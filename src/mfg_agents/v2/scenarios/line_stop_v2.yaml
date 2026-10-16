@@ -1,0 +1,127 @@
+# 停线应急协同（V1 line_stop 场景的声明式迁移，ARCHITECTURE-V2.md §4.1 / S1）
+#
+# 等价性要求：同输入同结论结构（V1: business → manufacturing → fan_out[quality,
+# supply_chain, equipment] → fan_in → fa → report）；V2 增量：
+#   - 三域并行取证改为 Text2SQLService 注册查询（真实 provenance）
+#   - fa 后新增 workflow（影响评估工单：通知计划/物控/业务）——确定性联动
+#   - 新增两个 HITL 点（复线决策 / 对客 ETA）——关键决策人在环路
+#   - 未确认停线时 condition 跳转 report（等价 V1 "没停线直接回复"）
+key: line_stop_v2
+name: 停线应急协同
+version: 1
+domains: [manufacturing, quality, supply_chain, equipment]
+triggers:
+  - {type: keyword, words: [停线, 停了, 什么时候复, 何时复, 急单, 出货影响]}
+  - {type: im_message}
+  - {type: event, topic: mfg.line_stop.confirmed}
+entry: business
+outputs: [internal_brief, customer_report, impact_ticket, hitl_cards]
+
+hitl:
+  - {step: hitl_restart, approver_roles: [制造现场负责人], condition: "confirmed_stop"}
+  - {step: hitl_eta, approver_roles: [业务经理], condition: "confirmed_stop"}
+
+steps:
+  # 1) 业务意图识别（复用 V1 business_agent：型号/线体/紧急度抽取）
+  - id: business
+    type: agent
+    agent: business
+    label: 业务Agent · 意图识别
+    icon: "🧠"
+    timeout_s: 10
+    on_error: degrade
+
+  # 2) 制造域确认停线事实（Text2SQL 注册查询：OEE + ongoing 停线事件）
+  - id: confirm_stop
+    type: agent
+    agent: manufacturing
+    label: 制造Agent · 确认停线
+    icon: "🗄️"
+    timeout_s: 30
+    on_error: degrade
+
+  # 3) 三域并行取证（fan-out；condition 未停线时直接跳 report，等价 V1）
+  - id: fanout
+    type: fan_out
+    condition: confirmed_stop
+    else: report
+    join: all
+    branches:
+      - id: quality
+        type: agent
+        agent: quality
+        label: 品质Agent · 查QMS
+        icon: "🔬"
+        timeout_s: 30
+        on_error: degrade
+      - id: supply_chain
+        type: agent
+        agent: supply_chain
+        label: 供应链Agent · 查SCM
+        icon: "📦"
+        timeout_s: 30
+        on_error: degrade
+      - id: equipment
+        type: agent
+        agent: equipment
+        label: 设备Agent · 查EAM
+        icon: "⚙️"
+        timeout_s: 30
+        on_error: degrade
+
+  # 4) 汇聚（LangGraph 自动等三分支完成；任一 degraded 不阻塞整体）
+  - id: fanin
+    type: fan_in
+
+  # 5) FA 分析（RAG + LLM 评级/根因/复线 ETA；LLM 不可用时模板化降级）
+  - id: fa
+    type: agent
+    agent: fa
+    label: FA分析Agent · RAG推理
+    icon: "📚"
+    timeout_s: 60
+    on_error: degrade
+
+  # 6) 影响评估工单（工作流引擎：通知计划/物控/业务，SLA 计时，确定性流程）
+  - id: impact_wf
+    type: workflow
+    workflow: impact_assessment
+    title: 停线影响评估工单
+    assignees: [计划, 物控, 业务]
+    notify_level: P1
+    sla_hours: 2
+    timeout_s: 15
+    on_error: degrade
+
+  # 7) HITL 1：复线决策（必须制造现场负责人 IM 卡片确认，不自动放行）
+  - id: hitl_restart
+    type: hitl
+    agent: hitl_restart
+    prompt: 复线决策确认：是否按 FA 建议 ETA 复线？
+    approver_roles: [制造现场负责人]
+    actions:
+      - {key: confirm_restart, label: 确认复线方案}
+      - {key: hold, label: 暂缓复线}
+    timeout_s: 10
+    on_error: degrade
+
+  # 8) HITL 2：对客 ETA 承诺（必须业务确认后才允许输出对外话术）
+  - id: hitl_eta
+    type: hitl
+    agent: hitl_eta
+    prompt: 对客 ETA 承诺确认：确认回复客户的预计恢复时间？
+    approver_roles: [业务经理]
+    actions:
+      - {key: confirm_eta, label: 确认对客ETA}
+      - {key: revise_eta, label: 修改ETA}
+    timeout_s: 10
+    on_error: degrade
+
+  # 9) 报告（内部简报 + 对客脱敏报告；degraded 时模板化）
+  - id: report
+    type: agent
+    agent: report
+    label: 报告Agent · 生成简报与对客报告
+    icon: "📄"
+    timeout_s: 60
+    on_error: degrade

@@ -22,6 +22,7 @@ dependencies = [
     "numpy>=1.26.0",
     "fastapi>=0.143.1",
     "uvicorn[standard]>=0.54.0",
+    "pyyaml>=6.0",
 ]
 
 [tool.uv]
@@ -33,3 +34,8 @@ default = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/mfg_agents"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]

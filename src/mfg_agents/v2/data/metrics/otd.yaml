@@ -1,0 +1,12 @@
+# 指标库 v1（Text2SQLService 第①道通道：指标定义即代码，口径唯一）。
+# 铁律：智能体优先查指标库，禁止各自写口径（ARCHITECTURE-V2.md §5.2）。
+metrics:
+  - id: otd_rate
+    name: OTD 准时交付率
+    owner: 供应链域
+    desc: "按时交付订单占比。演示口径：以 shipment.eta 为客户要求日，已安排发货（已发货/在途）且 eta 未逾期记为按时；真实口径需订单要求日与实际发货日两字段（数据就绪后升级）。"
+    tables: [shipment]
+    keywords: [OTD, 准时交付, 交付率, 订单达成]
+    sql: "SELECT ROUND(100.0 * SUM(CASE WHEN ship_status IN ('已发货', '在途') AND eta >= date('now') THEN 1 ELSE 0 END) / COUNT(*), 1) AS otd_rate_pct, COUNT(*) AS total_orders FROM shipment"
+    unit: "%"
+    higher_is_better: true

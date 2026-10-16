@@ -1,0 +1,45 @@
+# 注册查询库（Text2SQLService 第②道通道：参数化执行，高频固定查询）。
+# 每个查询定义：sql（参数化，:param 占位）/ tables（权限核验）/ keywords（路由匹配）/ desc（口径说明）。
+# 与 V1 Agent 硬编码 SQL 等价——保证 line_stop_v2 与 V1 行为等价（同输入同结论结构）。
+queries:
+  mfg_oee:
+    desc: "MES：指定线体/型号当日 OEE 与产出（等价 V1 ManufacturingAgent）"
+    tables: [production_output]
+    keywords: [OEE, 产出, 停线, 复线]
+    sql: "SELECT record_date, line_code, product_model, planned_qty, actual_qty, oee, stop_duration_min FROM production_output WHERE line_code = :line AND product_model = :model AND record_date = '2026-10-15'"
+
+  mfg_stop_ongoing:
+    desc: "MES：进行中的停线事件（等价 V1 ManufacturingAgent）"
+    tables: [line_stop_event]
+    keywords: [停线, 何时复, 什么时候复]
+    sql: "SELECT * FROM line_stop_event WHERE line_code = :line AND product_model = :model AND status = 'ongoing'"
+
+  quality_defect_dist:
+    desc: "QMS：不良分布聚合（等价 V1 QualityAgent）"
+    tables: [quality_defect]
+    keywords: [不良, 缺陷, 锡膏]
+    sql: "SELECT defect_type, SUM(defect_qty) AS total_qty FROM quality_defect WHERE line_code = :line AND product_model = :model GROUP BY defect_type"
+
+  supply_batches_today:
+    desc: "SCM：今日到货来料批次（等价 V1 SupplyChainAgent）"
+    tables: [material_batch]
+    keywords: [来料, 批次, 供应商, IQC]
+    sql: "SELECT batch_no, part_no, part_name, supplier, incoming_result FROM material_batch WHERE date(arrival_time) = '2026-10-15'"
+
+  equip_alarms:
+    desc: "EAM：线体设备异常告警（等价 V1 EquipmentAgent）"
+    tables: [equipment_log]
+    keywords: [设备, 告警, 参数, 预警]
+    sql: "SELECT equipment_id, alarm_code, param_name, param_value FROM equipment_log WHERE line_code = :line AND is_abnormal = 1"
+
+  warehouse_available:
+    desc: "WMS：型号可用库存（on_hand - reserved，等价 V1 WarehouseAgent）"
+    tables: [inventory]
+    keywords: [库存, 能发, 可用]
+    sql: "SELECT product_model, warehouse, on_hand_qty, reserved_qty, (on_hand_qty - reserved_qty) AS available_qty FROM inventory WHERE product_model = :model"
+
+  shipment_status:
+    desc: "TMS：型号发货单状态与 ETA（等价 V1 WarehouseAgent）"
+    tables: [shipment]
+    keywords: [发货, 在途, 交期]
+    sql: "SELECT order_no, product_model, qty, ship_status, eta FROM shipment WHERE product_model = :model"

@@ -1,7 +1,11 @@
 """集中配置：从环境变量读取。
 本地开发默认 SQLite（零依赖）；Docker部署通过环境变量切到MySQL。
+
+V2 扩展（可接入框架）：场景目录、工作流库、IM 回调配置、LLM 分级模型。
+V1 既有配置项默认值全部保持不变（零破坏）。
 """
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -26,6 +30,24 @@ class Settings:
     OPENAI_BASE_URL: str = os.getenv("OPENAI_BASE_URL", "https://api.deepseek.com/v1")
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
     OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "deepseek-chat")
+
+    # ================= V2 可接入框架 =================
+    # LLM 分级：L1 小模型（意图分类/SQL 初版，高频低敏）/ L2 大模型（分析/报告）
+    OLLAMA_MODEL_L1: str = os.getenv("OLLAMA_MODEL_L1", "qwen3.5:4b")
+
+    # 场景目录（YAML 声明式场景；新场景零代码新增）
+    V2_SCENARIOS_DIR: str = os.getenv(
+        "V2_SCENARIOS_DIR",
+        str(Path(__file__).resolve().parent / "v2" / "scenarios")
+    )
+
+    # 工作流库（SQLite：platform_workflow_task 工单/状态机/SLA/HITL 队列）
+    WORKFLOW_DB: str = os.getenv("WORKFLOW_DB", DB_URL)
+
+    # 企业微信回调配置（自建应用：URL+Token+AES；留空时回调端点 fail-fast 报错）
+    IM_TOKEN: str = os.getenv("IM_TOKEN", "")
+    IM_AES_KEY: str = os.getenv("IM_AES_KEY", "")
+    IM_APPID: str = os.getenv("IM_APPID", "")
 
 
 settings = Settings()
