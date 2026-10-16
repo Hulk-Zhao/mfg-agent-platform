@@ -368,7 +368,56 @@ class TestSensitiveFieldMasking:
             "千住金属", "深南电路", "STMicroelectronics"}
 
 
+# ---------- J. 已知限制锚定（Round 2.5 sqlglot 升级复核发现） ----------
+
+class TestKnownLimitations:
+    """已知限制行为锚定（非缺陷回归；修复后需翻转为断言拦截）。"""
+
+    def test_table_valued_pragma_metadata_gap(self):
+        """OBS-8（低危，预存非回归）：pragma_table_info 等表值函数被 sqlglot
+        解析为函数调用（不产出 Table 节点）→ 表级 ACL 视野外 → 审核放行 →
+        SQLite 返回 schema 元数据（列名/类型，不含行数据）。
+        旧正则实现同样漏（\\bpragma\\b 不匹配 pragma_table_info，非本轮回归）。
+        影响边界：仅 schema 元数据披露，越权表行数据仍不可读（下一条断言锁定）。
+        修复方向：_FORBIDDEN_SQL 增加表值函数黑名单（pragma_*/json_each 等）。"""
+        sql = "SELECT * FROM pragma_table_info('customer_complaint')"
+        assert SQLAuditor.audit(sql, MFG_CTX) == []  # 当前：放行（已知限制）
+        # 边界锁定：同一越权表的行数据仍然不可读
+        with pytest.raises(SQLAuditError, match="customer_complaint"):
+            SQLAuditor.audit("SELECT complaint_no FROM customer_complaint",
+                             MFG_CTX)
+
+    def test_parse_failure_fail_closed(self):
+        """sqlglot 解析失败 → fail-closed 抛 SQLAuditError（不回退宽松路径）。"""
+        for sql in ["SELECT * FROM", "SELECT !!! FROM", "FROM WHERE SELECT",
+                    "SELECT * FROM inventory WHERE", "((("]:
+            with pytest.raises(SQLAuditError, match="解析失败|仅允许|禁用"):
+                SQLAuditor.audit(sql, MFG_CTX)
+
+    def test_parser_divergence_candidates_blocked(self):
+        """解析器分歧候选（Round 2.5 QA 独立对抗）：sqlglot 提取与 SQLite
+        执行不一致的候选必须被拦截或不泄露行数据。"""
+        # 单引号表名（SQLite DQS 怪癖）：sqlglot 提表 → 拦截
+        with pytest.raises(SQLAuditError):
+            SQLAuditor.audit("SELECT complaint_no FROM 'customer_complaint'",
+                             MFG_CTX)
+        # 逗号 + 派生表：内层表被提取 → 拦截
+        with pytest.raises(SQLAuditError):
+            SQLAuditor.audit(
+                "SELECT c.complaint_no FROM inventory i, "
+                "(SELECT * FROM customer_complaint) c", WAREHOUSE_CTX)
+        # CTE 影子名（与真实表同名）：保守提取 → 拦截
+        with pytest.raises(SQLAuditError):
+            SQLAuditor.audit(
+                "WITH customer_complaint AS (SELECT 1 AS x) "
+                "SELECT * FROM customer_complaint", MFG_CTX)
+        # INDEXED BY：索引名一并保守提取 → 拦截
+        with pytest.raises(SQLAuditError):
+            SQLAuditor.audit(
+                "SELECT * FROM customer_complaint INDEXED BY idx_x", MFG_CTX)
+
 # ---------- H. 执行层 ----------
+
 
 class TestExecutionLayer:
     def test_readonly_connection_rejects_write(self, registry):

@@ -3,9 +3,9 @@
 - **验证人**：QA 工程师 严过关（software-qa-engineer）
 - **对象**：commit `51c2ff0`（V2 可接入框架，基线 `49dcd34` / tag `v1.0-prototype`）+ Round 2 修复 `54aa607`
 - **方法**：独立复算 + 红队攻击 + NIST 外部向量锚点 + demo 三件套实测；不信工程师自述，全部结论有测试/命令输出支撑
-- **最终结果（Round 2 后）**：`uv run pytest tests/ -q` → **277 passed / 0 failed / 2 skipped**
+- **最终结果（Round 2.5 后）**：`uv run pytest tests/ -q` → **280 passed / 0 failed / 2 skipped**
   - 工程师既有 112 用例全部通过（V1/V2 零破坏）
-  - QA 新增 5 个测试文件共 132 个用例（红队 76 / 密码学 26 / HITL 工作流 25 / 事件流 5 / V1 等价补测 3），另加 1 个 API E2E 实测脚本
+  - QA 新增 5 个测试文件共 135 个用例（红队 79 / 密码学 26 / HITL 工作流 25 / 事件流 5 / V1 等价补测 3），另加 1 个 API E2E 实测脚本
   - 工程师 Round 2 回归测试 32 例（QA 已审查：无 trivial 断言）
   - Round 1 的 9 个缺陷证据测试在修复后**全部转绿**，其中 4 个按预案翻转为"修复后行为锁定"
 
@@ -255,6 +255,38 @@ finally:
 ### Round 2 新增观察项
 
 - OBS-7：CTE 名称（`WITH t AS ... SELECT * FROM t`）与字符串字面量内含 `FROM xxx` 会被 `extract_tables` 保守提取 → 拦截（fail-closed 方向，与旧版行为一致，不影响全部注册查询/指标；如需精细化可在后续做 CTE 声明与引号感知）
+
+---
+
+## Round 2.5：sqlglot 真解析器升级复核（commit `928581d`）
+
+**背景**：结项后工程师按主理人原始规格将安全关键路径从手写正则升级为 sqlglot 真解析器（`extract_tables` / `alias_map` 改 AST，解析失败 fail-closed），`uv add sqlglot`（纯 Python 无依赖）。
+
+**QA 独立复核（不信主理人/工程师自述，重新对抗）**：
+
+1. **原 6 个 ACL 绕过变体**（括号 FROM/换行/反引号/双引号/方括号/逗号 join）：**6/6 全部拦截** ✓
+2. **解析器分歧对抗（12 候选，sqlglot 提取 vs SQLite 实际执行双视角）**——这是正则升级为真解析器后引入的**新攻击面**（解析器看到的表 ≠ 数据库执行的表）：
+
+| 候选 | sqlglot 提取 | 审核 | SQLite 实际执行 | 判定 |
+|------|-------------|------|----------------|------|
+| 单引号表名 `FROM 't'`（DQS 怪癖） | 提表 | BLOCK | 能执行 | ✅ 拦截（无泄露路径） |
+| 逗号+派生表 | 提全部表 | BLOCK | 能执行 | ✅ 拦截 |
+| CTE 影子名（与真实表同名） | 保守提表 | BLOCK | 能执行 | ✅ 保守拦截 |
+| INDEXED BY | 含索引名保守提取 | BLOCK | — | ✅ 拦截 |
+| 括号 UNION | 提两分支表 | BLOCK | — | ✅ 拦截 |
+| DQS 字符串 `WHERE note="t"` | 仅提 inventory | 放行 | SQLite 拒绝执行 | ✅ 合法查询不误伤（主理人已记录） |
+| generate_series | 无表 | 放行 | SQLite 未启用该函数 | ✅ 无数据面 |
+| json_each | 无表 | 放行 | 仅返回字面 JSON | ✅ 无库数据泄露 |
+| 残缺/垃圾/空 SQL | 解析失败 | BLOCK(fail-closed) | — | ✅ 不回退宽松路径 |
+| **pragma_table_info('t')** | **无表（按函数解析）** | **放行** | **返回 schema 元数据** | ⚠️ **OBS-8（见下）** |
+
+3. **脱敏别名（sqlglot 投影解析）**：AS/表限定/隐式别名/函数表达式/unit_price 全部正确；端到端明细通道品质角色脱敏、采购角色可见原文（QA 侧 `test_alias_masking_end_to_end_detail_channel` 独立锁死）
+4. **user_ctx fail-closed 加固**：`_validate_user_ctx` 入口校验（roles 非列表/dept 非字符串/非字典 → SQLAuditError），TypeError 不逃逸；注意契约收紧——**不带 roles 键的 user_ctx 现被整体拒绝**（内部调用方均带 roles，无影响）
+5. **全量回归**：277 passed / 2 skipped / 0 failed；demo 三件套无回归（CLI/IM 33 事件、API E2E 21 项断言全 PASS）
+
+**新发现 OBS-8（低危，预存非回归）**：`pragma_table_info('customer_complaint')` 等**表值函数**被 sqlglot 解析为函数调用（不产出 Table 节点）→ 表级 ACL 视野外 → 审核放行 → SQLite 返回目标表 **schema 元数据**（列名/类型，不含行数据）。旧正则实现同样漏（`\bpragma\b` 不匹配 `pragma_table_info`），**非本轮回归**。影响边界：仅元数据披露，越权表**行数据仍不可读**（已用测试锁定边界）。修复方向：`_FORBIDDEN_SQL` 增加表值函数黑名单（`pragma_*` 等）。已在 `TestKnownLimitations` 落行为锚定（修复后需翻转为断言拦截）。
+
+**结论：sqlglot 实现通过 QA 复核。** 表级 ACL 对抗强度不低于（实质高于）正则版；fail-closed 策略正确；唯一新观察项 OBS-8 为低危预存问题，不阻断交付，建议纳入生产化清单。
 
 ---
 
