@@ -20,10 +20,13 @@ import json
 import logging
 import queue
 import uuid
+from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from ...config import settings
@@ -31,10 +34,20 @@ from ..contracts.im_gateway import ReplyCard
 from ..contracts.adapters.wecom import WeComAdapter
 from ..core.events import EventHub, QueueSink, bind_existing, hub, unbind
 from ..core.orchestrator import V2Orchestrator, create_default_orchestrator
+from ..services.workflow import WorkflowEngine, WorkflowTransitionError
 
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="mfg-agent-platform v2", version="2.0.0")
+
+# 演示前端（demo/ui）可能以 file:// 直开（Origin: null）或跨端口访问，
+# 需放开 CORS；仅影响本 demo 应用，V1 与 V2 现有路由行为不变。
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 _orchestrator: Optional[V2Orchestrator] = None
 
@@ -93,19 +106,86 @@ async def api_events(request_id: str = Query(...),
                             detail=f"请求不存在或已结束: {request_id}")
 
     async def gen():
-        deadline = asyncio.get_event_loop().time() + wait_s
-        while asyncio.get_event_loop().time() < deadline:
-            try:
-                event = event_queue.get_nowait()
-            except queue.Empty:
-                await asyncio.sleep(0.05)
-                continue
-            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-            if event.get("type") in ("final", "error"):
-                break
-        hub.close(request_id)
+        try:
+            deadline = asyncio.get_event_loop().time() + wait_s
+            while asyncio.get_event_loop().time() < deadline:
+                try:
+                    event = event_queue.get_nowait()
+                except queue.Empty:
+                    await asyncio.sleep(0.05)
+                    continue
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                if event.get("type") in ("final", "error"):
+                    break
+        finally:
+            # 客户端断开 / 流结束都必须回收队列，避免 EventHub 泄漏
+            hub.close(request_id)
 
     return StreamingResponse(gen(), media_type="text/event-stream")
+
+
+class EventsOpenRequest(BaseModel):
+    request_id: str
+
+
+@app.post("/api/v2/events/open")
+def api_events_open(req: EventsOpenRequest) -> dict[str, Any]:
+    """预开请求事件队列：前端先订阅 SSE 再发查询，事件流实时可达。
+
+    与 POST /api/v2/query 内的 hub.open(request_id) 幂等（同 id 返回同一队列），
+    不改变现有查询/事件行为，仅消除"先查询后订阅"的时序竞态。
+    """
+    hub.open(req.request_id)
+    return {"code": 0, "data": {"request_id": req.request_id},
+            "message": "ok"}
+
+
+# ---------- HITL 审批中心（WorkflowEngine 待办 / 审批回写） ----------
+
+
+class WorkflowActionRequest(BaseModel):
+    approver: str = "演示用户"
+    comment: str = ""
+    final: bool = False
+
+
+def _workflow_engine() -> WorkflowEngine:
+    """工作流引擎（总控运行时单例；工单与 API 共享同一 SQLite 库）。"""
+    return get_orchestrator().runtime.workflow
+
+
+@app.get("/api/v2/workflow/pending")
+def api_workflow_pending() -> dict[str, Any]:
+    """HITL 待办队列（waiting_hitl 工单；审批中心/待办卡片数据源）。"""
+    tasks = _workflow_engine().pending_hitl()
+    return {"code": 0, "data": [t.to_dict() for t in tasks], "message": "ok"}
+
+
+@app.post("/api/v2/workflow/{task_id}/approve")
+def api_workflow_approve(task_id: str,
+                         req: WorkflowActionRequest) -> dict[str, Any]:
+    """HITL 审批通过：waiting_hitl → running（final=True 时 → done）。"""
+    try:
+        task = _workflow_engine().approve(task_id, req.approver,
+                                          req.comment, final=req.final)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except WorkflowTransitionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"code": 0, "data": task.to_dict(), "message": "ok"}
+
+
+@app.post("/api/v2/workflow/{task_id}/reject")
+def api_workflow_reject(task_id: str,
+                        req: WorkflowActionRequest) -> dict[str, Any]:
+    """HITL 审批驳回：waiting_hitl → closed（回写审批人与意见）。"""
+    try:
+        task = _workflow_engine().reject(task_id, req.approver, req.comment)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except WorkflowTransitionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"code": 0, "data": task.to_dict(), "message": "ok"}
 
 
 # ---------- 企业微信回调 ----------
@@ -181,6 +261,18 @@ def _build_card(result: Any, msg: Any) -> ReplyCard:
         lines.append("⚠ degraded 模式：LLM 不可用，结论为规则/模板化输出，请人工复核。")
     return ReplyCard(title="停线应急协同 · 分析简报", body="\n".join(lines),
                      actions=actions, level="P1")
+
+
+# ---------- 静态前端挂载（/demo-ui → demo/ui 目录） ----------
+
+_UI_DIR = Path(__file__).resolve().parent / "ui"
+
+if _UI_DIR.is_dir():
+    # html=True：/demo-ui 与 /demo-ui/ 均返回 index.html（单页应用）。
+    # 直接双击 index.html（file://）亦可打开：前端自动探测后端，
+    # 不可达时进入演示模式（页面完整渲染 + 明确降级提示）。
+    app.mount("/demo-ui", StaticFiles(directory=str(_UI_DIR), html=True),
+              name="demo-ui")
 
 
 __all__ = ["app", "get_orchestrator", "EventHub"]

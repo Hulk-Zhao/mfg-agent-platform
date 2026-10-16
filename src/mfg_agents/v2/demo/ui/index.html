@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>制造业多智能体协同平台 · 智能门户</title>
+  <meta name="description" content="制造业多智能体协同平台演示门户：工作台 / 订单履约 / 智能问数 / 预警中心 / 报告中心 / HITL 审批" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='5' fill='%23185FA5'/%3E%3Cpath d='M12 4L4 8v8l8 4 8-4V8l-8-4z' fill='none' stroke='white' stroke-width='1.6' stroke-linejoin='round'/%3E%3Cpath d='M4 8l8 4 8-4M12 20v-8' stroke='white' stroke-width='1.6' stroke-linejoin='round' fill='none'/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="app.css" />
+</head>
+<body>
+  <div id="app" class="app">
+    <!-- ============ 左侧边栏 ============ -->
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-logo" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2L3 7v10l9 5 9-5V7l-9-5z" />
+            <path d="M3 7l9 5 9-5" />
+            <path d="M12 22V12" />
+            <circle cx="12" cy="12" r="2.2" />
+          </svg>
+        </div>
+        <div class="brand-text">
+          <div class="brand-name">智造协同平台</div>
+          <div class="brand-sub">Multi-Agent MFG OS</div>
+        </div>
+      </div>
+      <nav class="nav" id="main-nav" aria-label="主导航"></nav>
+      <div class="sidebar-foot">
+        <div class="env-card" id="env-card">
+          <div class="env-row"><span class="env-label">运行环境</span><span class="env-value" id="env-mode">检测中…</span></div>
+          <div class="env-row"><span class="env-label">框架版本</span><span class="env-value">V2.0.0</span></div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- ============ 主区域 ============ -->
+    <div class="main">
+      <header class="topbar">
+        <div class="topbar-left">
+          <div class="topbar-title" id="topbar-title">工作台</div>
+          <div class="topbar-sub" id="topbar-sub">制造业多智能体协同门户</div>
+        </div>
+        <div class="topbar-search">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/></svg>
+          <input type="text" id="global-search" placeholder="搜索订单 / 工单 / 预警 / 报告…" autocomplete="off" />
+        </div>
+        <div class="topbar-right">
+          <div class="backend-status" id="backend-status" title="后端连接状态">
+            <span class="dot dot-checking" id="backend-dot"></span>
+            <span id="backend-text">连接检测中</span>
+          </div>
+          <button class="icon-btn" id="btn-refresh" title="刷新当前页面">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+          </button>
+          <div class="user-chip" id="user-chip">
+            <div class="avatar" id="user-avatar">总</div>
+            <div class="user-meta">
+              <div class="user-name" id="user-name">张启明</div>
+              <div class="user-role" id="user-role">总经理</div>
+            </div>
+          </div>
+        </div>
+      </header>
+      <main class="content" id="screen-root" aria-live="polite"></main>
+    </div>
+  </div>
+
+  <div class="toast-root" id="toast-root" aria-live="polite"></div>
+
+  <script src="demo-data.js"></script>
+  <script src="app.js"></script>
+  <script src="screens.js"></script>
+</body>
+</html>
