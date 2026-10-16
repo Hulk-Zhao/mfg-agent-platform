@@ -1,0 +1,112 @@
+# ============================================================
+# mfg-agent-platform Docker 编排
+# 参考 Itcast_qa_system 的成熟做法：
+#   - 自定义网络隔离
+#   - MySQL healthcheck 后再启动 app
+#   - entrypoint.sh 等待依赖
+#   - 复用宿主机 Ollama（host.docker.internal:11434）
+#
+# 启动：docker compose up -d
+# 停止：docker compose down
+# ============================================================
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: mfg_mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: demo123
+      MYSQL_DATABASE: mfg_agent
+    ports:
+      - "3306:3306"
+    volumes:
+      - ./data/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-pdemo123"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    networks:
+      - mfg_net
+    restart: unless-stopped
+
+  chroma:
+    image: chromadb/chroma:latest
+    container_name: mfg_chroma
+    ports:
+      - "8000:8000"
+    volumes:
+      - chroma_data:/chroma/chroma
+    networks:
+      - mfg_net
+    restart: unless-stopped
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        HTTP_PROXY: ${DOCKER_BUILD_PROXY:-}
+        HTTPS_PROXY: ${DOCKER_BUILD_PROXY:-}
+    image: mfg-agent-platform:latest
+    container_name: mfg_app
+    depends_on:
+      mysql:
+        condition: service_healthy
+      chroma:
+        condition: service_started
+    environment:
+      PYTHONUNBUFFERED: 1
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_USER: root
+      MYSQL_PASSWORD: demo123
+      MYSQL_DB: mfg_agent
+      CHROMA_HOST: chroma
+      CHROMA_PORT: 8000
+      LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3.5:9b}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-deepseek-chat}
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./logs:/app/logs
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - mfg_net
+    restart: unless-stopped
+
+  # 可选：若要把 Ollama 也容器化（GPU直通），取消下面注释
+  # ollama:
+  #   image: ollama/ollama:0.40.2
+  #   container_name: mfg_ollama
+  #   ports:
+  #     - "11434:11434"
+  #   volumes:
+  #     - D:/Ollama_Models:/root/.ollama
+  #   environment:
+  #     - OLLAMA_MODELS=/root/.ollama
+  #     - OLLAMA_GPU_LAYERS=99
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: all
+  #             capabilities: [gpu]
+  #   networks:
+  #     - mfg_net
+  #   restart: unless-stopped
+
+networks:
+  mfg_net:
+    name: mfg_net
+
+volumes:
+  mysql_data:
+  chroma_data:
