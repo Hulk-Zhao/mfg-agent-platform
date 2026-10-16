@@ -3,9 +3,9 @@
 - **验证人**：QA 工程师 严过关（software-qa-engineer）
 - **对象**：commit `51c2ff0`（V2 可接入框架，基线 `49dcd34` / tag `v1.0-prototype`）+ Round 2 修复 `54aa607`
 - **方法**：独立复算 + 红队攻击 + NIST 外部向量锚点 + demo 三件套实测；不信工程师自述，全部结论有测试/命令输出支撑
-- **最终结果（Round 2 后）**：`uv run pytest tests/ -q` → **276 passed / 0 failed / 2 skipped**
+- **最终结果（Round 2 后）**：`uv run pytest tests/ -q` → **277 passed / 0 failed / 2 skipped**
   - 工程师既有 112 用例全部通过（V1/V2 零破坏）
-  - QA 新增 5 个测试文件共 131 个用例（红队 75 / 密码学 26 / HITL 工作流 25 / 事件流 5 / V1 等价补测 3），另加 1 个 API E2E 实测脚本
+  - QA 新增 5 个测试文件共 132 个用例（红队 76 / 密码学 26 / HITL 工作流 25 / 事件流 5 / V1 等价补测 3），另加 1 个 API E2E 实测脚本
   - 工程师 Round 2 回归测试 32 例（QA 已审查：无 trivial 断言）
   - Round 1 的 9 个缺陷证据测试在修复后**全部转绿**，其中 4 个按预案翻转为"修复后行为锁定"
 
@@ -235,8 +235,22 @@ finally:
 
 ### 最终测试状态
 
-- 全量：**276 passed / 0 failed / 2 skipped**（2 skipped = V1 图 LLM 门控补测，离线跳过属预期）
+- 全量：**277 passed / 0 failed / 2 skipped**（2 skipped = V1 图 LLM 门控补测，离线跳过属预期）
 - demo 三件套复跑：CLI exit 0（脱敏 True / 2×waiting_hitl / L0）；API E2E 21 项断言全 PASS（exit 0，33 事件含 tool 级）；IM 模拟器 exit 0（33 事件 / 回包签名自验证 True / degraded 标记）
+
+### 主理人抽查项复核（防软化 + 独立性）
+
+**翻转未削弱对抗强度**（git diff 54aa607 逐行核对，仅 4 处外科手术式改动）：
+1. `test_two_requests_no_cross_talk`：仅数字 21→33，**隔离性核心断言保持**（两队列物理隔离）
+2. `TestMemoryDbUrlBroken`→`TestMemoryDbUsable`：缺陷证据翻转为**更强的行为锁定**（create→start→hitl→approve final done→escalate→list 共 7 断言）
+3. `test_comma_join_leak_end_to_end`：删"泄露证据"断言，换 `pytest.raises(SQLAuditError, match="customer_complaint")`（与同类拦截用例同强度）
+4. `test_alias_bypasses_masking`：断言不变（masked=True + 值="供应商***"），补 SQL 第三参；**新增** `test_alias_visible_for_procurement`（防误伤）与 `test_alias_masking_end_to_end_detail_channel`（QA 侧端到端，与工程师侧同行为独立锁死）
+- 其余 72 个原红队用例断言**原样未动**（git diff 证实）；红队全类抽查重跑通过（DDL/堆叠/注释/UNION/表级权限/ACL 变体/脱敏/执行层/兜底契约）
+
+**工程侧回归测试 vs QA 证据测试：互补独立，无单向抄答案**：
+- 工程师独有形态：显式 `QueueSink(q)` 路径、`platform_metric_def` 内存库种子、`extract_tables` 函数级 6 形态精确集合断言、CTE 名保守提取（`{"line_stop_event", "c"}`）
+- QA 独有形态：三域并行 tool 事件集合断言、两请求隔离、隐式别名（无 AS）/函数表达式/`unit_price` 别名、`main.t` schema 限定、端到端泄露→拦截的历史叙事锚定
+- QA 用例早于工程师修复测试存在（Round 1 即落盘），工程师参照 QA 报告编写；双方从"审核链对外行为+执行层"与"内部函数正确性"两个角度独立锁死同一安全契约——交叉验证成立
 
 ### Round 2 新增观察项
 

@@ -341,6 +341,32 @@ class TestSensitiveFieldMasking:
         assert masked is False
         assert masked_rows[0]["s"] == "千住金属"
 
+    def test_alias_masking_end_to_end_detail_channel(self, service,
+                                                     monkeypatch):
+        """QA 侧端到端（与工程师侧同行为、独立锁死）：LLM 生成的别名 SQL
+        走明细通道，品质角色必须脱敏、采购角色可见原文。"""
+
+        class _Resp:
+            content = "SELECT batch_no, supplier AS s FROM material_batch"
+
+        class _LLM:
+            def invoke(self, prompt):
+                return _Resp()
+
+        monkeypatch.setattr("mfg_agents.tools.llm_factory.llm_available",
+                            lambda: True)
+        monkeypatch.setattr("mfg_agents.tools.llm_factory.get_llm",
+                            lambda *a, **k: _LLM())
+        r1 = service.query_detail("各批次供应商是谁", QUALITY_CTX)
+        assert r1.channel == "detail"
+        assert r1.masked is True
+        assert all(row["s"] == "供应商***" for row in r1.rows)
+        r2 = service.query_detail("各批次供应商是谁", PROCUREMENT_CTX)
+        assert r2.masked is False
+        assert all(row["s"] != "供应商***" for row in r2.rows)
+        assert {row["s"] for row in r2.rows} == {
+            "千住金属", "深南电路", "STMicroelectronics"}
+
 
 # ---------- H. 执行层 ----------
 
