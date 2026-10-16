@@ -41,9 +41,18 @@ class DataSource(ABC):
 class SQLiteDataSource(DataSource):
     """SQLite 只读数据源（本地 dev fixture / 演示）。
 
-    连接串使用 ``file:...?mode=ro``，从驱动层杜绝写操作；
-    注册查询通过构造参数 ``queries`` 注入（见 data/queries.yaml）。
+    连接串使用 ``file:...?mode=ro``，从驱动层杜绝写操作，这是"数据质量
+    优先于智能能力"的落地边界；注册查询通过构造参数 ``queries`` 注入
+    （见 data/queries.yaml）。
+
+    :memory: 特殊支持（BUG-4 修复，主理人规格）：内存库每个新连接都是
+    独立空库，故按源名在进程内共享同一连接（StaticPool 语义），使
+    ``sqlite:///:memory:`` 与文件库行为一致；该场景无落盘数据，
+    只读约束不适用（进程内临时库）。
     """
+
+    # 进程内共享的内存库连接（源名 → 连接），模拟 StaticPool 连接复用
+    _memory_conns: dict[str, sqlite3.Connection] = {}
 
     def __init__(self, db_path: str, name: str = "dev",
                  queries: Optional[dict[str, str]] = None,
@@ -54,7 +63,17 @@ class SQLiteDataSource(DataSource):
         self.row_cap = row_cap
 
     def _connect_ro(self) -> sqlite3.Connection:
-        """建立只读连接（URI mode=ro；文件不存在会直接报错，避免误建空库）。"""
+        """建立只读连接（URI mode=ro；文件不存在会直接报错，避免误建空库）。
+
+        :memory: 走进程内共享连接（见类文档）。
+        """
+        if self.db_path == ":memory:":
+            conn = self._memory_conns.get(self.name)
+            if conn is None:
+                conn = sqlite3.connect(":memory:")
+                conn.row_factory = sqlite3.Row
+                self._memory_conns[self.name] = conn
+            return conn
         uri = Path(self.db_path).resolve().as_uri() + "?mode=ro"
         conn = sqlite3.connect(uri, uri=True, timeout=5.0)
         conn.row_factory = sqlite3.Row

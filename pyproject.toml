@@ -23,6 +23,7 @@ dependencies = [
     "fastapi>=0.143.1",
     "uvicorn[standard]>=0.54.0",
     "pyyaml>=6.0",
+    "sqlglot>=30.23.0",
 ]
 
 [tool.uv]

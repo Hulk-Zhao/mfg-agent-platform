@@ -206,3 +206,25 @@ def material_control(task, ctx, sink) -> dict:
    全链路仍可演示——这是硬性验收项。
 5. **V1 零破坏**：V1 代码与五个演示脚本未改动；等价行为由
    `tests/test_v1_regression.py` 与 `tests/v2/test_e2e_v2.py` 守护。
+
+## 安全边界实现要点（Round 2 加固后）
+
+- **SQL 审核链用 sqlglot 真解析器**（非正则打补丁）：表名提取覆盖
+  FROM/JOIN/CTE/子查询/UNION、括号紧贴、反引号/双引号标识符、逗号隐式
+  join；**解析失败即 fail-closed 拒绝**（`SQLAuditError`）。
+- **脱敏基于 AST 投影别名映射**：`SELECT supplier AS s` 的别名 `s`
+  会解析回源列 `supplier` 后按角色掩码（`FieldMasker.mask(rows, ctx, sql)`）。
+- **user_ctx 入口校验**：roles 为 None/不可迭代、dept 非字符串 →
+  直接拒绝查询（fail-closed，不逃逸 TypeError）。
+
+## 已知限制（记录在案，生产前需处理）
+
+1. **企微回调无重放防护**：同一合法签名重复提交会被再次接受（企微官方
+   被动回调同样依赖 5s 窗口）。生产接入需在 API 层补 timestamp 窗口验重
+   + nonce 缓存。
+2. **`:memory:` 数据源/工作流库**：SQLite 内存库按"进程内共享连接"支持
+   （StaticPool 语义，`SQLiteDataSource` 按源名共享、`WorkflowEngine`
+   用持久单连接），仅用于测试/嵌入式场景；生产用文件库或 MySQL。
+3. **OTD 演示口径**：`data/metrics/otd.yaml` 以 `shipment.eta` 为客户
+   要求日（演示库无真实要求日/发货日字段），对外上线前必须替换为真实
+   字段并在指标库升版。

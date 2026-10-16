@@ -52,88 +52,29 @@ _FORBIDDEN_SQL = re.compile(
     r"detach|pragma|vacuum|reindex|replace|load_extension|sqlite_compileoption|"
     r"readfile|writefile)\b", re.IGNORECASE)
 
-# 表名标识符：裸标识 / 反引号 / 双引号 / 方括号包裹（SQLite 均接受）
-_IDENT = r'(?:`[^`]*`|"[^"]*"|\[[^\]]*\]|[A-Za-z_][A-Za-z0-9_]*)'
-# FROM/JOIN 子句的结束关键字（用于截取子句范围，覆盖逗号隐式 join）
-_CLAUSE_END_RE = re.compile(
-    r"\b(where|group|order|having|limit|union|except|intersect|on|using|"
-    r"join|from|window|values)\b", re.IGNORECASE)
 
-
-def _strip_sql_comments(sql: str) -> str:
-    """剥离 SQL 注释（-- 行注释与 /* */ 块注释），用于表名提取。
-
-    注意：关键词黑名单仍在原始 SQL 上执行（保守策略，注释藏毒即拦截），
-    此处仅服务于结构化的表名解析。
-    """
-    without_block = re.sub(r"/\*.*?\*/", " ", sql, flags=re.S)
-    return re.sub(r"--[^\n]*", " ", without_block)
-
-
-def _normalize_ident(token: str) -> str:
-    """剥掉标识符的包裹符（反引号/双引号/方括号）并转小写。"""
-    token = token.strip()
-    if len(token) >= 2 and token[0] == token[-1] and token[0] in "`\"[]":
-        return token[1:-1].lower()
-    return token.lower()
-
-
-def _split_top_level_commas(text: str) -> list[str]:
-    """按顶层逗号分割（括号深度归零的逗号；跳过字符串字面量内部）。"""
-    parts: list[str] = []
-    depth = 0
-    quote: Optional[str] = None
-    start = 0
-    for i, ch in enumerate(text):
-        if quote:
-            if ch == quote:
-                quote = None
-            continue
-        if ch in "'\"`":
-            quote = ch
-        elif ch == "(":
-            depth += 1
-        elif ch == ")":
-            depth = max(0, depth - 1)
-        elif ch == "," and depth == 0:
-            parts.append(text[start:i])
-            start = i + 1
-    parts.append(text[start:])
-    return parts
+def _parse_sql(sql: str):
+    """sqlglot AST 解析（SQLite 方言）；失败返回 None（调用方决定 fail 策略）。"""
+    try:
+        import sqlglot
+        return sqlglot.parse_one(sql, dialect="sqlite")
+    except Exception:  # noqa: BLE001 解析失败由调用方按 fail-closed 处理
+        return None
 
 
 def extract_tables(sql: str) -> set[str]:
-    """提取 SQL 引用的全部表名（fail-closed：宁可多提，不可漏提）。
+    """提取 SQL 引用的全部表名（sqlglot AST 级，主理人 Round 2 规格）。
 
-    覆盖（QA-BUG-1 修复）：
-    1. FROM/JOIN 后紧跟括号或换行：``FROM(t)`` / ``FROM\\n(t)``；
-    2. 反引号/双引号/方括号标识符：``FROM `t` ``；
-    3. 逗号隐式 join：``FROM a, b``（FROM 子句内每张表都提取）；
-    4. 子查询/CTE 内层 FROM：由全文 from/join 扫描天然覆盖；
-    5. 括号包裹且内层为 SELECT/WITH 的是子查询（跳过，内层表另行扫描）。
+    停止正则打补丁：真解析器天然覆盖 FROM/JOIN/CTE/子查询/UNION 分支、
+    括号紧贴、反引号/双引号标识符、逗号隐式 join。
+    **解析失败 → fail-closed 抛 SQLAuditError**（解析失败本身即可疑，
+    绝不回退到宽松路径——QA-BUG-1 的教训）。
     """
-    clean = _strip_sql_comments(sql)
-    lower = clean.lower()
-    tables: set[str] = set()
-    for kw in ("from", "join"):
-        for match in re.finditer(rf"\b{kw}\b", lower):
-            rest = clean[match.end():]
-            end_match = _CLAUSE_END_RE.search(rest.lower())
-            clause = rest[:end_match.start()] if end_match else rest
-            for part in _split_top_level_commas(clause):
-                part = part.strip()
-                if not part:
-                    continue
-                if part.startswith("("):
-                    close = part.rfind(")")
-                    inner = part[1:close] if close > 0 else part[1:]
-                    if re.match(r"\s*(select|with|values)\b", inner, re.IGNORECASE):
-                        continue  # 派生表子查询：内层表由全文扫描覆盖
-                    part = inner.strip()
-                ident_match = re.match(rf"\s*({_IDENT})", part)
-                if ident_match:
-                    tables.add(_normalize_ident(ident_match.group(1)))
-    return tables
+    expr = _parse_sql(sql)
+    if expr is None:
+        raise SQLAuditError(f"SQL 解析失败，拒绝查询: {sql[:120]}")
+    from sqlglot import exp
+    return {t.name.lower() for t in expr.find_all(exp.Table) if t.name}
 
 
 @dataclass
@@ -224,11 +165,30 @@ class SQLAuditor:
 
     @classmethod
     def audit(cls, sql: str, user_ctx: Optional[dict]) -> list[str]:
-        """执行前三道闸，返回告警列表；拦截即抛 SQLAuditError。"""
+        """执行前三道闸，返回告警列表；拦截即抛 SQLAuditError。
+
+        BUG-3 修复（主理人规格）：入口先校验 user_ctx——
+        roles 为 None/不可迭代、dept 非字符串 → 直接抛 SQLAuditError，
+        fail-closed，绝不让 TypeError 逃逸到调用方。
+        """
+        cls._validate_user_ctx(user_ctx)
         cls.regex_guard(sql)
         cls.structure_check(sql)
         cls.check_table_permission(sql, user_ctx)
         return []
+
+    @staticmethod
+    def _validate_user_ctx(user_ctx: Optional[dict]) -> None:
+        """user_ctx 入口校验（fail-closed）：无效上下文一律拒绝查询。"""
+        if not isinstance(user_ctx, dict):
+            raise SQLAuditError("user_ctx 无效（非字典），拒绝查询")
+        dept = user_ctx.get("dept")
+        if dept is not None and not isinstance(dept, str):
+            raise SQLAuditError("user_ctx.dept 必须为字符串，拒绝查询")
+        roles = user_ctx.get("roles")
+        if roles is None or isinstance(roles, (str, bytes)) or \
+                not isinstance(roles, (list, tuple, set, frozenset)):
+            raise SQLAuditError("user_ctx.roles 必须为角色列表，拒绝查询")
 
 
 class ResultValidator:
@@ -253,44 +213,43 @@ class FieldMasker:
     """字段脱敏（第六道闸）：敏感列按角色掩码，覆盖列别名（BUG-2 修复）。
 
     ``SELECT supplier AS s`` 的结果列名是 ``s``，仅按列名匹配会漏掩。
-    传入 SQL 时先解析 SELECT 列表的 输出列→源列 映射（别名解析），
-    源列命中敏感列即掩码，与显式列名双保险。
+    传入 SQL 时用 sqlglot 解析 SELECT 投影的 输出列→源列 映射（主理人
+    Round 2 规格：真解析器）；解析失败退化为纯列名匹配（审计已先行放行，
+    此处不应失败，且绝不因解析失败而放宽脱敏）。
     """
 
     @staticmethod
     def alias_map(sql: str) -> dict[str, str]:
-        """解析 SELECT 列表：输出列名（别名）→ 源列名（小写）。
+        """解析 SELECT 投影：输出列名（别名）→ 源列名（小写）。
 
-        覆盖：``col`` / ``t.col`` / ``col AS a`` / ``expr AS a``
-        （表达式取末尾标识符为源列，聚合/算术场景为近似，宁可多掩不漏掩）。
-        解析失败返回空映射（退化为纯列名匹配，不误放行）。
+        规则（sqlglot AST）：
+        - ``exp.Alias``（``col AS a``）：alias → 内层源列名；
+        - 裸 ``exp.Column``（``col`` / ``t.col``）：列名 → 列名；
+        - 函数/表达式包裹的列（``SUM(defect_qty) AS total``）：
+          取其中最后一个 Column 作为近似源列（宁可多映射不漏映射）。
         """
-        clean = _strip_sql_comments(sql)
-        match = re.search(r"\bselect\b(.*?)\bfrom\b", clean,
-                          re.IGNORECASE | re.S)
-        if not match:
+        expr = _parse_sql(sql)
+        if expr is None:
             return {}
-        select_list = re.sub(r"^\s*distinct\s+", "", match.group(1),
-                             flags=re.IGNORECASE)
+        from sqlglot import exp
         mapping: dict[str, str] = {}
-        for item in _split_top_level_commas(select_list):
-            item = item.strip()
-            if not item:
-                continue
-            alias_match = re.search(
-                rf"\bas\s+({_IDENT})\s*$", item, re.IGNORECASE)
-            if alias_match:
-                alias = _normalize_ident(alias_match.group(1))
-                source_expr = item[:alias_match.start()]
-            else:
-                tail = re.search(rf"({_IDENT})\s*$", item)
-                if not tail:
-                    continue
-                alias = _normalize_ident(tail.group(1))
-                source_expr = item
-            columns = re.findall(r"[A-Za-z_][A-Za-z0-9_]*", source_expr)
-            source = columns[-1].lower() if columns else alias
-            mapping[alias] = source
+
+        def _column_name(node) -> str:
+            if isinstance(node, exp.Column):
+                return node.name.lower()
+            columns = list(node.find_all(exp.Column))
+            return columns[-1].name.lower() if columns else ""
+
+        for select in expr.find_all(exp.Select):
+            for projection in select.expressions:
+                if isinstance(projection, exp.Alias):
+                    source = _column_name(projection.this)
+                    if source:
+                        mapping[projection.alias.lower()] = source
+                elif isinstance(projection, exp.Column):
+                    name = projection.name.lower()
+                    if name:
+                        mapping[name] = name
         return mapping
 
     @classmethod
@@ -403,9 +362,7 @@ class Text2SQLService:
         metric = self.metrics.get(metric_id)
         sql = str(metric["sql"])
         try:
-            SQLAuditor.regex_guard(sql)
-            SQLAuditor.structure_check(sql)
-            SQLAuditor.check_table_permission(sql, user_ctx)
+            SQLAuditor.audit(sql, user_ctx)  # 入口校验 + 正则 + 结构 + 表权限
         except SQLAuditError as exc:
             return self._rejected("metric", sql, str(exc), t0,
                                   tables=metric.get("tables", []),

@@ -291,20 +291,34 @@ class TestPersistence:
         assert ctx.get("confirmed_stop") is True
 
 
-# ---------- 7. BUG-4 证据锚定 ----------
+# ---------- 7. BUG-4 修复验证（Round 2 翻转：缺陷证据 → 修复后行为锁定） ----------
 
-class TestMemoryDbUrlBroken:
-    """QA-BUG-4（低危，待工程师修复）：
+class TestMemoryDbUsable:
+    """BUG-4（Round 2 已由工程师修复，commit 54aa607）：
 
-    WorkflowEngine("sqlite:///:memory:") 不可用——ensure_platform_schema 用
-    SQLAlchemy create_engine 建表（:memory: 每连接一个独立库），而引擎的
-    _connect() 用原生 sqlite3.connect(":memory:") 操作数据，两边不是同一个库，
-    任何写操作报 "no such table: platform_workflow_task"。
-    影响：快速单测/嵌入式场景会踩坑；文件库不受影响。
-    期望：构造即报清晰错误，或 :memory: 与文件库一样可用。
-    修复方向：DDL 也改原生 sqlite3，或对 :memory: 复用同一连接。"""
+    原缺陷：WorkflowEngine("sqlite:///:memory:") 不可用——ensure_platform_schema
+    走 SQLAlchemy（:memory: 每连接一个独立库），与引擎原生 sqlite3 连接不是
+    同一个库，create_task 报 "no such table: platform_workflow_task"。
+    修复：platform_schema 的 SQLite 路径改原生 sqlite3 建表+播种，内存库用
+    进程内持久单连接，DDL/DML 同一库。
 
-    def test_memory_db_url_broken(self):
+    本测试由 QA 从"缺陷证据锚定"翻转为"修复后行为锁定"：
+    :memory: 全生命周期必须可用。
+    """
+
+    def test_memory_db_full_lifecycle(self):
         engine = WorkflowEngine("sqlite:///:memory:")
-        with pytest.raises(sqlite3.OperationalError, match="no such table"):
-            engine.create_task("wf", "t")
+        task = engine.create_task("impact_assessment", "停线影响评估",
+                                  assignees=["计划"])
+        assert task.status == "pending"
+        started = engine.advance(task.task_uid, "start")
+        assert started.status == "running"
+        hitl = engine.create_task("hitl_restart", "复线决策", hitl=True,
+                                  hitl_prompt="确认？")
+        assert hitl.status == "waiting_hitl"
+        assert len(engine.pending_hitl()) == 1
+        approved = engine.approve(hitl.task_uid, "王制造", final=True)
+        assert approved.status == "done"
+        escalated = engine.escalate(started.task_uid, "SLA 超时")
+        assert escalated.status == "escalated"
+        assert len(engine.list_tasks()) == 2

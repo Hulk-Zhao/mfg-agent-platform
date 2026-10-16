@@ -1,15 +1,14 @@
 """QA 验证：事件流完整性（D6 并发隔离修复不能以丢事件为代价）。
 
 背景：V2 events.py 用 contextvar 做请求级事件队列（修 V1 全局队列串话）。
-QA 发现：yaml_dag._make_typed_node 为超时控制把 handler 提交到
+QA Round 1 发现：yaml_dag._make_typed_node 为超时控制把 handler 提交到
 ThreadPoolExecutor，handler 内 sink.emit 的 tool 事件在 worker 线程中
-查 contextvar 得到默认值 None → 事件被静默丢弃。
+查 contextvar 得到默认值 None → 事件被静默丢弃（BUG-5，CLI 33 事件完整 /
+API-SSE 仅 21，丢失 6 对 tool 事件）。
 
-表现：CLI（callback 直打）33 个事件完整；API/SSE（队列）只收到 21 个，
-6 个 tool_start + 6 个 tool_end（三域并行取证的 SQL 查询过程）全部丢失，
-前端看不到并行域的实时过程。agent 级事件在图线程执行故不受影响。
-
-本文件断言"安全行为"（tool 事件必须到达队列），当前失败即 BUG-5 证据。
+BUG-5 已由工程师修复（commit 54aa607，双保险：QueueSink 显式持队列引用 +
+pool.submit 前 contextvars.copy_context() 传播）。本文件现锁定修复行为：
+队列必须收满 33 事件（tool×12 全到达）。
 """
 import queue as queue_mod
 
@@ -122,5 +121,5 @@ def test_two_requests_no_cross_talk(orchestrator):
         unbind(t2)
     second = _drain(q2)
 
-    assert len(first) == len(second) == 21  # 当前实现两队列行为一致
+    assert len(first) == len(second) == 33  # Round 2 修复后两队列均收满（BUG-5 已修）
     # 隔离性：q2 的事件不可能在 q1 里（物理上两个队列对象）

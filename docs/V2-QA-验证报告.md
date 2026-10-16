@@ -1,28 +1,28 @@
 # V2 QA 验证报告（对抗性验证）
 
 - **验证人**：QA 工程师 严过关（software-qa-engineer）
-- **对象**：commit `51c2ff0`（V2 可接入框架，基线 `49dcd34` / tag `v1.0-prototype`）
+- **对象**：commit `51c2ff0`（V2 可接入框架，基线 `49dcd34` / tag `v1.0-prototype`）+ Round 2 修复 `54aa607`
 - **方法**：独立复算 + 红队攻击 + NIST 外部向量锚点 + demo 三件套实测；不信工程师自述，全部结论有测试/命令输出支撑
-- **全量结果**：`uv run pytest tests/ -q` → **234 passed / 9 failed / 2 skipped**
+- **最终结果（Round 2 后）**：`uv run pytest tests/ -q` → **276 passed / 0 failed / 2 skipped**
   - 工程师既有 112 用例全部通过（V1/V2 零破坏）
-  - QA 新增 5 个测试文件共 130 个用例（74 安全红队 + 26 密码学 + 25 HITL/工作流 + 5 事件流 + 3 V1 等价补测），另加 1 个 API E2E 实测脚本
-  - 9 个失败**全部是源码缺陷的行为证据**（详见 Bug 清单），非测试自身问题
+  - QA 新增 5 个测试文件共 131 个用例（红队 75 / 密码学 26 / HITL 工作流 25 / 事件流 5 / V1 等价补测 3），另加 1 个 API E2E 实测脚本
+  - 工程师 Round 2 回归测试 32 例（QA 已审查：无 trivial 断言）
+  - Round 1 的 9 个缺陷证据测试在修复后**全部转绿**，其中 4 个按预案翻转为"修复后行为锁定"
 
 ---
 
-## 智能路由判定
+## 智能路由判定（最终）
 
-> **路由给：软件工程师（software-engineer）**
-> 发现 **5 个源码 Bug**（1 高 / 2 中 / 2 低），均有确定性复现与期望/实际对照。
-> QA 自身测试问题 3 处已自行修复（记录在案）。修复后需 Round 2 回归。
+> **Round 1 判定：转工程师修复 5 个源码 Bug → Round 2 复核：全部修复有效，无回归。**
+> **最终路由：NoOne（QA 通过）。**
 
-| # | 级别 | 位置 | 一句话 |
-|---|------|------|--------|
-| BUG-1 | **高** | `src/mfg_agents/v2/services/text2sql.py:53-54` | SQLAuditor 表级 ACL 可被 4 种语法变体绕过，实测越权读到数据 |
-| BUG-2 | 中 | `src/mfg_agents/v2/services/text2sql.py:170-185` | FieldMasker 按列名精确匹配，`SELECT supplier AS s` 别名绕过脱敏 |
-| BUG-3 | 低 | `src/mfg_agents/v2/services/text2sql.py:139` | `user_ctx.roles=null` 时抛 TypeError 而非 fail-closed 的 SQLAuditError |
-| BUG-4 | 低 | `src/mfg_agents/v2/services/workflow.py:82` + `db/platform_schema.py` | `sqlite:///:memory:` 不可用：SQLAlchemy 建表与原生 sqlite3 操作两个不同的内存库 |
-| BUG-5 | 中 | `src/mfg_agents/v2/core/yaml_dag.py:253-258` + `core/events.py:42-46` | handler 在 ThreadPoolExecutor worker 线程执行，contextvar 队列绑定不传播 → SSE 丢失全部 12 个 tool 级事件 |
+| # | 级别 | 位置 | Round 1 状态 | Round 2 状态 |
+|---|------|------|--------------|--------------|
+| BUG-1 | 高 | `services/text2sql.py` `_TABLE_RE`→`extract_tables()` | ACL 四语法绕过，实测越权读到数据 | ✅ 已修：QA 用 10 个**新变体**（方括号/空格+括号/括号 JOIN/注释隔 FROM/引号+逗号/NATURAL JOIN/CTE/嵌套子查询/schema 限定/反引号+别名）独立对抗，全部拦截；合法注册查询/子查询/JOIN 无误拦 |
+| BUG-2 | 中 | `services/text2sql.py` FieldMasker | 列别名 `AS s` 绕过脱敏 | ✅ 已修：`alias_map()` 解析输出列→源列；QA 7 组对抗（AS/表限定+AS/隐式别名/函数表达式/unit_price/采购可见/无关列）全符合预期；端到端（LLM 生成别名 SQL 走明细通道）品质角色 `s` 脱敏为"供应商***" |
+| BUG-3 | 低 | `services/text2sql.py:139` | `roles:null` 抛 TypeError | ✅ 已修：5 种空 ctx 变体统一抛 SQLAuditError（fail-closed 契约一致） |
+| BUG-4 | 低 | `services/workflow.py` + `db/platform_schema.py` | `:memory:` 双库问题 | ✅ 已修：SQLite 路径改原生 sqlite3 建表+播种、内存库进程内持久单连接；QA 实测 `:memory:` 全生命周期（create→start→hitl waiting→approve final done→escalate→list）通 |
+| BUG-5 | 中 | `core/yaml_dag.py` + `core/events.py` | SSE 丢失 12 个 worker 线程 tool 事件 | ✅ 已修：copy_context 传播 + QueueSink 显式持队列双保险；QA 实测队列收满 33 事件（tool×12 全到达），API E2E 同步验证；CLI 33 基线不回归 |
 
 ---
 
@@ -204,6 +204,43 @@ finally:
 1. `uv run pytest tests/ -q` 全量：9 个失败用例应全绿（BUG-1×5、BUG-2×1、BUG-3×1、BUG-5×2），其余 236 不回归
 2. `TestMemoryDbUrlBroken::test_memory_db_url_broken` 为 BUG-4 的**当前行为锚定**：工程师若修复 BUG-4，该测试需翻转为断言"构造即可用"（QA 会同步更新）
 3. 若 Round 2 仍有失败 → 按纪律不再进入 Round 3，剩余问题以"已知问题"结项
+
+---
+
+## Round 2 回归结果（commit `54aa607`，2026-10-16）
+
+**判定：5 个 Bug 全部修复有效，无回归，QA 通过。**
+
+### 独立复核方法（不信工程师自述）
+
+不用工程师的回归测试证明，QA 重新独立对抗：
+
+| 复核项 | 方法 | 结果 |
+|--------|------|------|
+| BUG-1 | 工程师测试外的 **10 个新攻击变体**（方括号 `[t]`、`FROM (t)` 空格+括号、`JOIN(t)`、`FROM/*x*/t` 注释隔断、`"inventory", customer_complaint` 引号+逗号、NATURAL JOIN、CTE 内层、嵌套子查询、`main.t` schema 限定、反引号+别名） | ✅ 10/10 全部拦截 |
+| BUG-1 误拦检查 | 注册查询真实 SQL、合法子查询、合法 JOIN | ✅ 无误拦（CTE 名/字符串内含 FROM 的保守拦截见 OBS-7，与旧版行为一致，安全方向） |
+| BUG-2 | 7 组别名对抗（AS/表限定+AS/隐式别名无 AS/函数表达式/unit_price/采购可见/无关列不掩）+ **端到端**（monkeypatch LLM 返回 `SELECT batch_no, supplier AS s FROM material_batch` 走明细通道） | ✅ 7/7 + 端到端品质角色 `s`→"供应商***"、masked=True |
+| BUG-3 | 5 种空 ctx 变体（None/{}/roles=[]/dept=''+roles=None/dept=None+roles=None） | ✅ 全部统一抛 SQLAuditError |
+| BUG-4 | `:memory:` 全生命周期（create→start→hitl waiting→approve final done→escalate→list 2 条） | ✅ 全通 |
+| BUG-5 | `bind_queue()+QueueSink()` 无参路径收事件数 + API E2E 实测 SSE drain | ✅ 33 事件（tool×12 全到达）；API E2E 33 事件、tool_start/tool_end 均在 |
+| 工程师回归测试质量 | 通读 `tests/v2/test_bugfix_round2.py`（32 例） | ✅ 无 trivial 断言，与 QA 用例互补不重复 |
+| V1 零破坏 | `git diff 49dcd34 54aa607 -- agents graph api.py events.py` | ✅ 仍零 diff |
+
+### 锚定测试翻转（4 个，按 Round 1 预案执行）
+
+1. `TestMemoryDbUrlBroken` → `TestMemoryDbUsable::test_memory_db_full_lifecycle`（缺陷证据 → 修复后行为锁定）
+2. `test_two_requests_no_cross_talk`：21→33（隔离性核心断言保持：两队列物理隔离）
+3. `test_comma_join_leak_end_to_end` → `pytest.raises(SQLAuditError)`（泄露路径 → 拦截锁定）
+4. `test_alias_bypasses_masking` → 补第三参 SQL（接口契约 `mask(rows, user_ctx, sql=None)`），并新增 `test_alias_visible_for_procurement`（防误伤授权角色）
+
+### 最终测试状态
+
+- 全量：**276 passed / 0 failed / 2 skipped**（2 skipped = V1 图 LLM 门控补测，离线跳过属预期）
+- demo 三件套复跑：CLI exit 0（脱敏 True / 2×waiting_hitl / L0）；API E2E 21 项断言全 PASS（exit 0，33 事件含 tool 级）；IM 模拟器 exit 0（33 事件 / 回包签名自验证 True / degraded 标记）
+
+### Round 2 新增观察项
+
+- OBS-7：CTE 名称（`WITH t AS ... SELECT * FROM t`）与字符串字面量内含 `FROM xxx` 会被 `extract_tables` 保守提取 → 拦截（fail-closed 方向，与旧版行为一致，不影响全部注册查询/指标；如需精细化可在后续做 CTE 声明与引号感知）
 
 ---
 

@@ -6,8 +6,8 @@ B. 堆叠查询（SELECT 1; DELETE ...）
 C. 注释截断与注释藏毒（-- / /* */）
 D. UNION 探测（越权表经 UNION 混入结果集）
 E. 表级权限（跨角色越权 / 未注册表 / 空 user_ctx fail-closed）
-F. ACL 绕过变体（括号 FROM / 反引号 / 双引号 / 逗号隐式 join）——QA-BUG-1（预期失败，待工程师修复）
-G. 敏感字段脱敏（supplier / unit_price 按角色掩码；列别名绕过）——QA-BUG-2（预期失败，待工程师修复）
+F. ACL 绕过变体（括号 FROM / 反引号 / 双引号 / 方括号 / 逗号隐式 join）——BUG-1（Round 2 已修，本条锁定修复）
+G. 敏感字段脱敏（supplier / unit_price 按角色掩码；列别名映射）——BUG-2（Round 2 已修，本条锁定修复）
 H. 执行层（mode=ro 只读连接 / 行数上限 / load_extension 禁用）
 I. 兜底契约（被拦截查询不得返回任何数据行）
 """
@@ -199,9 +199,8 @@ class TestTableLevelPermission:
                                      {"dept": "", "roles": None}])
     def test_empty_user_ctx_fail_closed(self, ctx):
         """空 user_ctx → fail-closed：任何表都拒（绝不因缺上下文放行）。
-        注：roles=None（JSON null）当前抛 TypeError 而非 SQLAuditError——
-        QA-BUG-3（低危健壮性）：fail-closed 效果达成但契约不一致，
-        期望统一抛 SQLAuditError。修复：_user_scopes 用 (ctx.get("roles") or [])。"""
+        BUG-3（Round 2 已修）：roles=None（JSON null）曾抛 TypeError，
+        现统一抛 SQLAuditError（_user_scopes 用 ctx.get('roles') or []）。"""
         with pytest.raises(SQLAuditError):
             SQLAuditor.audit("SELECT * FROM inventory", ctx)
 
@@ -238,9 +237,13 @@ class TestTableLevelPermission:
 # ---------- F. ACL 绕过变体（QA-BUG-1：当前实现放行 = 缺陷证据） ----------
 
 class TestAclBypassVariants:
-    """_TABLE_RE 只识别 ``(from|join)\\s+(\\w+)`` 形式，以下语法变体
-    会漏提表名 → 表级 ACL 被绕过。这些用例断言安全行为（应拦截），
-    当前失败即缺陷证据，修复后应全部转绿。"""
+    """表级 ACL 绕过变体（BUG-1，Round 2 已由工程师修复，commit 54aa607）。
+
+    原缺陷：_TABLE_RE 只识别 ``(from|join)\\s+(\\w+)`` 形式，括号紧贴 FROM /
+    引号标识符 / 逗号隐式 join 会漏提表名 → ACL 被绕过（QA 实测越权读到
+    customer_complaint 数据行）。修复：extract_tables() 全文扫描 from/join
+    子句，覆盖括号/引号/方括号标识符、逗号 join、CTE/子查询内层、注释剥离。
+    本类用例现锁定修复行为：全部变体必须抛 SQLAuditError。"""
 
     def test_parenthesized_from_blocked(self):
         """FROM(customer_complaint)：括号紧贴 FROM 时表名漏提。"""
@@ -273,13 +276,13 @@ class TestAclBypassVariants:
             SQLAuditor.audit(sql, WAREHOUSE_CTX)
 
     def test_comma_join_leak_end_to_end(self, registry):
-        """端到端证据：warehouse 角色（无客诉表权限）经逗号 join
-        真实读到 customer_complaint 数据行。"""
+        """Round 2 翻转（BUG-1 已修，commit 54aa607）：warehouse 角色
+        （无客诉表权限）经逗号 join 必须被表级 ACL 拦截，不再有数据泄露路径。
+        原缺陷证据：audit 放行且 execute 真实返回 customer_complaint 行。"""
         sql = ("SELECT c.complaint_no FROM inventory i, "
                "customer_complaint c")
-        SQLAuditor.audit(sql, WAREHOUSE_CTX)  # 当前实现放行（缺陷）
-        rows = registry.execute_readonly_sql(sql, row_cap=50)
-        assert rows, "若 ACL 生效，此处不应返回任何数据行"
+        with pytest.raises(SQLAuditError, match="customer_complaint"):
+            SQLAuditor.audit(sql, WAREHOUSE_CTX)
 
 
 # ---------- G. 敏感字段脱敏 ----------
@@ -319,12 +322,24 @@ class TestSensitiveFieldMasking:
         assert all(r["supplier"] == "供应商***" for r in result.rows)
 
     def test_alias_bypasses_masking(self):
-        """QA-BUG-2：SELECT supplier AS s → 脱敏只认列名 supplier，
-        别名 s 原样输出敏感值。断言安全行为（别名也必须脱敏）。"""
+        """Round 2 翻转（BUG-2 已修，commit 54aa607）：SELECT supplier AS s
+        的结果列名是 s，传入 SQL 后 FieldMasker 经别名映射解析源列，
+        品质角色必须脱敏。接口契约：mask(rows, user_ctx, sql=None)，
+        第三参缺省时无法解析别名（调用方应始终传 SQL）。"""
         rows = [{"batch_no": "B1", "s": "千住金属"}]  # supplier AS s
-        masked_rows, masked = FieldMasker.mask(rows, QUALITY_CTX)
-        assert masked is True, "含敏感列的查询结果必须标记脱敏"
+        sql = "SELECT batch_no, supplier AS s FROM material_batch"
+        masked_rows, masked = FieldMasker.mask(rows, QUALITY_CTX, sql)
+        assert masked is True, "含敏感源列的查询结果必须标记脱敏"
         assert masked_rows[0]["s"] == "供应商***"
+
+    def test_alias_visible_for_procurement(self):
+        """采购角色经别名仍见原文（修复不能误伤授权角色）。"""
+        rows = [{"s": "千住金属"}]
+        masked_rows, masked = FieldMasker.mask(
+            rows, PROCUREMENT_CTX,
+            "SELECT supplier AS s FROM material_batch")
+        assert masked is False
+        assert masked_rows[0]["s"] == "千住金属"
 
 
 # ---------- H. 执行层 ----------

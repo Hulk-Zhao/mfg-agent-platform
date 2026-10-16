@@ -82,15 +82,13 @@ for line in r.text.splitlines():
         events.append(json.loads(line[6:]))
 check("GET /api/v2/events 有事件流", len(events) > 5, f"{len(events)} 个事件")
 types = {e.get("type") for e in events}
-# QA-BUG-5（已知，待工程师修复）：handler 在 ThreadPoolExecutor worker 线程
-# 执行，contextvar 队列绑定不传播 → 全部 tool 级事件丢失（仅 CLI callback
-# 路径完整）。此处记录实际行为：agent 级事件在、tool 级事件不在。
-check("agent 级事件到达（agent_start/agent_end/fan_in）",
-      {"agent_start", "agent_end", "fan_in"} <= types,
+# BUG-5 已于 Round 2 修复（commit 54aa607）：tool 级事件经 SSE 全到达
+check("事件枚举与 V1 兼容（agent_start/agent_end/tool_start/tool_end/fan_in）",
+      {"agent_start", "agent_end", "tool_start", "tool_end", "fan_in"} <= types,
       f"types={sorted(types)}")
-if "tool_start" not in types:
-    print("  [KNOWN-BUG-5] tool 级事件未达 SSE 队列（worker 线程 contextvar "
-          "丢失）——记录在案，见 tests/v2/test_qa_events.py")
+check("tool 事件成对完整（6 对）",
+      sum(1 for e in events if e["type"] == "tool_start") == 6
+      and sum(1 for e in events if e["type"] == "tool_end") == 6)
 
 # 4) 未知 request_id → 404
 r = client.get("/api/v2/events", params={"request_id": "req-not-exist"})
