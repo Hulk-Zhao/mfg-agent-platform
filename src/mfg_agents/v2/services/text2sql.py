@@ -49,9 +49,91 @@ SENSITIVE_COLUMNS: dict[str, dict[str, Any]] = {
 # 正则拦截：任何位置的 DDL/DML/危险命令（延续 V1 sql_tools 思路并扩充）
 _FORBIDDEN_SQL = re.compile(
     r"\b(insert|update|delete|drop|alter|create|truncate|grant|revoke|attach|"
-    r"detach|pragma|vacuum|reindex|replace)\b", re.IGNORECASE)
-_TABLE_RE = re.compile(
-    r"\b(?:from|join)\s+([A-Za-z_][A-Za-z0-9_]*)", re.IGNORECASE)
+    r"detach|pragma|vacuum|reindex|replace|load_extension|sqlite_compileoption|"
+    r"readfile|writefile)\b", re.IGNORECASE)
+
+# 表名标识符：裸标识 / 反引号 / 双引号 / 方括号包裹（SQLite 均接受）
+_IDENT = r'(?:`[^`]*`|"[^"]*"|\[[^\]]*\]|[A-Za-z_][A-Za-z0-9_]*)'
+# FROM/JOIN 子句的结束关键字（用于截取子句范围，覆盖逗号隐式 join）
+_CLAUSE_END_RE = re.compile(
+    r"\b(where|group|order|having|limit|union|except|intersect|on|using|"
+    r"join|from|window|values)\b", re.IGNORECASE)
+
+
+def _strip_sql_comments(sql: str) -> str:
+    """剥离 SQL 注释（-- 行注释与 /* */ 块注释），用于表名提取。
+
+    注意：关键词黑名单仍在原始 SQL 上执行（保守策略，注释藏毒即拦截），
+    此处仅服务于结构化的表名解析。
+    """
+    without_block = re.sub(r"/\*.*?\*/", " ", sql, flags=re.S)
+    return re.sub(r"--[^\n]*", " ", without_block)
+
+
+def _normalize_ident(token: str) -> str:
+    """剥掉标识符的包裹符（反引号/双引号/方括号）并转小写。"""
+    token = token.strip()
+    if len(token) >= 2 and token[0] == token[-1] and token[0] in "`\"[]":
+        return token[1:-1].lower()
+    return token.lower()
+
+
+def _split_top_level_commas(text: str) -> list[str]:
+    """按顶层逗号分割（括号深度归零的逗号；跳过字符串字面量内部）。"""
+    parts: list[str] = []
+    depth = 0
+    quote: Optional[str] = None
+    start = 0
+    for i, ch in enumerate(text):
+        if quote:
+            if ch == quote:
+                quote = None
+            continue
+        if ch in "'\"`":
+            quote = ch
+        elif ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth = max(0, depth - 1)
+        elif ch == "," and depth == 0:
+            parts.append(text[start:i])
+            start = i + 1
+    parts.append(text[start:])
+    return parts
+
+
+def extract_tables(sql: str) -> set[str]:
+    """提取 SQL 引用的全部表名（fail-closed：宁可多提，不可漏提）。
+
+    覆盖（QA-BUG-1 修复）：
+    1. FROM/JOIN 后紧跟括号或换行：``FROM(t)`` / ``FROM\\n(t)``；
+    2. 反引号/双引号/方括号标识符：``FROM `t` ``；
+    3. 逗号隐式 join：``FROM a, b``（FROM 子句内每张表都提取）；
+    4. 子查询/CTE 内层 FROM：由全文 from/join 扫描天然覆盖；
+    5. 括号包裹且内层为 SELECT/WITH 的是子查询（跳过，内层表另行扫描）。
+    """
+    clean = _strip_sql_comments(sql)
+    lower = clean.lower()
+    tables: set[str] = set()
+    for kw in ("from", "join"):
+        for match in re.finditer(rf"\b{kw}\b", lower):
+            rest = clean[match.end():]
+            end_match = _CLAUSE_END_RE.search(rest.lower())
+            clause = rest[:end_match.start()] if end_match else rest
+            for part in _split_top_level_commas(clause):
+                part = part.strip()
+                if not part:
+                    continue
+                if part.startswith("("):
+                    close = part.rfind(")")
+                    inner = part[1:close] if close > 0 else part[1:]
+                    if re.match(r"\s*(select|with|values)\b", inner, re.IGNORECASE):
+                        continue  # 派生表子查询：内层表由全文扫描覆盖
+                    part = inner.strip()
+                ident_match = re.match(rf"\s*({_IDENT})", part)
+                if ident_match:
+                    tables.add(_normalize_ident(ident_match.group(1)))
+    return tables
 
 
 @dataclass
@@ -123,8 +205,7 @@ class SQLAuditor:
     def check_table_permission(sql: str, user_ctx: dict) -> None:
         """第三道闸：表级权限（用户部门/角色必须在表白名单内，fail-closed）。"""
         allowed = SQLAuditor._user_scopes(user_ctx)
-        tables = {t.lower() for t in _TABLE_RE.findall(sql)}
-        for table in tables:
+        for table in sorted(extract_tables(sql)):
             acl = TABLE_ACL.get(table)
             if acl is None:
                 raise SQLAuditError(f"表未注册权限，拒绝访问: {table}")
@@ -134,9 +215,10 @@ class SQLAuditor:
 
     @staticmethod
     def _user_scopes(user_ctx: Optional[dict]) -> set[str]:
+        """用户权限范围（部门 + 角色）；roles 为 None/缺失时按空处理（BUG-3）。"""
         ctx = user_ctx or {}
-        scopes = {str(ctx.get("dept", "")).lower()}
-        scopes.update(str(r).lower() for r in ctx.get("roles", []))
+        scopes = {str(ctx.get("dept") or "").lower()}
+        scopes.update(str(r).lower() for r in (ctx.get("roles") or []))
         scopes.discard("")
         return scopes
 
@@ -168,17 +250,66 @@ class ResultValidator:
 
 
 class FieldMasker:
-    """字段脱敏（第六道闸）：敏感列按角色掩码。"""
+    """字段脱敏（第六道闸）：敏感列按角色掩码，覆盖列别名（BUG-2 修复）。
+
+    ``SELECT supplier AS s`` 的结果列名是 ``s``，仅按列名匹配会漏掩。
+    传入 SQL 时先解析 SELECT 列表的 输出列→源列 映射（别名解析），
+    源列命中敏感列即掩码，与显式列名双保险。
+    """
 
     @staticmethod
-    def mask(rows: list[dict], user_ctx: Optional[dict]) -> tuple[list[dict], bool]:
-        roles = {str(r).lower() for r in (user_ctx or {}).get("roles", [])}
+    def alias_map(sql: str) -> dict[str, str]:
+        """解析 SELECT 列表：输出列名（别名）→ 源列名（小写）。
+
+        覆盖：``col`` / ``t.col`` / ``col AS a`` / ``expr AS a``
+        （表达式取末尾标识符为源列，聚合/算术场景为近似，宁可多掩不漏掩）。
+        解析失败返回空映射（退化为纯列名匹配，不误放行）。
+        """
+        clean = _strip_sql_comments(sql)
+        match = re.search(r"\bselect\b(.*?)\bfrom\b", clean,
+                          re.IGNORECASE | re.S)
+        if not match:
+            return {}
+        select_list = re.sub(r"^\s*distinct\s+", "", match.group(1),
+                             flags=re.IGNORECASE)
+        mapping: dict[str, str] = {}
+        for item in _split_top_level_commas(select_list):
+            item = item.strip()
+            if not item:
+                continue
+            alias_match = re.search(
+                rf"\bas\s+({_IDENT})\s*$", item, re.IGNORECASE)
+            if alias_match:
+                alias = _normalize_ident(alias_match.group(1))
+                source_expr = item[:alias_match.start()]
+            else:
+                tail = re.search(rf"({_IDENT})\s*$", item)
+                if not tail:
+                    continue
+                alias = _normalize_ident(tail.group(1))
+                source_expr = item
+            columns = re.findall(r"[A-Za-z_][A-Za-z0-9_]*", source_expr)
+            source = columns[-1].lower() if columns else alias
+            mapping[alias] = source
+        return mapping
+
+    @classmethod
+    def mask(cls, rows: list[dict], user_ctx: Optional[dict],
+             sql: Optional[str] = None) -> tuple[list[dict], bool]:
+        """按角色掩码敏感列；sql 提供时联动别名解析（端到端防绕过）。"""
+        roles = {str(r).lower() for r in (user_ctx or {}).get("roles") or []}
+        aliases = cls.alias_map(sql) if sql else {}
         masked = False
         out: list[dict] = []
         for row in rows:
             new_row = dict(row)
-            for column, rule in SENSITIVE_COLUMNS.items():
-                if column in new_row and not (roles & rule["allow_roles"]):
+            for column in new_row:
+                lowered = str(column).lower()
+                # 输出列名本身是敏感列，或其源列（经别名映射）是敏感列
+                source = aliases.get(lowered, lowered)
+                rule = SENSITIVE_COLUMNS.get(lowered) or \
+                    SENSITIVE_COLUMNS.get(source)
+                if rule is not None and not (roles & rule["allow_roles"]):
                     new_row[column] = rule["mask"]
                     masked = True
             out.append(new_row)
@@ -281,7 +412,7 @@ class Text2SQLService:
                                   metric_id=metric_id)
         rows = self.data_registry.execute_readonly_sql(
             sql, params, row_cap=self.row_cap)
-        rows, masked = FieldMasker.mask(rows, user_ctx)
+        rows, masked = FieldMasker.mask(rows, user_ctx, sql)
         warnings = ResultValidator.validate(rows, self.row_cap)
         return QueryResult(
             channel="metric", sql=sql, rows=rows, masked=masked, confidence=0.95,
@@ -305,7 +436,7 @@ class Text2SQLService:
             return self._rejected("registered", sql, str(exc), t0,
                                   tables=spec.get("tables", []), name=name)
         rows = self.data_registry.run_query(name, params)
-        rows, masked = FieldMasker.mask(rows, user_ctx)
+        rows, masked = FieldMasker.mask(rows, user_ctx, sql)
         warnings = ResultValidator.validate(rows, self.row_cap)
         return QueryResult(
             channel="registered", sql=sql, rows=rows, masked=masked,
@@ -368,14 +499,13 @@ class Text2SQLService:
                 elapsed_ms=(time.perf_counter() - t0) * 1000,
                 provenance={"channel": "detail"},
             )
-        rows, masked = FieldMasker.mask(rows, user_ctx)
+        rows, masked = FieldMasker.mask(rows, user_ctx, sql)
         warnings = ResultValidator.validate(rows, self.row_cap)
         return QueryResult(
             channel="detail", sql=sql, rows=rows, masked=masked, confidence=0.6,
             warnings=warnings, elapsed_ms=(time.perf_counter() - t0) * 1000,
-            provenance={"channel": "detail", "tables": sorted(
-                {t.lower() for t in _TABLE_RE.findall(sql)}),
-                "row_count": len(rows), "elapsed_ms": 0.0},
+            provenance={"channel": "detail", "tables": sorted(extract_tables(sql)),
+                       "row_count": len(rows), "elapsed_ms": 0.0},
         )
 
     def query(self, question: str,

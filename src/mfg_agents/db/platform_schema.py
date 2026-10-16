@@ -6,10 +6,16 @@
 
 用法：WorkflowEngine 初始化时调用 ensure_platform_schema(db_url)（幂等）。
 指标种子来自 v2/data/metrics/*.yaml（与代码共用同一份定义源，避免双源漂移）。
+
+BUG-4 修复：SQLite 路径的 DDL/种子改用**原生 sqlite3**（与 WorkflowEngine
+的 DML 连接同一文件/同一内存库）；仅 MySQL 等非 SQLite URL 走 SQLAlchemy。
 """
 from __future__ import annotations
 
+import json
 import logging
+import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 
 from sqlalchemy import create_engine, text
@@ -50,6 +56,12 @@ PLATFORM_DDL = [
     """,
 ]
 
+_METRIC_UPSERT = (
+    "INSERT OR REPLACE INTO platform_metric_def "
+    "(id, name, owner, description, tables_json, keywords_json, sql, unit, version, updated_at) "
+    "VALUES (:id, :name, :owner, :desc, :tables, :keywords, :sql, :unit, 1, :now)"
+)
+
 
 def sqlite_path_from_url(db_url: str) -> str:
     """DB_URL → sqlite 文件路径（sqlite:///path 或裸路径均可）。"""
@@ -60,44 +72,66 @@ def sqlite_path_from_url(db_url: str) -> str:
     return db_url
 
 
+def _load_metric_rows() -> list[tuple]:
+    """从 v2/data/metrics/*.yaml 加载指标种子行（与 MetricLibrary 同源）。"""
+    from ..v2.services.text2sql import MetricLibrary  # 延迟导入避免环
+
+    metrics_dir = Path(__file__).resolve().parent.parent / "v2" / "data" / "metrics"
+    library = MetricLibrary.load(metrics_dir)
+    now = datetime.now(timezone.utc).isoformat()
+    rows = []
+    for metric in library._metrics.values():
+        rows.append((
+            str(metric["id"]), str(metric.get("name", "")),
+            str(metric.get("owner", "")), str(metric.get("desc", "")),
+            json.dumps(metric.get("tables", []), ensure_ascii=False),
+            json.dumps(metric.get("keywords", []), ensure_ascii=False),
+            str(metric["sql"]), str(metric.get("unit", "")), now,
+        ))
+    return rows
+
+
 def ensure_platform_schema(db_url: str) -> None:
-    """建平台表（幂等）+ 播种指标库。"""
+    """建平台表（幂等）+ 播种指标库。
+
+    SQLite（含 :memory:）：原生 sqlite3，保证与 WorkflowEngine 同一库；
+    其他（MySQL 等）：SQLAlchemy。
+    """
+    if "sqlite" in db_url:
+        ensure_platform_schema_sqlite(db_url)
+        return
     engine = create_engine(db_url)
     with engine.begin() as conn:
         for ddl in PLATFORM_DDL:
             conn.execute(text(ddl))
-    seed_metric_defs(engine)
+        for row in _load_metric_rows():
+            conn.execute(text(_METRIC_UPSERT.replace(":", ":")), dict(
+                id=row[0], name=row[1], owner=row[2], desc=row[3],
+                tables=row[4], keywords=row[5], sql=row[6], unit=row[7],
+                now=row[8]))
     logger.info("[platform] 平台库就绪: %s", db_url)
 
 
-def seed_metric_defs(engine) -> int:
-    """把 v2/data/metrics/*.yaml 的指标定义写入 platform_metric_def。"""
-    import json
+def ensure_platform_schema_sqlite(db_url_or_conn) -> None:
+    """在原生 sqlite3 连接（或 sqlite URL）上建表 + 播种指标库。
 
-    from ..v2.services.text2sql import MetricLibrary  # 延迟导入避免环
-
-    metrics_dir = Path(__file__).resolve().parent.parent / "v2" / "data" / "metrics"
+    接受 sqlite3.Connection（:memory: 持久连接场景）或 sqlite URL（文件库）。
+    """
+    owns_conn = isinstance(db_url_or_conn, str)
+    if owns_conn:
+        conn = sqlite3.connect(sqlite_path_from_url(db_url_or_conn))
+    else:
+        conn = db_url_or_conn
     try:
-        library = MetricLibrary.load(metrics_dir)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("[platform] 指标库加载失败，跳过种子: %s", exc)
-        return 0
-    from datetime import datetime, timezone
-    now = datetime.now(timezone.utc).isoformat()
-    count = 0
-    with engine.begin() as conn:
-        for metric in library._metrics.values():
-            conn.execute(text(
-                "INSERT OR REPLACE INTO platform_metric_def "
-                "(id, name, owner, description, tables_json, keywords_json, sql, unit, version, updated_at) "
-                "VALUES (:id, :name, :owner, :desc, :tables, :keywords, :sql, :unit, 1, :now)"),
-                {"id": str(metric["id"]), "name": str(metric.get("name", "")),
-                 "owner": str(metric.get("owner", "")),
-                 "desc": str(metric.get("desc", "")),
-                 "tables": json.dumps(metric.get("tables", []), ensure_ascii=False),
-                 "keywords": json.dumps(metric.get("keywords", []), ensure_ascii=False),
-                 "sql": str(metric["sql"]), "unit": str(metric.get("unit", "")),
-                 "now": now})
-            count += 1
-    logger.info("[platform] 指标库种子写入 %d 条", count)
-    return count
+        for ddl in PLATFORM_DDL:
+            conn.execute(ddl)
+        for row in _load_metric_rows():
+            conn.execute(_METRIC_UPSERT, {
+                "id": row[0], "name": row[1], "owner": row[2], "desc": row[3],
+                "tables": row[4], "keywords": row[5], "sql": row[6],
+                "unit": row[7], "now": row[8]})
+        conn.commit()
+        logger.info("[platform] 平台库就绪（sqlite 原生连接）")
+    finally:
+        if owns_conn:
+            conn.close()

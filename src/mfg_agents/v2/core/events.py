@@ -47,13 +47,23 @@ def push(event: dict) -> None:
 
 
 class QueueSink:
-    """事件 sink：绑定请求队列期间，把事件同时送入队列与可选回调（CLI 打印用）。"""
+    """事件 sink：把事件送入请求队列与可选回调（CLI 打印 / SSE 用）。
 
-    def __init__(self, callback: Optional[Callable[[dict], None]] = None) -> None:
+    修复 BUG-5：handler 在 ThreadPoolExecutor worker 线程执行时
+    contextvar 不传播，经 contextvar 的 push 会静默丢事件。
+    现在 sink 可**显式持有队列引用**（构造传入），不依赖 contextvar；
+    未显式传入时回退 contextvar（兼容旧调用方式）。
+    """
+
+    def __init__(self, queue: Optional[queue.Queue] = None,
+                 callback: Optional[Callable[[dict], None]] = None) -> None:
+        self._queue = queue
         self._callback = callback
 
     def emit(self, event: dict) -> None:
-        push(event)
+        target = self._queue if self._queue is not None else _current_queue.get()
+        if target is not None:
+            target.put(event)
         if self._callback is not None:
             self._callback(event)
 

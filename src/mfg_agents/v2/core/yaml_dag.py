@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import ast
+import contextvars
 import logging
 import threading
 import time
@@ -250,9 +251,14 @@ class YamlDagExecutor:
             )
             out: dict[str, Any]
             try:
+                # copy_context：把图线程的 contextvar（含请求事件队列）传播到
+                # worker 线程，修复 BUG-5（tool 事件在 worker 线程被静默丢弃）。
+                # 每个节点复制独立 Context 且仅 submit 一个任务，无并发进入冲突。
+                worker_ctx = contextvars.copy_context()
                 pool = ThreadPoolExecutor(max_workers=1)
                 try:
-                    future = pool.submit(handler, task, self.ctx, self.sink)
+                    future = pool.submit(worker_ctx.run, handler, task,
+                                         self.ctx, self.sink)
                     out = future.result(timeout=timeout_s)
                 finally:
                     pool.shutdown(wait=False)

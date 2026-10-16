@@ -75,7 +75,7 @@ def api_query(req: QueryRequest) -> dict[str, Any]:
     try:
         result = get_orchestrator().handle(req.query,
                                            req.user_ctx or DEFAULT_USER_CTX,
-                                           sink=QueueSink())
+                                           sink=QueueSink(event_queue))
     finally:
         unbind(token)
     data = result.to_dict()
@@ -155,7 +155,7 @@ async def wecom_callback(request: Request) -> PlainTextResponse:
             result = get_orchestrator().handle(
                 msg.text, {"user_id": msg.user_id, "dept": "manufacturing",
                            "roles": ["manufacturing", "coordinator"]},
-                sink=QueueSink())
+                sink=QueueSink(event_queue))
         finally:
             unbind(token)
         return adapter.reply(msg, _build_card(result, msg))

@@ -80,7 +80,13 @@ def decrypt_msg(aes_key: str, appid: str, encrypt_b64: str) -> str:
         ciphertext = base64.b64decode(encrypt_b64)
     except Exception as exc:  # noqa: BLE001
         raise WeComCryptoError(f"密文 Base64 解码失败: {exc}") from exc
-    plain = pkcs7_unpad(cbc_decrypt(key, key[:16], ciphertext))
+    try:
+        plain = pkcs7_unpad(cbc_decrypt(key, key[:16], ciphertext))
+    except WeComCryptoError:
+        raise
+    except ValueError as exc:
+        # 截断/篡改导致长度非 16 倍数等原生 ValueError → 统一契约异常（OBS-2）
+        raise WeComCryptoError(f"密文解密失败: {exc}") from exc
     if len(plain) < 20:
         raise WeComCryptoError("解密后明文过短，结构非法")
     msg_len = struct.unpack(">I", plain[16:20])[0]

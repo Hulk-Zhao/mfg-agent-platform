@@ -19,7 +19,11 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-from ...db.platform_schema import ensure_platform_schema, sqlite_path_from_url
+from ...db.platform_schema import (
+    ensure_platform_schema,
+    ensure_platform_schema_sqlite,
+    sqlite_path_from_url,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -73,17 +77,30 @@ class WorkflowTask:
 
 
 class WorkflowEngine:
-    """工作流引擎：状态机 + SLA 计时 + HITL 待办队列（DB 持久化）。"""
+    """工作流引擎：状态机 + SLA 计时 + HITL 待办队列（DB 持久化）。
+
+    SQLite 持久化（platform_workflow_task），可重放、可审计。
+    :memory: 场景使用进程内持久单连接（修复 BUG-4：DDL 与 DML 同一库）。
+    """
 
     def __init__(self, db_url: str, default_sla_hours: float = 2.0) -> None:
         self.db_url = db_url
         self.db_path = sqlite_path_from_url(db_url)
         self.default_sla_hours = default_sla_hours
-        ensure_platform_schema(db_url)
+        self._memory_conn: Optional[sqlite3.Connection] = None
+        if self.db_path == ":memory:":
+            # 内存库：建一个进程内持久连接，DDL/DML 共用同一库
+            self._memory_conn = sqlite3.connect(":memory:")
+            self._memory_conn.row_factory = sqlite3.Row
+            ensure_platform_schema_sqlite(self._memory_conn)
+        else:
+            ensure_platform_schema(db_url)
 
     # ---------- 连接 ----------
 
     def _connect(self) -> sqlite3.Connection:
+        if self._memory_conn is not None:
+            return self._memory_conn
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(self.db_path, timeout=10.0)
         conn.row_factory = sqlite3.Row
