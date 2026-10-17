@@ -72,6 +72,7 @@ git clone https://github.com/Hulk-Zhao/mfg-agent-platform.git
 cd mfg-agent-platform
 
 # 2. 环境变量（LLM 可全部留空——留空即离线降级演示模式）
+#    Linux/macOS 用：cp .env.example .env
 copy .env.example .env
 
 # 3. 安装依赖

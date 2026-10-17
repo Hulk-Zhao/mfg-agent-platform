@@ -57,12 +57,23 @@ _UI_DIR = _Path(__file__).resolve().parent / "ui"
 @app.get("/demo-ui/", include_in_schema=False)
 @app.get("/demo-ui/index.html", include_in_schema=False)
 def demo_ui_index() -> _HTMLResponse:
-    """index.html 动态渲染：JS/CSS 引用注入 ?v=<mtime>，根治浏览器缓存。"""
+    """index.html 动态渲染：JS/CSS 引用注入 ?v=<mtime>，根治浏览器缓存。
+
+    版本号字符类放宽为 ``[0-9A-Za-z_.\\-]+``（兼容数字 / split1 / hitlfix1 /
+    带点划线等任意常见格式），且资源引用即使原本没有 ``?v=`` 也会被追加，
+    保证清单内资源必定带上 ``?v=<mtime>``——文件一改，缓存自动失效。
+    """
     html = (_UI_DIR / "index.html").read_text(encoding="utf-8")
     for f in ("demo-data.js", "app.js", "screens.js", "help-screen.js", "app.css"):
         fp = _UI_DIR / f
         v = int(fp.stat().st_mtime) if fp.exists() else 0
-        html = _re.sub(rf"({_re.escape(f)})\?v=[0-9]+", rf"\1?v={v}", html)
+        # 仅替换引号内的资源引用（允许 ./、子目录等路径前缀），不动 HTML 其余部分；
+        # 无 ?v= 时追加，有则无论原格式（split1/数字/带点划线）一律按 mtime 覆写。
+        html = _re.sub(
+            rf"([\"'])([.\w/-]*{_re.escape(f)})(?:\?v=[0-9A-Za-z_.\-]+)?\1",
+            rf"\g<1>\g<2>?v={v}\g<1>",
+            html,
+        )
     return _HTMLResponse(html)
 
 
