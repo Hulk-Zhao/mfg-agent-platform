@@ -1,0 +1,85 @@
+# ============================================================
+# 本地开发中间件：MySQL 8.0 + Milvus standalone + Redis（应用本体跑本地 uv）
+#
+# 启动：docker compose -f docker-compose.infra.yml up -d
+# 停止：docker compose -f docker-compose.infra.yml down
+#
+# MySQL：root/demo123，库 mfg_agent，首次启动自动执行 data/init.sql 建表
+# Milvus：gRPC 19531 / 健康检查 9091；单容器模式（内嵌 etcd + 本地存储，
+#         官方 standalone_embed 同款配置）——MinIO 公共镜像已下架，故不外置
+# Redis：6380；V2 缓存层（会话上下文 / 查询结果缓存 / 限流），
+#        REDIS_URL 缺失时应用自动降级（无缓存）
+# 端口避让：本机另有 EDURAG 栈占用 3306/19530/6379，故映射 3307/19531/6380
+# 应用连接：VECTOR_BACKEND=milvus  MILVUS_URI=http://localhost:19531
+#           REDIS_URL=redis://localhost:6380/0
+# ============================================================
+services:
+  mysql:
+    container_name: mfg_mysql
+    image: docker.m.daocloud.io/library/mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: demo123
+      MYSQL_DATABASE: mfg_agent
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./data/init.sql:/docker-entrypoint-initdb.d/10_init.sql:ro
+      # 数据集扩充（512 行历史数据）：文件名前缀保证在 init.sql 之后执行
+      - ./data/seed_mysql_extra.sql:/docker-entrypoint-initdb.d/20_seed_extra.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-pdemo123"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # ---------- Milvus standalone（单容器：内嵌 etcd + 本地存储） ----------
+  milvus:
+    container_name: mfg_milvus
+    image: milvusdb/milvus:v2.5.26
+    command: ["milvus", "run", "standalone"]
+    security_opt:
+      - seccomp:unconfined
+    environment:
+      ETCD_USE_EMBED: "true"
+      ETCD_DATA_DIR: /var/lib/milvus/etcd
+      ETCD_CONFIG_PATH: /milvus/configs/embedEtcd.yaml
+      COMMON_STORAGETYPE: local
+    volumes:
+      - milvus_data:/var/lib/milvus
+      - ./deploy/embedEtcd.yaml:/milvus/configs/embedEtcd.yaml:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 30s
+      start_period: 90s
+      timeout: 20s
+      retries: 3
+    ports:
+      - "19531:19530"
+      - "9091:9091"
+
+  # ---------- Redis（V2 缓存层：会话上下文 / 查询结果缓存 / 限流） ----------
+  redis:
+    container_name: mfg_redis
+    image: docker.m.daocloud.io/library/redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  mysql_data:
+  milvus_data:
+  redis_data:
+
+networks:
+  default:
+    name: mfg_infra

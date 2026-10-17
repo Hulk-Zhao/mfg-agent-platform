@@ -117,27 +117,77 @@
     return display;
   }
 
+  /** P0-4 强制填意见：驳回一律必填；同意时若所选动作标注 require_comment 则必填。 */
+  function commentRule(action, selFull) {
+    if (action === "reject") {
+      return { title: "驳回理由（必填）", hint: "驳回必须说明理由，将写入工单留痕并通知发起方。" };
+    }
+    if (action === "approve" && selFull && selFull.require_comment) {
+      return { title: "决策依据（必填）", hint: "该处置动作属高风险（如特采/让步接收/立即停机），必须填写决策依据。" };
+    }
+    return null;
+  }
+
+  /** 轻量意见输入弹窗：返回输入文本；取消返回 null。不引入框架，覆盖层样式复用 .comment-modal-*。 */
+  function askComment(ctx, opts) {
+    const UI = ctx.UI;
+    const o = opts || {};
+    return new Promise((resolve) => {
+      const wrap = document.createElement("div");
+      wrap.className = "comment-modal";
+      wrap.innerHTML = `
+        <div class="comment-modal-card" role="dialog" aria-modal="true">
+          <div class="comment-modal-title">${UI.icon("warn", 15)}<span>${UI.esc(o.title || "填写决策意见")}</span></div>
+          <div class="comment-modal-hint">${UI.esc(o.hint || "该操作将写入工单留痕，请填写理由/依据。")}</div>
+          <textarea class="input comment-modal-input" rows="3" placeholder="${UI.esc(o.placeholder || "请输入理由/依据（必填）")}"></textarea>
+          <div class="comment-modal-bar">
+            <button type="button" class="btn btn-outline btn-sm" data-cancel>取消</button>
+            <button type="button" class="btn btn-primary btn-sm" data-ok>提交</button>
+          </div>
+        </div>`;
+      const input = wrap.querySelector(".comment-modal-input");
+      const onKey = (e) => { if (e.key === "Escape") close(null); };
+      const close = (val) => {
+        document.removeEventListener("keydown", onKey);
+        wrap.remove();
+        resolve(val);
+      };
+      const submit = () => {
+        const text = (input.value || "").trim();
+        if (!text) { input.classList.add("is-invalid"); input.focus(); return; }
+        close(text);
+      };
+      input.addEventListener("input", () => input.classList.remove("is-invalid"));
+      wrap.querySelector("[data-cancel]").addEventListener("click", () => close(null));
+      wrap.querySelector("[data-ok]").addEventListener("click", submit);
+      wrap.addEventListener("click", (e) => { if (e.target === wrap) close(null); });
+      document.addEventListener("keydown", onKey);
+      document.body.appendChild(wrap);
+      setTimeout(() => input.focus(), 30);
+    });
+  }
+
   async function hitlAction(ctx, taskUid, action) {
     const st = ctx.state.screenState;
     const map = processedMap(ctx);
     if (map[taskUid]) return;
     const role = ctx.currentRole();
 
-    // 动作校验：有可选动作时必须先选定；需填依据的动作必须写理由
+    // 动作校验：有可选动作时必须先选定
     const acts = normalizeActions(_hitlActions[taskUid] || []);
     const govStatus = signoffOf(taskUid, acts);
     const sel = hitlSelMap(ctx)[taskUid]
       || (govStatus.action_key ? { key: govStatus.action_key, label: govStatus.selected_action } : null);
+    // 回查完整动作对象，保证 require_comment 在「工作台列表 / 审批中心」两条入口都生效
+    const selFull = sel
+      ? (acts.find((a) => a.key === sel.key) || acts.find((a) => a.label === sel.label) || sel)
+      : null;
     const commentEl = document.getElementById(`act-comment-${taskUid}`)
       || document.getElementById("hitl-comment");
-    const commentText = commentEl && commentEl.value ? commentEl.value.trim() : "";
+    let commentText = commentEl && commentEl.value ? commentEl.value.trim() : "";
     if (action === "approve") {
       if (acts.length && !sel) {
         ctx.UI.toast("请先选择一个处置动作（按你的岗位权限）", "warn", 3200);
-        return;
-      }
-      if (sel && sel.require_comment && !commentText) {
-        ctx.UI.toast("该动作需填写决策依据（将写入工单留痕）", "warn", 3400);
         return;
       }
       // 前端门控（后端仍二次校验）：会签未齐 / 无 approve 权限时直接提示
@@ -146,6 +196,13 @@
         ctx.UI.toast(gate.reason, "warn", 4600);
         return;
       }
+    }
+    // P0-4 强制填意见：驳回一律必填；同意时若所选动作标注 require_comment 则必填
+    const need = commentRule(action, selFull);
+    if (need && !commentText) {
+      const typed = await askComment(ctx, need);
+      if (typed === null) return;        // 用户取消 → 不提交
+      commentText = typed;
     }
     const decision = sel ? sel.label : "";
     if (!ctx.api.online()) {
@@ -161,10 +218,8 @@
       + (commentText ? "；" + commentText : "");
     try {
       const task = action === "approve"
-        ? await ctx.api.workflowApprove(taskUid, role.user, comment, false, decision,
-          govRoles(ctx), role.dept, role.uid)
-        : await ctx.api.workflowReject(taskUid, role.user, comment, decision,
-          govRoles(ctx), role.dept, role.uid);
+        ? await ctx.api.workflowApprove(taskUid, role.user, comment, false, decision)
+        : await ctx.api.workflowReject(taskUid, role.user, comment, decision);
       const last = task.history && task.history.length ? task.history[task.history.length - 1] : null;
       map[taskUid] = {
         action, status: task.status,
@@ -179,7 +234,7 @@
       _hitlGov[taskUid] = task;
       // 审批后保持详情停在该工单，便于查看 before/after 与状态机留痕
       ctx.state.screenState.hitlSelected = taskUid;
-      ctx.UI.toast(`工单 ${taskUid} 已${action === "approve" ? "同意" : "驳回"} → ${task.status}`, "ok", 4000);
+      ctx.UI.toast(`工单 ${taskUid} 已${action === "approve" ? "同意" : "驳回"} → ${statusLabel(task.status)}`, "ok", 4000);
       ctx.refreshScreen();
     } catch (err) {
       ctx.UI.toast(`审批失败：${apiErrorMessage(err)}`, "err", 5200);
@@ -195,7 +250,7 @@
     const time = Number.isNaN(when.getTime()) ? info.time : when.toLocaleString("zh-CN", { hour12: false });
     return `<div class="processed-banner${approve ? "" : " rejected"}">`
       + `${ctx.UI.icon(approve ? "check" : "x", 15)}`
-      + `<span>${label} · 工单状态 <b>${ctx.UI.esc(info.status)}</b> · 处理人 ${ctx.UI.esc(info.actor)} · ${ctx.UI.esc(time)}`
+      + `<span>${label} · 工单状态 <b>${ctx.UI.esc(statusLabel(info.status))}</b> · 处理人 ${ctx.UI.esc(info.actor)} · ${ctx.UI.esc(time)}`
       + `${info.demo ? "（演示模式，未真实调用后端）" : ""}</span></div>`;
   }
 
@@ -203,9 +258,38 @@
    * 屏幕一：工作台
    * ============================================================ */
 
+  /** 我的看板 KPI 卡：配置了 drill 映射（k.drill）→ 点卡片就地下钻分解；
+   *  未映射 → 点卡片跳协同问数。卡内「问数」按钮始终跳协同问数（携带该卡预置问题）。 */
+  function dashKpiCard(UI, k) {
+    const mapped = k.drill && k.drill.screen && k.drill.kpi;
+    const ask = k.ask || "";
+    const attrs = mapped
+      ? `data-dash-drill="1" data-screen="${UI.esc(k.drill.screen)}" data-kpi="${UI.esc(k.drill.kpi)}"
+         title="点击下钻「${UI.esc(k.label)}」明细分解"`
+      : `data-ask="${UI.esc(ask)}" title="点击问数：${UI.esc(ask)}"`;
+    const hint = mapped
+      ? `${UI.icon("filter", 11)} 下钻分解`
+      : `${UI.icon("chat", 11)} ${UI.esc(ask)}`;
+    return `<div class="card stat-card stat-clickable" role="button" tabindex="0" ${attrs}>
+      <div class="stat-icon ${UI.esc(k.tone || "blue")}">${UI.icon(k.icon, 19)}</div>
+      <div class="stat-body">
+        <div class="stat-num">${UI.esc(k.num)}</div>
+        <div class="stat-label">${UI.esc(k.label)}</div>
+        <div class="stat-trend ${k.up ? "up" : ""}">${UI.icon(k.up ? "warn" : "clock", 12)} ${UI.esc(k.trend)}</div>
+        <div class="stat-ask">${hint}</div>
+        ${mapped ? `<button class="stat-ask-btn" data-ask="${UI.esc(ask)}"
+                title="跳转协同问数：${UI.esc(ask)}">${UI.icon("chat", 11)} 问数</button>` : ""}
+      </div>
+    </div>`;
+  }
+
   function render_dashboard(root, ctx) {
     const UI = ctx.UI, DEMO = ctx.DEMO;
+    const st = ctx.state.screenState;
     const role = ctx.currentRole();
+    // 我的看板内联下钻状态（host=dashboard）；其它看板残留下钻状态在此复位
+    let drill = st.boardDrill;
+    if (drill && drill.host !== "dashboard") { drill = null; st.boardDrill = null; }
     const sum = DEMO.ALERT_SUMMARY[role.id] || DEMO.ALERT_SUMMARY.gm;
     const hour = new Date().getHours();
     const greet = hour < 6 ? "凌晨好" : hour < 12 ? "上午好" : hour < 14 ? "中午好" : hour < 18 ? "下午好" : "晚上好";
@@ -226,21 +310,19 @@
           </div>
         </div>
 
-        <div class="section-title">我的看板 <span class="section-extra">统计范围：${UI.esc(role.name)}视角 · 点卡片直接问数下钻</span></div>
-        <div class="grid grid-4">
-          ${(DEMO.ROLE_KPIS[role.id] || []).map((k) => `
-          <button class="card stat-card stat-clickable" data-ask="${UI.esc(k.ask || "")}"
-                  title="点击下钻：${UI.esc(k.ask || "")}">
-            <div class="stat-icon ${k.tone}">${UI.icon(k.icon, 19)}</div>
-            <div><div class="stat-num">${UI.esc(k.num)}</div><div class="stat-label">${UI.esc(k.label)}</div>
-            <div class="stat-trend ${k.up ? "up" : ""}">${UI.icon(k.up ? "warn" : "clock", 12)} ${UI.esc(k.trend)}</div>
-            <div class="stat-ask">${UI.icon("chat", 11)} ${UI.esc(k.ask || "")}</div></div>
-          </button>`).join("")}
-          <div class="card stat-card">
-            <div class="stat-icon blue">${UI.icon("approve", 19)}</div>
-            <div><div class="stat-num" id="dash-hitl-count">—</div><div class="stat-label">待人工确认</div>
-            <div class="stat-trend">${UI.icon("clock", 12)} 停线工单 SLA 2h</div></div>
-          </div>
+        <div class="section-title">我的看板 <span class="section-extra">统计范围：${UI.esc(role.name)}视角 · ${drill ? "下钻明细分解 · 面包屑逐级返回" : "点卡片下钻分解 / 问数"}</span></div>
+        <div id="dash-crumb"></div>
+        <div id="dash-body">
+          ${drill
+            ? `<div class="empty">${UI.spinner("lg")}<div style="margin-top:10px">正在加载下钻明细…</div></div>`
+            : `<div class="grid grid-4">
+            ${(DEMO.ROLE_KPIS[role.id] || []).map((k) => dashKpiCard(UI, k)).join("")}
+            <div class="card stat-card">
+              <div class="stat-icon blue">${UI.icon("approve", 19)}</div>
+              <div><div class="stat-num" id="dash-hitl-count">—</div><div class="stat-label">待人工确认</div>
+              <div class="stat-trend">${UI.icon("clock", 12)} 停线工单 SLA 2h</div></div>
+            </div>
+          </div>`}
         </div>
 
         <div class="section-title">待办中心 <span class="section-extra" id="todo-source">待确认事项 · 加载中…</span></div>
@@ -278,16 +360,36 @@
       btn.addEventListener("click", () => ctx.navigate(btn.dataset.goto));
     });
 
-    // KPI 卡下钻问数（"看到异常→问出结论"一步完成）
+    // 我的看板 KPI 卡：有映射 → 就地 L2 下钻；未映射 → 跳协同问数
+    root.querySelectorAll("[data-dash-drill]").forEach((el) => {
+      const fn = () => setDrill(ctx, {
+        level: 2, host: "dashboard", screen: el.dataset.screen, kpi: el.dataset.kpi,
+      });
+      el.addEventListener("click", fn);
+      el.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); fn(); }
+      });
+    });
+    // 卡内「问数」按钮 / 未映射卡整卡：跳协同问数（携带预置问题）
     root.querySelectorAll("[data-ask]").forEach((btn) => {
-      btn.addEventListener("click", () => {
+      const go = (ev) => {
+        if (ev) ev.stopPropagation();
         const q = btn.dataset.ask;
         if (!q) return;
         try { sessionStorage.setItem("chat_prefill", q); } catch (e) { /* 隐私模式忽略 */ }
         ctx.navigate("chat");
-      });
+      };
+      btn.addEventListener("click", go);
+      // div 卡无原生键盘激活，补齐 Enter/Space（原生 <button> 不重复绑定）
+      if (btn.tagName !== "BUTTON") {
+        btn.addEventListener("keydown", (ev) => {
+          if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); go(); }
+        });
+      }
     });
 
+    // 处于下钻态：就地渲染 L2/L3（宿主 = 工作台看板区，复用看板下钻机件）
+    if (drill) loadMfgDrill(ctx, drill);
     loadDashboardBriefing(ctx);
     loadDashboardTodos(ctx);
   }
@@ -354,7 +456,7 @@
     try {
       const raw = await ctx.api.workflowPending();
       if (ctx.state.screen !== "dashboard") return;
-      if (source) source.innerHTML = `待确认事项 · ${UI.realFlag("WorkflowEngine 待办队列")}`;
+      if (source) source.innerHTML = `待确认事项 · ${UI.realFlag("工作流引擎待办队列")}`;
       if (count) count.textContent = String(raw.length);
       const tasks = mergeProcessedTasks(ctx, raw);
       if (!tasks.length) {
@@ -370,6 +472,49 @@
       list.innerHTML = DEMO.DEMO_TODOS.map((t) => demoTodoHtml(ctx, t)).join("");
       bindTodoActions(ctx, list);
     }
+  }
+
+  /**
+   * 列表内联审批摘要（工作台「待办中心」卡片）：
+   * 把工单 context 已带的事因 / 上游各域依据结论 / 风险评级 / 预估复线 / 已选动作 / 会签进度
+   * 压缩成 2-3 行，让审批人在列表即可判断，无需先点开详情（对齐竞品"卡片即详情、减少跳转"）。
+   */
+  function todoSummaryHtml(ctx, t) {
+    const UI = ctx.UI;
+    const c = t.context || {};
+    const reason = c.reason || "";
+    const brief = Array.isArray(c.brief) ? c.brief : [];
+    const slot = slotOf(t);
+    const signoff = taskSignoff(t);
+    const rows = [];
+    if (reason) {
+      rows.push(`<div class="todo-brief reason">${UI.icon("warn", 12)}<span>${UI.esc(reason)}</span></div>`);
+    }
+    if (brief.length) {
+      const items = brief.slice(0, 3).map((b) => {
+        const text = String(b.summary || "");
+        const shown = text.length > 40 ? text.slice(0, 40) + "…" : text;
+        return `<b>${UI.esc(b.label || "")}</b> ${UI.esc(shown)}`;
+      }).filter(Boolean);
+      if (items.length) {
+        rows.push(`<div class="todo-brief">${UI.icon("list", 12)}<span>${items.join(" · ")}</span></div>`);
+      }
+    }
+    const chips = [];
+    if (c.fa_rating) chips.push(`风险评级 <b>${UI.esc(c.fa_rating)}</b>`);
+    if (c.eta_hours != null && c.eta_hours !== "") chips.push(`预估复线 <b>${UI.esc(c.eta_hours)}h</b>`);
+    if (slot) {
+      chips.push(signoff.selected_action
+        ? `动作 <b>${UI.esc(signoff.selected_action)}</b>`
+        : "动作 <b>未选定</b>");
+      chips.push(signoff.total
+        ? `会签 <b>${UI.esc(signoff.progress)}</b>${signoff.satisfied ? " ✓" : ""}`
+        : "无需会签");
+    }
+    if (chips.length) {
+      rows.push(`<div class="todo-chips">${chips.map((x) => `<span class="todo-chip">${x}</span>`).join("")}</div>`);
+    }
+    return rows.length ? `<div class="todo-brief-wrap">${rows.join("")}</div>` : "";
   }
 
   function demoTodoHtml(ctx, t) {
@@ -395,7 +540,7 @@
         ${processed ? "" : `
         <button class="btn btn-primary btn-sm" data-approve="${UI.esc(t.task_uid)}">同意</button>
         <button class="btn btn-danger btn-sm" data-reject="${UI.esc(t.task_uid)}">驳回</button>`}
-        <button class="btn btn-outline btn-sm" data-goto="hitl">详情</button>
+        <button class="btn btn-outline btn-sm" data-detail="${UI.esc(t.task_uid)}">详情</button>
       </div>
     </div>`;
   }
@@ -406,6 +551,16 @@
     const total = slaTotalMs(t);
     const approvers = (t.assignees || []).join("、") || "—";
     const processed = processedMap(ctx)[t.task_uid];
+    // 播种治理缓存：工作台列表不经过「审批中心」屏幕，直接点「同意」也必须走治理链语义
+    if (t.governance && !_hitlGov[t.task_uid]) _hitlGov[t.task_uid] = t;
+    if (!_hitlActions[t.task_uid]) {
+      _hitlActions[t.task_uid] = normalizeActions((t.context && t.context.actions) || []);
+    }
+    // 列表页门控：未选动作 / 会签未齐 / 无审批权限 → 禁用「同意」，与后端 _approve 三道强制校验一致
+    const gate = processed ? { ok: true, reason: "" } : todoGate(ctx, t);
+    const gateHint = (!processed && !gate.ok && gate.reason)
+      ? `<div class="todo-gate">${UI.icon("info", 12)}<span>${UI.esc(gate.reason)}</span></div>`
+      : "";
     return `<div class="todo-item" data-task="${UI.esc(t.task_uid)}">
       <div class="todo-ico ${t.wf_id === "hitl_eta" ? "eta" : t.wf_id === "impact_assessment" ? "impact" : "restart"}">
         ${UI.icon(t.wf_id === "hitl_eta" ? "users" : t.wf_id === "impact_assessment" ? "list" : "zap", 16)}
@@ -418,14 +573,16 @@
           <span>优先级 <b>${UI.esc(t.priority || "P1")}</b></span>
           <span>run_id <b>${UI.esc((t.context && t.context.run_id) || "-")}</b></span>
         </div>
+        ${todoSummaryHtml(ctx, t)}
+        ${gateHint}
         <div style="margin-top:8px;max-width:280px">${slaHtml(due, total)}</div>
         ${hitlProcessedBanner(ctx, t.task_uid)}
       </div>
       <div class="todo-actions">
         ${processed ? "" : `
-        <button class="btn btn-primary btn-sm" data-approve="${UI.esc(t.task_uid)}">同意</button>
+        <button class="btn btn-primary btn-sm" data-approve="${UI.esc(t.task_uid)}"${gate.ok ? "" : ` disabled title="${UI.esc(gate.reason)}"`}>同意</button>
         <button class="btn btn-danger btn-sm" data-reject="${UI.esc(t.task_uid)}">驳回</button>`}
-        <button class="btn btn-outline btn-sm" data-goto="hitl">详情</button>
+        <button class="btn btn-outline btn-sm" data-detail="${UI.esc(t.task_uid)}">详情</button>
       </div>
     </div>`;
   }
@@ -437,8 +594,12 @@
     list.querySelectorAll("[data-reject]").forEach((btn) => {
       btn.addEventListener("click", () => hitlAction(ctx, btn.dataset.reject, "reject"));
     });
-    list.querySelectorAll("[data-goto]").forEach((btn) => {
-      btn.addEventListener("click", () => ctx.navigate(btn.dataset.goto));
+    list.querySelectorAll("[data-detail]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        // 深链到具体工单：进入审批中心并选中该工单，避免二次翻找
+        ctx.state.screenState.hitlSelected = btn.dataset.detail;
+        ctx.navigate("hitl");
+      });
     });
   }
 
@@ -446,93 +607,188 @@
    * 屏幕二：订单履约看板
    * ============================================================ */
 
+  /* ============================================================
+   * 屏幕二：订单履约看板（L1 指标总览 / L2 维度分解 / L3 单实体明细）
+   * 参考「制造综合看板」：三级可下钻 + 每级可协同问数
+   * ============================================================ */
+
+  /** 订单数量千分位展示。 */
+  function fmtQty(v) {
+    const n = Number(v || 0);
+    return Number.isFinite(n) ? n.toLocaleString("en-US") : String(v == null ? "" : v);
+  }
+
+  /** 订单履约 L1 正文：KPI 卡 + TOP5 + 状态管道 + 风险订单 + 部门协同 + 口径说明。 */
+  function ordersBody(UI, d, DEMO) {
+    const grid = (d.kpis || []).length >= 4 ? "grid grid-4" : "grid grid-2";
+    const pipe = d.pipeline || [];
+    const total = pipe.reduce((s, p) => s + (p.count || 0), 0) || 1;
+    const risks = d.risk_orders || [];
+    const domains = ((DEMO && DEMO.ORDERS) || {}).domains || [];
+
+    const kpiHtml = `<div class="section-title">核心指标 <span class="section-extra">点卡片看客户/型号明细分解 · 卡内「问数」可跳协同问数</span></div>
+      <div class="${grid}">${(d.kpis || []).map((k) => mfgKpiCard(UI, k, "orders")).join("")}</div>`;
+
+    const rankHtml = `<div class="section-title">重点关注 TOP5 <span class="section-extra">最需关注的最差 5 名 · 点行看实体逐日明细</span></div>
+      <div class="grid grid-2">${(d.rankings || []).map((r) => mfgRankCard(UI, r, "orders")).join("")}</div>`;
+
+    const pipeHtml = `<div class="section-title">订单状态管道 <span class="section-extra">按订单环节分布 · 标注各环节延期单数</span></div>
+      <div class="card">
+        <div class="card-head">
+          <div class="card-title">${UI.icon("activity", 16)}订单状态管道</div>
+          <div class="card-extra">在单合计 <b style="color:var(--text)">${total}</b> 单</div>
+        </div>
+        <div class="pipeline">
+          ${pipe.map((p, i) => `
+            <div class="pipe-stage">
+              <div class="pipe-stage-name">${UI.esc(p.stage)}</div>
+              <div class="pipe-stage-num">${UI.esc(p.count)}</div>
+              <div class="pipe-stage-bar"><div class="progress-bar" style="width:${Math.round(((p.count || 0) / total) * 100)}%"></div></div>
+              <div class="pipe-stage-pct">占比 ${Math.round(((p.count || 0) / total) * 100)}%${p.delayed ? ` · 延期 ${UI.esc(p.delayed)}` : ""}</div>
+            </div>
+            ${i < pipe.length - 1 ? `<div class="pipe-arrow">${UI.icon("chevron", 14)}</div>` : ""}
+          `).join("")}
+        </div>
+      </div>`;
+
+    const riskHtml = `<div class="section-title">风险订单 <span class="section-extra">延期风险 / 缺料关联 / 客诉 · 点「问数」协同处置</span></div>
+      <div class="card">
+        ${risks.length ? risks.map((r) => {
+          const levelCls = r.customer_level === "S" ? "badge-red" : r.customer_level === "A" ? "badge-amber" : "badge-gray";
+          const ask = `订单 ${r.order_no}（${r.customer}）延期 ${r.delay_days} 天，当前环节「${r.stage}」，${r.shortage_note || "无缺料异常"}，如何推进按期交付？`;
+          return `<div class="risk-order">
+            <div class="ro-head">
+              <span class="ro-no">${UI.esc(r.order_no)}</span>
+              ${UI.badge(r.customer, "badge-blue")}
+              ${UI.badge("客户等级 " + r.customer_level, levelCls)}
+              ${UI.badge("延期 " + r.delay_days + " 天", r.delay_days >= 3 ? "badge-red" : "badge-amber")}
+              ${UI.badge(r.risk_type, "badge-outline")}
+              <button class="row-ask" data-ask="${UI.esc(ask)}" title="跳转协同问数：${UI.esc(ask)}">${UI.icon("chat", 11)}问数</button>
+            </div>
+            <div class="ro-body">
+              <span>产品 <b>${UI.esc(r.product_model)} × ${fmtQty(r.qty)}pcs</b></span>
+              <span>环节 <b>${UI.esc(r.stage)}</b> · 责任人 <b>${UI.esc(r.owner)}</b></span>
+            </div>
+            ${r.shortage_note ? `<div class="ro-body"><span>缺料/异常 <b>${UI.esc(r.shortage_note)}</b></span></div>` : ""}
+            <div class="ro-foot">
+              <span style="font-size:11.5px;color:var(--text-3)">履约进度</span>
+              <div class="progress"><div class="progress-bar ${r.progress < 50 ? "warn" : ""}" style="width:${r.progress}%"></div></div>
+              <span style="font-size:11.5px;color:var(--text-3);font-variant-numeric:tabular-nums">${UI.esc(r.progress)}%</span>
+            </div>
+          </div>`;
+        }).join("") : `<div class="empty">${UI.icon("check", 22)}<div style="margin-top:8px">窗口内无风险订单</div></div>`}
+      </div>`;
+
+    const domainHtml = domains.length ? `<div class="section-title">部门协同状态 <span class="section-extra">16 部门 → 5 域组 · 今日待办 / 已闭环 / 超时 ${UI.demoFlag()}</span></div>
+      <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(230px,1fr))">
+        ${domains.map((dd) => {
+          const todo = dd.depts.reduce((s, x) => s + x.todo, 0);
+          const done = dd.depts.reduce((s, x) => s + x.done, 0);
+          const over = dd.depts.reduce((s, x) => s + x.over, 0);
+          return `<div class="card dept-domain">
+            <div class="dept-domain-head">
+              <span class="stat-icon ${dd.name === "制造域" ? "blue" : dd.name === "品质域" ? "purple" : dd.name === "供应链域" ? "green" : dd.name === "设备域" ? "amber" : "red"}" style="width:30px;height:30px;border-radius:8px">${UI.icon(dd.icon, 15)}</span>
+              <span class="dept-domain-name">${UI.esc(dd.name)}</span>
+              <span class="dept-domain-count">${dd.depts.length} 部门</span>
+            </div>
+            <table class="dept-table">
+              <thead><tr><th>部门</th><th style="text-align:right">待办</th><th style="text-align:right">闭环</th><th style="text-align:right">超时</th></tr></thead>
+              <tbody>
+                ${dd.depts.map((x) => `<tr>
+                  <td>${UI.esc(x.name)}</td>
+                  <td class="num">${x.todo}</td>
+                  <td class="num" style="color:var(--ok)">${x.done}</td>
+                  <td class="num ${x.over > 0 ? "over" : ""}">${x.over}</td>
+                </tr>`).join("")}
+                <tr><td style="font-weight:600;color:var(--text)">小计</td>
+                  <td class="num" style="font-weight:600">${todo}</td>
+                  <td class="num" style="font-weight:600;color:var(--ok)">${done}</td>
+                  <td class="num ${over > 0 ? "over" : ""}">${over}</td></tr>
+              </tbody>
+            </table>
+          </div>`;
+        }).join("")}
+      </div>` : "";
+
+    return kpiHtml + rankHtml + pipeHtml + riskHtml + domainHtml + mfgNotes(UI, d.notes);
+  }
+
   function render_orders(root, ctx) {
-    const UI = ctx.UI, DEMO = ctx.DEMO;
-    const O = DEMO.ORDERS;
-    const total = O.pipeline.reduce((s, p) => s + p.count, 0);
+    const UI = ctx.UI;
+    const st = ctx.state.screenState;
+    // 下钻状态只在本屏有效；从其它看板进入时复位
+    let drill = st.boardDrill;
+    // 仅本屏下钻有效；其它看板/工作台内联下钻残留一律复位
+    if (drill && (drill.screen !== "orders" || drill.host === "dashboard")) {
+      drill = null; st.boardDrill = null;
+    }
 
     root.innerHTML = `
       <div class="content-inner">
         <div class="page-head">
-          <div class="page-title">${UI.icon("orders", 20)}订单履约看板</div>
-          <div class="page-desc">订单全链路状态管道、风险订单跟踪与 16 部门（5 域组）协同态势。${UI.demoFlag()}</div>
+          <div class="page-title">${UI.icon("orders", 20)}订单履约看板
+            ${UI.badge("OTD / OTIF / 延期 / 齐套", "badge-blue")}</div>
+          <div class="page-desc">订单全链路状态管道 · 交付类 KPI 三级下钻（客户·等级 / 型号）· 风险订单协同处置。
+            <span id="orders-window">统计窗口加载中…</span>
+            <span id="orders-flag"></span><span id="orders-gen" class="mfg-gen"></span></div>
         </div>
-
-        <div class="card">
-          <div class="card-head">
-            <div class="card-title">${UI.icon("activity", 16)}订单状态管道</div>
-            <div class="card-extra">在单合计 <b style="color:var(--text)">${total}</b> 单 ${UI.demoFlag("演示数据")}</div>
-          </div>
-          <div class="pipeline">
-            ${O.pipeline.map((p, i) => `
-              <div class="pipe-stage">
-                <div class="pipe-stage-name">${UI.esc(p.stage)}</div>
-                <div class="pipe-stage-num">${p.count}</div>
-                <div class="pipe-stage-bar"><div class="progress-bar" style="width:${Math.round((p.count / total) * 100)}%"></div></div>
-                <div class="pipe-stage-pct">占比 ${Math.round((p.count / total) * 100)}%</div>
-              </div>
-              ${i < O.pipeline.length - 1 ? `<div class="pipe-arrow">${UI.icon("chevron", 14)}</div>` : ""}
-            `).join("")}
-          </div>
-        </div>
-
-        <div class="section-title">风险订单 <span class="section-extra">延期风险 / 缺料关联 / 客户等级</span></div>
-        <div class="card">
-          ${O.risks.map((r) => {
-            const levelCls = r.level === "S" ? "badge-red" : r.level === "A" ? "badge-amber" : "badge-gray";
-            const tagList = (r.tagsList || r.tags || []);
-            return `<div class="risk-order">
-              <div class="ro-head">
-                <span class="ro-no">${UI.esc(r.no)}</span>
-                ${UI.badge(r.customer, "badge-blue")}
-                ${UI.badge("客户等级 " + r.level, levelCls)}
-                ${UI.badge("延期 " + r.delay_days + " 天", r.delay_days >= 3 ? "badge-red" : "badge-amber")}
-                ${tagList.map((t) => UI.badge(t, "badge-outline")).join("")}
-              </div>
-              <div class="ro-body">
-                <span>产品 <b>${UI.esc(r.product)}</b></span>
-                <span>缺料关联 <b>${UI.esc(r.shortage)}</b></span>
-              </div>
-              <div class="ro-foot">
-                <span style="font-size:11.5px;color:var(--text-3)">履约进度</span>
-                <div class="progress"><div class="progress-bar ${r.progress < 50 ? "warn" : ""}" style="width:${r.progress}%"></div></div>
-                <span style="font-size:11.5px;color:var(--text-3);font-variant-numeric:tabular-nums">${r.progress}%</span>
-              </div>
-            </div>`;
-          }).join("")}
-        </div>
-
-        <div class="section-title">部门协同状态 <span class="section-extra">16 部门 → 5 域组 · 今日待办 / 已闭环 / 超时 ${UI.demoFlag()}</span></div>
-        <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(230px,1fr))">
-          ${O.domains.map((d) => {
-            const todo = d.depts.reduce((s, x) => s + x.todo, 0);
-            const done = d.depts.reduce((s, x) => s + x.done, 0);
-            const over = d.depts.reduce((s, x) => s + x.over, 0);
-            return `<div class="card dept-domain">
-              <div class="dept-domain-head">
-                <span class="stat-icon ${d.name === "制造域" ? "blue" : d.name === "品质域" ? "purple" : d.name === "供应链域" ? "green" : d.name === "设备域" ? "amber" : "red"}" style="width:30px;height:30px;border-radius:8px">${UI.icon(d.icon, 15)}</span>
-                <span class="dept-domain-name">${UI.esc(d.name)}</span>
-                <span class="dept-domain-count">${d.depts.length} 部门</span>
-              </div>
-              <table class="dept-table">
-                <thead><tr><th>部门</th><th style="text-align:right">待办</th><th style="text-align:right">闭环</th><th style="text-align:right">超时</th></tr></thead>
-                <tbody>
-                  ${d.depts.map((x) => `<tr>
-                    <td>${UI.esc(x.name)}</td>
-                    <td class="num">${x.todo}</td>
-                    <td class="num" style="color:var(--ok)">${x.done}</td>
-                    <td class="num ${x.over > 0 ? "over" : ""}">${x.over}</td>
-                  </tr>`).join("")}
-                  <tr><td style="font-weight:600;color:var(--text)">小计</td>
-                    <td class="num" style="font-weight:600">${todo}</td>
-                    <td class="num" style="font-weight:600;color:var(--ok)">${done}</td>
-                    <td class="num ${over > 0 ? "over" : ""} style="font-weight:600">${over}</td></tr>
-                </tbody>
-              </table>
-            </div>`;
-          }).join("")}
+        <div id="orders-crumb"></div>
+        <div id="orders-body">
+          <div class="empty">${UI.spinner("lg")}<div style="margin-top:10px">正在加载看板数据…</div></div>
         </div>
       </div>`;
+
+    if (drill) loadMfgDrill(ctx, drill);
+    else loadOrdersDashboard(ctx);
+  }
+
+  /**
+   * 订单履约看板 L1 数据加载（真实优先 + 演示降级，全程不抛）：
+   * 在线且未降级 → /api/v2/dashboard/orders；否则 → DEMO.ORDERS_DASHBOARD（与接口同构）。
+   */
+  async function loadOrdersDashboard(ctx) {
+    const UI = ctx.UI;
+    const cfg = BOARD_CFG.orders;
+    const box = document.getElementById(cfg.body);
+    if (!box) return;
+    let payload = null, source = "real", reason = "";
+
+    if (ctx.api.online()) {
+      try {
+        const d = await ctx.api.ordersDashboard();
+        if (d && !d.degraded && (d.kpis || []).length) {
+          payload = d;
+        } else {
+          reason = (d && d.degraded_reason) || "后端数据降级";
+        }
+      } catch (err) {
+        reason = "后端请求失败：" + (err && err.message ? err.message : "未知错误");
+        UI.toast("看板数据请求失败，已切换演示数据", "warn", 3600);
+      }
+    } else {
+      reason = "后端离线 · 演示数据（口径与真实链路一致）";
+    }
+
+    if (!payload) {
+      source = "demo";
+      payload = ctx.DEMO.ORDERS_DASHBOARD;
+    }
+    if (!payload) {
+      box.innerHTML = `<div class="empty">${UI.icon("warn", 28)}<div style="margin-top:8px">暂无看板数据</div></div>`;
+      return;
+    }
+
+    const winEl = document.getElementById(cfg.win);
+    if (winEl && payload.window) {
+      winEl.textContent = `${payload.window.label}（${payload.window.start} ~ ${payload.window.end}）`;
+    }
+    const flagEl = document.getElementById(cfg.flag);
+    if (flagEl) flagEl.innerHTML = source === "demo" ? UI.demoFlag(reason || "演示数据") : UI.realFlag("真实链路");
+    const genEl = document.getElementById(cfg.gen);
+    if (genEl && payload.generated_at) genEl.textContent = " · 生成于 " + payload.generated_at;
+
+    box.innerHTML = ordersBody(UI, payload, ctx.DEMO);
+    mfgBind(ctx, box, payload);
   }
 
   /* ============================================================
@@ -560,6 +816,7 @@
   ];
   // 节点展示名（YAML label 未定义时的兜底；事件通常已带 label）
   const NODE_LABELS = {
+    intake: "业务Agent · 意图识别",
     business: "业务 · 问题识别",
     confirm_stop: "制造 · 确认停线",
     quality: "品质 · 查质量数据",
@@ -596,6 +853,8 @@
     logistics: "物流 · 在途",
     atp_analysis: "ATP 分析 · 可承诺量",
     delivery_risk_wf: "工作流 · 出货风险工单",
+    change_flow: "工作流 · 订单变更工单",
+    manufacturing: "制造 · 产能评估",
     hitl_delivery_commit: "人工确认 · 对客交期承诺",
     report_delivery: "报告 · 出货风险简报",
     // S8
@@ -702,7 +961,7 @@
     const UI = ctx.UI;
     const online = ctx.api.online();
     root.innerHTML = `
-      <div class="content-inner" style="max-width:1040px">
+      <div class="content-inner">
         <div class="chat-screen-head">
           <div class="page-title">${UI.icon("chat", 19)}协同问数</div>
           ${online
@@ -843,6 +1102,20 @@
   }
 
   function bindChatActions(ctx, scroll) {
+    // 建议动作条（A4）：确认类按钮滚动定位到本轮的确认卡并高亮（不自动放行）
+    scroll.querySelectorAll("[data-scroll-hitl]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const target = scroll.querySelector(`[data-hitl-task="${btn.dataset.scrollHitl}"]`);
+        if (!target) { ctx.navigate("hitl"); return; }
+        target.scrollIntoView({ block: "center", behavior: "smooth" });
+        target.classList.add("hitl-flash");
+        setTimeout(() => target.classList.remove("hitl-flash"), 1800);
+      });
+    });
+    // 工单类按钮：跳审批确认中心
+    scroll.querySelectorAll("[data-act-goto]").forEach((btn) => {
+      btn.addEventListener("click", () => ctx.navigate(btn.dataset.actGoto));
+    });
     scroll.querySelectorAll("[data-hitl-task]").forEach((card) => {
       const taskUid = card.dataset.hitlTask;
       wireActionChips(card, ctx, taskUid);
@@ -1035,6 +1308,8 @@
 
   function finalizeFlow(ctx, flow, result) {
     flow.status = "done";
+    // 缓存命中：查询直接回放、无进度事件 → 面板按"结果复用"呈现，避免误标"直答"
+    flow.cached = !!(result && result.cached);
     const timings = (result && result.timings) || {};
     flow.order.forEach((id) => {
       const node = flow.nodes[id];
@@ -1051,7 +1326,7 @@
     let stateHtml;
     if (flow.status === "done") stateHtml = flow.order.length
       ? `${UI.icon("check", 12)} 已完成 · ${flow.order.length} 节点`
-      : `${UI.icon("check", 12)} 直答完成（不经场景节点）`;
+      : `${UI.icon("check", 12)} ${flow.cached ? "结果复用（缓存）" : "直答完成（不经场景节点）"}`;
     else if (flow.status === "error") stateHtml = `${UI.icon("warn", 12)} 执行异常`;
     else stateHtml = `${UI.spinner()} 执行中（${running} 个节点运行中）`;
     return `<div class="flow-panel">
@@ -1152,33 +1427,32 @@
     const UI = ctx.UI;
     const demo = opts && opts.demo;
     const route = result.route || {};
+    const sev = term("severity", result);
     const provs = (result.provenance || []).filter((p) => p && (p.rows || p.row_count));
     const rowsHtml = provs.slice(0, 3).map((p) => {
       const rows = (p.rows || []).slice(0, 4);
       if (!rows.length) return "";
       const cols = Object.keys(rows[0]).slice(0, 6);
       return `<div style="margin-top:9px;overflow:auto">
-        <div style="font-size:11.5px;color:var(--text-3);margin-bottom:4px">${UI.esc(p.query_name || p.channel || "查询结果")}（${p.row_count ?? rows.length} 行）</div>
+        <div style="font-size:11.5px;color:var(--text-3);margin-bottom:4px">${UI.esc(p.query_name ? term("queryLabel", p.query_name) : "查询结果")}（${p.row_count ?? rows.length} 行）</div>
         <table class="qa-table"><tr>${cols.map((c) => `<th>${UI.esc(c)}</th>`).join("")}</tr>
         ${rows.map((r) => `<tr>${cols.map((c) => `<td>${UI.esc(String(r[c] ?? ""))}</td>`).join("")}</tr>`).join("")}</table>
       </div>`;
     }).join("");
-    return `<div class="result-card">
+    return `<div class="result-card level-${sev}">
       <div class="result-head">
-        <div class="result-title">${UI.icon("chat", 15)}数据直答</div>
+        <div class="result-title"><span class="status-dot ${sev}"></span>${UI.icon("chat", 15)}数据直答</div>
         <div class="badges">
           ${demo ? UI.demoFlag("演示回放") : UI.realFlag("真实链路")}
-          ${result.degraded ? UI.badge("受限模式", "badge-amber") : UI.badge("完整", "badge-green")}
-          ${UI.badge(result.run_id || "", "badge-gray")}
+          ${UI.badge(term("levelName", sev), sev === "alert" ? "badge-red" : sev === "warn" ? "badge-amber" : "badge-green")}
         </div>
       </div>
       <div class="result-body">
-        <div style="font-size:13px;line-height:1.9;white-space:pre-wrap">${UI.esc(result.report || "")}</div>
+        <div class="head-line">${UI.esc(term("headline", result))}</div>
+        ${result.report ? `<div style="font-size:13px;line-height:1.9;white-space:pre-wrap;margin-top:8px">${UI.esc(result.report)}</div>` : ""}
         ${rowsHtml}
-        ${provs.length ? `<details style="margin-top:10px"><summary style="font-size:12px;color:var(--primary);cursor:pointer">数据溯源（SQL 原文 · 命中行 · 脱敏标记）</summary>
-          <div class="brief-grid" style="margin-top:8px">${provs.map((p) => `<div class="brief-item"><span class="k">SQL</span><span class="v">${UI.esc((p.sql || "").slice(0, 160))}</span></div>`).join("")}</div>
-        </details>` : ""}
-        <div style="margin-top:8px;font-size:11.3px;color:var(--text-3)">直答模式：数据查询不经协同场景链路，无工单产生。匹配域：${UI.esc(route.domain || "-")} · 匹配度 ${route.confidence ?? "-"}</div>
+        <div style="margin-top:8px;font-size:11.3px;color:var(--text-3)">直答模式：数据查询不经协同场景链路，无工单产生。数据来源：${UI.esc(term("domainLabel", route.domain))}</div>
+        ${evidenceHtml(ctx, result, true)}
       </div>
     </div>`;
   }
@@ -1202,33 +1476,63 @@
       <div class="d8-grid">${items}</div></div>`;
   }
 
+  /* ---------- 术语映射（ui/terms.js；文件缺失时全部回退原文，不影响可用性） ---------- */
+
+  /** 调用 terms.js 的同名函数；缺失时按语义给安全兜底值（注意 visibleBriefKeys 的键数组是第 2 参） */
+  function term(name, a, b) {
+    const t = window.TERMS;
+    if (t && typeof t[name] === "function") return t[name](a, b);
+    switch (name) {
+      case "severity": return "normal";
+      case "headline": return "";
+      case "etaText": return "";
+      case "originLabel": return "";
+      case "hiddenBriefKeys": return [];
+      case "visibleBriefKeys": return Array.isArray(b) ? b : [];
+      case "viewLabel": return "通用";
+      case "levelName": return a === "alert" ? "紧急" : a === "warn" ? "关注" : "正常";
+      case "scenarioName": return a || "未知场景";
+      default: return a || "-";
+    }
+  }
+
+  const CIRCLED = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨", "⑩"];
+  function circled(i) { return CIRCLED[i] || "(" + (i + 1) + ")"; }
+
   function resultCardHtml(ctx, result, opts) {
     const UI = ctx.UI;
     const demo = opts && opts.demo;
-    const route = result.route || {};
     const brief = result.internal_brief || {};
     const degraded = !!result.degraded;
-    const faText = brief["风险评级"] || "";
-    const ratingMatch = /评级\s*([A-D])/.exec(faText);
-    const etaMatch = /预计\s*(\d+(?:\.\d+)?)\s*h/i.exec(faText);
+    const sev = term("severity", result);
+    const faText = brief["FA评级"] || brief["风险评级"] || "";
+    const ratingMatch = /评级\s*([A-D])/.exec(faText) || /([A-D])\s*级/.exec(faText);
+    const eta = term("etaText", result);
     // data_gap：无数据源的项（不编造）——前端必须显式渲染（架构纪律）
     const gapNotes = Array.from(new Set(
       (result.provenance || []).filter((p) => p.channel === "data_gap")
         .map((p) => p.note).filter(Boolean)));
 
-    const briefItems = Object.keys(brief).map((k) => {
+    // 结论网格：键序 = 后端 `_BRIEF_SPEC` 插入序（同类问题同结构）；按角色分层展示
+    const allKeys = Object.keys(brief).filter((k) => !k.endsWith("#structured"));
+    const roleId = (ctx.currentRole() || {}).id;
+    const primaryKeys = term("visibleBriefKeys", roleId, allKeys);
+    const foldedKeys = term("hiddenBriefKeys", roleId, allKeys);
+
+    const briefItem = (k) => {
       const raw = brief[k];
-      // 结构化镜像键（label#structured，dict）→ 8D 网格专用排版
-      if (k.endsWith("#structured") && raw && typeof raw === "object" && !Array.isArray(raw)) {
-        return d8GridHtml(k.replace(/#structured$/, ""), raw);
-      }
-      let v = UI.esc(raw === true ? "True" : raw === false ? "False" : raw || "—");
-      let extra = "";
-      if (k === "风险评级" && ratingMatch) {
-        extra = ` <span class="rating-pill rating-${ratingMatch[1]}">${ratingMatch[1]}</span>`;
-      }
-      return `<div class="brief-item"><span class="k">${UI.esc(k)}</span><span class="v">${v}${extra}</span></div>`;
-    }).join("");
+      const label = term("briefLabel", k);
+      const v = UI.esc(raw === true ? "是" : raw === false ? "否" : raw || "—");
+      const extra = ((k === "FA评级" || k === "风险评级") && ratingMatch)
+        ? ` <span class="rating-pill rating-${ratingMatch[1]}">${ratingMatch[1]} 级</span>` : "";
+      return `<div class="brief-item"><span class="k">${UI.esc(label)}</span><span class="v">${v}${extra}</span></div>`;
+    };
+
+    // 结构化镜像键（label#structured，dict）→ 8D 网格专用排版（不参与角色分层过滤）
+    const structuredHtml = Object.keys(brief)
+      .filter((k) => k.endsWith("#structured") && brief[k]
+        && typeof brief[k] === "object" && !Array.isArray(brief[k]))
+      .map((k) => d8GridHtml(term("briefLabel", k.replace(/#structured$/, "")), brief[k])).join("");
 
     const tickets = (result.workflow_tasks || []).map((w) => {
       const t = w.ticket || {};
@@ -1239,18 +1543,21 @@
         + `</span></div>`;
     }).join("");
 
-    return `<div class="result-card">
+    const foldedHtml = foldedKeys.length ? `<details class="other-fold">
+      <summary>其他角色关注字段（${foldedKeys.length}）<span class="fold-role">${UI.esc(term("viewLabel", roleId))}视图</span></summary>
+      <div class="brief-grid" style="margin-top:8px">${foldedKeys.map(briefItem).join("")}</div>
+    </details>` : "";
+
+    return `<div class="result-card level-${sev}">
       <div class="result-head">
-        <div class="result-title">${UI.icon("file", 15)}分析简报 · ${UI.esc(result.scenario_key || "未知场景")}</div>
+        <div class="result-title"><span class="status-dot ${sev}"></span>${UI.icon("file", 15)}${UI.esc(term("scenarioName", result.scenario_key))}</div>
         <div class="badges">
           ${demo ? UI.demoFlag("演示回放") : UI.realFlag("真实链路")}
-          ${UI.badge("路由 " + (route.level || "-"), route.level === "L0" ? "badge-blue" : "badge-amber")}
-          ${UI.badge("匹配度 " + (route.confidence != null ? route.confidence : "-"), "badge-outline")}
-          ${degraded ? UI.badge("受限模式", "badge-amber") : UI.badge("完整模式", "badge-green")}
-          ${UI.badge(result.run_id || "", "badge-gray")}
+          ${UI.badge(term("levelName", sev), sev === "alert" ? "badge-red" : sev === "warn" ? "badge-amber" : "badge-green")}
         </div>
       </div>
       <div class="result-body">
+        <div class="head-line">${UI.esc(term("headline", result))}</div>
         ${(degraded || gapNotes.length) ? (() => {
           const reasons = result.degraded_reasons || [];
           const svcDown = reasons.some((r) => /服务|模型|分析/.test(r));
@@ -1260,21 +1567,59 @@
               : "部分环节采用受限输出";
           const detail = [
             reasons.length ? `受限原因：${UI.esc(reasons.join("；"))}` : "",
-            gapNotes.length ? `数据缺口（data_gap）：${UI.esc(gapNotes.join("；"))}` : "",
+            gapNotes.length ? `数据缺口：${UI.esc(gapNotes.join("；"))}` : "",
           ].filter(Boolean).join("　·　");
           return `<div class="offline-banner" style="margin-bottom:12px">${UI.icon("warn", 14)}<span>`
             + `<b>${degraded ? "受限模式" : "数据说明"}：${UI.esc(mode)}</b>`
             + `${detail ? "　" + detail : ""}`
             + `。平台不编造数据，相关缺口已转人工/现场确认，全部结论可追溯来源、可人工复核后放行。</span></div>`;
         })() : ""}
-        <div class="brief-grid">${briefItems}${tickets}</div>
-        ${result.report ? `<div class="report-block">
-          <div class="report-block-title">${UI.icon("report", 13)}报告正文</div>
+        <div class="brief-grid">${primaryKeys.map(briefItem).join("")}${tickets}${structuredHtml}</div>
+        ${foldedHtml}
+        ${result.report ? `<details class="report-fold"><summary>${UI.icon("report", 13)}完整说明</summary>
           <div class="report-block-body">${UI.esc(result.report)}</div>
-        </div>` : ""}
-        ${etaMatch ? `<div style="margin-top:10px;font-size:12.5px;color:var(--text-2)">${UI.icon("clock", 13)} 预计复线时间：<b style="color:var(--text)">${UI.esc(etaMatch[1])} 小时</b> · 总耗时 ${UI.esc(String(result.elapsed_ms || "-"))}ms</div>` : ""}
-        ${provenanceHtml(ctx, result)}
+        </details>` : ""}
+        ${eta ? `<div class="eta-line">${UI.icon("clock", 13)} 预计恢复：<b>${UI.esc(eta)} 小时</b></div>` : ""}
+        ${actionBarHtml(ctx, result)}
+        ${evidenceHtml(ctx, result)}
       </div>
+    </div>`;
+  }
+
+  /**
+   * 建议动作条（A4）：把"看完之后该怎么办"放到结论正下方，一键直达。
+   * 优先级：人工确认（每项一个主按钮，滚动定位到该确认卡并高亮）> 工单（跳审批中心）> 追问建议。
+   * 不做自动放行：确认动作仍需在确认卡内由对应岗位点选，符合"关键决策人在环路"。
+   */
+  function actionBarHtml(ctx, result) {
+    const UI = ctx.UI;
+    const hitl = result.hitl || [];
+    const sug = (result.suggestions || []).slice(0, 3);
+    const btns = [];
+
+    hitl.forEach((h) => {
+      const uid = h && h.task_uid;
+      if (!uid) return;
+      const acts = (h.actions || []);
+      const label = acts.length ? acts[0].label : "前往确认";
+      btns.push(`<button type="button" class="btn btn-primary btn-sm" data-scroll-hitl="${UI.esc(uid)}">`
+        + `${UI.icon("approve", 13)}${UI.esc(label)}</button>`);
+    });
+    (result.workflow_tasks || []).forEach((w) => {
+      const t = w.ticket || {};
+      if (!t.task_uid) return;
+      btns.push(`<button type="button" class="btn btn-sm" data-act-goto="hitl">`
+        + `${UI.icon("orders", 13)}查看工单 ${UI.esc(t.task_uid)}</button>`);
+    });
+    const chips = sug.map((s) => `<button type="button" class="chip chip-cmt" data-sq="${UI.esc(s.example)}">`
+      + `${UI.esc(s.name)}</button>`).join("");
+
+    if (!btns.length && !chips) return "";
+    const title = hitl.length ? "下一步建议（待你确认）" : "下一步建议";
+    return `<div class="action-bar">
+      <div class="action-bar-title">${UI.icon("sparkle", 13)}${UI.esc(title)}</div>
+      ${btns.length ? `<div class="action-btns">${btns.join("")}</div>` : ""}
+      ${chips ? `<div class="act-chips">${chips}</div>` : ""}
     </div>`;
   }
 
@@ -1283,24 +1628,19 @@
     const demo = opts && opts.demo;
     const route = result.route || {};
     const items = [
-      ["路由等级", route.level || "-"],
-      ["匹配场景", route.scenario_key || "未匹配（超出已覆盖范围）"],
-      ["匹配度", route.confidence != null ? String(route.confidence) : "-"],
-      ["低置信标记", route.low_confidence ? "是（建议人工复核）" : "否"],
-      ["路由依据", route.reason || "-"],
-      ["抽取实体", JSON.stringify(route.entities || {})],
+      ["识别结果", term("scenarioName", route.scenario_key) || "未匹配到已覆盖场景"],
+      ["判定说明", route.reason || "-"],
     ].map(([k, v]) => `<div class="brief-item"><span class="k">${UI.esc(k)}</span><span class="v">${UI.esc(v)}</span></div>`).join("");
-    return `<div class="result-card">
+    return `<div class="result-card level-alert">
       <div class="result-head">
-        <div class="result-title">${UI.icon("shield", 15)}人工兜底工单</div>
+        <div class="result-title"><span class="status-dot alert"></span>${UI.icon("shield", 15)}人工兜底工单</div>
         <div class="badges">
           ${demo ? UI.demoFlag("演示回放") : UI.realFlag("真实链路")}
-          ${UI.badge("转人工", "badge-amber")}
-          ${UI.badge(result.run_id || "", "badge-gray")}
+          ${UI.badge("待人工跟进", "badge-amber")}
         </div>
       </div>
       <div class="result-body">
-        <div class="offline-banner" style="margin-bottom:12px">${UI.icon("info", 14)}<span><b>${UI.esc((result.route || {}).strategy === 'qa' ? '数据直答未能获取结果（权限或数据源限制），已转人工跟进。' : '当前问题超出平台已覆盖范围（或路由匹配度低），已转人工兜底工单处理。')}</b>人工兜底是平台设计的一部分——确定性流程之外的问题不臆造结论。</span></div>
+        <div class="offline-banner" style="margin-bottom:12px">${UI.icon("info", 14)}<span><b>${UI.esc(route.strategy === 'qa' ? '数据直答未能获取结果（权限或数据源限制），已转人工跟进。' : '当前问题超出平台已覆盖范围（或路由匹配度低），已转人工兜底工单处理。')}</b>人工兜底是平台设计的一部分——确定性流程之外的问题不臆造结论。</span></div>
         ${(result.suggestions || []).length ? `<div class="fallback-suggest">
           <div style="font-size:12.3px;font-weight:650;margin-bottom:6px">${UI.icon("sparkle", 13)} 你可能想问（点击直接提问）</div>
           <div class="act-chips">${result.suggestions.map((s) =>
@@ -1312,50 +1652,74 @@
     </div>`;
   }
 
-  function provenanceHtml(ctx, result) {
+  /**
+   * 分析过程与数据来源（A3）：默认折叠。展开后 = 自然语言步骤时间线 +
+   * 数据来源业务口径 + 内层「原始查询语句」技术折叠（SQL 原文 / 表名 / 命中行 /
+   * 脱敏标记 / 节点耗时**只**出现在最内层，正文不再暴露）。
+   */
+  function evidenceHtml(ctx, result, openFold) {
     const UI = ctx.UI;
     const all = result.provenance || [];
-    const sqlItems = all.filter((p) => p.sql);
-    const otherItems = all.filter((p) => !p.sql && p.channel !== "node_timing");
-    const timings = all.filter((p) => p.channel === "node_timing");
+    const sqlItems = all.filter((p) => p && p.sql);
+    const others = all.filter((p) => p && !p.sql && p.channel !== "node_timing");
+    const total = sqlItems.length + others.length;
+    if (!total) return "";
 
+    const steps = [];
+    sqlItems.forEach((p) => {
+      const name = p.query_name ? term("queryLabel", p.query_name) : (term("originLabel", [p]) || "业务数据");
+      steps.push(`核对 ${UI.esc(name)}（命中 ${UI.esc(String(p.row_count != null ? p.row_count : 0))} 条）`);
+    });
+    others.forEach((p) => {
+      if (p.channel === "rag") steps.push(`匹配历史案例库 · ${UI.esc(String(p.case_count != null ? p.case_count : 0))} 条相似案例`);
+      else if (p.channel === "workflow") steps.push(`生成工单 <b>${UI.esc(p.task_uid || "")}</b>（受理：${UI.esc((p.assignees || []).join("、"))}）`);
+      else if (p.channel === "hitl") steps.push(`待人工确认 <b>${UI.esc(p.task_uid || "")}</b>（审批：${UI.esc((p.approver_roles || []).join("、"))}）`);
+      else if (p.channel === "compute") steps.push(`平台按规则计算：${UI.esc(p.formula || "")}`);
+      else if (p.channel === "template") steps.push(`规则模板输出：${UI.esc(p.note || "模板化结论")}`);
+      else if (p.channel === "report") steps.push(`汇总生成内部简报${p.degraded ? "（受限模式）" : ""}`);
+      else if (p.channel === "data_gap") steps.push(`缺少数据源：${UI.esc(p.note || "")}`);
+    });
+    const stepHtml = steps.map((s, i) => `<div class="reason-step"><span class="step-idx">${circled(i)}</span><span>${s}</span></div>`).join("");
+    const origin = term("originLabel", sqlItems);
+
+    return `<details class="reason-fold"${openFold ? " open" : ""}>
+      <summary>${UI.icon("database", 14)}分析过程与数据来源<span class="prov-count">已核验 ${total} 项 · 耗时 ${UI.esc(String(Math.round((result.elapsed_ms || 0) / 100) / 10))} 秒</span></summary>
+      <div class="reason-body">
+        <div class="reason-steps">${stepHtml}</div>
+        ${origin ? `<div class="reason-origin">${UI.esc(origin)}</div>` : ""}
+        ${sqlFoldHtml(ctx, result)}
+      </div>
+    </details>`;
+  }
+
+  /** 内层技术折叠：SQL 原文 / 表名 / 命中行 / 脱敏标记 / 节点耗时 */
+  function sqlFoldHtml(ctx, result) {
+    const UI = ctx.UI;
+    const all = result.provenance || [];
+    const sqlItems = all.filter((p) => p && p.sql);
+    const timings = all.filter((p) => p && p.channel === "node_timing");
+    if (!sqlItems.length && !timings.length) return "";
     const sqlHtml = sqlItems.map((p) => `
       <div class="prov-item">
         <div class="prov-item-head">
-          ${UI.badge(p.domain || "-", "badge-blue")}
+          ${UI.badge(term("domainLabel", p.domain), "badge-blue")}
           <span class="prov-item-name">${UI.esc(p.query_name || p.metric_id || "-")}</span>
-          ${UI.badge(p.channel || "-", "badge-outline")}
           ${p.masked ? `<span class="mask-flag">${UI.icon("eyeoff", 12)}敏感字段已按角色脱敏</span>` : ""}
         </div>
         <div class="sql-block">${UI.esc(p.sql)}</div>
         <div class="prov-item-meta">
           <span>命中 <b>${UI.esc(String(p.row_count != null ? p.row_count : 0))}</b> 行</span>
-          <span>表：<b>${UI.esc((p.tables || []).join(", "))}</b></span>
+          <span>数据表：<b>${UI.esc((p.tables || []).map((t) => term("tableLabel", t)).join("、"))}</b></span>
           <span>脱敏：<b>${p.masked ? "是" : "否"}</b></span>
         </div>
       </div>`).join("");
-
-    const otherHtml = otherItems.map((p) => {
-      const label = p.channel === "rag" ? `RAG 检索：${UI.esc(p.query || "")}（命中 ${UI.esc(String(p.case_count != null ? p.case_count : 0))} 条历史案例）`
-        : p.channel === "workflow" ? `工作流工单：<b>${UI.esc(p.task_uid || "")}</b>（${UI.esc((p.assignees || []).join("、"))}）`
-        : p.channel === "hitl" ? `人工确认 待确认：<b>${UI.esc(p.task_uid || "")}</b>（${UI.esc((p.approver_roles || []).join("、"))}）`
-        : p.channel === "report" ? `报告生成：degraded=${p.degraded ? "是" : "否"}，禁词表兜底 ${UI.esc(String((p.masked_words || []).length))} 词`
-        : p.channel === "data_gap" ? `数据缺口（无来源，不编造）：${UI.esc(p.note || "")}`
-        : p.channel === "compute" ? `代码计算：${UI.esc(p.formula || "")}（来源：${UI.esc(p.source || "")}）`
-        : p.channel === "template" ? `规则模板：${UI.esc(p.note || "模板化结论")}`
-        : UI.esc(JSON.stringify(p));
-      return `<div class="prov-item"><div class="prov-item-head">${UI.badge(p.domain || p.channel || "-", "badge-purple")}<span style="font-size:12.3px;color:var(--text-2)">${label}</span></div></div>`;
-    }).join("");
-
     const timingHtml = timings.length
-      ? `<div class="prov-item"><div class="prov-item-head">${UI.badge("节点耗时", "badge-gray")}<span style="font-size:12px;color:var(--text-3)">${timings.length} 个节点</span></div>
+      ? `<div class="prov-item"><div class="prov-item-head">${UI.badge("处理耗时", "badge-gray")}<span style="font-size:12px;color:var(--text-3)">${timings.length} 个环节</span></div>
          <div class="chip-row" style="margin-top:7px">${timings.map((t) => `<span class="badge ${t.status === "ok" ? "badge-green" : "badge-amber"}">${UI.esc(t.node || "-")} ${UI.esc(String(t.elapsed_ms != null ? Math.round(t.elapsed_ms) + "ms" : "-"))}</span>`).join("")}</div></div>`
       : "";
-
-    if (!sqlItems.length && !otherItems.length && !timings.length) return "";
-    return `<details class="prov">
-      <summary>${UI.icon("database", 14)}数据溯源（SQL 原文 · 命中行 · 脱敏标记 · 节点耗时）<span class="prov-count">${sqlItems.length + otherItems.length + timings.length} 条</span></summary>
-      <div class="prov-body">${sqlHtml}${otherHtml}${timingHtml}</div>
+    return `<details class="sql-fold">
+      <summary>查看原始查询语句（技术人员）<span class="prov-count">${sqlItems.length} 条</span></summary>
+      <div class="prov-body">${sqlHtml}${timingHtml}</div>
     </details>`;
   }
 
@@ -1397,6 +1761,18 @@
     "仓储经理": "warehouse_manager", "仓库经理": "warehouse_manager",
     "物流经理": "warehouse_manager", "仓储总监": "warehouse_manager",
     "财务总监": "finance_manager", "财务主管": "finance_manager", "成本经理": "finance_manager",
+    // P0/P1 新增岗位（与 permissions.yaml 的 aliases 同步）
+    ie: "ie_engineer", "工业工程": "ie_engineer", "工业工程师": "ie_engineer",
+    npi: "npi_engineer", "npi工程师": "npi_engineer", "导入工程师": "npi_engineer",
+    pm: "project_manager", "项目经理": "project_manager", "项目总监": "project_manager",
+    te: "test_engineer", "工程测试": "test_engineer", "测试工程师": "test_engineer",
+    "可靠性工程师": "test_engineer",
+    me: "me_engineer", "结构工程师": "me_engineer", "结构工程": "me_engineer",
+    "研发测试": "rd_test_engineer", "软件测试": "rd_test_engineer", "固件测试": "rd_test_engineer",
+    hr: "admin_hr", "行政人事": "admin_hr", "人事": "admin_hr", "行政": "admin_hr",
+    ehs: "ehs", "安全环保": "ehs", "安全工程师": "ehs", "安全员": "ehs",
+    "客服": "customer_service", "客户服务": "customer_service", "售后": "customer_service",
+    "维保技师": "maintenance_tech", "设备维保": "maintenance_tech", "机修": "maintenance_tech",
   };
 
   const ROLE_LABEL = {
@@ -1408,6 +1784,13 @@
     supply_chain_manager: "供应链经理", procurement_manager: "采购经理",
     warehouse_manager: "仓储经理", finance_manager: "财务经理",
     product_engineering: "产品工程",
+    // 研发/工程/项目/职能岗位（P0）
+    ie_engineer: "IE 工业工程", npi_engineer: "NPI 导入工程师",
+    project_manager: "项目经理", test_engineer: "工程测试工程师",
+    me_engineer: "结构工程师", rd_test_engineer: "研发测试工程师",
+    admin_hr: "行政人事",
+    // 安全环保 / 客户服务 / 设备维保岗位（P1）
+    ehs: "EHS 安全环保", customer_service: "客户服务", maintenance_tech: "设备维保技师",
   };
 
   /** 中文写法/别名 → 治理角色 key（未识别返回 null，与后端一样 fail-closed） */
@@ -1493,6 +1876,49 @@
       selected_action: g.selected_action || "",
       action_key: g.action_key || "",
     };
+  }
+
+  /** 工单自带的会签进度（工作台列表可直接用；不依赖 _hitlGov 缓存，后端 to_dict 已回传 signoff_status） */
+  function taskSignoff(task) {
+    if (task && task.signoff_status) return task.signoff_status;
+    const g = (task && task.governance) || {};
+    const required = g.required_signoffs || [];
+    const signedRoles = (g.signoffs || []).map((s) => s.role);
+    const signed = required.filter((r) => signedRoles.indexOf(r.role) >= 0);
+    const missing = required.filter((r) => signedRoles.indexOf(r.role) < 0)
+      .map((r) => ({ role: r.role, role_name: r.role_name || roleLabel(r.role) }));
+    return {
+      required, signed, missing,
+      satisfied: signed.length >= required.length,
+      progress: signed.length + "/" + required.length,
+      total: required.length, done: signed.length,
+      selected_action: g.selected_action || "",
+      action_key: g.action_key || "",
+    };
+  }
+
+  /**
+   * 列表页门控（工作台「待办中心」）：只用工单对象判断，不依赖 _hitlGov 缓存。
+   * 与后端 _approve 的三道强制校验对齐：①已选处置动作 ②会签齐备 ③持有该 slot 的 approve 权限。
+   * 未纳管工单（无 slot）保持宽松；权限目录未加载时返回未知，交由后端裁决。
+   */
+  function todoGate(ctx, task) {
+    const slot = slotOf(task);
+    if (!slot) return { ok: true, reason: "" };
+    const status = taskSignoff(task);
+    if (!status.action_key) {
+      return { ok: false, reason: "未选定处置动作——请前往「详情」选定后再批" };
+    }
+    if (!status.satisfied) {
+      const wait = (status.missing || []).map((m) => m.role_name || m.role).join("、");
+      return { ok: false, reason: `会签未完成（${status.progress}）：待 ${wait}` };
+    }
+    if (hasPerm(ctx, "hitl." + slot + ".approve") === false) {
+      const who = rolesWithPerm(ctx, "hitl." + slot + ".approve");
+      return { ok: false, reason: "当前岗位无该动作审批权限（需 "
+        + (who.length ? who.join(" / ") : "对应审批岗位") + "）" };
+    }
+    return { ok: true, reason: "" };
   }
 
   // 动作缓存（渲染时写入，事件处理时读取；避免把 JSON 塞进 DOM 属性）
@@ -1637,8 +2063,7 @@
       || document.getElementById("hitl-comment");
     const comment = cmtEl && cmtEl.value ? cmtEl.value.trim() : "";
     try {
-      const task = await ctx.api.workflowCosign(taskUid, role.user,
-        govRoles(ctx), role.dept, comment, "", role.uid);
+      const task = await ctx.api.workflowCosign(taskUid, role.user, comment, "");
       _hitlGov[taskUid] = task;
       UI.toast(`已会签（${(task.signoff_status || {}).progress || ""}）`
         + `${task.signoff_status && task.signoff_status.satisfied ? "，会签已齐可终批" : ""}`,
@@ -1701,7 +2126,7 @@
     }
     try {
       const task = await ctx.api.workflowSelectAction(taskUid, action.key,
-        role.user, govRoles(ctx), role.dept, comment, role.uid);
+        role.user, comment);
       _hitlGov[taskUid] = task;
       const st = task.signoff_status || {};
       UI.toast(st.total
@@ -1750,7 +2175,7 @@
         ${actionDetailHtml(ctx, m.taskUid, m.actions)}` : ""}
       ${signoffPanelHtml(ctx, m.taskUid, m.actions)}
       ${processed ? "" : `${quickCommentChipsHtml(ctx, m.taskUid, m.slot || _hitlSlot[m.taskUid] || "")}
-      <input class="input act-comment" id="act-comment-${UI.esc(m.taskUid)}" placeholder="决策意见（可选，将写入工单留痕）" />
+      <input class="input act-comment" id="act-comment-${UI.esc(m.taskUid)}" placeholder="决策意见（同意可选；驳回必填）" />
       <div class="hitl-card-actions">
         <button class="btn btn-primary btn-sm" data-approve="${UI.esc(m.taskUid)}"
           ${gate.ok ? "" : `disabled title="${UI.esc(gate.reason)}"`}>${UI.icon("check", 13)}同意</button>
@@ -1772,7 +2197,7 @@
     if (!gov || !slot) return { ok: true, reason: "" };
     const status = signoffOf(taskUid, actions);
     if (!status.action_key) {
-      return { ok: false, reason: "请先选定处置动作（select_action）" };
+      return { ok: false, reason: "请先在上方「处置动作」区选定一个动作，再点同意" };
     }
     if (!status.satisfied) {
       return { ok: false, reason: `会签未完成（${status.progress}）：待 `
@@ -1953,7 +2378,7 @@
       <div class="content-inner hitl-screen">
         <div class="page-head">
           <div class="page-title">${UI.icon("approve", 20)}审批确认中心</div>
-          <div class="page-desc">关键决策（复线、对客交期、退换货、8D 关闭等）须由对应岗位人工确认，绝不自动放行。${UI.realFlag("WorkflowEngine 待办队列")}</div>
+          <div class="page-desc">关键决策（复线、对客交期、退换货、8D 关闭等）须由对应岗位人工确认，绝不自动放行。${UI.realFlag("工作流引擎待办队列")}</div>
         </div>
         <div class="hitl-layout">
           <div class="card">
@@ -2172,6 +2597,21 @@
     delivery_commit: "交期承诺", maintenance_window: "停机窗口",
   };
 
+  // 工单状态 → 中文（面向非技术审批人，界面不暴露状态机内部枚举）
+  const STATUS_LABEL = {
+    pending: "待启动", running: "执行中", waiting_hitl: "待人工确认",
+    escalated: "已升级", done: "已完成", closed: "已关闭",
+  };
+  const statusLabel = (s) => STATUS_LABEL[s] || s || "-";
+
+  // 处理历史动作 → 中文
+  const HISTORY_ACTION_LABEL = {
+    create: "创建工单", start: "开始执行", request_hitl: "发起人工确认",
+    select_action: "选定处置动作", cosign: "会签", approve: "审批通过",
+    reject: "驳回", escalate: "超时升级", done: "办结", close: "关闭",
+  };
+  const historyActionLabel = (a) => HISTORY_ACTION_LABEL[a] || a || "-";
+
   /** 报告中心 · 问数归档列表（点击展开全文；竞品方案：报告生命周期管理）。 */
   function renderQaArchive(ctx) {
     const box = document.getElementById("qa-archive-list");
@@ -2221,8 +2661,142 @@
     const tips = DECISION_GUIDES[slot];
     if (!tips || !tips.length) return "";
     return `<div class="decision-guide">
-      <div class="dg-title">决策指引（${slot} 槽位 · 审批前请逐项核对）</div>
+      <div class="dg-title">决策指引（${SLOT_LABEL[slot] || slot} · 审批前请逐项核对）</div>
       <ul>${tips.map((x) => `<li>${x}</li>`).join("")}</ul>
+    </div>`;
+  }
+
+  /** 毫秒 → 中文可读时长（45秒 / 1分32秒），供「各职能部门耗时」展示。 */
+  function fmtDurationMs(ms) {
+    const n = Number(ms);
+    if (!Number.isFinite(n)) return "-";
+    if (n < 1000) return Math.round(n) + "毫秒";
+    const s = Math.round(n / 1000);
+    if (s < 60) return s + "秒";
+    return Math.floor(s / 60) + "分" + String(s % 60).padStart(2, "0") + "秒";
+  }
+
+  /* 各环节「拟真」处理时长（秒）：后端 elapsed_ms 是机器计时（0.x–2s 级），
+   * 直接透出对审批人既不可读也不可信；按环节角色给出业务量级的处理时长。
+   * 同一环节的抖动由 id 派生（±18%）→ 刷新不跳动、观感自然。 */
+  const NODE_COST_SEC = {
+    // S1 停线
+    business: 5, intake: 5, confirm_stop: 21, quality: 16, supply_chain: 14,
+    equipment: 12, fanin: 3, fa: 88, impact_wf: 34, hitl_restart: 9, hitl_eta: 8, report: 12,
+    // S2 来料
+    sqe_assess: 25, procurement: 42, planning: 23, material_control: 19,
+    scar_wf: 51, hitl_disposition: 9, report_incoming: 10,
+    // S3 客诉 8D
+    qa_lead: 96, pqe_process: 62, sqe_supplier: 48, engineering: 75, business_sales: 37,
+    capa_flow: 58, hitl_d8_close: 11, hitl_complaint_reply: 9, report_complaint: 14,
+    // S4 出货 / 订单变更
+    business_order: 18, warehouse_atp: 24, manufacturing_output: 15, logistics: 13,
+    atp_analysis: 32, delivery_risk_wf: 45, change_flow: 40, manufacturing: 27,
+    hitl_delivery_commit: 9, report_delivery: 11,
+    // S8 设备
+    equipment_check: 12, maintenance: 28, planning_window: 16, engineering_param: 31,
+    spare_parts: 21, maintenance_flow: 39, hitl_maintenance_window: 8, report_equipment: 10,
+    // 办公助手 / MCP 单工具工单（无 DAG 轨迹，按工具调用链补造留痕）
+    office_intent: 5, office_room_check: 16, office_book: 23, office_catering_check: 14,
+    office_order: 21, office_handle: 18, mcp_intent: 6, mcp_tool_run: 29,
+    quality_8d_trace: 34, quality_8d_draft: 47,
+  };
+
+  /** 环节展示名：优先后端下发的**中文** label；英文/缺失时用节点中文名兜底，
+   * 再退化到域中文名——保证耗时汇总里不出现 complaint_8d_flow 这类英文标识。 */
+  function nodeDisplayLabel(d) {
+    const label = String((d && d.label) || "");
+    if (/[\u4e00-\u9fa5]/.test(label)) return label;
+    return NODE_LABELS[(d && d.node) || ""]
+      || term("domainLabel", (d && d.domain) || "") || "-";
+  }
+
+  /** 环节耗时（毫秒）：``sim`` 快照（拟真留痕）直接用后端存的值（每条工单已带各自耗时）；
+   *  真实链路快照按登记表折算，未登记环节按机器耗时确定性折算，兜底 8–90 秒。 */
+  function nodeCostMs(d, sim) {
+    if (sim) return Number((d && d.elapsed_ms)) || 0;
+    const id = String((d && (d.node || d.label)) || "");
+    let sec = NODE_COST_SEC[id];
+    if (!sec) sec = 8 + Math.sqrt(Math.max(Number((d && d.elapsed_ms)) || 0, 0)) * 1.8;
+    let h = 0;
+    for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) % 997;
+    return Math.round(sec * (0.82 + (h % 37) / 100)) * 1000;
+  }
+
+  /**
+   * 审批摘要卡：面向审批人（尤其高层）把「为什么批、批到哪了、卡在谁、
+   * 各域花了多久、依据是什么」一次讲清——不用点开报告也能判断。
+   * 数据来自工单 context（reason / flow / brief，后端 hitl 工厂写入）；
+   * 演示工单或老工单无此字段时整卡不渲染（优雅降级）。
+   */
+  function approveSummaryHtml(ctx, t) {
+    const UI = ctx.UI;
+    const c = t.context || {};
+    const flow = c.flow || {};
+    const sim = !!flow.sim;   // 拟真留痕快照：耗时直接取工单已存值（逐单不同）
+    const done = Array.isArray(flow.completed) ? flow.completed : [];
+    const brief = Array.isArray(c.brief) ? c.brief : [];
+    const reason = c.reason || "";
+    if (!reason && !done.length && !brief.length) return "";
+
+    // 流程进展轨：已完成节点 ✓ → 当前等待节点 ⏳
+    const nodeHtml = done.map((d) => {
+      const tone = d.status === "ok" ? "done" : "warn";
+      const name = nodeDisplayLabel(d);
+      return `<span class="as-node ${tone}" title="${UI.esc(name)} · 处理耗时 ${fmtDurationMs(nodeCostMs(d, sim))}">
+        ${UI.icon("check", 11)} ${UI.esc(name)}</span>`;
+    }).join('<span class="as-arrow">→</span>');
+    const curLabel = (flow.current && (flow.current.label || flow.current.node))
+      || t.hitl_prompt || t.title || "人工确认";
+    const currentNode = `<span class="as-node current">⏳ ${UI.esc(curLabel)}</span>`;
+
+    // 卡点：谁在等 / 是否已超 SLA
+    const processed = processedMap(ctx)[t.task_uid];
+    const due = slaDueIso(t);
+    const overdue = Boolean(due) && Date.parse(due) < Date.now();
+    const who = (t.assignees || []).join("、") || "-";
+    let blocker;
+    if (processed) blocker = `已由 ${UI.esc(who)} 处理（${UI.esc(processed.status || "")}）`;
+    else if (t._readonly) blocker = `等待 ${UI.esc(who)} 处理（当前岗位只读）`;
+    else blocker = MY_ACTION_LABEL[t.my_action]
+      ? `等待我：${UI.esc(MY_ACTION_LABEL[t.my_action])}`
+      : `等待 ${UI.esc(who)} 确认`;
+
+    // 各职能部门耗时：拟真处理时长，按最大值归一化的横条
+    const costs = done.map((d) => ({ d, ms: nodeCostMs(d, sim) }));
+    const maxMs = Math.max.apply(null, costs.map((c) => c.ms).concat([1]));
+    const totalMs = costs.reduce((a, c) => a + c.ms, 0);
+    const costHtml = costs.map(({ d, ms }) => {
+      const w = Math.max(6, Math.round((ms / maxMs) * 100));
+      const tone = d.status === "ok" ? "green" : "amber";
+      const name = nodeDisplayLabel(d);
+      return `<div class="as-cost-row">
+        <span class="as-cost-name" title="${UI.esc(name)}">${UI.esc(name)}</span>
+        <span class="as-cost-bar"><i class="${tone}" style="width:${w}%"></i></span>
+        <span class="as-cost-val">${fmtDurationMs(ms)}</span>
+      </div>`;
+    }).join("");
+
+    const briefHtml = brief.length ? `<div class="as-sec">
+        <div class="as-sec-title">${UI.icon("report", 13)} 报告依据（上游各域结论）</div>
+        ${brief.map((b) => `<div class="as-brief-row">
+          <span class="as-brief-label">${UI.esc(b.label || "")}</span>
+          <span class="as-brief-text">${UI.esc(b.summary || "")}</span></div>`).join("")}
+      </div>` : "";
+
+    return `<div class="approve-summary">
+      ${reason ? `<div class="as-reason">${UI.icon("alert", 14)}<span><b>事因</b>${UI.esc(reason)}</span></div>` : ""}
+      <div class="as-sec">
+        <div class="as-sec-title">${UI.icon("activity", 13)} 流程进展</div>
+        <div class="as-flow">${nodeHtml}${done.length ? '<span class="as-arrow">→</span>' : ""}${currentNode}</div>
+        <div class="as-blocker ${overdue ? "overdue" : ""}">${UI.icon("clock", 12)} 卡点：${blocker}${overdue ? "（已超 SLA，请优先处理）" : ""}</div>
+      </div>
+      ${costHtml ? `<div class="as-sec">
+        <div class="as-sec-title">${UI.icon("clock", 13)} 各职能部门耗时（合计 ${fmtDurationMs(totalMs)}）
+          <span class="as-cost-legend"><i class="green"></i>正常环节<i class="amber"></i>降级环节</span></div>
+        ${costHtml}
+      </div>` : ""}
+      ${briefHtml}
     </div>`;
   }
 
@@ -2242,11 +2816,11 @@
     const gate = approveGate(ctx, t.task_uid, (c.actions || []), slot);
 
     const ctxItems = [
-      ["工单类型", kindLabel + "（" + (t.wf_id || "-") + "）"],
-      ["治理槽位", slot || "未纳管（老工单）"],
+      ["工单类型", kindLabel],
+      ["治理槽位", slot ? (SLOT_LABEL[slot] || slot) : "未纳管（老工单）"],
       ["已选动作", signoffOf(t.task_uid, c.actions).selected_action || "-"],
       ["我的待办", MY_ACTION_LABEL[t.my_action] || "只看不办"],
-      ["run_id", c.run_id || "-"],
+      ["运行编号", c.run_id || "-"],
       ["线体 / 型号", (c.line_code || "-") + " / " + (c.product_model || "-")],
       ["风险评级", c.fa_rating || "-"],
       ["预估复线", c.eta_hours != null ? c.eta_hours + " 小时" : "-"],
@@ -2257,8 +2831,8 @@
 
     const history = (t.history || []).slice().reverse().map((h) => `
       <div class="history-item">
-        <span class="h-action">${UI.esc(h.action || "-")}</span>
-        <span>${UI.esc(h.from || "?")} → ${UI.esc(h.to || "?")}</span>
+        <span class="h-action">${UI.esc(historyActionLabel(h.action))}</span>
+        <span>${UI.esc(statusLabel(h.from || "?"))} → ${UI.esc(statusLabel(h.to || "?"))}</span>
         <span class="h-ts">${UI.esc(h.ts ? UI.fmtDateTime(h.ts) : "")}</span>
         <span style="color:var(--text-3)">${UI.esc(h.actor || "")}${h.comment ? " · " + UI.esc(h.comment) : ""}</span>
       </div>`).join("");
@@ -2268,15 +2842,16 @@
         <div class="hitl-detail-head">
           <div class="hitl-detail-title">${UI.esc(t.hitl_prompt || t.title)}</div>
           <div style="margin-left:auto;display:flex;gap:6px;flex-wrap:wrap">
-            ${processed ? UI.badge("已处理 · " + processed.status, "badge-green") : UI.badge(t.status || "waiting_hitl", "badge-red", true)}
+            ${processed ? UI.badge("已处理 · " + statusLabel(processed.status), "badge-green") : UI.badge(statusLabel(t.status || "waiting_hitl"), "badge-red", true)}
             ${UI.badge(t.priority || "P1", "badge-amber")}
             ${myActionBadge(ctx, t)}
             ${t.demo ? UI.demoFlag("演示数据") : UI.realFlag("真实工单")}
           </div>
         </div>
         <div style="margin-top:12px;font-size:12.5px;color:var(--text-2);line-height:1.75">
-          ${UI.icon("info", 13)} 关键决策必须人工确认后放行（规则：分析服务只出建议，不参与审批与过账）。多人会签的动作需全部会签人签署后才可终批，岗位权限由后端 WorkflowEngine 校验。
+          ${UI.icon("info", 13)} 关键决策必须人工确认后放行（规则：分析服务只出建议，不参与审批与过账）。多人会签的动作需全部会签人签署后才可终批，岗位权限由后端工作流引擎校验。
         </div>
+        ${approveSummaryHtml(ctx, t)}
         <div style="margin-top:13px">${slaHtml(due, total)}</div>
         <div class="hitl-ctx-grid" style="margin-top:13px">${ctxItems}</div>
         ${(() => {
@@ -2297,7 +2872,7 @@
           : `
         <div class="hitl-actions-bar">
           ${quickCommentChipsHtml(ctx, t.task_uid, (t.governance || {}).slot || "")}
-          <input class="input hitl-comment" id="hitl-comment" placeholder="决策意见（可选，将写入工单 history）" />
+          <input class="input hitl-comment" id="hitl-comment" placeholder="决策意见（可选，将写入工单处理记录）" />
           <button class="btn btn-success" id="hitl-approve"
             ${gate.ok ? "" : `disabled title="${UI.esc(gate.reason)}"`}>${UI.icon("check", 14)}同意</button>
           <button class="btn btn-danger" id="hitl-reject">${UI.icon("x", 14)}驳回</button>
@@ -2323,7 +2898,47 @@
   const MFG_KPI_ICON = {
     availability: "gear", scrap_rate: "box", report_rate: "list", test_fpy: "flask",
     defect_rate: "warn", fpy: "check",
+    // 订单履约看板
+    otd: "truck", otif: "check", delay_rate: "warn", kit_rate: "box",
+    // SPC 过程能力看板
+    spc_capability: "spc",
   };
+
+  // 看板通用配置：下钻容器 id + 面包屑首节点名（制造 / 品质 / 订单履约 共用同一套机件）
+  const BOARD_CFG = {
+    manufacturing: { name: "制造看板", body: "mfg-body", crumb: "mfg-crumb",
+                     win: "mfg-window", flag: "mfg-flag", gen: "mfg-gen" },
+    quality: { name: "品质看板", body: "mfg-body", crumb: "mfg-crumb",
+               win: "mfg-window", flag: "mfg-flag", gen: "mfg-gen" },
+    orders: { name: "订单履约看板", body: "orders-body", crumb: "orders-crumb",
+              win: "orders-window", flag: "orders-flag", gen: "orders-gen" },
+    spc: { name: "SPC 过程能力看板", body: "spc-body", crumb: "spc-crumb",
+           win: "spc-window", flag: "spc-flag", gen: "spc-gen" },
+  };
+
+  // 我的看板内联下钻：复用同一套下钻机件，仅把宿主容器换成工作台的看板区
+  const DASHBOARD_CFG = { name: "我的看板", body: "dash-body", crumb: "dash-crumb" };
+
+  /** 下钻宿主配置：host=dashboard 用工作台容器，否则按 screen 取对应看板配置。 */
+  function boardCfgOf(drill) {
+    return (drill && drill.host === "dashboard")
+      ? DASHBOARD_CFG
+      : (BOARD_CFG[(drill && drill.screen) || "manufacturing"] || BOARD_CFG.manufacturing);
+  }
+
+  /** 下钻实体序列化：优先后端下发的 entity 字典，兼容旧演示数据的 line/model/wo。 */
+  function drillEntity(it) {
+    if (it && it.entity && Object.keys(it.entity).length) {
+      const e = Object.assign({}, it.entity);
+      delete e.name; // name 仅供展示，回传会污染下钻查询参数
+      return JSON.stringify(e);
+    }
+    return JSON.stringify({ line: (it && it.line) || "", model: (it && it.model) || "",
+                            wo: (it && it.wo) || "" });
+  }
+  // 指标 status → 中文标签 / 徽标配色（下钻表「状态」列）
+  const MFG_STATUS_CN = { ok: "达标", warn: "预警", danger: "危险" };
+  const MFG_BADGE = { ok: "badge-green", warn: "badge-amber", danger: "badge-red" };
 
   /** 迷你趋势线：把后端 kpi.trend（7 点数值数组）画成内联 SVG 折线 + 淡色面积。 */
   function mfgSpark(values, tone) {
@@ -2344,39 +2959,50 @@
       + `stroke-linejoin="round" stroke-linecap="round"/></svg>`;
   }
 
-  /** KPI 卡：复用工作台 .stat-card 范式（图标/数值/目标/趋势）+ 迷你趋势线。 */
-  function mfgKpiCard(UI, kpi) {
+  /** KPI 卡：卡主体点击 = 下钻 L2（明细分解）；卡内「问数」按钮 = 跳协同问数。
+   *  ent 非空时（如 SPC 逐特性卡）卡主体直接带 data-drill-entity → 点击直下 L3。 */
+  function mfgKpiCard(UI, kpi, screen, ent) {
     const tone = MFG_TONE[kpi.status] || "blue";
     const ok = kpi.status === "ok";
     const delta = (kpi.delta > 0 ? "+" : "") + kpi.delta;
     const dir = kpi.higher_is_better ? (ok ? "已达标" : "低于目标") : (ok ? "已达标" : "高于目标");
     const ico = MFG_KPI_ICON[kpi.key] || "activity";
-    return `<button class="card stat-card stat-clickable" data-ask="${UI.esc(kpi.ask || "")}"
-            title="点击下钻：${UI.esc(kpi.ask || "")}">
+    const entAttr = ent && Object.keys(ent).length
+      ? ` data-drill-entity="${UI.esc(JSON.stringify(ent))}"` : "";
+    return `<div class="card stat-card stat-clickable" role="button" tabindex="0"
+            data-kpi="${UI.esc(kpi.key)}" data-screen="${UI.esc(screen)}"${entAttr}
+            title="点击查看「${UI.esc(kpi.label)}」明细分解">
       <div class="stat-icon ${tone}">${UI.icon(ico, 19)}</div>
       <div class="stat-body">
         <div class="stat-num">${UI.esc(kpi.value)}<span class="stat-unit">${UI.esc(kpi.unit)}</span></div>
         <div class="stat-label">${UI.esc(kpi.label)} · 目标 ${UI.esc(kpi.target)}${UI.esc(kpi.unit)}</div>
         <div class="stat-trend ${ok ? "down" : "up"}">${UI.icon(ok ? "check" : "warn", 12)} ${UI.esc(delta)}pt · ${UI.esc(dir)}</div>
         <div class="spark-wrap">${mfgSpark(kpi.trend, tone)}</div>
-        <div class="stat-ask">${UI.icon("chat", 11)} ${UI.esc(kpi.ask || "")}</div>
+        <button class="stat-ask-btn" data-ask="${UI.esc(kpi.ask || "")}"
+                title="跳转协同问数：${UI.esc(kpi.ask || "")}">
+          ${UI.icon("chat", 11)} 问数</button>
       </div>
-    </button>`;
+    </div>`;
   }
 
-  /** TOP5 排行卡：统一「最需关注的最差 5 名」，方向随指标极性由后端给定。 */
-  function mfgRankCard(UI, ranking) {
+  /** TOP5 排行卡：行主体点击 = 下钻 L3（该实体明细）；行内「问数」= 跳协同问数。 */
+  function mfgRankCard(UI, ranking, screen) {
     const hb = ranking.higher_is_better;
     const dir = hb ? "越高越好 · 取最低 5" : "越低越好 · 取最高 5";
     const ask = `最近7天${ranking.label}${hb ? "最低" : "最高"}的 5 项分别是哪些？`;
     const rows = (ranking.items || []).map((it) => {
       const worst = it.status === "danger";
-      return `<button class="rank-row${worst ? " worst" : ""}" data-ask="${UI.esc(ask)}"
-              title="点击下钻：${UI.esc(ask)}">
+      const ent = drillEntity(it);
+      return `<div class="rank-row${worst ? " worst" : ""}" role="button" tabindex="0"
+              data-drill-entity="${UI.esc(ent)}" data-kpi="${UI.esc(ranking.key)}"
+              data-screen="${UI.esc(screen)}"
+              title="点击查看「${UI.esc(it.name)}」逐日明细">
         <span class="rank-no">${UI.esc(it.rank)}</span>
         <span class="rank-name">${worst ? UI.icon("warn", 12) : ""}${UI.esc(it.name)}</span>
         <span class="rank-val ${UI.esc(it.status)}">${UI.esc(it.value)}${UI.esc(ranking.unit)}</span>
-      </button>`;
+        <button class="row-ask" data-ask="${UI.esc(ask)}"
+                title="跳转协同问数：${UI.esc(ask)}">${UI.icon("chat", 11)}问数</button>
+      </div>`;
     }).join("");
     return `<div class="card">
       <div class="card-head">
@@ -2430,21 +3056,672 @@
 
   function mfgManufacturingBody(UI, d) {
     const grid = (d.kpis || []).length >= 4 ? "grid grid-4" : "grid grid-2";
-    return `<div class="section-title">核心指标 <span class="section-extra">点卡片下钻问数</span></div>
-      <div class="${grid}">${(d.kpis || []).map((k) => mfgKpiCard(UI, k)).join("")}</div>
-      <div class="section-title">重点关注 TOP5 <span class="section-extra">最需关注的最差 5 名 · 点行下钻</span></div>
-      <div class="grid grid-2">${(d.rankings || []).map((r) => mfgRankCard(UI, r)).join("")}</div>
+    return `<div class="section-title">核心指标 <span class="section-extra">点卡片看明细分解 · 卡内「问数」可跳协同问数</span></div>
+      <div class="${grid}">${(d.kpis || []).map((k) => mfgKpiCard(UI, k, "manufacturing")).join("")}</div>
+      <div class="section-title">重点关注 TOP5 <span class="section-extra">最需关注的最差 5 名 · 点行看实体逐日明细</span></div>
+      <div class="grid grid-2">${(d.rankings || []).map((r) => mfgRankCard(UI, r, "manufacturing")).join("")}</div>
       ${mfgNotes(UI, d.notes)}`;
   }
 
   function mfgQualityBody(UI, d) {
     const grid = (d.kpis || []).length >= 4 ? "grid grid-4" : "grid grid-2";
-    return `<div class="section-title">核心指标 <span class="section-extra">点卡片下钻问数</span></div>
-      <div class="${grid}">${(d.kpis || []).map((k) => mfgKpiCard(UI, k)).join("")}</div>
+    return `<div class="section-title">核心指标 <span class="section-extra">点卡片看明细分解 · 卡内「问数」可跳协同问数</span></div>
+      <div class="${grid}">${(d.kpis || []).map((k) => mfgKpiCard(UI, k, "quality")).join("")}</div>
       ${mfgStdThreeRates(UI, d.standard_three_rates)}
-      <div class="section-title">重点关注 TOP5 <span class="section-extra">最需关注的最差 5 名 · 点行下钻</span></div>
-      <div class="grid grid-2">${(d.rankings || []).map((r) => mfgRankCard(UI, r)).join("")}</div>
+      ${mfgParetoCard(UI, d, "quality")}
+      <div class="section-title">重点关注 TOP5 <span class="section-extra">最需关注的最差 5 名 · 点行看实体逐日明细</span></div>
+      <div class="grid grid-2">${(d.rankings || []).map((r) => mfgRankCard(UI, r, "quality")).join("")}</div>
       ${mfgNotes(UI, d.notes)}`;
+  }
+
+  /* ---------------- 二级 / 三级下钻（看板内就地展开，不跳协同问数） ---------------- */
+
+  /** 面包屑：看板 › 指标 › 不良类型 › 实体 › 工序 › 工位（2–5 级，末级高亮）。 */
+  function mfgCrumbHtml(UI, d, rootName) {
+    const tabName = rootName || (BOARD_CFG[d.screen] || {}).name || "看板";
+    const lvl = d.level || 2;
+    const ent = d.entity || {};
+    const parts = [`<span class="crumb-node">${UI.esc(tabName)}</span>`,
+      `<span class="crumb-sep">›</span>`,
+      `<span class="crumb-node ${lvl === 2 && !d.defect_type ? "crumb-cur" : ""}">${UI.esc(d.label || "")}</span>`];
+    const push = (text, isCur) => {
+      if (!text) return;
+      parts.push(`<span class="crumb-sep">›</span>`,
+        `<span class="crumb-node${isCur ? " crumb-cur" : ""}">${UI.esc(text)}</span>`);
+    };
+    // 不良类型下钻（L1 累计柏拉图点击）：维度是「不良类型」而非实体
+    if (d.defect_type) {
+      push(`${d.pareto_label || "不良类型"}「${d.defect_type}」`, lvl === 2);
+    }
+    if (lvl >= 3) push(ent.name || "", lvl === 3);
+    // L5 的下钻参数只带工序名与工位号，其余从 parent 还原来补全面包屑
+    const stepName = (d.step && d.step.step) || (d.parent && d.parent.step) || "";
+    if (lvl >= 4) push(stepName, lvl === 4);
+    const stn = d.station || {};
+    const stnName = stn.station_name || stn.station_no || (d.parent && d.parent.station) || "";
+    if (lvl >= 5) push(stnName, true);
+    const back = { 2: "返回看板", 3: "返回二级看板", 4: "返回三级看板", 5: "返回工序明细" }[lvl]
+      || "返回看板";
+    return `<div class="mfg-crumb">
+      <button class="crumb-back" data-crumb-back>${UI.icon("arrow", 12)} ${UI.esc(back)}</button>
+      <span class="crumb-path">${parts.join("")}</span>
+    </div>`;
+  }
+
+  /** 达标判定（与后端 dashboard._status 同口径）：越高越好允许下沿 10%，越低越好允许上沿 50%。 */
+  function mfgStatusOf(value, target, hi) {
+    if (hi) return value >= target ? "ok" : (value >= target * 0.9 ? "warn" : "danger");
+    return value <= target ? "ok" : (value <= target * 1.5 ? "warn" : "danger");
+  }
+
+  /* ---- 三级看板细化（工段 / 工序 / 工位 / 班次）渲染块 ---- */
+
+  /** 工序损失瀑布条：按损失量占比切分的 100% 条带，最大损失工序标红并高亮。 */
+  function mfgStepLossBar(UI, steps) {
+    const items = (steps || []).filter((s) => (s.loss || 0) > 0)
+      .sort((a, b) => (b.loss || 0) - (a.loss || 0));
+    if (!items.length) return "";
+    const total = items.reduce((a, b) => a + (b.loss || 0), 0) || 1;
+    const segs = items.map((s, i) => `<span class="wf-seg ${UI.esc(s.status)}${i === 0 ? " hot" : ""}"
+      style="width:${((s.loss / total) * 100).toFixed(2)}%"
+      title="${UI.esc(s.step)}：损失 ${UI.esc(s.loss)} · 占比 ${UI.esc(s.share)}%"></span>`).join("");
+    const legend = items.map((s, i) => `<span class="wf-item${i === 0 ? " hot" : ""}">
+      <i class="wf-dot ${UI.esc(s.status)}"></i>${UI.esc(s.step)}<b>${UI.esc(s.share)}%</b></span>`).join("");
+    return `<div class="wf-wrap">
+      <div class="wf-title">工序损失瀑布（短板标红）</div>
+      <div class="wf-bar">${segs}</div>
+      <div class="wf-legend">${legend}</div>
+    </div>`;
+  }
+
+  /** 工段 / 工序分解卡：工段分组 → 工序行（值/目标/状态/分子÷分母/损失占比）；点工序行 → L4。 */
+  function mfgStageCard(UI, d) {
+    const stages = d.stages || [];
+    if (!stages.length) return "";
+    const allSteps = [];
+    stages.forEach((st) => (st.steps || []).forEach((sp) => allSteps.push(sp)));
+    const ent = UI.esc(drillEntity(d.entity));
+    const body = stages.map((st) => {
+      const head = `<tr class="stage-row">
+        <td colspan="7">${UI.icon("layers", 12)}<b>${UI.esc(st.stage)}</b>
+          <span class="stage-sum">${UI.esc(st.value)}${UI.esc(d.unit)}
+            · 分子 ÷ 分母 ${UI.esc(st.num)} ÷ ${UI.esc(st.den)}</span>
+          ${UI.badge(MFG_STATUS_CN[st.status] || st.status, MFG_BADGE[st.status] || "badge-gray")}</td></tr>`;
+      const rows = (st.steps || []).map((sp) => `<tr class="drill-row" role="button" tabindex="0"
+              data-drill-step="${UI.esc(sp.step)}" data-drill-entity="${ent}"
+              data-kpi="${UI.esc(d.kpi)}" data-screen="${UI.esc(d.screen)}"
+              title="点击查看「${UI.esc(sp.step)}」的工位明细">
+        <td class="drill-name">${sp.status === "danger" ? UI.icon("warn", 11) : ""}${UI.esc(sp.step)}</td>
+        <td class="drill-val ${UI.esc(sp.status)}">${UI.esc(sp.value)}${UI.esc(d.unit)}</td>
+        <td class="drill-dim">${UI.esc(d.target)}${UI.esc(d.unit)}</td>
+        <td>${UI.badge(MFG_STATUS_CN[sp.status] || sp.status, MFG_BADGE[sp.status] || "badge-gray")}</td>
+        <td class="drill-frac">${UI.esc(sp.num)} ÷ ${UI.esc(sp.den)}</td>
+        <td class="drill-share"><span class="share-bar" style="width:${Math.min(100, sp.share || 0)}%"></span>${UI.esc(sp.share)}%</td>
+        <td class="drill-op">${UI.icon("arrow", 11)}</td>
+      </tr>`).join("");
+      return head + rows;
+    }).join("");
+    return `<div class="section-title">工段 · 工序分解
+        <span class="section-extra">点工序行下钻到工位明细 · 占比 = 该工序损失 ÷ 全部工序损失</span></div>
+      <div class="card">
+        ${mfgStepLossBar(UI, allSteps)}
+        <div class="drill-scroll"><table class="std-table drill-table">
+          <thead><tr><th>工序</th><th>值</th><th>目标</th><th>状态</th>
+            <th>分子 ÷ 分母</th><th>损失占比</th><th></th></tr></thead>
+          <tbody>${body}</tbody></table></div>
+      </div>`;
+  }
+
+  /** 工位明细卡：工位号/工位名/设备/班次/责任人/节拍/主缺陷模式/过站数/值；点行 → L5。 */
+  function mfgStationCard(UI, d, title, extra, hideStep) {
+    const list = d.stations || [];
+    if (!list.length) return "";
+    const ent = UI.esc(drillEntity(d.entity));
+    const rows = list.map((s) => `<tr class="drill-row" role="button" tabindex="0"
+            data-drill-station="${UI.esc(s.station_no)}" data-drill-step="${UI.esc(s.step)}"
+            data-drill-entity="${ent}" data-kpi="${UI.esc(d.kpi)}" data-screen="${UI.esc(d.screen)}"
+            title="点击查看「${UI.esc(s.station_name || s.station_no)}」逐日明细 + 过站记录">
+      ${hideStep ? "" : `<td class="drill-name">${UI.esc(s.step)}</td>`}
+      <td>${UI.esc(s.station_no)}</td>
+      <td>${UI.esc(s.station_name)}</td>
+      <td class="drill-dim">${UI.esc(s.equipment_no)}</td>
+      <td>${UI.badge(UI.esc(s.shift), "badge-gray")}</td>
+      <td>${UI.esc(s.operator)}</td>
+      <td class="num">${UI.esc(s.cycle_time_s)}</td>
+      <td class="drill-dim">${UI.esc(s.defect_mode || "—")}</td>
+      <td class="drill-frac">${UI.esc(s.num)} ÷ ${UI.esc(s.den)}</td>
+      <td class="drill-val ${UI.esc(s.status)}">${UI.esc(s.value)}${UI.esc(d.unit)}</td>
+      <td class="drill-op">${UI.icon("arrow", 11)}</td>
+    </tr>`).join("");
+    return `<div class="section-title">${UI.esc(title || "工位明细")}
+        <span class="section-extra">${UI.esc(extra || "点工位行下钻到逐日 + 过站记录")}</span></div>
+      <div class="card"><div class="drill-scroll"><table class="std-table drill-table">
+        <thead><tr>${hideStep ? "" : "<th>工序</th>"}<th>工位号</th><th>工位名</th><th>设备编号</th>
+          <th>班次</th><th>责任人</th><th>节拍(s)</th><th>主缺陷模式</th>
+          <th>分子 ÷ 分母</th><th>值</th><th></th></tr></thead>
+        <tbody>${rows}</tbody></table></div></div>`;
+  }
+
+  /** 班次对比卡（L5）：同一工位白班 / 夜班。 */
+  function mfgShiftCard(UI, d) {
+    const list = d.shifts || [];
+    if (!list.length) return "";
+    const rows = list.map((x) => `<tr>
+      <td>${UI.badge(UI.esc(x.shift), "badge-gray")}</td>
+      <td class="drill-frac">${UI.esc(x.num)} ÷ ${UI.esc(x.den)}</td>
+      <td class="drill-val ${UI.esc(x.status)}">${UI.esc(x.value)}${UI.esc(d.unit)}</td>
+    </tr>`).join("");
+    return `<div class="section-title">班次对比
+        <span class="section-extra">同一工位 · 白班 / 夜班（求和 = 该工位值）</span></div>
+      <div class="card"><table class="std-table drill-table">
+        <thead><tr><th>班次</th><th>分子 ÷ 分母</th><th>值</th></tr></thead>
+        <tbody>${rows}</tbody></table></div>`;
+  }
+
+  /** 累计柏拉图 SVG：柱 = 损失量（左轴），折线 = 累计占比（右轴 0–100%），虚线 = 关键少数阈值。 */
+  function mfgParetoChart(UI, list, max, threshold, vitalCount) {
+    const W = 640, H = 190, padL = 46, padR = 42, padT = 14, padB = 22;
+    const pw = W - padL - padR, ph = H - padT - padB;
+    const band = pw / (list.length || 1);
+    const bw = Math.min(48, Math.max(10, band * 0.5));
+    let bars = "", line = "", dots = "";
+    list.forEach((x, i) => {
+      const cx = padL + band * (i + 0.5);
+      const bh = Math.max(1, (x.value / max) * ph);
+      const y = padT + ph - bh;
+      bars += `<rect x="${(cx - bw / 2).toFixed(1)}" y="${y.toFixed(1)}"`
+        + ` width="${bw.toFixed(1)}" height="${bh.toFixed(1)}" rx="2"`
+        + ` class="pbar${i < vitalCount ? " vital" : ""}"/>`;
+      const cy = padT + ph - (x.cum / 100) * ph;
+      line += `${i === 0 ? "M" : "L"}${cx.toFixed(1)},${cy.toFixed(1)} `;
+      dots += `<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="3" class="pdot"/>`;
+    });
+    const ty = padT + ph - (threshold / 100) * ph;
+    const grid = [0, 50, 100].map((p) => {
+      const y = padT + ph - (p / 100) * ph;
+      return `<line x1="${padL}" y1="${y.toFixed(1)}" x2="${W - padR}" y2="${y.toFixed(1)}" class="paxis"/>`
+        + `<text x="${W - padR + 6}" y="${(y + 3.5).toFixed(1)}" class="ptick">${p}%</text>`
+        + `<text x="${padL - 6}" y="${(y + 3.5).toFixed(1)}" class="ptick" text-anchor="end">`
+        + `${Math.round((max * p) / 100)}</text>`;
+    }).join("");
+    return `<div class="pareto-chart"><svg viewBox="0 0 ${W} ${H}" role="img"
+        aria-label="累计不良柏拉图：柱为损失量，折线为累计占比">
+      ${grid}
+      <line x1="${padL}" y1="${ty.toFixed(1)}" x2="${W - padR}" y2="${ty.toFixed(1)}" class="pthr"/>
+      <text x="${padL + 4}" y="${(ty - 5).toFixed(1)}" class="pthr-label">关键少数 ${threshold}%</text>
+      ${bars}
+      <path d="${line.trim()}" class="pline"/>
+      ${dots}
+    </svg></div>`;
+  }
+
+  /** 累计柏拉图卡：柱 + 累计折线 + 80% 参考线；L1（带 screen / pareto_kpi）可点击类型下钻。 */
+  function mfgParetoCard(UI, d, screen) {
+    const items = d.pareto || [];
+    if (!items.length) return "";
+    const threshold = d.pareto_threshold || 80;
+    // cum_share：后端已算（L1 与 L3 同源口径）；离线演示数据缺省时按 share 就地累积
+    let acc = 0;
+    const list = items.map((x) => {
+      const share = x.share === undefined ? 0 : x.share;
+      acc = x.cum_share === undefined ? Math.round((acc + share) * 10) / 10 : x.cum_share;
+      return { name: x.name, value: x.value || 0, share: share, cum: acc };
+    });
+    const total = list.reduce((a, b) => a + b.value, 0) || 1;
+    const max = Math.max.apply(null, list.map((x) => x.value)) || 1;
+    // 关键少数 = 累计占比首达 threshold 的类型（含该项）；后端已给则直接采用
+    const vitalOf = (arr) => {
+      const out = [];
+      for (let i = 0; i < arr.length; i += 1) {
+        out.push(arr[i].name);
+        if (arr[i].cum >= threshold) break;
+      }
+      return out;
+    };
+    const vital = (d.pareto_vital && d.pareto_vital.length) ? d.pareto_vital : vitalOf(list);
+    const drillable = !!(screen && d.pareto_kpi);
+    const rows = list.map((x, i) => {
+      const hot = vital.indexOf(x.name) >= 0;
+      const attrs = drillable
+        ? ` role="button" tabindex="0" data-drill-pareto="${UI.esc(x.name)}"`
+          + ` data-kpi="${UI.esc(d.pareto_kpi)}" data-screen="${UI.esc(d.screen || screen)}"`
+          + ` title="点击下钻：${UI.esc(x.name)} 的产线 · 型号分解"`
+        : ` title="${UI.esc(x.name)}：损失 ${UI.esc(x.value)} · 占比 ${UI.esc(x.share)}%`
+          + ` · 累计 ${UI.esc(x.cum)}%"`;
+      return `<div class="pareto-row${hot ? " vital" : ""}${drillable ? " drillable" : ""}"${attrs}>
+        <span class="pareto-no">${i + 1}</span>
+        <span class="pareto-name"${hot ? ` title="关键少数：累计占比首达 ${threshold}%"` : ""}
+          >${UI.esc(x.name)}</span>
+        <span class="pareto-bar"><i style="width:${((x.value / max) * 100).toFixed(1)}%"></i></span>
+        <span class="pareto-val">${UI.esc(x.value)}</span>
+        <span class="pareto-share">${UI.esc(x.share)}%</span>
+        <span class="pareto-cum">${UI.esc(x.cum)}%</span>
+      </div>`;
+    }).join("");
+    return `<div class="section-title">${UI.esc(d.pareto_label || "缺陷模式")}累计柏拉图
+        <span class="section-extra">按损失量降序 · 累计占比 = 前 N 类 ÷ 合计${drillable
+          ? " · 点类型下钻产线 · 型号分解" : ""}</span></div>
+      <div class="card">
+        <div class="card-head">
+          <div class="card-title">${UI.icon("list", 16)}${UI.esc(d.pareto_label || "缺陷模式")}累计柏拉图</div>
+          <div class="card-extra">合计 ${total} · 关键少数 ${vital.length} 类 · 累计 ≥ ${threshold}%</div>
+        </div>
+        ${mfgParetoChart(UI, list, max, threshold, vital.length)}
+        <div class="pareto-head">
+          <span class="pareto-no">#</span><span class="pareto-name">类型</span>
+          <span class="pareto-bar">损失量</span><span class="pareto-val">数量</span>
+          <span class="pareto-share">占比</span><span class="pareto-cum">累计</span>
+        </div>
+        <div class="pareto-list">${rows}</div>
+      </div>`;
+  }
+
+  /** 下钻 hero 卡（3/4/5 级共用）：大字值 + 状态 + 口径 + 去问数。 */
+  function mfgDrillHero(UI, d, title) {
+    const delta = (d.delta > 0 ? "+" : "") + d.delta;
+    return `<div class="card drill-hero-card">
+        <div class="drill-hero">
+          <div class="drill-hero-main">
+            <div class="drill-hero-label">${UI.esc(title || "")}</div>
+            <div class="drill-hero-value"><span class="big ${UI.esc(d.status)}">${UI.esc(d.value)}</span>
+              <span class="stat-unit">${UI.esc(d.unit)}</span></div>
+            <div class="drill-hero-sub">目标 ${UI.esc(d.target)}${UI.esc(d.unit)} · 偏差 ${UI.esc(delta)}pt
+              · 分子 ÷ 分母 ${UI.esc(d.numerator)} ÷ ${UI.esc(d.denominator)}</div>
+          </div>
+          <div class="drill-hero-side">
+            ${UI.badge(MFG_STATUS_CN[d.status] || d.status, MFG_BADGE[d.status] || "badge-gray")}
+            <div class="drill-def">${UI.icon("info", 12)}<span>${UI.esc(d.definition || "")}</span></div>
+          </div>
+        </div>
+        <div class="drill-hero-ops">
+          <button class="row-ask" data-ask="${UI.esc(d.ask || "")}"
+            title="跳转协同问数：${UI.esc(d.ask || "")}">${UI.icon("chat", 12)} 去问数</button>
+        </div>
+      </div>`;
+  }
+
+  /** 逐日明细卡（3/4/5 级共用）。 */
+  function mfgDailyCard(UI, d, title) {
+    const rows = (d.daily || []).map((x) => `<tr>
+      <td>${UI.esc(x.date)}</td>
+      <td class="num">${x.numerator === null ? "—" : UI.esc(x.numerator)}</td>
+      <td class="num">${x.denominator === null ? "—" : UI.esc(x.denominator)}</td>
+      <td class="drill-val ${UI.esc(x.status)}">${x.value === null ? "—" : UI.esc(x.value) + UI.esc(d.unit)}</td>
+    </tr>`).join("");
+    return `<div class="section-title">${UI.esc(title || "逐日明细（最近 7 天 · 演示窗口）")}</div>
+      <div class="card"><table class="std-table drill-table">
+        <thead><tr><th>日期</th><th>分子</th><th>分母</th><th>值</th></tr></thead>
+        <tbody>${rows || `<tr><td colspan="4" class="empty-cell">暂无逐日数据</td></tr>`}</tbody></table></div>`;
+  }
+
+  /** 关联原始记录卡（3/4/5 级共用）。 */
+  function mfgRecordCard(UI, d, extra) {
+    const cols = d.columns || [];
+    const head = cols.map((c) => `<th>${UI.esc(c.label)}</th>`).join("");
+    const rows = (d.records || []).map((r) => `<tr>${cols.map((c) => {
+      const v = r[c.key];
+      return `<td>${v === null || v === undefined || v === "" ? "—" : UI.esc(v)}</td>`;
+    }).join("")}</tr>`).join("");
+    return `<div class="section-title">关联原始记录
+        <span class="section-extra">${UI.esc(extra || "最多 5 条 · 与聚合同源")}</span></div>
+      <div class="card">${rows ? `<div class="drill-scroll"><table class="std-table drill-table">
+        <thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table></div>`
+        : `<div class="empty">${UI.icon("warn", 22)}<div style="margin-top:8px">无原始记录（离线演示数据不含明细）</div></div>`}</div>`;
+  }
+
+  /** L2：指标按维度全量分解表（序号/实体/值/目标/状态/分子÷分母/趋势/问数）。
+   *  ``terminal``（不良类型下钻）为类型维度终点视图：行不再下钻实体，仅保留问数。 */
+  function mfgDrillL2Body(UI, d) {
+    const term = !!d.terminal;
+    const rows = (d.rows || []).map((r) => {
+      const tone = MFG_TONE[r.status] || "blue";
+      const ent = drillEntity(r);
+      const rowAttrs = term
+        ? ` title="${UI.esc(r.name)}：${UI.esc(r.value)}${UI.esc(d.unit)}`
+          + ` · ${UI.esc(r.numerator)} ÷ ${UI.esc(r.denominator)}"`
+        : ` role="button" tabindex="0" data-drill-entity="${UI.esc(ent)}"`
+          + ` data-kpi="${UI.esc(d.kpi)}" data-screen="${UI.esc(d.screen)}"`
+          + ` title="点击查看「${UI.esc(r.name)}」逐日明细"`;
+      return `<tr class="drill-row"${rowAttrs}>
+        <td class="drill-no"><span class="rank-no">${UI.esc(r.rank)}</span></td>
+        <td class="drill-name">${r.status === "danger" ? UI.icon("warn", 12) : ""}${UI.esc(r.name)}</td>
+        <td class="drill-val ${UI.esc(r.status)}">${UI.esc(r.value)}${UI.esc(d.unit)}</td>
+        <td class="drill-dim">${UI.esc(d.target)}${UI.esc(d.unit)}</td>
+        <td>${UI.badge(MFG_STATUS_CN[r.status] || r.status, MFG_BADGE[r.status] || "badge-gray")}</td>
+        <td class="drill-frac">${UI.esc(r.numerator)} ÷ ${UI.esc(r.denominator)}</td>
+        <td class="drill-spark">${mfgSpark(r.trend, tone)}</td>
+        <td class="drill-op"><button class="row-ask" data-ask="${UI.esc(d.ask || "")}"
+            title="跳转协同问数：${UI.esc(d.ask || "")}">${UI.icon("chat", 11)}问数</button></td>
+      </tr>`;
+    }).join("");
+    return `<div class="section-title">${UI.esc(d.label)}${d.defect_type
+        ? ` · ${UI.esc(d.pareto_label || "不良类型")}「${UI.esc(d.defect_type)}」` : ""} · 按${UI.esc(d.dimension)}分解
+        <span class="section-extra">共 ${(d.rows || []).length} 项 · ${term
+          ? "该不良类型下的明细 · 返回看板可切换类型" : "点行看逐日明细 · 行内「问数」可跳协同问数"}</span></div>
+      <div class="card">
+        <div class="card-head">
+          <div class="card-title">${UI.icon("list", 16)}${UI.esc(d.label)} · 明细分解</div>
+          <div class="card-extra">目标 ${UI.esc(d.target)}${UI.esc(d.unit)}</div>
+        </div>
+        ${rows ? `<div class="drill-scroll"><table class="std-table drill-table">
+          <thead><tr><th>序号</th><th>${UI.esc(d.dimension)}</th><th>值</th><th>目标</th>
+            <th>状态</th><th>分子 ÷ 分母</th><th>7 日趋势</th><th>操作</th></tr></thead>
+          <tbody>${rows}</tbody></table></div>`
+        : `<div class="empty">${UI.icon("warn", 22)}<div style="margin-top:8px">${term
+          ? "该不良类型在统计窗口内无明细记录" : "该指标暂无分组明细"}</div></div>`}
+        <div class="drill-def">${UI.icon("info", 12)}<span>口径：${UI.esc(d.definition || "")}</span></div>
+      </div>`;
+  }
+
+  /** L3：单实体明细（工段·工序分解 + 工位明细 + 帕累托 + 逐日 + 原始记录）。 */
+  function mfgDrillL3Body(UI, d) {
+    return mfgDrillHero(UI, d, (d.entity && d.entity.name) || "")
+      + mfgStageCard(UI, d)
+      + mfgStationCard(UI, d)
+      + mfgParetoCard(UI, d)
+      + mfgDailyCard(UI, d)
+      + mfgRecordCard(UI, d, "最多 5 条 · 与聚合同源");
+  }
+
+  /** L4：单工序明细（该工序工位表 + 逐日 + 过站记录）。 */
+  function mfgDrillL4Body(UI, d) {
+    return mfgDrillHero(UI, d, (d.parent && d.parent.name) || "")
+      + mfgStationCard(UI, d, "该工序工位明细", "点工位行下钻到逐日 + 过站记录", true)
+      + mfgDailyCard(UI, d, "该工序逐日明细（最近 7 天）")
+      + mfgRecordCard(UI, d, "该工序过站记录 · 最多 20 条");
+  }
+
+  /** L5：单工位明细（班次对比 + 逐日 + 过站记录）。 */
+  function mfgDrillL5Body(UI, d) {
+    return mfgDrillHero(UI, d, (d.parent && d.parent.name) || "")
+      + mfgShiftCard(UI, d)
+      + mfgDailyCard(UI, d, "该工位逐日明细（最近 7 天）")
+      + mfgRecordCard(UI, d, "该工位过站记录 · 最多 20 条");
+  }
+
+  /**
+   * 离线降级：不良类型下钻（L1 累计柏拉图点击）。
+   * 演示数据没有「不良类型 × 产线·型号」交叉表，故按 TOP5 明细的不良数占比把该类型
+   * 损失量分摊到各产线 · 型号（最大余数法，各行之和恒等于该类型总量），并标注为演示口径。
+   */
+  function mfgParetoFallback(ctx, drill, reason) {
+    const q = (ctx.DEMO.DASHBOARD || {}).quality || {};
+    const ranking = (q.rankings || [])[0] || {};
+    const kpi = (q.kpis || []).find((k) => k.key === "defect_rate") || {};
+    const hitType = (q.pareto || []).find((x) => x.name === drill.defectType);
+    const baseRows = (ranking.items || []).filter((r) => (r.numerator || 0) > 0);
+    if (!hitType || !baseRows.length) return null;
+    const totalDefect = baseRows.reduce((a, b) => a + b.numerator, 0) || 1;
+    const raw = baseRows.map((r) => (hitType.value * r.numerator) / totalDefect);
+    const alloc = raw.map((v) => Math.floor(v));
+    let rest = hitType.value - alloc.reduce((a, b) => a + b, 0);
+    raw.map((v, i) => ({ i: i, frac: v - Math.floor(v) }))
+      .sort((a, b) => b.frac - a.frac)
+      .forEach((x) => { if (rest > 0) { alloc[x.i] += 1; rest -= 1; } });
+    const rows = baseRows.map((r, i) => {
+      const value = Math.round((1000 * alloc[i]) / (r.denominator || 1)) / 10;
+      return Object.assign({}, r, {
+        value: value, numerator: alloc[i], trend: [],
+        status: mfgStatusOf(value, ranking.target, !!ranking.higher_is_better),
+      });
+    }).filter((r) => r.numerator > 0)
+      .sort((a, b) => b.value - a.value)
+      .map((r, i) => Object.assign(r, { rank: i + 1 }));
+    return {
+      screen: "quality", kpi: "defect_rate", level: 2, kind: "pareto",
+      terminal: true, defect_type: drill.defectType, pareto_label: "不良类型",
+      label: ranking.label || "不良率", unit: ranking.unit || "%",
+      target: ranking.target || 2.0, higher_is_better: !!ranking.higher_is_better,
+      dimension: "产线 · 型号", definition: kpi.definition || "", ask: kpi.ask || "",
+      window: q.window, rows: rows, degraded: true,
+      degraded_reason: reason || "演示数据（该类型损失量按 TOP5 不良数占比分摊）",
+    };
+  }
+
+  /** 离线降级：L2 取 DEMO.DASHBOARD.drill[screen][kpi]；L3 从该 L2 行定位实体；
+   *  L4/L5 由该行自带的 offline 工段/工序/工位分解裁剪而来（后端离线也能演示）。 */
+  function mfgDrillFallback(ctx, drill, reason) {
+    // 不良类型下钻：演示数据无该维度交叉表 → 走分摊构造
+    if ((drill.level || 2) === 2 && drill.defectType) {
+      return mfgParetoFallback(ctx, drill, reason);
+    }
+    const all = ((ctx.DEMO.DASHBOARD || {}).drill || {});
+    const l2 = (all[drill.screen] || {})[drill.kpi];
+    if (!l2) return null;
+    if ((drill.level || 2) === 2) return l2;
+    const e = drill.entity || {};
+    const hit = (l2.rows || []).find((r) => {
+      const re = r.entity || {};
+      if (e.wo) return (r.wo || re.wo) === e.wo;
+      // SPC：特性 / 不良类型维度（L2 行 entity 与 backend entity_cols 一致）
+      if (e.characteristic) return (re.characteristic || r.characteristic) === e.characteristic;
+      if (e.defect_type) return (re.defect_type || r.defect_type) === e.defect_type;
+      if (e.customer) {
+        const rc = re.customer || r.customer || "";
+        const rl = re.level || r.level || "";
+        return rc === e.customer && (!e.level || rl === e.level);
+      }
+      if (e.model) {
+        const rm = re.model || r.model || "";
+        const rline = re.line || r.line || "";
+        return rm === e.model && (!e.line || rline === e.line);
+      }
+      return false;
+    });
+    if (!hit) return null;
+    const base = Object.assign({}, l2, {
+      level: 3, degraded_reason: reason || "演示数据",
+      entity: Object.assign({ name: hit.name, line: hit.line || "",
+                              model: hit.model || "", wo: hit.wo || "" }, hit.entity || {}),
+      value: hit.value, numerator: hit.numerator, denominator: hit.denominator,
+      status: hit.status, delta: Math.round((hit.value - l2.target) * 10) / 10,
+      stages: hit.stages || [], stations: hit.stations || [],
+      pareto: hit.pareto || [], pareto_label: hit.pareto_label || "缺陷模式",
+      daily: hit.daily || [], records: hit.records || [], columns: hit.columns || [],
+    });
+    const lvl = drill.level || 3;
+    if (lvl === 3) return base;
+    const stepName = drill.step || "";
+    const stepDef = (base.stages || []).map((st) => (st.steps || []).find((sp) => sp.step === stepName))
+      .find((x) => x);
+    if (!stepDef) return null;
+    const ent = base.entity;
+    const stepStations = (base.stations || []).filter((s) => s.step === stepName);
+    const sum = (arr, k) => arr.reduce((a, b) => a + (b[k] || 0), 0);
+    const agg = (arr, fb) => (arr.length
+      ? { num: sum(arr, "num"), den: sum(arr, "den") } : { num: fb.num, den: fb.den });
+    const mk = (n, d) => {
+      const v = d ? Math.round(1000 * n / d) / 10 : 0;
+      return Object.assign({}, base, {
+        entity: ent, numerator: n, denominator: d, value: v,
+        status: mfgStatusOf(v, base.target, base.higher_is_better),
+      });
+    };
+    if (lvl === 4) {
+      const a = agg(stepStations, { num: stepDef.num, den: stepDef.den });
+      const p = mk(a.num, a.den);
+      p.level = 4; p.stations = stepStations;
+      p.shifts = [];
+      p.parent = { stage: stepDef.stage, step: stepName, station: "",
+                   name: [stepDef.stage, stepName].filter((x) => x).join(" · ") };
+      p.step = stepDef;
+      return p;
+    }
+    const sno = drill.station || "";
+    const rows = stepStations.filter((s) => s.station_no === sno);
+    if (!rows.length) return null;
+    const a = agg(rows, { num: stepDef.num, den: stepDef.den });
+    const p = mk(a.num, a.den);
+    const byShift = {};
+    rows.forEach((s) => { (byShift[s.shift] = byShift[s.shift] || []).push(s); });
+    p.level = 5; p.stations = rows;
+    p.shifts = Object.keys(byShift).map((sh) => {
+      const g = agg(byShift[sh], { num: 0, den: 0 });
+      const v = g.den ? Math.round(1000 * g.num / g.den) / 10 : 0;
+      return { shift: sh, num: g.num, den: g.den, value: v,
+               status: mfgStatusOf(v, base.target, base.higher_is_better) };
+    });
+    p.station = rows[0];
+    p.parent = { stage: stepDef.stage, step: stepName, station: sno,
+                 name: [stepDef.stage, stepName, sno].filter((x) => x).join(" · ") };
+    p.step = stepDef;
+    return p;
+  }
+
+  /** 看板下钻状态写入并重渲染（挂 screenState，重渲染不丢；制造 / 订单履约共用）。 */
+  function setDrill(ctx, next) {
+    ctx.state.screenState.boardDrill = next;
+    ctx.refreshScreen();
+  }
+
+  /** 返回上一级：L5 → L4 → L3 → L2 → L1（看板首页）。 */
+  function backDrill(ctx) {
+    const st = ctx.state.screenState;
+    const cur = st.boardDrill;
+    if (!cur) return;
+    const host = cur.host || "";   // 保留宿主（我的看板内联下钻 / 看板内下钻）
+    const lvl = cur.level || 2;
+    if (lvl >= 5) {
+      st.boardDrill = { level: 4, host: host, screen: cur.screen, kpi: cur.kpi,
+                        entity: cur.entity, step: cur.step };
+    } else if (lvl === 4) {
+      st.boardDrill = { level: 3, host: host, screen: cur.screen, kpi: cur.kpi, entity: cur.entity };
+    } else if (lvl === 3) {
+      st.boardDrill = { level: 2, host: host, screen: cur.screen, kpi: cur.kpi };
+    } else {
+      st.boardDrill = null;
+    }
+    ctx.refreshScreen();
+  }
+
+  /** 绑定看板下钻交互：data-kpi → L2；data-drill-entity → L3；
+   *  data-drill-step → L4（带 data-drill-station 则 L5）；行内「问数」→ 协同问数。 */
+  function mfgBind(ctx, box, payload, host) {
+    const h = host || "";   // 宿主透传：我的看板内联下钻时回写 dashboard，保证返回/再下钻不串屏
+    box.querySelectorAll("[data-ask]").forEach((btn) => {
+      btn.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        const q = btn.dataset.ask;
+        if (!q) return;
+        try { sessionStorage.setItem("chat_prefill", q); } catch (e) { /* 隐私模式忽略 */ }
+        ctx.navigate("chat");
+      });
+    });
+    const entOf = (el) => {
+      try { return JSON.parse(el.dataset.drillEntity || "{}"); } catch (e) { return {}; }
+    };
+    const goL2 = (el) => () => setDrill(ctx, {
+      level: 2, host: h, screen: el.dataset.screen, kpi: el.dataset.kpi,
+    });
+    const goL3 = (el) => () => setDrill(ctx, {
+      level: 3, host: h, screen: el.dataset.screen, kpi: el.dataset.kpi, entity: entOf(el),
+    });
+    const goL4L5 = (el) => () => {
+      const station = el.dataset.drillStation || "";
+      setDrill(ctx, {
+        level: station ? 5 : 4, host: h, screen: el.dataset.screen, kpi: el.dataset.kpi,
+        entity: entOf(el), step: el.dataset.drillStep || "", station: station,
+      });
+    };
+    // L1 累计不良柏拉图 → 不良类型下钻（类型维度 L2，行不再下钻实体）
+    const goPareto = (el) => () => setDrill(ctx, {
+      level: 2, host: h, screen: el.dataset.screen, kpi: el.dataset.kpi,
+      defectType: el.dataset.drillPareto || "",
+    });
+    const keyGo = (fn) => (ev) => {
+      if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); fn(); }
+    };
+    box.querySelectorAll("[data-drill-pareto]").forEach((el) => {
+      const fn = goPareto(el);
+      el.addEventListener("click", fn);
+      el.addEventListener("keydown", keyGo(fn));
+    });
+    // 仅 KPI 卡走 L2；带 data-drill-entity 的行（L1 TOP5 / L2 明细行）一律直下 L3
+    box.querySelectorAll("[data-kpi]:not([data-drill-entity]):not([data-drill-pareto])")
+      .forEach((el) => {
+        const fn = goL2(el);
+        el.addEventListener("click", fn);
+        el.addEventListener("keydown", keyGo(fn));
+      });
+    // 工序行 / 工位行带 data-drill-step，优先绑定（避免被下面的 L3 绑定覆盖）
+    box.querySelectorAll("[data-drill-step]").forEach((el) => {
+      const fn = goL4L5(el);
+      el.addEventListener("click", fn);
+      el.addEventListener("keydown", keyGo(fn));
+    });
+    box.querySelectorAll("[data-drill-entity]:not([data-drill-step])").forEach((el) => {
+      const fn = goL3(el);
+      el.addEventListener("click", fn);
+      el.addEventListener("keydown", keyGo(fn));
+    });
+  }
+
+  /**
+   * 下钻数据加载（真实优先 + 演示降级，全程不抛）：
+   * 无 entity = L2（按维度全量分解）；有 entity = L3（单实体 + 工段/工序/工位）；
+   * 再带 step = L4（该工序）；再带 station = L5（该工位）。
+   */
+  async function loadMfgDrill(ctx, drill) {
+    const UI = ctx.UI;
+    const cfg = boardCfgOf(drill);
+    const box = document.getElementById(cfg.body);
+    if (!box) return;
+    const lvl = drill.level || 2;
+    const entity = lvl >= 3 ? (drill.entity || {}) : null;
+    const step = lvl >= 4 ? (drill.step || "") : "";
+    const station = lvl >= 5 ? (drill.station || "") : "";
+    const defectType = lvl === 2 ? (drill.defectType || "") : "";
+    let payload = null, source = "real", reason = "";
+
+    if (ctx.api.online()) {
+      try {
+        const d = await ctx.api.dashboardDrill(drill.screen, drill.kpi, entity, step,
+                                               station, defectType);
+        // 不良类型下钻：后端权威（空行也是有效答案），不因 0 行退回演示数据
+        const okLvl = d && d.level === lvl
+          && (lvl === 2 ? ((d.rows || []).length > 0 || !!d.defect_type) : !!d.entity);
+        if (d && !d.degraded && okLvl) {
+          payload = d;
+        } else {
+          reason = (d && d.degraded_reason) || "后端数据降级";
+        }
+      } catch (err) {
+        reason = "后端请求失败：" + (err && err.message ? err.message : "未知错误");
+        UI.toast("下钻数据请求失败，已切换演示数据", "warn", 3600);
+      }
+    } else {
+      reason = "后端离线 · 演示数据（口径与真实链路一致）";
+    }
+
+    if (!payload) {
+      source = "demo";
+      payload = mfgDrillFallback(ctx, drill, reason);
+    }
+    if (!payload) {
+      box.innerHTML = `<div class="empty">${UI.icon("warn", 28)}<div style="margin-top:8px">暂无明细数据</div></div>`;
+      return;
+    }
+
+    const winEl = document.getElementById(cfg.win);
+    if (winEl && payload.window) {
+      winEl.textContent = `${payload.window.label}（${payload.window.start} ~ ${payload.window.end}）`;
+    }
+    const flagEl = document.getElementById(cfg.flag);
+    if (flagEl) flagEl.innerHTML = source === "demo"
+      ? UI.demoFlag(reason || "演示数据") : UI.realFlag("真实链路");
+
+    const crumbEl = document.getElementById(cfg.crumb);
+    if (crumbEl) {
+      crumbEl.innerHTML = mfgCrumbHtml(UI, payload, cfg.name);
+      const back = crumbEl.querySelector("[data-crumb-back]");
+      if (back) back.addEventListener("click", () => backDrill(ctx));
+    }
+
+    const bodyOf = {
+      2: mfgDrillL2Body, 3: mfgDrillL3Body, 4: mfgDrillL4Body, 5: mfgDrillL5Body,
+    }[payload.level] || mfgDrillL2Body;
+    box.innerHTML = bodyOf(UI, payload);
+    mfgBind(ctx, box, payload, drill.host);
   }
 
   function render_mfgboard(root, ctx) {
@@ -2452,6 +3729,12 @@
     const st = ctx.state.screenState;
     const tab = st.mfgTab === "quality" ? "quality" : "manufacturing";
     const isQ = tab === "quality";
+    // 下钻状态只在同 Tab 内有效；换 Tab / 换屏复位
+    let drill = st.boardDrill;
+    // 仅本屏下钻有效；其它看板/工作台内联下钻残留一律复位
+    if (drill && (drill.screen !== tab || drill.host === "dashboard")) {
+      drill = null; st.boardDrill = null;
+    }
 
     root.innerHTML = `
       <div class="content-inner">
@@ -2466,6 +3749,7 @@
           <button class="chip${isQ ? "" : " active"}" data-tab="manufacturing">${UI.icon("cpu", 14)}制造看板</button>
           <button class="chip${isQ ? " active" : ""}" data-tab="quality">${UI.icon("shield", 14)}品质看板</button>
         </div>
+        <div id="mfg-crumb"></div>
         <div id="mfg-body">
           <div class="empty">${UI.spinner("lg")}<div style="margin-top:10px">正在加载看板数据…</div></div>
         </div>
@@ -2475,11 +3759,13 @@
       btn.addEventListener("click", () => {
         if (st.mfgTab === btn.dataset.tab) return;
         st.mfgTab = btn.dataset.tab;
+        st.boardDrill = null;   // 切换 Tab 复位下钻层级
         ctx.refreshScreen();
       });
     });
 
-    loadMfgDashboard(ctx, tab);
+    if (drill) loadMfgDrill(ctx, drill);
+    else loadMfgDashboard(ctx, tab);
   }
 
   /**
@@ -2497,8 +3783,7 @@
 
     if (ctx.api.online()) {
       try {
-        const resp = isQ ? await ctx.api.qualityDashboard() : await ctx.api.manufacturingDashboard();
-        const d = resp && resp.data;
+        const d = isQ ? await ctx.api.qualityDashboard() : await ctx.api.manufacturingDashboard();
         if (d && !d.degraded && (d.kpis || []).length) {
           payload = d;
         } else {
@@ -2532,15 +3817,176 @@
     if (genEl && payload.generated_at) genEl.textContent = " · 生成于 " + payload.generated_at;
 
     box.innerHTML = isQ ? mfgQualityBody(UI, payload) : mfgManufacturingBody(UI, payload);
+    // 主体点击 = 就地看明细（L2/L3）；卡内/行内「问数」按钮 = 跳协同问数
+    mfgBind(ctx, box, payload);
+  }
 
-    box.querySelectorAll("[data-ask]").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const q = btn.dataset.ask;
-        if (!q) return;
-        try { sessionStorage.setItem("chat_prefill", q); } catch (e) { /* 隐私模式忽略 */ }
-        ctx.navigate("chat");
-      });
-    });
+  /* ============================================================
+   * 屏幕七：SPC 过程能力看板（逐特性 Cpk 判定 + 越限预警 + 不良柏拉图）
+   * ============================================================ */
+
+  // 判定 verdict → 视觉 tone（与后端 _verdict_status 同口径）
+  const SPC_VERDICT = { "合格": "ok", "偏低": "warn", "不合格": "danger", "不可判定": "empty" };
+
+  /** L1 正文：逐特性 KPI 卡 + 过程能力明细 + 不良柏拉图 + TOP5 + 口径说明。 */
+  function spcBody(UI, d) {
+    const grid = (d.kpis || []).length >= 4 ? "grid grid-4" : "grid grid-3";
+
+    const kpiHtml = `<div class="section-title">过程能力（逐特性 Cpk）
+        <span class="section-extra">点卡片看该特性原始记录 · 卡内「问数」可跳协同问数</span></div>
+      <div class="${grid}">${(d.kpis || []).map((k) => mfgKpiCard(UI, k, "spc", k.entity)).join("")}</div>`;
+
+    const rankHtml = (d.rankings || []).length
+      ? `<div class="section-title">重点关注 TOP5 <span class="section-extra">最需关注的最差 5 名 · 点行看实体原始记录</span></div>
+      <div class="grid grid-2">${(d.rankings || []).map((r) => mfgRankCard(UI, r, "spc")).join("")}</div>` : "";
+
+    const gapHtml = d.data_gap
+      ? `<div class="card"><div class="kpi-def"><div class="kpi-def-row">${UI.icon("warn", 12)}
+          <span>存在数据缺口（缺测量值 / 缺规格限）的特性，其能力指数不可判定，未做编造。</span></div></div></div>` : "";
+
+    return kpiHtml + gapHtml + spcCapCard(UI, d.capabilities)
+      + spcParetoCard(UI, d.pareto) + rankHtml + mfgNotes(UI, d.notes);
+  }
+
+  /** 过程能力明细表：特性 / 判定 / Cp / Cpk / Pp / Ppk / σ组内 / σ整体 / 样本数 / 子组数 / 规格限；
+   *  行主体点击 = L3（该特性关联原始记录）；行内「问数」= 跳协同问数。 */
+  function spcCapCard(UI, caps) {
+    if (!(caps || []).length) return "";
+    const cell = (v) => (v === null || v === undefined ? "—" : UI.esc(v));
+    const rows = caps.map((c) => {
+      const tone = SPC_VERDICT[c.verdict] || "empty";
+      const spec = c.spec || {};
+      const specTxt = (spec.lsl == null && spec.usl == null) ? "—"
+        : `${spec.lsl == null ? "—" : spec.lsl} ~ ${spec.usl == null ? "—" : spec.usl}`;
+      const ent = { characteristic: c.characteristic };
+      const ask = `${c.characteristic} 的过程能力 Cpk 如何？是否需要加严检验或工程介入？`;
+      return `<tr class="drill-row" role="button" tabindex="0"
+              data-drill-entity="${UI.esc(JSON.stringify(ent))}" data-kpi="spc_capability" data-screen="spc"
+              title="点击查看「${UI.esc(c.characteristic)}」关联原始记录">
+        <td class="drill-name">${UI.esc(c.characteristic)}</td>
+        <td>${c.verdict ? UI.badge(c.verdict, MFG_BADGE[tone] || "badge-gray") : "—"}</td>
+        <td class="num">${cell(c.cp)}</td>
+        <td class="drill-val ${tone}">${cell(c.cpk)}</td>
+        <td class="num">${cell(c.pp)}</td>
+        <td class="num">${cell(c.ppk)}</td>
+        <td class="num">${cell(c.sigma_within)}</td>
+        <td class="num">${cell(c.sigma_overall)}</td>
+        <td class="num">${cell(c.n_total)}</td>
+        <td class="num">${cell(c.n_subgroups)}</td>
+        <td class="drill-dim">${UI.esc(specTxt)}</td>
+        <td class="drill-op"><button class="row-ask" data-ask="${UI.esc(ask)}"
+            title="跳转协同问数：${UI.esc(ask)}">${UI.icon("chat", 11)}问数</button></td>
+      </tr>`;
+    }).join("");
+    return `<div class="section-title">过程能力明细
+        <span class="section-extra">Cp/Cpk 用组内 σ · Pp/Ppk 用整体 σ · 判定：≥1.33 合格 / ≥1.00 偏低 / &lt;1.00 不合格</span></div>
+      <div class="card"><div class="drill-scroll"><table class="std-table drill-table">
+        <thead><tr><th>特性</th><th>判定</th><th>Cp</th><th>Cpk</th><th>Pp</th><th>Ppk</th>
+          <th>σ组内</th><th>σ整体</th><th>样本数</th><th>子组数</th><th>规格限</th><th>操作</th></tr></thead>
+        <tbody>${rows}</tbody></table></div></div>`;
+  }
+
+  /** 不良柏拉图：按不良数降序 + 占比条 + 累计占比；条目点击 = L3（该不良类型原始记录）。 */
+  function spcParetoCard(UI, pareto) {
+    const items = pareto || [];
+    if (!items.length) return "";
+    const max = Math.max.apply(null, items.map((x) => x.value || 0)) || 1;
+    const rows = items.map((x, i) => {
+      const ent = (x.entity && Object.keys(x.entity).length) ? x.entity : { defect_type: x.name };
+      const ask = x.ask || `最近7天「${x.name}」不良 ${x.value} 件、占比 ${x.share}%，如何降低该类缺陷？`;
+      return `<div class="pareto-row clickable" role="button" tabindex="0"
+              data-drill-entity="${UI.esc(JSON.stringify(ent))}" data-kpi="spc_pareto" data-screen="spc"
+              title="点击查看「${UI.esc(x.name)}」关联原始记录">
+        <span class="pareto-no">${i + 1}</span>
+        <span class="pareto-name">${UI.esc(x.name)}</span>
+        <span class="pareto-bar"><i style="width:${(((x.value || 0) / max) * 100).toFixed(1)}%"></i></span>
+        <span class="pareto-val">${UI.esc(x.value)}</span>
+        <span class="pareto-share">${UI.esc(x.share)}%</span>
+        <span class="pareto-cum">累计 ${UI.esc(x.cum_share)}%</span>
+        <button class="row-ask" data-ask="${UI.esc(ask)}"
+          title="跳转协同问数：${UI.esc(ask)}">${UI.icon("chat", 11)}问数</button>
+      </div>`;
+    }).join("");
+    return `<div class="section-title">不良柏拉图
+        <span class="section-extra">按不良数降序 · 占比 = 该类型 ÷ 合计 · 累计首达 80% 为关键少数</span></div>
+      <div class="card spc-pareto"><div class="pareto-list">${rows}</div></div>`;
+  }
+
+  function render_spc(root, ctx) {
+    const UI = ctx.UI;
+    const st = ctx.state.screenState;
+    // 下钻状态只在本屏有效；从其它看板进入时复位
+    let drill = st.boardDrill;
+    if (drill && (drill.screen !== "spc" || drill.host === "dashboard")) {
+      drill = null; st.boardDrill = null;
+    }
+
+    root.innerHTML = `
+      <div class="content-inner">
+        <div class="page-head">
+          <div class="page-title">${UI.icon("spc", 20)}SPC 过程能力看板
+            ${UI.badge("Cpk / Pp / Ppk · 判定与越限预警", "badge-blue")}</div>
+          <div class="page-desc">逐特性过程能力指数（双西格玛口径）· 越限预警三级下钻（特性 / 不良类型）· 不良柏拉图关键少数。
+            <span id="spc-window">统计窗口加载中…</span>
+            <span id="spc-flag"></span><span id="spc-gen" class="mfg-gen"></span></div>
+        </div>
+        <div id="spc-crumb"></div>
+        <div id="spc-body">
+          <div class="empty">${UI.spinner("lg")}<div style="margin-top:10px">正在加载看板数据…</div></div>
+        </div>
+      </div>`;
+
+    if (drill) loadMfgDrill(ctx, drill);
+    else loadSpcDashboard(ctx);
+  }
+
+  /**
+   * SPC 看板 L1 数据加载（真实优先 + 演示降级，全程不抛）：
+   * 在线且未降级 → /api/v2/dashboard/spc；否则 → DEMO.SPC_DASHBOARD（与接口同构）。
+   */
+  async function loadSpcDashboard(ctx) {
+    const UI = ctx.UI;
+    const cfg = BOARD_CFG.spc;
+    const box = document.getElementById(cfg.body);
+    if (!box) return;
+    let payload = null, source = "real", reason = "";
+
+    if (ctx.api.online()) {
+      try {
+        const d = await ctx.api.spcDashboard();
+        if (d && !d.degraded && (d.kpis || []).length) {
+          payload = d;
+        } else {
+          reason = (d && d.degraded_reason) || "后端数据降级";
+        }
+      } catch (err) {
+        reason = "后端请求失败：" + (err && err.message ? err.message : "未知错误");
+        UI.toast("看板数据请求失败，已切换演示数据", "warn", 3600);
+      }
+    } else {
+      reason = "后端离线 · 演示数据（口径与真实链路一致）";
+    }
+
+    if (!payload) {
+      source = "demo";
+      payload = ctx.DEMO.SPC_DASHBOARD;
+    }
+    if (!payload) {
+      box.innerHTML = `<div class="empty">${UI.icon("warn", 28)}<div style="margin-top:8px">暂无看板数据</div></div>`;
+      return;
+    }
+
+    const winEl = document.getElementById(cfg.win);
+    if (winEl && payload.window) {
+      winEl.textContent = `${payload.window.label}（${payload.window.start} ~ ${payload.window.end}）`;
+    }
+    const flagEl = document.getElementById(cfg.flag);
+    if (flagEl) flagEl.innerHTML = source === "demo" ? UI.demoFlag(reason || "演示数据") : UI.realFlag("真实链路");
+    const genEl = document.getElementById(cfg.gen);
+    if (genEl && payload.generated_at) genEl.textContent = " · 生成于 " + payload.generated_at;
+
+    box.innerHTML = spcBody(UI, payload);
+    mfgBind(ctx, box, payload);
   }
 
   /* ============================================================
@@ -2550,6 +3996,7 @@
   window.Screens = {
     render_dashboard,
     render_orders,
+    render_spc,
     render_chat,
     render_alerts,
     render_reports,

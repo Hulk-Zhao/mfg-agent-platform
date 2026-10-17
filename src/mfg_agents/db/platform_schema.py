@@ -55,6 +55,39 @@ PLATFORM_DDL = [
       updated_at TEXT NOT NULL
     )
     """,
+    # 签名事实表（会签/审批的独立落地表）：把"谁在什么角色上签了什么"从
+    # governance_json 内嵌数组提升为独立表，重复提交由 DB 唯一索引兜底——
+    # 进程内锁只能防单实例并发，唯一索引才能防多实例/多连接并发（见 README 生产化）。
+    """
+    CREATE TABLE IF NOT EXISTS wf_signoff (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      task_uid TEXT NOT NULL,
+      role_key TEXT NOT NULL,
+      role_name TEXT DEFAULT '',
+      actor TEXT NOT NULL DEFAULT '',
+      actor_id TEXT NOT NULL DEFAULT '',
+      actor_kind TEXT DEFAULT 'human',
+      verb TEXT NOT NULL DEFAULT 'cosign',
+      decision TEXT DEFAULT '',
+      comment TEXT DEFAULT '',
+      on_behalf_of TEXT,
+      overdue_signoff INTEGER DEFAULT 0,
+      ts TEXT NOT NULL
+    )
+    """,
+    # 幂等：同工单 + 同角色 + 同一人 + 同动作只能有一行（重复提交 → IntegrityError）。
+    """
+    CREATE UNIQUE INDEX IF NOT EXISTS ux_wf_signoff_role
+      ON wf_signoff (task_uid, role_key, actor, verb)
+    """,
+    # 一人一签（SoD）：同一自然人不得在同一工单内会签两次（跨角色也不行）。
+    # 判定用 actor_id（稳定用户标识），不按姓名——重名/改名/伪造姓名都不可靠。
+    # 当前仅落 cosign 行，故等价于 (task_uid, actor_id) 唯一；未来若把 approve/reject
+    # 也写入本表，需注意同一人重复终批会被该索引拦下（业务上是否允许需先定义）。
+    """
+    CREATE UNIQUE INDEX IF NOT EXISTS ux_wf_signoff_sod
+      ON wf_signoff (task_uid, actor_id, verb)
+    """,
 ]
 
 _METRIC_UPSERT = (

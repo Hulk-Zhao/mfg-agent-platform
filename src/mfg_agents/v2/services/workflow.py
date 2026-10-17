@@ -125,10 +125,10 @@ TRANSITIONS: dict[str, set[str]] = {
 
 TERMINAL_STATUSES = {"done", "closed"}
 
-# 治理层支持的 7 个 HITL 槽位（与 v2/data/permissions.yaml 的 slots 对齐）
+# 治理层支持的 8 个 HITL 槽位（与 v2/data/permissions.yaml 的 slots 对齐）
 GOVERNANCE_SLOTS: frozenset[str] = frozenset({
     "restart", "eta", "disposition", "d8_close", "complaint_reply",
-    "delivery_commit", "maintenance_window",
+    "delivery_commit", "maintenance_window", "spc_action",
 })
 
 
@@ -183,7 +183,7 @@ class WorkflowTask:
     def is_governed(self) -> bool:
         """是否启用治理校验（新工单 = 已知槽位 + 建单时携带处置动作）。
 
-        槽位不在 7 个合法槽位内时按"未纳管"处理（与老工单同路径），
+        槽位不在 8 个合法槽位内时按"未纳管"处理（与老工单同路径），
         避免脏数据在权限查询时抛错；纳管工单的槽位只可能来自本模块的归一化。
         """
         return self.slot in GOVERNANCE_SLOTS
@@ -613,11 +613,27 @@ class WorkflowEngine:
 
         驳回不要求会签齐备（会签未齐也可驳回止损），但仍校验岗位权限
         （持有该 slot 的 ``propose`` 或 ``approve`` 权限之一）。
+
+        受治理工单还强制**填写驳回理由**（非空）：
+
+        - 驳回是"退回整改"的决策，无理由等于盲批，既无法留痕审计，
+          也无法通知发起方要改什么——故在此fail-closed；
+        - 校验顺序为「先权限后理由」：无权限者仍返回 403，不泄露校验细节。
+
+        老工单（``governance`` 为空）保持原有宽松行为，向后兼容。
+
+        Raises:
+            PermissionDenied: 岗位无该 slot 的 propose/approve 权限（403）。
+            ValueError: 受治理工单驳回但未填写理由（API 400）。
         """
         task = self.get(task_uid)
         governance: Optional[dict[str, Any]] = None
         if task.is_governed():
             role_key = self._assert_reject_permission(task, role, user_ctx)
+            if not (comment or "").strip():
+                raise ValueError(
+                    "驳回必须填写理由（决策意见不能为空），"
+                    "以便写入工单留痕并通知发起方整改")
             governance = self._append_approval(
                 task, role_key, approver, "reject", comment,
                 actor_id=self._last_actor_id)

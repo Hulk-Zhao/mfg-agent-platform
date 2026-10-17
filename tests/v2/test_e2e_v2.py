@@ -167,3 +167,46 @@ def test_notification_service_levels():
         service.send("P9", ["x"], "t", "b")
     with pytest.raises(ValueError, match="目标"):
         service.send("P1", [], "t", "b")
+
+
+# ---------- 6. 审批可读性：工单 context 携带事因/流程进展/报告依据 ----------
+
+def test_hitl_task_context_carries_approval_summary(orchestrator):
+    """审批中心「审批摘要卡」数据面：事因 + 流程进展（含各域耗时）+ 上游报告依据。"""
+    from mfg_agents.v2.services.workflow import WorkflowEngine
+    orchestrator.handle(STOP_QUERY, USER_CTX)
+    engine = WorkflowEngine(settings.WORKFLOW_DB)
+    tasks = engine.pending_hitl()
+    assert tasks, "停线场景应产生 waiting_hitl 工单"
+
+    for t in tasks:
+        c = t.context
+        # 事因：一句话讲清为什么需要人工确认
+        assert c.get("reason"), f"{t.task_uid} 缺事因"
+        assert "现需人工确认" in c["reason"]
+        assert "SMT-1" in c["reason"] and "锡膏偏移" in c["reason"]
+        # 流程进展：已执行节点留痕 + 各域耗时 + 当前卡点
+        flow = c.get("flow") or {}
+        completed = flow.get("completed") or []
+        nodes = [item["node"] for item in completed]
+        assert "confirm_stop" in nodes and "fa" in nodes
+        assert all(isinstance(item.get("elapsed_ms"), (int, float))
+                   for item in completed)
+        assert flow["current"]["kind"] == "hitl"
+        # 报告依据：上游各域结论摘要
+        brief = c.get("brief") or []
+        assert any(b["label"] == "生产" for b in brief)
+        assert any(b["label"] == "FA 分析" for b in brief)
+
+
+def test_hitl_summary_helpers_without_flow(orchestrator):
+    """老工单/演示数据无 flow 字段时，摘要卡应优雅降级（不渲染、不报错）。"""
+    from mfg_agents.v2.agents.hitl import _brief_items, _flow_snapshot, _reason_line
+    from mfg_agents.v2.core.shared_context import SharedContext
+    from types import SimpleNamespace
+
+    ctx = SharedContext()
+    task = SimpleNamespace(entities={}, params={}, step_id="hitl_x")
+    assert _reason_line(ctx, task, "确认？") == "现需人工确认：确认？"
+    assert _flow_snapshot(ctx, "hitl_x", "确认？")["completed"] == []
+    assert _brief_items(ctx) == []

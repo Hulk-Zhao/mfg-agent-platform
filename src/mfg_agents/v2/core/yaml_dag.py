@@ -285,6 +285,9 @@ class YamlDagExecutor:
             with self._lock:
                 self._timings[sid] = round(elapsed_ms, 1)
                 self._status[sid] = str(out.get("status", "ok"))
+            # 节点留痕进共享上下文：供下游 HITL 节点快照「流程进展 / 各域耗时」
+            self.ctx.record_node(sid, label, domain,
+                                 str(out.get("status", "ok")), elapsed_ms)
             self._emit({"type": "agent_end", "node": sid, "label": label,
                         "summary": out.get("summary", ""),
                         "status": out.get("status", "ok"),

@@ -70,12 +70,15 @@
 
   <div class="toast-root" id="toast-root" aria-live="polite"></div>
 
-  <!-- defer：并行下载且不阻塞首屏渲染。顺序保持 demo-data → app → screens → help
+  <!-- defer：并行下载且不阻塞首屏渲染。顺序保持 demo-data → terms → app → screens → help
        （依赖前序定义）。app.js 内部已在 DOMContentLoaded 时 boot()（带 readyState 兜底），
        无需额外引导脚本。公网隧道下白屏从 ~12s 降到 ~4s（GZipMiddleware 生效后更短）。 -->
   <script defer src="demo-data.js?v=perf2"></script>
+  <script defer src="terms.js?v=perf2"></script>
   <script defer src="app.js?v=perf2"></script>
   <script defer src="screens.js?v=perf2"></script>
   <script defer src="./help-screen.js?v=perf2"></script>
+  <script defer src="./kb-screen.js?v=perf2"></script>
+  <script defer src="./office-screen.js?v=perf2"></script>
 </body>
 </html>

@@ -45,9 +45,9 @@ from mfg_agents.v2.services.workflow import (
 
 SCENARIO_DIR = Path(v2_pkg.__file__).resolve().parent / "scenarios"
 
-# 7 个合法 HITL 槽位（与 permissions.yaml 的 slots 一致）
+# 8 个合法 HITL 槽位（与 permissions.yaml 的 slots 一致；V3.6 增 spc_action）
 LEGAL_SLOTS = ["restart", "eta", "disposition", "d8_close", "complaint_reply",
-               "delivery_commit", "maintenance_window"]
+               "delivery_commit", "maintenance_window", "spc_action"]
 
 # ---------- 演示身份（user_ctx.roles 为权威角色来源） ----------
 SQE_CTX: dict[str, Any] = {"user_id": "u-sqe", "dept": "quality",
@@ -117,19 +117,33 @@ def _select_concession(engine: WorkflowEngine, uid: str) -> Any:
 
 
 def test_permission_catalog_shape():
-    """目录规模：21 条权限（7 slot × 3 verb）/ 15 角色 / 7 槽位。"""
+    """目录规模：24 条权限（8 slot × 3 verb）/ 15 角色 / 8 槽位。"""
     registry = get_permission_registry()
     describe = registry.describe()
-    assert len(describe["permissions"]) == 21
-    assert len(describe["slots"]) == 7
+    assert len(describe["permissions"]) == 24
+    assert len(describe["slots"]) == 8
     assert len(describe["roles"]) >= 14
     assert {p["key"] for p in describe["permissions"]} == {
         f"hitl.{slot}.{verb}"
         for slot in ("restart", "eta", "disposition", "d8_close",
-                     "complaint_reply", "delivery_commit", "maintenance_window")
+                     "complaint_reply", "delivery_commit", "maintenance_window",
+                     "spc_action")
         for verb in ("propose", "cosign", "approve")
     }
     assert DEFAULT_PERMISSIONS_PATH.is_file()
+
+
+def test_spc_action_holds_three_permissions():
+    """新增 8 号槽位 spc_action：propose/cosign/approve 三条权限均在目录与槽位内。"""
+    registry = get_permission_registry()
+    assert registry.slot("spc_action") is not None
+    assert "spc_action" in registry.slot_keys()
+    for verb in ("propose", "cosign", "approve"):
+        key = f"hitl.spc_action.{verb}"
+        assert registry.permission(key) is not None, key
+        assert key in registry.slot("spc_action").available_permissions
+    assert sorted(registry.slot("spc_action").available_permissions) == sorted(
+        f"hitl.spc_action.{verb}" for verb in ("propose", "cosign", "approve"))
 
 
 def test_normalize_role_aliases():
@@ -464,7 +478,27 @@ def test_reject_by_proposer_allowed(engine):
     """发起人（propose 权限）也可驳回。"""
     uid = _make_hitl_task(engine)
     _select_concession(engine, uid)
-    assert engine.reject(uid, "王倩", user_ctx=SQE_CTX).status == "closed"
+    assert engine.reject(uid, "王倩", user_ctx=SQE_CTX,
+                         comment="证据不足，退回补做 D8").status == "closed"
+
+
+def test_reject_requires_reason_on_governed_task(engine):
+    """受治理工单驳回必须填理由（含纯空白）→ ValueError（API 400），状态不变。"""
+    uid = _make_hitl_task(engine)
+    _select_concession(engine, uid)
+    with pytest.raises(ValueError, match="驳回必须填写理由"):
+        engine.reject(uid, "李静", user_ctx=QD_CTX)
+    with pytest.raises(ValueError, match="驳回必须填写理由"):
+        engine.reject(uid, "李静", user_ctx=QD_CTX, comment="   ")
+    assert engine.get(uid).status == "waiting_hitl"
+
+
+def test_reject_permission_checked_before_reason(engine):
+    """先权限后理由：无驳回权限者仍 403（不因漏填理由提前暴露校验细节）。"""
+    uid = _make_hitl_task(engine)
+    _select_concession(engine, uid)
+    with pytest.raises(PermissionDenied, match="驳回权限"):
+        engine.reject(uid, "周凯", user_ctx=WH_CTX)
 
 
 def test_reject_permission_denied(engine):
@@ -582,11 +616,28 @@ def _payload(user_ctx: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
     return body
 
 
+def _auth(user_ctx: dict[str, Any]) -> dict[str, str]:
+    """按测试身份签发访问令牌（F2 后 HITL 写接口只认 Bearer 令牌）。
+
+    直接用服务端签发函数，等价于「登录接口拿到的令牌」，避免每个用例都走一次
+    登录往返；令牌里的角色由服务端归一化，与旧 ``user_ctx.roles`` 语义一致。
+    """
+    from mfg_agents.v2.services.auth import issue_token
+
+    token, _ = issue_token(user_id=user_ctx["user_id"], name="",
+                           dept=user_ctx.get("dept", ""), roles=user_ctx["roles"])
+    return {"Authorization": f"Bearer {token}"}
+
+
+def _hitl(client: TestClient, path: str, ctx: dict[str, Any], **kwargs: Any):
+    """带令牌调用 HITL 写接口（不再用请求体声明身份）。"""
+    return client.post(path, json=_payload(ctx, **kwargs), headers=_auth(ctx))
+
+
 def test_api_select_action_and_pending_payload(api_client, engine):
     uid = _make_hitl_task(engine)
-    resp = api_client.post(f"/api/v2/workflow/{uid}/select-action",
-                           json=_payload(SQE_CTX, action_key="concession",
-                                         comment="加严检验"))
+    resp = _hitl(api_client, f"/api/v2/workflow/{uid}/select-action", SQE_CTX,
+                 action_key="concession", comment="加严检验")
     assert resp.status_code == 200, resp.text
     data = resp.json()["data"]
     assert data["governance"]["selected_action"] == "特采（让步接收）"
@@ -603,37 +654,34 @@ def test_api_status_codes(api_client, engine):
     uid = _make_hitl_task(engine)
 
     # 未选动作 approve → 409
-    resp = api_client.post(f"/api/v2/workflow/{uid}/approve", json=_payload(QD_CTX))
+    resp = _hitl(api_client, f"/api/v2/workflow/{uid}/approve", QD_CTX)
     assert resp.status_code == 409
     assert "先选定处置动作" in resp.json()["detail"]
 
     # 未选动作 cosign → 409
-    resp = api_client.post(f"/api/v2/workflow/{uid}/cosign", json=_payload(PQE_CTX))
+    resp = _hitl(api_client, f"/api/v2/workflow/{uid}/cosign", PQE_CTX)
     assert resp.status_code == 409
 
     # 选动作后：越权 select（仓库）→ 403
     uid2 = _make_hitl_task(engine)
-    resp = api_client.post(f"/api/v2/workflow/{uid2}/select-action",
-                           json=_payload(WH_CTX, action_key="concession",
-                                         comment="越权"))
+    resp = _hitl(api_client, f"/api/v2/workflow/{uid2}/select-action", WH_CTX,
+                 action_key="concession", comment="越权")
     assert resp.status_code == 403
     assert "SQE" in resp.json()["detail"]
 
     # require_comment 未填 → 400
-    resp = api_client.post(f"/api/v2/workflow/{uid2}/select-action",
-                           json=_payload(SQE_CTX, action_key="concession",
-                                         comment=""))
+    resp = _hitl(api_client, f"/api/v2/workflow/{uid2}/select-action", SQE_CTX,
+                 action_key="concession", comment="")
     assert resp.status_code == 400
     assert "决策依据" in resp.json()["detail"]
 
     # 正常选动作
-    resp = api_client.post(f"/api/v2/workflow/{uid2}/select-action",
-                           json=_payload(SQE_CTX, action_key="concession",
-                                         comment="加严检验"))
+    resp = _hitl(api_client, f"/api/v2/workflow/{uid2}/select-action", SQE_CTX,
+                 action_key="concession", comment="加严检验")
     assert resp.status_code == 200
 
     # 会签不齐 approve → 409 结构化 detail
-    resp = api_client.post(f"/api/v2/workflow/{uid2}/approve", json=_payload(QD_CTX))
+    resp = _hitl(api_client, f"/api/v2/workflow/{uid2}/approve", QD_CTX)
     assert resp.status_code == 409
     detail = resp.json()["detail"]
     assert detail["progress"] == "0/3"
@@ -641,28 +689,38 @@ def test_api_status_codes(api_client, engine):
     assert "会签未完成" in detail["message"]
 
     # 会签（PQE）→ 200，进度 1/3
-    resp = api_client.post(f"/api/v2/workflow/{uid2}/cosign", json=_payload(PQE_CTX))
+    resp = _hitl(api_client, f"/api/v2/workflow/{uid2}/cosign", PQE_CTX)
     assert resp.status_code == 200
     assert resp.json()["data"]["signoff_status"]["progress"] == "1/3"
 
     # 越权会签（仓库）→ 403
-    resp = api_client.post(f"/api/v2/workflow/{uid2}/cosign", json=_payload(WH_CTX))
+    resp = _hitl(api_client, f"/api/v2/workflow/{uid2}/cosign", WH_CTX)
     assert resp.status_code == 403
 
     # 无 approve 权限（仓库）→ 403
-    resp = api_client.post(f"/api/v2/workflow/{uid2}/approve", json=_payload(WH_CTX))
+    resp = _hitl(api_client, f"/api/v2/workflow/{uid2}/approve", WH_CTX)
     assert resp.status_code == 403
     assert "审批权限" in resp.json()["detail"]
 
+    # 驳回未填理由（受治理工单）→ 400，且工单状态不变
+    uid3 = _make_hitl_task(engine)
+    resp = _hitl(api_client, f"/api/v2/workflow/{uid3}/reject", QD_CTX)
+    assert resp.status_code == 400
+    assert "驳回必须填写理由" in resp.json()["detail"]
+    assert engine.get(uid3).status == "waiting_hitl"
+    # 驳回无权限者仍先 403（不因漏填理由提前暴露校验细节）
+    resp = _hitl(api_client, f"/api/v2/workflow/{uid3}/reject", WH_CTX)
+    assert resp.status_code == 403
+
     # 补全会签后终批 → 200
-    api_client.post(f"/api/v2/workflow/{uid2}/cosign", json=_payload(BIZ_CTX))
-    api_client.post(f"/api/v2/workflow/{uid2}/cosign", json=_payload(QA_CTX))
-    resp = api_client.post(f"/api/v2/workflow/{uid2}/approve", json=_payload(QD_CTX))
+    _hitl(api_client, f"/api/v2/workflow/{uid2}/cosign", BIZ_CTX)
+    _hitl(api_client, f"/api/v2/workflow/{uid2}/cosign", QA_CTX)
+    resp = _hitl(api_client, f"/api/v2/workflow/{uid2}/approve", QD_CTX)
     assert resp.status_code == 200
     assert resp.json()["data"]["status"] == "running"
 
     # 不存在的工单 → 404
-    resp = api_client.post("/api/v2/workflow/wf-not-exist/approve", json=_payload(QD_CTX))
+    resp = _hitl(api_client, "/api/v2/workflow/wf-not-exist/approve", QD_CTX)
     assert resp.status_code == 404
 
 
@@ -670,10 +728,77 @@ def test_api_governance_permissions_endpoint(api_client):
     resp = api_client.get("/api/v2/governance/permissions")
     assert resp.status_code == 200
     data = resp.json()["data"]
-    assert len(data["permissions"]) == 21
+    assert len(data["permissions"]) == 24
     assert {"restart", "eta", "disposition", "d8_close", "complaint_reply",
-            "delivery_commit", "maintenance_window"} == {
+            "delivery_commit", "maintenance_window", "spc_action"} == {
         s["key"] for s in data["slots"]}
+
+
+# ============================================================
+# 8.x 认证与岗位令牌门禁（F2）
+# ============================================================
+
+
+def test_login_issues_usable_token(api_client):
+    """岗位登录：签发令牌 + /auth/me 可用；岗位经服务端归一化。"""
+    resp = api_client.post("/api/v2/auth/login",
+                           json={"role": "sqe", "user_id": "u-sqe", "name": "刘强"})
+    assert resp.status_code == 200, resp.text
+    data = resp.json()["data"]
+    assert data["user_ctx"]["roles"] == ["sqe"]
+    assert data["token"]
+
+    me = api_client.get("/api/v2/auth/me",
+                        headers={"Authorization": f"Bearer {data['token']}"})
+    assert me.status_code == 200
+    assert me.json()["data"]["user_ctx"]["user_id"] == "u-sqe"
+
+
+def test_login_rejects_unknown_role(api_client):
+    """未知岗位不下发令牌（400），避免拿到「身份模糊」的通行证。"""
+    resp = api_client.post("/api/v2/auth/login", json={"role": "随便谁"})
+    assert resp.status_code == 400
+    assert "岗位未识别" in resp.json()["detail"]
+
+
+def test_write_endpoint_requires_token(api_client, engine):
+    """写接口无令牌 / 伪造令牌一律 401（消除「链接即权限」）。"""
+    uid = _make_hitl_task(engine)
+    resp = api_client.post(f"/api/v2/workflow/{uid}/approve", json=_payload(QD_CTX))
+    assert resp.status_code == 401
+    assert "访问令牌" in resp.json()["detail"]
+
+    forged = api_client.post(f"/api/v2/workflow/{uid}/approve", json=_payload(QD_CTX),
+                             headers={"Authorization": "Bearer Zm9yZ2Vk.c2ln"})
+    assert forged.status_code == 401
+    assert engine.get(uid).status == "waiting_hitl", "拒绝路径不得改变工单状态"
+
+
+def test_write_endpoint_rejects_expired_token(api_client, engine, monkeypatch):
+    """过期令牌 → 401。"""
+    from mfg_agents.v2.services import auth as auth_module
+
+    codec = auth_module.IdentityCodec("test-secret", ttl_s=60)
+    codec.ttl_s = -10                      # 生成 exp 已过期的载荷（格式不变）
+    monkeypatch.setattr(auth_module, "_CODEC", codec)
+
+    uid = _make_hitl_task(engine)
+    token, _ = codec.issue(user_id="u-qd", roles=["quality_director"])
+    resp = api_client.post(f"/api/v2/workflow/{uid}/approve", json=_payload(QD_CTX),
+                           headers={"Authorization": f"Bearer {token}"})
+    assert resp.status_code == 401
+    assert "过期" in resp.json()["detail"]
+
+
+def test_write_endpoint_ignores_forged_body_roles(api_client, engine):
+    """请求体里声明的角色彻底失效：令牌说仓库，体里就算自称 SQE 也无发起权。"""
+    uid = _make_hitl_task(engine)
+    resp = api_client.post(
+        f"/api/v2/workflow/{uid}/select-action",
+        json=_payload(SQE_CTX, action_key="concession", comment="越权"),
+        headers=_auth(WH_CTX))
+    assert resp.status_code == 403
+    assert "SQE" in resp.json()["detail"]
 
 
 # ============================================================
@@ -682,7 +807,12 @@ def test_api_governance_permissions_endpoint(api_client):
 
 
 def test_all_scenario_hitl_actions_are_governable():
-    """全部 7 个 HITL 节点的每个动作：propose/cosign 角色必须可识别且持有对应权限。"""
+    """8 个已纳管 HITL 节点的每个动作：propose/cosign 角色必须可识别且持有对应权限。
+
+    场景 YAML 的逐动作 propose/cosign 角色必须与 ``permissions.yaml`` 的槽位授权一致，
+    否则运行期会因「角色缺权限」而无法推进；本用例作为两套定义（场景 × 权限目录）
+    的防漂移闸门。
+    """
     registry = get_permission_registry()
     slots = {
         "hitl_restart": "restart",
@@ -692,6 +822,7 @@ def test_all_scenario_hitl_actions_are_governable():
         "hitl_complaint_reply": "complaint_reply",
         "hitl_delivery_commit": "delivery_commit",
         "hitl_maintenance_window": "maintenance_window",
+        "hitl_spc_action": "spc_action",
     }
     seen: set[str] = set()
     for yaml_file in sorted(SCENARIO_DIR.glob("*.yaml")):
@@ -815,8 +946,8 @@ def test_api_pending_role_query(api_client, engine):
     assert resp["scope"]["unknown"] == ["随便谁"]
 
     # 选动作后 PQE 的待办变为 cosign
-    api_client.post(f"/api/v2/workflow/{uid}/select-action",
-                    json=_payload(SQE_CTX, action_key="concession", comment="加严检验"))
+    _hitl(api_client, f"/api/v2/workflow/{uid}/select-action", SQE_CTX,
+          action_key="concession", comment="加严检验")
     resp = api_client.get("/api/v2/workflow/pending", params={"role": "pqe"}).json()
     assert resp["data"][0]["my_action"] == "cosign"
 
@@ -878,7 +1009,7 @@ def test_registry_rejects_agent_role_with_approve(tmp_path):
 
 
 def test_every_slot_declares_available_permissions():
-    """7 个槽位必须显式声明 3 个权限，且都存在于目录、归属本槽位。"""
+    """8 个槽位必须显式声明 3 个权限，且都存在于目录、归属本槽位。"""
     registry = get_permission_registry()
     assert sorted(registry.slot_keys()) == sorted(LEGAL_SLOTS)
     for slot_key in LEGAL_SLOTS:
@@ -906,14 +1037,14 @@ def test_slot_with_undeclared_permission_fails_at_load(tmp_path):
 
 
 def test_all_scenarios_hitl_slots_are_whitelisted():
-    """5 个真实场景的 7 个 HITL 节点，槽位全部落在白名单内。"""
+    """7 个真实场景的 9 个 HITL 节点，槽位全部落在白名单内。"""
     registry = get_permission_registry()
     scenario_registry = ScenarioRegistry(SCENARIO_DIR)
     loaded = scenario_registry.load()
     nodes: list[dict[str, str]] = []
     for meta in loaded.values():
         nodes.extend(scenario_registry.hitl_nodes(meta))
-    assert len(nodes) == 8, f"HITL 节点数应为 8，实际 {len(nodes)}: {nodes}"
+    assert len(nodes) == 9, f"HITL 节点数应为 9，实际 {len(nodes)}: {nodes}"
     for node in nodes:
         assert node["slot"] in registry.slot_keys(), node
     assert {n["slot"] for n in nodes} == set(LEGAL_SLOTS)

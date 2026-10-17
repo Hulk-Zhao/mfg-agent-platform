@@ -1,0 +1,80 @@
+# S6 SPC 过程能力异常预警（越限/能力不足 → 不良柏拉图取证 → HITL 处置决策 → 简报）
+#
+# 统一范式：entry(business) → 牵头域判定(spc_capability) →
+#   fan_out(condition=spc_alert, else=report_spc) → fan_in → hitl(spc_action 处置) → report。
+# 全部节点 on_error=degrade（离线可跑）；能力指数/柏拉图由 core/spc.py 纯函数计算（不编造），
+# 无测量值时 spc_capability 输出 data_gap 并令 spc_alert=True（诚实降级：缺数据也要人工确认）。
+key: spc_anomaly_v2
+name: SPC 过程能力异常预警
+version: 1
+domains: [quality, manufacturing]
+triggers:
+  - {type: keyword, words: [过程能力, Cpk, CPK, 能力指数, 越限, 控制图, 柏拉图, 尺寸超差]}
+  - {type: im_message}
+  - {type: event, topic: mfg.quality.spc.alert}
+entry: intake
+outputs: [spc_capability_result, spc_pareto_result, spc_action_ticket, internal_brief]
+
+hitl:
+  - {step: hitl_spc_action, approver_roles: [质量总监, 制造现场负责人], condition: "spc_alert"}
+
+steps:
+  # 1) 业务意图识别（复用 V1 business_agent）
+  - id: intake
+    type: agent
+    agent: business
+    label: 业务Agent · 意图识别
+    icon: "🧠"
+    timeout_s: 10
+    on_error: degrade
+
+  # 2) 过程能力判定（spc_measurement 取数 → 双西格玛 Cp/Cpk/Pp/Ppk 判定；缺数据诚实降级）
+  - id: spc_capability
+    type: agent
+    agent: spc_capability
+    label: PQE · 过程能力判定
+    icon: "📊"
+    timeout_s: 30
+    on_error: degrade
+
+  # 3) 越限时并行取证：不良柏拉图（定位关键少数）；未越限直接跳简报
+  - id: fanout
+    type: fan_out
+    condition: spc_alert
+    else: report_spc
+    join: all
+    branches:
+      - id: spc_pareto
+        type: agent
+        agent: spc_pareto
+        label: PQE · 不良柏拉图
+        icon: "📈"
+        timeout_s: 30
+        on_error: degrade
+
+  # 4) 汇聚
+  - id: fanin
+    type: fan_in
+
+  # 5) HITL：过程异常处置决策（加严检验/工程介入/计划内暂停；绝不自动放行）
+  - id: hitl_spc_action
+    type: hitl
+    agent: hitl_spc_action
+    prompt: 过程能力异常处置决策确认
+    approver_roles: [质量总监, 制造现场负责人]
+    actions:
+      - {key: tighten_inspection, label: 加严检验, propose: [PQE], cosign: [制造], impact: "检验频次上升 · 交付可控", followup: "PQE 出加严检验方案 / 制造排工时 / SPC 加密监控"}
+      - {key: engineering_action, label: 工程介入调参, propose: [工程], cosign: [PQE], impact: "工艺参数调整 · 需首件验证", followup: "工程调参 / PQE 首件确认 / 连续 3 组能力复核"}
+      - {key: planned_pause, label: 计划内暂停, propose: [制造], cosign: [质量总监], require_comment: true, impact: "产出损失 · 需计划重排", followup: "计划重排 / 设备维保窗口 / 复线后能力再认证"}
+      - {key: continue_monitor, label: 维持监控, propose: [PQE], cosign: [制造], require_comment: true, impact: "风险自留 · 需加密监控", followup: "SPC 加密 / 24h 内复评 / 触发再升级"}
+    timeout_s: 10
+    on_error: degrade
+
+  # 6) 内部简报（degraded 模板化；越限场景无对客模板）
+  - id: report_spc
+    type: agent
+    agent: report_spc
+    label: 报告Agent · 过程能力简报
+    icon: "📄"
+    timeout_s: 60
+    on_error: degrade

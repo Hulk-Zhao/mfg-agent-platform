@@ -6,6 +6,7 @@ import 路径不变）。
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -24,11 +25,22 @@ TABLE_ACL: dict[str, set[str]] = {
                           "supply_chain_manager"},
     "line_stop_event": {"manufacturing", "coordinator", "quality", "gm"},
     "quality_defect": {"quality", "manufacturing", "coordinator", "gm"},
+    # V3.6 SPC 域：测量值表（spc.ingest 落库 / spc 取数），口径与 quality_defect 一致
+    "spc_measurement": {"quality", "manufacturing", "coordinator", "gm"},
     # V3.3：material_control 加入——齐套检查/到货批次是物控核心场景
     "material_batch": {"procurement", "quality", "coordinator", "material_control", "gm",
                        "supply_chain_manager"},
     "equipment_log": {"manufacturing", "coordinator", "gm", "equipment_manager"},
     "inventory": {"warehouse", "supply_chain", "coordinator", "gm"},
+    # V3.7 库存域（材料库存/成品库存/来料批次综合）：仓储 · 物控 · 采购 · 供应链可读
+    "material_inventory": {"warehouse", "warehouse_manager", "material_control",
+                           "supply_chain", "supply_chain_manager", "procurement",
+                           "coordinator", "gm"},
+    "finished_inventory": {"warehouse", "warehouse_manager", "material_control",
+                           "supply_chain", "supply_chain_manager", "coordinator", "gm"},
+    "incoming_batch": {"warehouse", "warehouse_manager", "material_control",
+                       "supply_chain", "supply_chain_manager", "procurement",
+                       "quality", "coordinator", "gm"},
     # sales=业务经理：对客 ETA / 出货风险 / 客诉响应核心场景
     "shipment": {"business", "warehouse", "coordinator", "sales", "gm",
                  "supply_chain_manager"},
@@ -123,11 +135,25 @@ class QueryLibrary:
         """全部注册查询（Agentic Agent 的工具目录来源；只读视图）。"""
         return dict(self._queries)
 
-    def match(self, question: str) -> Optional[str]:
-        best_name: Optional[str] = None
-        best_score = 0
-        for name, spec in self._queries.items():
-            score = sum(1 for w in spec.get("keywords", []) if w in question)
-            if score > best_score:
-                best_name, best_score = name, score
-        return best_name
+    def match(self, question: str, params: Optional[dict] = None) -> Optional[str]:
+        """按关键词重叠打分取最优注册查询（严格大于才替换；平局取声明序先者）。
+
+        V3.7：传入 ``params`` 时启用**可满足性优先**——同分/降分候选里，
+        优先返回命名绑定已被 ``params`` 满足的查询，避免抽不到参数的重参查询
+        顶掉无参速查（如"材料库存还有多少"被 :model 查询空手命中而缺参崩溃）。
+        全部候选都不可满足时，仍返回最高分者（交由上层缺参守卫降级）。
+        """
+        scored = [(sum(1 for w in spec.get("keywords", []) if w in question), name)
+                  for name, spec in self._queries.items()]
+        best = [(s, n) for s, n in scored if s > 0]
+        if not best:
+            return None
+        best.sort(key=lambda t: -t[0])     # 分数降序（稳定排序保留同分声明序）
+        if params is not None:
+            bound = set(params)
+            for _score, name in best:      # 从高分到低分，取第一个参数可满足者
+                sql = str(self._queries[name].get("sql", ""))
+                needed = set(re.findall(r":([A-Za-z_]\w*)", sql))
+                if not (needed - bound):
+                    return name
+        return best[0][1]

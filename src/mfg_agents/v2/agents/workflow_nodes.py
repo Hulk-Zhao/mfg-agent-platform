@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+from .hitl import _flow_snapshot
+
 __all__ = ["make_workflow_handler"]
 
 # 从 SharedContext 透传进工单 context 的关键键（审计关联）
@@ -38,6 +40,8 @@ def make_workflow_handler(engine: Any, notifier: Any) -> Callable:
             value = ctx.get(key)
             if value is not None:
                 context[key] = value
+        # 流程留痕：上游已执行节点轨迹 + 本工作流卡点（审批摘要卡渲染进展与各环节耗时）
+        context["flow"] = _flow_snapshot(ctx, task.step_id, title, kind="workflow")
         sink.emit({"type": "tool_start", "tool": "工作流",
                    "detail": f"创建工单：{title}（{level}，SLA {sla_hours:.0f}h）"})
         wf_task = engine.create_task(

@@ -131,7 +131,22 @@ class Text2SQLService:
         except SQLAuditError as exc:
             return self._rejected("registered", sql, str(exc), t0,
                                   tables=spec.get("tables", []), name=name)
-        rows = self.data_registry.run_query(name, params)
+        # V3.7 缺参守卫：SQL 命名绑定与传入 params 对齐后再执行——
+        # 缺参 → 人工兜底（绝不把 sqlite3.ProgrammingError 抛成 500）；
+        # 多余键剔除（避免驱动对未知绑定报错）。与 router 的库存快路径同批修复。
+        bound = self._bind_params(sql, params)
+        if bound is None:
+            missing = sorted(set(re.findall(r":([A-Za-z_]\w*)", sql)))
+            logger.warning("[registered] 缺参降级: %s 需要 %s", name, missing)
+            return QueryResult(
+                channel="fallback", sql=sql, confidence=0.0,
+                fallback="manual_ticket",
+                warnings=[f"注册查询 {name} 缺少参数 {missing}，降级人工兜底"],
+                elapsed_ms=(time.perf_counter() - t0) * 1000,
+                provenance={"channel": "registered", "query_name": name,
+                            "missing_params": missing, "params": params or {}},
+            )
+        rows = self.data_registry.run_query(name, bound)
         rows, masked = FieldMasker.mask(rows, user_ctx, sql)
         warnings = ResultValidator.validate(rows, self.row_cap)
         return QueryResult(
@@ -211,22 +226,29 @@ class Text2SQLService:
         metric = self.metrics.match(question)
         if metric is not None:
             return self.query_metric(str(metric["id"]), user_ctx=user_ctx)
-        name = self.queries.match(question)
+        params = self._extract_params(question)
+        name = self.queries.match(question, params)
         if name is not None:
-            return self.query_registered(name, self._extract_params(question),
-                                         user_ctx)
+            return self.query_registered(name, params, user_ctx)
         return self.query_detail(question, user_ctx)
 
     @staticmethod
     def _extract_params(question: str) -> dict[str, str]:
-        """从问题中轻量抽取注册查询参数（线体/型号，规则级、无 LLM）。"""
+        """从问题中轻量抽取注册查询参数（线体/型号/编码/制度词，规则级、无 LLM）。"""
         params: dict[str, str] = {}
         line = re.search(r"(SMT|DIP)-(\d)", question)
         if line:
             params["line"] = f"{line.group(1)}-{line.group(2)}"
-        model = re.search(r"([AB])\s*型号", question)
+        model = re.search(r"([A-E])\s*型号", question)
         if model:
             params["model"] = f"{model.group(1)}型号"
+        # V3.7：料号/批号编码 token（大写字母起头、含连字符与数字，排除线体 SMT-/DIP-）。
+        # 同一 token 同时登记 part_no / batch_no，最终由命中的注册查询的绑定键裁剪。
+        code = re.search(r"\b([A-Z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)+)\b", question)
+        if code and not code.group(1).startswith(("SMT-", "DIP-")) \
+                and any(ch.isdigit() for ch in code.group(1)):
+            params["part_no"] = code.group(1)
+            params["batch_no"] = code.group(1)
         # V3.2：职能域知识检索参数（kw = 问题中命中的制度关键词；
         # 词表与 queries.yaml 的 finance/admin_policy_search keywords 同源）
         for kw in ("借支", "报销", "发票", "差旅", "开票", "备用金", "住宿标准",
@@ -235,7 +257,26 @@ class Text2SQLService:
             if kw in question:
                 params["kw"] = kw
                 break
+        # V3.7：材料口语模糊词的 kw 兜底（"M8 螺栓还有多少库存" → kw="M8"），
+        # 供 material_stock_search 的料号/名称 LIKE 使用；制度词优先。
+        if "kw" not in params:
+            spec = re.search(r"\b([A-Z]{1,3}\d{1,4})\b", question)
+            if spec and any(w in question for w in (
+                    "库存", "螺栓", "电容", "电阻", "连接器", "外壳", "电池",
+                    "液晶屏", "彩盒", "PCB", "物料", "材料")):
+                params["kw"] = spec.group(1)
         return params
+
+    @staticmethod
+    def _bind_params(sql: str, params: Optional[dict]) -> Optional[dict]:
+        """对齐 SQL 命名绑定与传入参数：缺参 → None；无绑定 → {}；多余键剔除。"""
+        needed = set(re.findall(r":([A-Za-z_]\w*)", sql))
+        if not needed:
+            return {}
+        provided = params or {}
+        if needed - set(provided):
+            return None
+        return {k: provided[k] for k in needed}
 
     # ---------- 内部 ----------
 

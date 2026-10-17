@@ -37,6 +37,17 @@ def _provider() -> str:
     return "ollama"
 
 
+# 思考档位 → DeepSeek 网关参数映射：
+# - disabled：关闭思考（thinking.type=disabled），高频/结构化节点零推理延迟；
+# - low/medium/high：reasoning_effort 分档（同一参数族，网关按档位分配思考预算）。
+_THINKING_MODES: dict[str, dict] = {
+    "disabled": {"extra_body": {"thinking": {"type": "disabled"}}},
+    "low": {"reasoning_effort": "low"},
+    "medium": {"reasoning_effort": "medium"},
+    "high": {"reasoning_effort": "high"},
+}
+
+
 def get_llm(temperature: float = 0.0, *, tier: str = "L2",
             max_tokens: int | None = None,
             timeout: float | None = None,
@@ -45,11 +56,14 @@ def get_llm(temperature: float = 0.0, *, tier: str = "L2",
 
     tier="L2"（默认）：分析/报告类模型；tier="L1"：低延迟模型（意图/路由/SQL 初版）。
     max_tokens / timeout：云端模型建议显式设置，避免长文本生成拖慢演示链路。
-    thinking：思考强度 —— "disabled"（默认，关闭思考）/ "low"（轻量）/ "high"（模型默认）。
-    DeepSeek 网关实测支持 thinking.type=disabled 与 reasoning_effort=low。
+    thinking：思考强度 —— "disabled"（默认，关闭思考）/ "low" / "medium" / "high"
+    （reasoning_effort 分档）。非法值直接报错，避免拼写错误静默变成全量思考。
     """
     if tier not in _TIERS:
         raise ValueError(f"tier 必须是 {_TIERS}，收到 {tier!r}")
+    mode = (thinking or "disabled").strip().lower()
+    if mode not in _THINKING_MODES:
+        raise ValueError(f"thinking 必须是 {sorted(_THINKING_MODES)}，收到 {thinking!r}")
     provider = _provider()
     if provider == "ollama":
         from langchain_ollama import ChatOllama
@@ -64,12 +78,7 @@ def get_llm(temperature: float = 0.0, *, tier: str = "L2",
         )
     if provider == "deepseek":
         from langchain_openai import ChatOpenAI
-        mode = (thinking or "disabled").strip().lower()
-        extra: dict = {}
-        if mode == "disabled":
-            extra["extra_body"] = {"thinking": {"type": "disabled"}}
-        elif mode == "low":
-            extra["reasoning_effort"] = "low"
+        extra: dict = dict(_THINKING_MODES[mode])
         return ChatOpenAI(
             model=settings.DS_MODEL_L2 if tier == "L2" else settings.DS_MODEL_L1,
             base_url=settings.DS_URL,

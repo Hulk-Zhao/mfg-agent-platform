@@ -34,7 +34,8 @@ def fa_agent(state: dict[str, Any]) -> dict[str, Any]:
 只输出JSON。
 """
     events.append({"type": "llm_start", "detail": "FA模型推理中（评级/根因/复线时间）..."})
-    llm = get_llm(temperature=0.1)
+    # 根因推断是多因素权衡（评级/ETA/验证项），开轻量思考；与 V2 FA 节点档位对齐
+    llm = get_llm(temperature=0.1, thinking="low")
     resp = llm.invoke(prompt)
     content = resp.content if hasattr(resp, "content") else str(resp)
 

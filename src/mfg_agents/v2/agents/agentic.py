@@ -21,6 +21,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
+from .hitl import single_tool_flow
+
 logger = logging.getLogger(__name__)
 
 __all__ = ["DOMAIN_AGENT_CONFIGS", "AgenticDomainAgent", "AgenticStep"]
@@ -88,9 +90,11 @@ DOMAIN_AGENT_CONFIGS: dict[str, dict[str, str]] = {
     "supply_chain": {
         "abbr": "SC",
         "name": "供应链智能体",
-        "role": ("你是供应链域智能体，服务供应链经理/采购经理/仓储经理/计划/物控/业务经理。"
-                 "意图：回答订单交付、齐套、缺料、ATP 可承诺量、库存与发货类问题。"),
-        "boundary": ("边界：只回答供应链域问题；质量判定、设备维修不在职责内；"
+        "role": ("你是供应链域智能体，服务供应链经理/计划/物控/业务经理。"
+                 "意图：回答订单交付、齐套、缺料、ATP 可承诺量、库存与发货类问题"
+                 "（采购专项与仓储专项已拆分，分别由采购智能体、仓储智能体承接）。"),
+        "boundary": ("边界：只回答供应链域问题；采购/供应商专项走采购智能体、"
+                     "仓储/发货专项走仓储智能体、质量判定走质量域、设备维修走制造域；"
                      "shipment 数据对业务/仓库角色可见，其他角色会被 ACL 拒绝。"),
         "hitl_rule": ("HITL 准则：涉及「对客交期承诺」「分批出货」「加急生产」"
                       "时必须发起 create_hitl_task；纯查询不需要。"),
@@ -198,6 +202,51 @@ DOMAIN_AGENT_CONFIGS: dict[str, dict[str, str]] = {
         "boundary": "边界：你做跨域汇总与升级判断，不做单域深挖（那是各域智能体的职责）；只读汇总，不产生处置动作。",
         "hitl_rule": "HITL 准则：涉及「重大客户升级」「高层决策」时发起 create_hitl_task。",
     },
+    # ---------- 采购 / 仓储（P1：从供应链域拆分为独立智能体） ----------
+    "procurement": {
+        "abbr": "PROC",
+        "name": "采购智能体",
+        "role": ("你是采购域智能体，服务采购经理/采购专员，承接原供应链域中的采购专项。"
+                 "意图：回答供应商交期达成、供应商绩效、来料异常会签、SCAR 跟催、"
+                 "询价比价与供应商索赔类问题。"),
+        "boundary": ("边界：只回答采购与供应商域问题；库存/发货专项走仓储智能体，"
+                     "质量判定走质量域；供应商价格字段对采购角色可见，其他角色会被 ACL 拒绝。"),
+        "hitl_rule": ("HITL 准则：涉及「来料处置会签」「供应商索赔确认」时发起"
+                      " create_hitl_task；纯查询不需要。"),
+    },
+    "warehouse": {
+        "abbr": "WH",
+        "name": "仓储智能体",
+        "role": ("你是仓储物流域智能体，服务仓储经理/仓库主管/物控，"
+                 "承接原供应链域中的仓储发货专项。"
+                 "意图：回答库存准确、出入库、盘点差异、库龄、ATP 可承诺量与发货协同类问题。"),
+        "boundary": ("边界：只回答仓储与发货域问题；采购/供应商专项走采购智能体；"
+                     "shipment 数据对仓库/业务角色可见，其他角色会被 ACL 拒绝。"),
+        "hitl_rule": ("HITL 准则：涉及「发货协同终批」「对客交期承诺」时必须发起"
+                      " create_hitl_task；纯查询不需要。"),
+    },
+    # ---------- 安全环保 / 客户服务（P1：补齐部门智能体） ----------
+    "ehs": {
+        "abbr": "EHS",
+        "name": "安全环保智能体（EHS）",
+        "role": ("你是 EHS 安全环保域智能体，服务 EHS 工程师/安全员/现场负责人。"
+                 "意图：回答安全隐患、环保危废、消防与职业健康、事故调查与整改闭环类问题。"),
+        "boundary": ("边界：只回答安全环保域问题；生产排程、质量判定不在职责内。"
+                     "当前隐患台账/危废联单数据源未接入时诚实说明数据缺口，"
+                     "绝不编造整改状态。"),
+        "hitl_rule": ("HITL 准则：涉及「停工整改」「危废转移审批」时发起"
+                      " create_hitl_task；查询类不需要。"),
+    },
+    "customer_service": {
+        "abbr": "CS",
+        "name": "客户服务智能体",
+        "role": ("你是客户服务/售后域智能体，服务客服专员/业务/售后团队。"
+                 "意图：回答客诉受理与分派、售后与退换货、服务时效跟进、对客口径协同类问题。"),
+        "boundary": ("边界：只回答客户服务与售后域问题；技术根因判定引导到质量/工程域智能体。"
+                     "对客回复口径的最终放行不在你的职责内（需人工确认）。"),
+        "hitl_rule": ("HITL 准则：涉及「对客回复口径」「退换货/售后承诺」时发起"
+                      " create_hitl_task；纯查询不需要。"),
+    },
 }
 
 _SYSTEM_TEMPLATE = """{role}
@@ -252,15 +301,10 @@ class AgenticDomainAgent:
 
     def _get_llm(self) -> Any:
         if self._llm is None:
-            from langchain_openai import ChatOpenAI
-
-            from ...config import settings
-            self._llm = ChatOpenAI(
-                model=settings.DS_MODEL_L1,
-                base_url=settings.DS_URL, api_key=settings.DS_KEY,
-                temperature=0.0, max_tokens=900, timeout=45,
-                extra_body={"thinking": {"type": "disabled"}},
-            ).bind_tools(self._tool_schemas())
+            from ...tools.llm_factory import get_llm
+            self._llm = get_llm(temperature=0.0, tier="L1", max_tokens=900,
+                                timeout=45, thinking="disabled")
+            self._llm = self._llm.bind_tools(self._tool_schemas())
         return self._llm
 
     # ---------- 工具实现（能力即工具；全部走既有服务层，权限同源） ----------
@@ -335,10 +379,18 @@ class AgenticDomainAgent:
 
         def create_hitl_task(title: str, prompt: str, slot: str) -> dict:
             """Agent 发起 HITL（治理：只 propose，工单走完整治理链，Agent 永不放行）。"""
+            # 流程留痕：域 Agent 无 DAG 轨迹，按「意图识别 → 数据取证判定」调用链补造，
+            # 供审批摘要卡渲染流程进展与各职能部门耗时（与办公/MCP 单工具工单同口径）
+            flow = single_tool_flow(
+                [("agentic_intent", f"{self.cfg['name']} · 意图识别", 6_000),
+                 ("agentic_evidence", f"{self.cfg['name']} · 数据取证与判定", 24_000)],
+                f"agentic_{slot}", prompt, seed=f"{title}|{prompt}")
             task = wf.create_task(
                 wf_id=f"agentic_{slot}", title=title[:80],
                 context={"slot": slot, "kind": slot, "actions": [],
-                         "origin": "agentic_agent", "domain": self.domain},
+                         "origin": "agentic_agent", "domain": self.domain,
+                         "reason": f"{title}；现需人工确认：{prompt}",
+                         "flow": flow},
                 assignees=["质量总监"], priority="P2", hitl=True,
                 hitl_prompt=prompt[:300])
             return {"task_uid": task.task_uid, "status": task.status,

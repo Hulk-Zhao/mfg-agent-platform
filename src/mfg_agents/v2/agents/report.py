@@ -6,9 +6,12 @@
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Callable
 
 from ..prompts.report import FORBIDDEN_WORDS, _apply_forbidden_words
+
+logger = logging.getLogger(__name__)
 
 __all__ = ["make_report_handler"]
 
@@ -50,6 +53,10 @@ _BRIEF_SPEC: dict[str, list[tuple[str, str]]] = {
         ("排产影响", "planning_summary"),
         ("物料齐套", "material_summary"),
         ("制造产能", "production_summary"),
+    ],
+    "spc_anomaly_v2": [
+        ("过程能力", "spc_capability_summary"),
+        ("不良柏拉图", "spc_pareto_summary"),
     ],
 }
 

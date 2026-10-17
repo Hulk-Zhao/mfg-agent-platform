@@ -20,9 +20,12 @@
     { id: "dashboard", label: "工作台", title: "工作台", sub: "制造运营协同门户", icon: "grid", group: "运营视图" },
     { id: "orders", label: "订单履约看板", title: "订单履约看板", sub: "订单全链路管道 · 风险订单 · 部门协同", icon: "orders", group: "运营视图" },
     { id: "mfgboard", label: "制造综合看板", title: "制造综合看板", sub: "制造 + 品质双看板 · 稼动率/报废率/报工完成率/直通率/标准三率", icon: "activity", group: "运营视图" },
+    { id: "spc", label: "SPC 过程能力看板", title: "SPC 过程能力看板", sub: "过程能力指数 Cpk/Pp/Ppk · 判定与越限预警 · 不良柏拉图", icon: "spc", group: "运营视图" },
     { id: "chat", label: "协同问数", title: "协同问数", sub: "对话式跨部门协同分析（真实后端链路）", icon: "chat", group: "智能协同", core: true },
+    { id: "kbqa", label: "企业咨询助手", title: "企业咨询助手", sub: "制度知识库咨询 · 结论带出处（Milvus + LLM）", icon: "book", group: "智能协同" },
     { id: "alerts", label: "预警中心", title: "预警中心", sub: "多域预警与联动处置", icon: "alert", group: "智能协同" },
     { id: "reports", label: "报告中心", title: "报告中心", sub: "内部简报与对客脱敏报告", icon: "report", group: "智能协同" },
+    { id: "office", label: "企业助手", title: "企业综合助手", sub: "办公事务（会议室/订餐）+ 制造数据速查（材料库存/成品库存/来料批次，只读）", icon: "clock", group: "智能协同" },
     { id: "hitl", label: "审批确认中心", title: "审批确认中心", sub: "人工在环 · 关键决策审批（真实工单）", icon: "approve", group: "流程治理" },
     { id: "help", label: "帮助中心", title: "帮助中心", sub: "智能体协同架构 · 各智能体职责与边界 · 使用指引", icon: "info", group: "流程治理" },
   ];
@@ -66,11 +69,14 @@
     shield: '<path d="M12 22s8-3 8-10V5l-8-3-8 3v7c0 7 8 10 8 10z"/>',
     zap: '<path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>',
     info: '<circle cx="12" cy="12" r="9"/><path d="M12 16v-4M12 8h.01"/>',
+    book: '<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>',
     warn: '<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4M12 17h.01"/>',
     send: '<path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/>',
     arrow: '<path d="M5 12h14M12 5l7 7-7 7"/>',
     box: '<path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M3.27 6.96L12 12.01l8.73-5.05"/><path d="M12 22.08V12"/>',
     activity: '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
+    spc: '<path d="M4 3v17h17"/><path d="M6 8h15M6 15h15"/><path d="M6.5 12.5l3-3.5 3 4 3-5 3 3.5 1.5-1.5"/>',
+    layers: '<path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/>',
     link: '<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><path d="M15 3h6v6"/><path d="M10 14L21 3"/>',
     list: '<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>',
     filter: '<path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z"/>',
@@ -88,6 +94,7 @@
   const state = {
     screen: "dashboard",
     role: "gm",
+    token: "",       // 岗位访问令牌（F2）：HITL 写接口凭它鉴权；演示模式为空
     backend: { online: false, base: "", checking: true },
     perms: null,     // 治理权限目录快照（/api/v2/governance/permissions）
     screenState: {}, // 各屏持久状态（对话记录、审批处理结果等，重渲染不丢）
@@ -97,18 +104,19 @@
     return window.DEMO.ROLES.find((r) => r.id === state.role) || window.DEMO.ROLES[0];
   }
 
-  /* ---------- 登录态（演示版免密码：选择岗位身份即登录） ---------- */
+  /* ---------- 登录态（演示版免密码：选择岗位身份即登录，并换取访问令牌） ---------- */
 
   const USER_KEY = "mfg_gateway_user_v1";
 
-  function saveUser(roleId) {
+  function saveUser(roleId, token) {
     try {
-      localStorage.setItem(USER_KEY, JSON.stringify({ roleId, at: Date.now() }));
+      localStorage.setItem(USER_KEY,
+        JSON.stringify({ roleId, token: token || "", at: Date.now() }));
     } catch (err) { /* 隐私模式/存储禁用时忽略 */ }
   }
 
   /**
-   * 读取上次登录岗位（刷新/重开页面后恢复会话）。
+   * 读取上次登录态（刷新/重开页面后恢复会话）。
    * 岗位可能已被从 ROLES 移除或数据被手工篡改 → 一律降级为 null（回登录页），
    * 绝不返回脏 roleId，否则 currentRole() 会静默回退到 ROLES[0]，表现为"进了别人的岗位"。
    */
@@ -120,7 +128,7 @@
       const id = data && data.roleId;
       if (!id) return null;
       const exists = window.DEMO.ROLES.some((r) => r.id === id);
-      return exists ? id : null;
+      return exists ? { roleId: id, token: String(data.token || "") } : null;
     } catch (err) {
       return null;   // 隐私模式/存储禁用/JSON 损坏 → 当作未登录
     }
@@ -199,7 +207,7 @@
             </div>
           </div>
           <div class="login-brand-body">
-            <h1>13 个智能体协同<br/>16 个部门一个入口<br/>一个入口完成协同</h1>
+            <h1>17 个智能体协同<br/>16 个部门一个入口<br/>一个入口完成协同</h1>
             <p>跨部门并行取证 · 跨域工单闭环 · 数据权限随岗位隔离</p>
             <ul class="login-points">
               <li><span>01</span><div><b>5 大协同场景</b>停线应急 / 来料异常 / 客诉 8D / 出货 ATP / 设备维保</div></li>
@@ -208,7 +216,7 @@
             </ul>
           </div>
           <div class="login-stats">
-            <div class="login-stat"><b>13</b><span>智能体角色</span></div>
+            <div class="login-stat"><b>17</b><span>智能体角色</span></div>
             <div class="login-stat"><b>5</b><span>协同场景</span></div>
             <div class="login-stat"><b>10</b><span>MCP 工具</span></div>
             <div class="login-stat"><b>390</b><span>自动化测试</span></div>
@@ -257,12 +265,66 @@
   function enterApp(roleId) {
     const role = window.DEMO.ROLES.find((r) => r.id === roleId) || window.DEMO.ROLES[0];
     state.role = role.id;
-    saveUser(role.id);
+    state.token = "";          // 换岗位必须换令牌（令牌与岗位绑定），由 ensureSession 重新签发
+    saveUser(role.id, "");
     const root = document.getElementById("login-root");
     if (root) { root.hidden = true; root.innerHTML = ""; }
     updateChrome();
     toast(`已进入：${role.name} · ${role.user}`, "ok", 2600);
     startApp();
+  }
+
+  /* ---------- 岗位令牌（F2）：登录换令牌 + 启动时校验/静默补签 ---------- */
+
+  /**
+   * 向服务端换取岗位访问令牌。后端离线（演示模式）时令牌置空——此模式下
+   * 审批操作只做本地回放，本就不会命中后端写接口。
+   */
+  async function loginAs(roleId) {
+    const role = window.DEMO.ROLES.find((r) => r.id === roleId);
+    if (!role || !state.backend.online) { state.token = ""; return null; }
+    try {
+      const data = await api.login({
+        roles: role.roles || [], role: role.id,
+        user_id: role.uid || "", name: role.user || "", dept: role.dept || "",
+      });
+      state.token = (data && data.token) || "";
+      saveUser(role.id, state.token);
+      return data;
+    } catch (err) {
+      state.token = "";
+      console.warn("[auth] 岗位令牌获取失败，审批写操作将被后端以 401 拒绝:", err);
+      toast("岗位令牌获取失败：人工确认写操作暂不可用", "warn", 4000);
+      return null;
+    }
+  }
+
+  /** 令牌仍有效？（服务端 /auth/me 校验；失败不弹错，交给 ensureSession 补签） */
+  async function tokenValid() {
+    if (!state.token) return false;
+    try { await api.me(); return true; } catch (err) { return false; }
+  }
+
+  /** 保证进入应用时持有可用令牌：有效则复用，失效/缺失则按当前岗位静默补签。 */
+  async function ensureSession() {
+    if (!state.backend.online || !state.role) { state.token = ""; return; }
+    if (await tokenValid()) return;
+    await loginAs(state.role);
+  }
+
+  /** 令牌失效（401）：清登录态并回到登录页，避免"看似已登录却处处写不进去"。 */
+  let authExpiredAt = 0;
+  function handleAuthExpired(detail) {
+    const now = Date.now();
+    if (now - authExpiredAt < 1000) return;   // 连发请求时只提示一次
+    authExpiredAt = now;
+    clearUser();
+    state.token = "";
+    state.role = "";
+    const msg = (detail && detail.detail) ? String(detail.detail)
+      : "登录状态已失效，请重新选择岗位";
+    toast(msg, "bad", 4000);
+    renderLogin();
   }
 
   /* ============================================================
@@ -416,13 +478,16 @@
     },
 
     async _post(path, body) {
+      const headers = { "Content-Type": "application/json" };
+      if (state.token) headers.Authorization = `Bearer ${state.token}`;
       const resp = await fetch(`${this.base()}${path}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify(body || {}),
       });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok || data.code !== 0) {
+        if (resp.status === 401) handleAuthExpired(data);   // 令牌失效 → 回登录页
         throw apiError(resp.status, data);
       }
       return data.data;
@@ -435,7 +500,9 @@
       const timer = setTimeout(() => ctrl.abort(), timeoutMs || DEFAULT_TIMEOUT_MS);
       let resp;
       try {
-        resp = await fetch(`${this.base()}${path}`, { signal: ctrl.signal });
+        const opts = { signal: ctrl.signal };
+        if (state.token) opts.headers = { Authorization: `Bearer ${state.token}` };
+        resp = await fetch(`${this.base()}${path}`, opts);
       } finally {
         clearTimeout(timer);
       }
@@ -446,9 +513,64 @@
       return data.data;
     },
 
+    /** 岗位登录（F2）：用岗位身份换访问令牌 */
+    login(payload) { return this._post("/api/v2/auth/login", payload); },
+
+    /** 当前登录态校验（F2）：令牌有效则返回权威 user_ctx */
+    me() { return this._get("/api/v2/auth/me", 6000); },
+
     /** 统一问数入口（TwoLevelRouter → YamlDagExecutor） */
     query(query, requestId, userCtx) {
       return this._post("/api/v2/query", { query, request_id: requestId, user_ctx: userCtx });
+    },
+
+    /** 企业咨询助手：Milvus 制度库检索 + LLM 生成带出处回答（独立通道） */
+    kbqaQuery(query, topK) {
+      return this._post("/api/v2/kbqa", { query, top_k: topK || 3 });
+    },
+
+    /** 企业咨询助手元数据：支持类别面板 + 知识库块数 */
+    kbqaMeta() { return this._get("/api/v2/kbqa/meta"); },
+
+    /* ---------- 企业综合助手（Agentic Agent：办公事务 + 制造数据只读速查） ---------- */
+
+    /** 企业助手对话（强制定向该 Agent；返回含工具调用留痕 steps） */
+    officeChat(query, userCtx) {
+      return this._post("/api/v2/office/chat", { query, user_ctx: userCtx || null });
+    },
+    /** 办公能力元数据：后端实现（demo/真实）/ LLM 可用性 / 高影响阈值 */
+    officeMeta() { return this._get("/api/v2/office/meta", 6000); },
+    /** 制造数据速查快照（材料库存/缺料/成品/来料批次；按岗位权限过滤，无需 LLM） */
+    officeSnapshot(roles) {
+      const list = Array.isArray(roles) ? roles.join(",") : (roles || "");
+      const qs = list ? `?roles=${encodeURIComponent(list)}` : "";
+      return this._get(`/api/v2/office/snapshot${qs}`);
+    },
+    /** 会议室目录（可按最小容量筛选） */
+    officeRooms(capacityMin) {
+      const qs = capacityMin ? `?capacity_min=${encodeURIComponent(capacityMin)}` : "";
+      return this._get(`/api/v2/office/rooms${qs}`);
+    },
+    /** 餐厅目录（员工食堂 / 商务餐厅） */
+    officeRestaurants() { return this._get("/api/v2/office/restaurants"); },
+    /** 某时段可用会议室（无需 LLM 的确定性查询） */
+    officeAvailable(date, start, end, capacityMin) {
+      const qs = `?date=${encodeURIComponent(date)}&start=${encodeURIComponent(start)}`
+        + `&end=${encodeURIComponent(end)}`
+        + (capacityMin ? `&capacity_min=${encodeURIComponent(capacityMin)}` : "");
+      return this._get(`/api/v2/office/available${qs}`);
+    },
+    /** 某餐厅菜单（价格 + 是否需人工确认） */
+    officeMenu(restaurantId) {
+      return this._get(`/api/v2/office/menu/${encodeURIComponent(restaurantId)}`);
+    },
+    /** 我的会议室预订与订餐订单 */
+    officeMine(actor) {
+      return this._get(`/api/v2/office/my/${encodeURIComponent(actor)}`);
+    },
+    /** 取消本人预订 / 订单（kind: booking | order） */
+    officeCancel(kind, id, actor) {
+      return this._post("/api/v2/office/cancel", { kind, id, actor: actor || "" });
     },
 
     /** 预开请求事件队列（保证 SSE 实时订阅，不丢事件） */
@@ -485,7 +607,7 @@
       return this._get(`/api/v2/workflow/${encodeURIComponent(taskId)}`);
     },
 
-    /** 治理权限目录（角色×权限矩阵 + 7 个 HITL 槽位；前端门控提示用） */
+    /** 治理权限目录（角色×权限矩阵 + 8 个 HITL 槽位；前端门控提示用） */
     governancePermissions() { return this._get("/api/v2/governance/permissions"); },
 
     /** 制造看板（稼动率/报废率/报工完成率/测试直通率；全员可见） */
@@ -494,36 +616,50 @@
     /** 品质看板（不良率/直通率 FPY/标准三率；全员可见） */
     qualityDashboard() { return this._get("/api/v2/dashboard/quality", 8000); },
 
-    /** 选定处置动作（按该动作 propose/cosign 生成会签要求）。uid：一人一签判定依据 */
-    workflowSelectAction(taskId, actionKey, approver, roles, dept, comment, uid) {
+    /** 订单履约看板（OTD 准时交付率/OTIF 准时足额率/延期订单率/齐套率；全员可见） */
+    ordersDashboard() { return this._get("/api/v2/dashboard/orders", 8000); },
+
+    /** SPC 过程能力看板（逐特性 Cpk/Pp/Ppk 判定 + 子组越限预警 + 不良柏拉图；全员可见） */
+    spcDashboard() { return this._get("/api/v2/dashboard/spc", 8000); },
+
+    /** 看板下钻：无 entity = L2（按维度分解）；带 entity = L3（单实体）；
+     *  再带 step = L4（该工序逐日+工位）；再带 station = L5（该工位逐日+过站记录）；
+     *  defectType = 不良类型下钻（L1 累计柏拉图点击，该类型按产线 · 型号分解）。 */
+    dashboardDrill(screen, kpi, entity, step, station, defectType) {
+      const qs = `screen=${encodeURIComponent(screen)}&kpi=${encodeURIComponent(kpi)}`;
+      let extra = entity
+        ? Object.keys(entity).filter((k) => entity[k])
+            .map((k) => `&${k}=${encodeURIComponent(entity[k])}`).join("")
+        : "";
+      if (step) extra += `&step=${encodeURIComponent(step)}`;
+      if (station) extra += `&station=${encodeURIComponent(station)}`;
+      if (defectType) extra += `&defect_type=${encodeURIComponent(defectType)}`;
+      return this._get(`/api/v2/dashboard/drill?${qs}${extra}`, 8000);
+    },
+
+    /** 选定处置动作（按该动作 propose/cosign 生成会签要求）。
+     *  操作者角色与身份由岗位令牌裁决（F2），请求体只带留痕信息。 */
+    workflowSelectAction(taskId, actionKey, approver, comment) {
       return this._post(`/api/v2/workflow/${encodeURIComponent(taskId)}/select-action`,
-        { approver, comment: comment || "", action_key: actionKey,
-          role: (roles || []).join(","),
-          user_ctx: { user_id: uid || approver, dept, roles: roles || [] } });
+        { approver, comment: comment || "", action_key: actionKey });
     },
 
-    /** 会签（多角色背书，缺一不可）。uid：一人一签判定依据 */
-    workflowCosign(taskId, approver, roles, dept, comment, decision, uid) {
+    /** 会签（多角色背书，缺一不可）。角色与 actor 由岗位令牌裁决 */
+    workflowCosign(taskId, approver, comment, decision) {
       return this._post(`/api/v2/workflow/${encodeURIComponent(taskId)}/cosign`,
-        { approver, comment: comment || "", decision: decision || "",
-          role: (roles || []).join(","),
-          user_ctx: { user_id: uid || approver, dept, roles: roles || [] } });
+        { approver, comment: comment || "", decision: decision || "" });
     },
 
-    /** 人工确认 审批通过（waiting_hitl → running / done）。uid：一人一签判定依据 */
-    workflowApprove(taskId, approver, comment, final, decision, roles, dept, uid) {
+    /** 人工确认 审批通过（waiting_hitl → running / done）。角色由令牌裁决 */
+    workflowApprove(taskId, approver, comment, final, decision) {
       return this._post(`/api/v2/workflow/${encodeURIComponent(taskId)}/approve`,
-        { approver, comment, final: !!final, decision: decision || "",
-          role: (roles || []).join(","),
-          user_ctx: roles ? { user_id: uid || approver, dept, roles } : undefined });
+        { approver, comment, final: !!final, decision: decision || "" });
     },
 
-    /** 人工确认 审批驳回（→ closed）。uid：一人一签判定依据 */
-    workflowReject(taskId, approver, comment, decision, roles, dept, uid) {
+    /** 人工确认 审批驳回（→ closed）。角色由令牌裁决 */
+    workflowReject(taskId, approver, comment, decision) {
       return this._post(`/api/v2/workflow/${encodeURIComponent(taskId)}/reject`,
-        { approver, comment, decision: decision || "",
-          role: (roles || []).join(","),
-          user_ctx: roles ? { user_id: uid || approver, dept, roles } : undefined });
+        { approver, comment, decision: decision || "" });
     },
   };
 
@@ -622,11 +758,14 @@
     }
   }
 
+  /** 快捷切换岗位（看板内一键换身份）：岗位变 → 令牌必须重签，否则写接口仍代表旧岗位。 */
   function setRole(roleId) {
     state.role = roleId;
-    saveUser(roleId);
+    state.token = "";
+    saveUser(roleId, "");
     updateChrome();
     refreshScreen();
+    ensureSession();   // 静默按新岗位补签令牌（异步，不阻塞渲染）
   }
 
   /* ============================================================
@@ -765,6 +904,7 @@
       menu.querySelector("#menu-logout").addEventListener("click", () => {
         menu.remove();
         clearUser();
+        state.token = "";   // 退出即作废岗位令牌
         state.role = "";   // 退出后必须重新选择身份，不保留上次选中
         renderLogin();
       });
@@ -802,6 +942,7 @@
 
   async function startApp() {
     await api.probe();
+    await ensureSession();       // F2：持有可用岗位令牌，写接口才有鉴权凭据
     await loadPermCatalog();
     updateChrome();
 
@@ -833,9 +974,10 @@
     initChrome();
     // 刷新/重开保持会话：有有效登录态就直接进应用（所在屏由 location.hash 恢复，
     // 见 startApp），没有才回登录页选择岗位。退出登录走 clearUser()，不受影响。
-    const savedRoleId = loadUser();
-    if (savedRoleId) {
-      state.role = savedRoleId;
+    const saved = loadUser();
+    if (saved) {
+      state.role = saved.roleId;
+      state.token = saved.token;   // 令牌由 startApp → ensureSession 校验/补签
       const root = document.getElementById("login-root");
       if (root) { root.hidden = true; root.innerHTML = ""; }
       updateChrome();
@@ -843,6 +985,7 @@
       return;
     }
     state.role = "";
+    state.token = "";
     renderLogin();
   }
 

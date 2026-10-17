@@ -1,7 +1,7 @@
-"""P1 工具层落地测试：7 个新工具（23 个工具 / 五 server 分治）。
+"""P1 工具层落地测试：7 个新工具（37 个工具 / 多 server 分治）。
 
 覆盖点：
-- 五域归组：键恰为五域、各域工具数与归属正确（含 P1 增量 7 个）、展平 == 23、单域 ≤ 15；
+- 各域归组：键恰为 data/asset/quality/spc/workflow/knowledge/office、各域工具数与归属正确（含 P1 增量 7 个、办公助手域 10 个、SPC 域 3 个）、展平 == 37、单域 ≤ 15；
 - 7 个新工具的 tier/readonly 标记（quality.8d 为 tier=1/readonly=False，其余 tier=0/readonly=True）；
 - equipment.predict：固定输入 → 确定性打分；输出"草稿/未确认"标记；无数据诚实降级不编造分数；
 - quality.8d：匿名 403 且零工单；合法身份生成 8D 草稿；关闭会签只发起（工单可被 workflow.pending 查到）；
@@ -25,7 +25,7 @@ from mfg_agents.v2.mcp_tools.tools import (
 )
 from mfg_agents.v2.services.workflow import PermissionDenied
 
-_FIVE_DOMAINS = {"data", "asset", "quality", "workflow", "knowledge"}
+_DOMAINS = {"data", "asset", "quality", "spc", "workflow", "knowledge", "office"}
 
 # P1 增量 7 个工具（名字一字不差）
 _P1_NEW = {
@@ -52,9 +52,9 @@ def registry(orch) -> ToolRegistry:
 
 
 def test_domain_toolsets_split_p1(orch):
-    """键恰为五域；各域工具数/归属正确；展平全集 == 23；每域 ≤ 15。"""
+    """键恰为各域；各域工具数/归属正确；展平全集 == 37；每域 ≤ 15。"""
     toolsets = build_domain_toolsets(orch)
-    assert set(toolsets) == _FIVE_DOMAINS
+    assert set(toolsets) == _DOMAINS
 
     expect = {
         "data": ["platform.describe", "data.list_queries", "data.run_query",
@@ -63,10 +63,16 @@ def test_domain_toolsets_split_p1(orch):
         "asset": ["asset.status", "inventory.atp", "equipment.predict",
                   "supply.risk"],
         "quality": ["quality.trace", "quality.8d"],
+        "spc": ["spc.capability", "spc.pareto", "spc.ingest"],
         "workflow": ["scenario.list", "scenario.run", "scenario.explain",
                      "workflow.pending", "workflow.act", "workflow.governance",
                      "workflow.create"],
-        "knowledge": ["knowledge.search", "report.draft", "doc.extract"],
+        "knowledge": ["knowledge.search", "report.draft", "doc.extract", "spc.report"],
+        "office": ["office.list_rooms", "office.find_available_rooms",
+                   "office.book_room", "office.cancel_booking",
+                   "office.my_bookings", "office.list_restaurants",
+                   "office.menu", "office.place_order", "office.cancel_order",
+                   "office.my_orders"],
     }
     for domain, names in expect.items():
         assert [t.name for t in toolsets[domain]] == names, domain
@@ -74,23 +80,24 @@ def test_domain_toolsets_split_p1(orch):
 
     flat = {t.name for domain in toolsets.values() for t in domain}
     assert flat == {t.name for t in build_platform_tools(orch)}
-    assert len(flat) == 23 == len(build_platform_tools(orch))
-    # 各域工具数：7 / 4 / 2 / 7 / 3
+    assert len(flat) == 37 == len(build_platform_tools(orch))
+    # 各域工具数：7 / 4 / 2 / 3 / 7 / 4 / 10
     assert {d: len(toolsets[d]) for d in toolsets} == {
-        "data": 7, "asset": 4, "quality": 2, "workflow": 7, "knowledge": 3}
+        "data": 7, "asset": 4, "quality": 2, "spc": 3, "workflow": 7,
+        "knowledge": 4, "office": 10}
     # P1 增量 7 个全部落地且归组
     assert _P1_NEW <= flat
 
 
 def test_register_domain_toolsets_p1(orch):
     regs = register_domain_toolsets(orch)
-    assert set(regs) == _FIVE_DOMAINS
+    assert set(regs) == _DOMAINS
     assert {t.name for t in regs["asset"].list()} == {
         "asset.status", "inventory.atp", "equipment.predict", "supply.risk"}
     assert {t.name for t in regs["quality"].list()} == {
         "quality.trace", "quality.8d"}
     assert {t.name for t in regs["knowledge"].list()} == {
-        "knowledge.search", "report.draft", "doc.extract"}
+        "knowledge.search", "report.draft", "doc.extract", "spc.report"}
 
 
 # ============================================================

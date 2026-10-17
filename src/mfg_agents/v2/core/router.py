@@ -37,6 +37,16 @@ V1_SCENE_TO_V2: dict[str, Optional[str]] = {
     "equipment_warning": "equipment_warning_v2",
 }
 
+# 办公意图关键词（办公助手 Agentic Agent 的确定性入口；先于 L1 语义分类，
+# 保证"帮我订会议室/中午订个餐"这类口语问法稳定落到办公助手）
+OFFICE_KEYWORDS: tuple[str, ...] = (
+    "会议室", "会议室预订", "预订会议室", "预定会议室", "预约会议室", "订会议室",
+    "订餐", "点餐", "叫餐", "订饭", "订午饭", "订晚饭", "订晚餐", "订外卖",
+    "订个餐", "订个饭", "食堂", "餐厅", "工作餐", "加餐",
+    "商务餐厅", "客餐", "宴请",
+    "我的预订", "我的订单", "我的会议室",
+)
+
 # V1 场景 → 域组（供 L0 命中但场景未迁移时给出域归属）
 V1_SCENE_TO_DOMAIN: dict[str, str] = {
     "line_stop": "manufacturing",
@@ -45,6 +55,25 @@ V1_SCENE_TO_DOMAIN: dict[str, str] = {
     "delivery_risk": "supply_chain",
     "equipment_warning": "manufacturing",
 }
+
+# 制造数据速查意图（V3.7 企业综合助手）：材料库存/成品库存/来料批次/库龄呆滞/
+# 缺料/批次追溯等**口径查询**。这些问题的共性词（库存/缺料/能发/齐套/来料）
+# 会被场景触发词误判成 delivery_status_v2 等协同场景，故单列快路径直答。
+INVENTORY_QUERY_KEYWORDS: tuple[str, ...] = (
+    "材料库存", "原材料库存", "物料库存", "原料库存", "材料仓",
+    "成品库存", "成品仓", "成品有多少", "库存还有多少", "还有多少库存",
+    "库存量", "库存速查", "查库存",
+    "库龄", "呆滞", "积压", "长库龄",
+    "安全库存", "低于安全库存", "缺料", "备料缺口",
+    "来料批次", "到货批次", "批次追溯", "检验结论", "让步接收", "特采",
+)
+
+# 场景强信号（排除表）：一旦出现这些词，说明是停线/客诉/交期承诺等**协同场景**，
+# 让位给 L0 场景触发词，不抢路由。
+INVENTORY_SCENARIO_SIGNALS: tuple[str, ...] = (
+    "停线", "复线", "客诉", "投诉", "8D", "发货", "交期", "承诺",
+    "齐套", "延期", "升级", "报告", "设备", "参数", "不良批次", "质量异常",
+)
 
 
 @dataclass
@@ -86,12 +115,20 @@ class TwoLevelRouter:
         self.intent_classifier = intent_classifier or LLMClosedSetClassifier()
 
     def route(self, query: str, user_ctx: Optional[dict] = None) -> RouteResult:
-        """路由入口：先 L0，未命中再 L1，LLM 不可用则降级。"""
+        """路由入口：库存数据速查 → L0 场景/办公 → L1 语义 → 降级。"""
         entities = self._extract_entities(query)
+        inventory = self._route_inventory(query)
+        if inventory is not None:
+            inventory.entities = entities
+            return inventory
         l0 = self._route_l0(query)
         if l0 is not None:
             l0.entities = entities
             return l0
+        office = self._route_office(query)
+        if office is not None:
+            office.entities = entities
+            return office
         if llm_available():
             l1 = self._route_l1(query)
             if l1 is not None:
@@ -129,6 +166,39 @@ class TwoLevelRouter:
                     reason=f"V1 关键词命中: {scene}",
                 )
         return None
+
+    # ---------- 制造数据速查快路径（企业综合助手的确定性入口） ----------
+
+    def _route_inventory(self, query: str) -> Optional[RouteResult]:
+        """库存/批次等制造数据口径查询：直答（strategy="qa"，无工单无 HITL）。
+
+        先于 L0 场景触发词：这批问题的共性词会把它们误判为协同场景
+        （delivery_status_v2 / incoming_quality_v2）。命中**具体库存问法**后直答；
+        一旦出现停线/客诉/交期承诺等场景强信号，则让位给协同场景。
+        """
+        hit = next((w for w in INVENTORY_QUERY_KEYWORDS if w in query), None)
+        if hit is None:
+            return None
+        if any(w in query for w in INVENTORY_SCENARIO_SIGNALS):
+            return None
+        return RouteResult(
+            domain="supply_chain", scenario_key=None, confidence=1.0, level="L0",
+            reason=f"制造数据速查意图命中: {hit}", strategy="qa")
+
+    # ---------- 办公意图快路径（办公助手 Agentic Agent 的确定性入口） ----------
+
+    def _route_office(self, query: str) -> Optional[RouteResult]:
+        """办公关键词命中即路由到办公助手（独立 Agentic Agent）。
+
+        先于 L1 语义分类：保证"帮我订个会议室""中午订个餐"等口语问法稳定落地，
+        且在 LLM 不可用时同样可用（离线可演示）。
+        """
+        hit = next((w for w in OFFICE_KEYWORDS if w in query), None)
+        if hit is None:
+            return None
+        return RouteResult(
+            domain="office", scenario_key=None, confidence=1.0, level="L0",
+            reason=f"办公意图关键词命中: {hit}", strategy="office")
 
     # ---------- L1：语义闭集分类（委托 intent.classifier） ----------
 

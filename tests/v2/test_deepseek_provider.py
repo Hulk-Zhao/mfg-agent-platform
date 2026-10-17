@@ -96,6 +96,21 @@ def test_get_llm_low_thinking_uses_reasoning_effort():
     assert getattr(llm, "reasoning_effort", None) == "low"
 
 
+def test_get_llm_medium_high_thinking_use_reasoning_effort():
+    """三档思考：medium/high 显式设置 reasoning_effort（不再依赖模型默认）。"""
+    medium = get_llm(tier="L2", thinking="medium")
+    high = get_llm(tier="L2", thinking="high")
+    assert getattr(medium, "reasoning_effort", None) == "medium"
+    assert getattr(high, "reasoning_effort", None) == "high"
+    assert getattr(high, "extra_body", None) is None
+
+
+def test_get_llm_rejects_unknown_thinking_mode():
+    """非法档位直接报错，避免拼写错误静默变成全量思考。"""
+    with pytest.raises(ValueError, match="thinking"):
+        get_llm(tier="L2", thinking="ultra")
+
+
 # ---------- 探针（含鉴权头） ----------
 
 def test_probe_true_when_model_present_and_sends_auth(monkeypatch):

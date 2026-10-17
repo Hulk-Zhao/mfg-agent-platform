@@ -36,8 +36,14 @@ logger = logging.getLogger(__name__)
 # V2 资源默认路径（相对本文件：src/mfg_agents/v2/...）
 _V2_DIR = Path(__file__).resolve().parent.parent
 
-# 项目根（data/seed_v3.sql 所在；布局：src/mfg_agents/v2 → 根需上溯 3 级）
-_SEED_SQL = _V2_DIR.parents[2] / "data" / "seed_v3.sql"
+# 项目根（data/*.sql 所在；布局：src/mfg_agents/v2 → 根需上溯 3 级）
+_DATA_DIR = _V2_DIR.parents[2] / "data"
+# 按序执行的种子（幂等 INSERT OR IGNORE）：主扩充 + 工段/工序/工位明细 + 库存域
+_SEED_SQLS = [
+    _DATA_DIR / "seed_v3.sql",
+    _DATA_DIR / "seed_station_detail.sql",
+    _DATA_DIR / "seed_inventory.sql",
+]
 
 
 def _apply_seed(db_path: str) -> None:
@@ -46,16 +52,20 @@ def _apply_seed(db_path: str) -> None:
     V3.1：员工自由提问需要"有东西可查"——扩充历史批次/客诉/产出/设备/
     停线数据（2026-10-08 ~ 10-14），"今天"（10-15）的行与场景锚点一律不动，
     由 tests/v2/test_scenarios_v2.py 的数据红线测试守护。
+    V3.5：追加 ``seed_station_detail.sql``，把六指标按 工段/工序/工位×班次
+    拆分入库（拆分式，求和回原值），供三级看板下钻。
     """
-    if not _SEED_SQL.exists():
-        return
     import sqlite3
 
+    seeds = [p for p in _SEED_SQLS if p.exists()]
+    if not seeds:
+        return
     try:
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         with sqlite3.connect(db_path, timeout=10.0) as conn:
-            conn.executescript(_SEED_SQL.read_text(encoding="utf-8"))
-        logger.info("[seed] 演示数据扩充完成: %s", _SEED_SQL.name)
+            for p in seeds:
+                conn.executescript(p.read_text(encoding="utf-8"))
+                logger.info("[seed] 演示数据扩充完成: %s", p.name)
     except Exception as exc:  # noqa: BLE001 —— 种子失败不阻断启动（演示库可能只读）
         logger.warning("[seed] 执行失败（不阻断）: %s", exc)
 
@@ -71,6 +81,8 @@ class V2Runtime:
     notifier: NotificationService
     workflow: WorkflowEngine
     handlers: dict[str, Any] = field(default_factory=dict)
+    # 办公后端（会议室/订餐）；demo 用内存实现，接真实飞书/钉钉/美餐时替换实现
+    office: Any = None
 
     @classmethod
     def create_default(cls) -> "V2Runtime":
@@ -95,6 +107,13 @@ class V2Runtime:
         scenario_registry = ScenarioRegistry(settings.V2_SCENARIOS_DIR)
         scenario_registry.load()
         workflow = WorkflowEngine(settings.WORKFLOW_DB)
+        from ..services.office import DemoOfficeBackend
+        office_backend = DemoOfficeBackend()
+        if settings.OFFICE_BACKEND.strip().lower() in ("feishu", "lark"):
+            # 真实飞书接入：会议室走飞书日历（订餐暂仍 demo，P1-B 再接美餐/美团）。
+            # 缺凭据即启动报错——业务办理不允许静默落到 demo 内存数据。
+            from ..services.feishu_calendar import build_feishu_backend
+            office_backend = build_feishu_backend()
         runtime = cls(
             router=TwoLevelRouter(scenario_registry),
             scenario_registry=scenario_registry,
@@ -102,6 +121,7 @@ class V2Runtime:
             text2sql=Text2SQLService(data_registry, metrics, queries),
             notifier=NotificationService(LogNotificationChannel()),
             workflow=workflow,
+            office=office_backend,
         )
         runtime.handlers = build_handlers(runtime)
         return runtime
@@ -169,6 +189,8 @@ _NODE_CN: dict[str, str] = {
     "maintenance": "维保", "planning_window": "计划窗口",
     "engineering_param": "工程参数", "spare_parts": "备件",
     "fa": "根因分析", "report": "报告",
+    "spc_capability": "过程能力", "spc_pareto": "不良柏拉图",
+    "report_spc": "过程能力简报", "hitl_spc_action": "过程处置",
 }
 
 
@@ -194,6 +216,9 @@ class V2Orchestrator:
 
         if route.strategy == "qa":
             return self._handle_qa(result, query, user_ctx, t0)
+
+        if route.strategy == "office":
+            return self._handle_office(result, query, user_ctx, t0)
 
         if route.scenario_key is None:
             result.fallback = "manual_ticket"
@@ -290,7 +315,8 @@ class V2Orchestrator:
                         agentic["hitl_task"], result.run_id)]
                 result.elapsed_ms = (time.perf_counter() - t0) * 1000
                 logger.info("[orchestrator] %s agentic 接管: domain=%s steps=%d",
-                            result.run_id, route.domain, len(agentic["steps"]))
+                            result.run_id, result.route.get("domain"),
+                            len(agentic["steps"]))
                 return result
         result.internal_brief = {"回答通道": _QA_CHANNEL_CN.get(qr.channel, qr.channel),
                                  "数据行数": len(qr.rows or []),
@@ -308,6 +334,56 @@ class V2Orchestrator:
                     result.run_id, qr.channel, len(qr.rows or []))
         return result
 
+    def _handle_office(self, result: OrchestratorResult, query: str,
+                       user_ctx: Optional[dict], t0: float) -> OrchestratorResult:
+        """办公助手通道：独立 Agentic Agent 接管会议室预订/订餐等办公事务。
+
+        Agent 自主决定调哪些办公工具、何时对高影响事项发起 HITL；执行或失败
+        均如实回写（含数据缺口）——失败回落人工兜底，降级不崩。
+        """
+        from ...tools.llm_factory import llm_available
+        from ..agents.office import OfficeAssistantAgent
+
+        if not llm_available():
+            # LLM 不可用：办公助手无法自主规划工具调用 → 诚实降级转人工，绝不空转
+            result.fallback = "manual_ticket"
+            result.internal_brief = {
+                "执行方式": "办公助手智能体（Agentic）", "工具调用步数": 0,
+                "数据缺口": "LLM 服务不可用，无法自主办理"}
+            result.report = ("办公助手需要 LLM 服务（当前不可用），已转人工兜底："
+                             "请稍后重试，或直接联系行政办理会议室预订/订餐。")
+            result.elapsed_ms = (time.perf_counter() - t0) * 1000
+            logger.info("[orchestrator] %s 办公助手降级（LLM 不可用）", result.run_id)
+            return result
+
+        try:
+            agent = OfficeAssistantAgent(orchestrator=self)
+            out = agent.run(query, user_ctx=user_ctx)
+        except Exception as exc:  # noqa: BLE001 —— 办公助手异常回落人工兜底
+            logger.warning("[orchestrator] %s 办公助手执行失败: %s", result.run_id, exc)
+            result.fallback = "manual_ticket"
+            result.report = "办公助手当前不可用，已转人工兜底处理（请稍后重试或联系行政）。"
+            result.elapsed_ms = (time.perf_counter() - t0) * 1000
+            return result
+
+        result.route = dict(result.route, strategy="office")
+        result.internal_brief = {
+            "执行方式": "办公助手智能体（Agentic）",
+            "工具调用步数": len(out["steps"]),
+            "数据缺口": "；".join(out["data_gaps"]) or "无",
+        }
+        result.provenance = out["steps"]
+        result.report = out["report"]
+        result.degraded_reasons = (["存在缺口：" + "；".join(out["data_gaps"])]
+                                   if out["data_gaps"] else [])
+        result.degraded = bool(result.degraded_reasons)
+        if out.get("hitl_task"):
+            result.hitl = [self._agentic_hitl_card(out["hitl_task"], result.run_id)]
+        result.elapsed_ms = (time.perf_counter() - t0) * 1000
+        logger.info("[orchestrator] %s 办公助手完成: steps=%d hitl=%d",
+                    result.run_id, len(out["steps"]), len(result.hitl))
+        return result
+
     # 专业角色路由表（V3.3）：问题关键词 → 专属智能体（二级路由，覆盖域默认值）。
     # 顺序敏感：更具体的词放前面。
     ROLE_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
@@ -317,13 +393,18 @@ class V2Orchestrator:
         ("rd_test", ("软件测试", "固件", "Bug", "bug", "回归测试", "版本验证")),
         ("test_engineer", ("测试报告", "可靠性", "跌落", "高低温", "测试执行", "失效分析", "测试计划")),
         ("project_manager", ("项目里程碑", "项目风险", "资源协调", "跨部门协调", "项目健康度")),
+        ("procurement", ("采购", "供应商交期", "供应商绩效", "SCAR", "询价", "比价", "索赔")),
+        ("warehouse", ("库存", "仓库", "仓储", "出入库", "盘点", "库龄", "拣货", "发货单")),
+        ("ehs", ("EHS", "安全环保", "安全隐患", "危废", "消防", "职业健康", "安全事故")),
+        ("customer_service", ("客诉受理", "客服", "客户服务", "售后", "维修服务", "退换货")),
     ]
 
     def _run_agentic(self, domain, query, user_ctx, run_id):
         """运行域组 Agentic Agent；无对应域（function/None）返回 None 走原兜底。
 
-        二级路由（V3.3）：先按角色关键词匹配专属智能体（测试/ME/IE/NPI/PM），
-        无命中再落回域默认智能体——13 个智能体共享同一工具层与治理约束。
+        二级路由（V3.3）：先按角色关键词匹配专属智能体（NPI/IE/ME/研发测试/TE/PM，
+        以及 P1 拆分的采购/仓储/安全环保/客户服务），无命中再落回域默认智能体
+        ——17 个智能体共享同一工具层与治理约束。
         """
         from ..agents.agentic import DOMAIN_AGENT_CONFIGS, AgenticDomainAgent
 
@@ -398,6 +479,7 @@ class V2Orchestrator:
         "customer_complaint_v2": "华为投诉BATCH-A-1008",
         "delivery_status_v2": "A型号能发多少货",
         "equipment_warning_v2": "SMT-1设备参数异常吗",
+        "spc_anomaly_v2": "回流焊峰值温度过程能力Cpk是否越限",
     }
 
     def _route_suggestions(self, query: str) -> list[dict[str, Any]]:

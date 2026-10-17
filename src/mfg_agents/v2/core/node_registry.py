@@ -33,7 +33,7 @@ from ..agents import manufacturing as mf_agents
 from ..agents import quality as q_agents
 from ..agents import report as rep_agents
 from ..agents import supply_chain as sc_agents
-from ..agents.hitl import make_hitl_handler
+from ..agents.hitl import _flow_snapshot, make_hitl_handler
 from ..agents.workflow_nodes import make_workflow_handler
 
 logger = logging.getLogger(__name__)
@@ -249,8 +249,10 @@ def build_handlers(runtime: Any) -> dict[str, Any]:
             import json
             import re
             try:
+                # 思考档位动态分级：有相似案例 → 证据充分，低思考足够；
+                # 无案例 → 开放推理（评级/根因全靠模型权衡），升中思考
                 llm = get_llm(temperature=0.1, tier="L2", max_tokens=900, timeout=45,
-                              thinking="low")
+                              thinking="low" if cases else "medium")
                 resp = llm.invoke(prompt)
                 content = resp.content if hasattr(resp, "content") else str(resp)
                 match = re.search(r"\{.*\}", content, re.S)
@@ -292,6 +294,8 @@ def build_handlers(runtime: Any) -> dict[str, Any]:
             "fa_rating": ctx.get("fa_rating"),
             "eta_hours": ctx.get("eta_hours"),
             "root_cause": ctx.get("root_cause"),
+            # 流程留痕：上游已执行节点轨迹 + 本工作流卡点（审批摘要卡渲染进展/耗时）
+            "flow": _flow_snapshot(ctx, task.step_id, title, kind="workflow"),
         }
         wf_task = engine.create_task(
             wf_id="impact_assessment", title=title, context=context,
@@ -391,6 +395,8 @@ def build_handlers(runtime: Any) -> dict[str, Any]:
         engine, notifier, "delivery_commit")
     handlers["hitl_maintenance_window"] = make_hitl_handler(
         engine, notifier, "maintenance_window")
+    # S6 SPC 过程能力异常预警：过程异常处置决策（加严检验/工程介入/计划内暂停/维持监控）
+    handlers["hitl_spc_action"] = make_hitl_handler(engine, notifier, "spc_action")
 
     # 工作流工厂（同一实现按 step.params 装配；key = YAML step 的 workflow id）
     wf_handler = make_workflow_handler(engine, notifier)
@@ -454,6 +460,10 @@ def build_handlers(runtime: Any) -> dict[str, Any]:
         "supply_chain", eng_agents.spare_parts_template,
         summary_key="spare_summary")
 
+    # S6 SPC 过程能力异常预警：能力判定 + 不良柏拉图（口径来自 core.spc）
+    handlers["spc_capability"] = q_agents.make_spc_capability(t2s)
+    handlers["spc_pareto"] = q_agents.make_spc_pareto(t2s)
+
     # 报告工厂（按场景聚合简报；S3/S4 另出对客脱敏报告）
     handlers["report_incoming"] = rep_agents.make_report_handler(
         "incoming_quality_v2", llm_ok)
@@ -465,6 +475,8 @@ def build_handlers(runtime: Any) -> dict[str, Any]:
         "equipment_warning_v2", llm_ok)
     handlers["report_order_change"] = rep_agents.make_report_handler(
         "order_change_impact_v2", llm_ok)
+    handlers["report_spc"] = rep_agents.make_report_handler(
+        "spc_anomaly_v2", llm_ok)
 
     return handlers
 

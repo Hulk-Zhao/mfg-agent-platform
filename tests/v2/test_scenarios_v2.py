@@ -19,6 +19,10 @@ DB_PATH = "data/mfg_agent.db"
 
 USER_CTX = {"user_id": "u-gm", "dept": "management", "roles": ["coordinator"]}
 
+# SPC 场景需合法制造/质量身份（HITL 处置决策的发起/会签角色来源）
+SPC_CTX = {"user_id": "u1", "dept": "manufacturing",
+           "roles": ["manufacturing", "quality"]}
+
 # 5 个快捷问题 → 期望场景/域（L0 触发词路由证据）
 QUICK_ROUTES = [
     ("A型号在SMT-1停线，何时复线？", "line_stop_v2", "manufacturing"),
@@ -151,6 +155,74 @@ def test_s8_equipment_warning_end_to_end(orchestrator):
     assert len({g["note"] for g in gaps}) == 2  # 无重复 note
     assert brief.get("数据缺口")
     assert result.degraded is True
+
+
+# ---------- 7. S6 过程能力异常预警（SPC） ----------
+
+SPC_QUERY = "回流焊峰值温度过程能力Cpk是否越限"
+
+
+def test_s6_spc_trigger_routes_to_scenario(orchestrator):
+    """触发词「过程能力/Cpk/越限」命中 L0 路由 → spc_anomaly_v2（quality 域）。"""
+    result = orchestrator.handle(SPC_QUERY, SPC_CTX)
+    assert result.route["level"] == "L0"
+    assert result.scenario_key == "spc_anomaly_v2"
+    assert result.route["domain"] == "quality"
+    assert result.route["confidence"] == 1.0
+
+
+def test_s6_spc_scenario_dag_steps(orchestrator):
+    """场景 DAG 步骤集合/数量正确；fan_out 条件分支声明 spc_alert + else。"""
+    meta = orchestrator.runtime.scenario_registry.get("spc_anomaly_v2")
+    assert len(meta.steps) == 6
+    assert {s["id"] for s in meta.steps} == {
+        "intake", "spc_capability", "fanout", "fanin",
+        "hitl_spc_action", "report_spc"}
+    fanout = next(s for s in meta.steps if s["id"] == "fanout")
+    assert fanout["condition"] == "spc_alert"
+    assert fanout["else"] == "report_spc"
+    assert [b["id"] for b in fanout["branches"]] == ["spc_pareto"]
+    assert set(meta.outputs) == {"spc_capability_result", "spc_pareto_result",
+                                 "spc_action_ticket", "internal_brief"}
+
+
+def test_s6_spc_alert_branch_hits_pareto_and_hitl(orchestrator):
+    """越限（演示库 Cpk 含不合格/偏低）→ 走 spc_pareto 分支 + 到达 spc_action 槽位。"""
+    result = orchestrator.handle(SPC_QUERY, SPC_CTX)
+    assert result.error is None
+    assert result.scenario_key == "spc_anomaly_v2"
+    nodes = {p["node"] for p in result.provenance if p.get("channel") == "node_timing"}
+    assert "spc_pareto" in nodes
+    assert {"spc_capability", "hitl_spc_action"} <= nodes
+    # HITL 到达 spc_action 槽位（绝不自动放行）
+    assert len(result.hitl) == 1
+    assert result.hitl[0]["slot"] == "spc_action"
+    assert result.hitl[0]["kind"] == "spc_action"
+    assert result.hitl[0]["status"] == "waiting_hitl"
+    # 内部简报结构
+    assert set(result.internal_brief) == {"过程能力", "不良柏拉图"}
+    # provenance：真实 SQL（特性清单 + 柏拉图全量聚合）
+    names = {p.get("query_name") for p in result.provenance}
+    assert {"spc_characteristics_recent",
+            "quality_defect_pareto_all"} <= names
+
+
+def test_s6_spc_no_alert_branch_skips_pareto(orchestrator):
+    """无越限（spc_alert=False）→ else 直通 report_spc，跳过 spc_pareto 与 HITL。"""
+    def _no_alert(task, ctx, sink):   # 注入无越限判定（演示库恒越限，为覆盖 else 分支）
+        return {"domain": "quality", "status": "ok",
+                "payload": {"spc_capabilities": [], "spc_alert": False,
+                            "spc_capability_summary": "无越限特性"},
+                "summary": "无越限特性"}
+    orchestrator.runtime.handlers["spc_capability"] = _no_alert
+
+    result = orchestrator.handle(SPC_QUERY, SPC_CTX)
+    assert result.scenario_key == "spc_anomaly_v2"
+    nodes = {p["node"] for p in result.provenance if p.get("channel") == "node_timing"}
+    assert "spc_pareto" not in nodes      # 越限分支未触发
+    assert "report_spc" in nodes          # else 直达简报
+    assert "hitl_spc_action" not in nodes
+    assert result.hitl == []
 
 
 # ---------- 6. 数据红线回归（守卫未来数据编辑） ----------

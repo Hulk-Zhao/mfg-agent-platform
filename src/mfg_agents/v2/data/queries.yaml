@@ -35,7 +35,7 @@ queries:
   warehouse_available:
     desc: "WMS：型号可用库存（on_hand - reserved，等价 V1 WarehouseAgent）"
     tables: [inventory]
-    keywords: [库存, 能发, 可用]
+    keywords: [能发, 可用]
     sql: "SELECT product_model, warehouse, on_hand_qty, reserved_qty, (on_hand_qty - reserved_qty) AS available_qty FROM inventory WHERE product_model = :model"
 
   shipment_status:
@@ -70,7 +70,7 @@ queries:
   inventory_available_all:
     desc: "WMS：库存可用量（on_hand - reserved，替代料/冻结评估）"
     tables: [inventory]
-    keywords: [库存, 可用, 替代料, 冻结]
+    keywords: [可用, 替代料, 冻结, 可用量]
     sql: "SELECT product_model, warehouse, on_hand_qty, reserved_qty, (on_hand_qty - reserved_qty) AS available_qty FROM inventory"
 
   # ---- S3 客户投诉 ----
@@ -160,7 +160,7 @@ queries:
   atp_by_model:
     desc: "WMS：按产品型号查库存可用量 ATP（available = on_hand - reserved）"
     tables: [inventory]
-    keywords: [ATP, 可用量, 库存, 能发, 齐套]
+    keywords: [ATP, 可用量, 能发, 齐套, 型号库存, 型号可发]
     sql: "SELECT product_model, warehouse, on_hand_qty, reserved_qty, (on_hand_qty - reserved_qty) AS available_qty FROM inventory WHERE product_model = :model"
 
   # ============================================================
@@ -181,4 +181,110 @@ queries:
     tables: [production_output]
     keywords: [日均产出, 日产出, 产能, 插单, 排产推演, 交付影响]
     sql: "SELECT product_model, record_date, actual_qty AS output_qty FROM production_output WHERE product_model = :model ORDER BY record_date DESC LIMIT 14"
+
+  # ============================================================
+  # V3.6 SPC 域（最小切片）：柏拉图 + 测量值取数（工具 spc.* 的底座，仅追加不改上行）
+  # ============================================================
+
+  quality_defect_pareto_all:
+    desc: "QMS：全量不良分布聚合（不限定线体/型号，供 SPC 柏拉图排序与 80% 分界）"
+    tables: [quality_defect]
+    keywords: [柏拉图, 帕累托, pareto, 不良分布, 缺陷排序]
+    sql: "SELECT defect_type, SUM(defect_qty) AS total_qty FROM quality_defect GROUP BY defect_type ORDER BY total_qty DESC"
+
+  spc_measurements_by_characteristic:
+    desc: "QMS/SPC：按特性查测量值（含 USL/LSL 与子组号，供能力分析/报表取数；数据源为 spc.ingest 导入）"
+    tables: [spc_measurement]
+    keywords: [测量值, 特性, 子组, SPC, 能力分析, Cp, Cpk, 报表]
+    sql: "SELECT characteristic, subgroup_no, seq, value, usl, lsl, measured_at, source FROM spc_measurement WHERE characteristic = :characteristic ORDER BY subgroup_no, seq"
+
+  spc_characteristics_recent:
+    desc: "QMS/SPC：有测量值的特性清单（按测量条数倒序，供过程能力预警挑选待分析特性）"
+    tables: [spc_measurement]
+    keywords: [特性清单, 有哪些特性, 待分析特性, 过程能力特性]
+    sql: "SELECT characteristic, COUNT(*) AS n FROM spc_measurement GROUP BY characteristic ORDER BY n DESC, characteristic"
+
+  # ============================================================
+  # V3.7 增量（企业综合助手·制造数据速查）：材料库存 / 成品库存 / 来料批次
+  # （素材来自 seed_inventory.sql 三张新表；仅追加不改上行）
+  # 口径：可用量 available = on_hand - reserved（冻结量不计可用）；库龄 age_days。
+  # ============================================================
+
+  # ---- 材料库存 ----
+  # keywords 纪律（V3.7 修复）：泛化问法（"材料库存还有多少"）必须落到**无参**的
+  # *_all/*_top；带 :param 的 by_* 只保留**必须显式给出编码**才成立的关键词，
+  # 避免 QueryLibrary.match 把泛化问法打成 2 分命中 by_* 却抽不出参数而缺参崩溃。
+  material_stock_by_part:
+    desc: "WMS：按料号精确查材料库存（在库/预留/冻结/可用/safety/库龄），按仓库分行"
+    tables: [material_inventory]
+    keywords: [料号库存, 按料号, 料号查询, 该料号]
+    sql: "SELECT part_no, part_name, category, warehouse, bin_location, batch_no, supplier, on_hand_qty, reserved_qty, frozen_qty, (on_hand_qty - reserved_qty) AS available_qty, safety_stock, age_days, last_move_date FROM material_inventory WHERE part_no = :part_no ORDER BY warehouse"
+
+  material_stock_search:
+    desc: "WMS：按关键字模糊查材料库存（料号/名称 LIKE，口语问法兜底，如 M8 螺栓）"
+    tables: [material_inventory]
+    keywords: [材料模糊, 物料名称, 名称库存, 螺栓, 电容, 电阻, 连接器, 外壳, 电池, 液晶屏, 彩盒, PCB, 库存]
+    sql: "SELECT part_no, part_name, category, warehouse, bin_location, batch_no, on_hand_qty, reserved_qty, frozen_qty, (on_hand_qty - reserved_qty) AS available_qty, safety_stock, age_days FROM material_inventory WHERE part_no LIKE '%' || :kw || '%' OR part_name LIKE '%' || :kw || '%' ORDER BY part_no, warehouse"
+
+  material_stock_all:
+    desc: "WMS：全量材料库存速查（按料号+仓库分行，含可用量与安全库存）"
+    tables: [material_inventory]
+    keywords: [材料库存, 原材料库存, 物料库存, 库存速查, 在库, 原材料, 还有多少库存, 库存还有多少]
+    sql: "SELECT part_no, part_name, category, warehouse, bin_location, batch_no, on_hand_qty, reserved_qty, frozen_qty, (on_hand_qty - reserved_qty) AS available_qty, safety_stock, age_days FROM material_inventory ORDER BY part_no, warehouse"
+
+  material_shortage:
+    desc: "WMS：材料缺料/低于安全库存清单（缺口 = safety_stock - 可用量，按料号汇总）"
+    tables: [material_inventory]
+    keywords: [缺料, 缺口, 安全库存, 备料, 齐套, 低于安全]
+    sql: "SELECT part_no, part_name, category, SUM(on_hand_qty) AS on_hand_qty, SUM(reserved_qty) AS reserved_qty, SUM(on_hand_qty - reserved_qty) AS available_qty, MAX(safety_stock) AS safety_stock, (MAX(safety_stock) - SUM(on_hand_qty - reserved_qty)) AS shortage_qty FROM material_inventory GROUP BY part_no, part_name, category HAVING SUM(on_hand_qty - reserved_qty) < MAX(safety_stock) ORDER BY shortage_qty DESC"
+
+  material_aging_top:
+    desc: "WMS：材料库龄/呆滞 TOP10（按库龄天数倒序，>=90 天视为呆滞）"
+    tables: [material_inventory]
+    keywords: [库龄, 呆滞, 呆滞料, 积压, 长库龄, 老化]
+    sql: "SELECT part_no, part_name, category, warehouse, bin_location, batch_no, on_hand_qty, age_days, last_move_date FROM material_inventory ORDER BY age_days DESC LIMIT 10"
+
+  # ---- 成品库存 ----
+  finished_stock_all:
+    desc: "WMS：全量成品库存（型号/仓/批号/在库/预留/可用/安全库存/库龄）"
+    tables: [finished_inventory]
+    keywords: [成品库存, 成品仓, 成品, 备货, 成品有多少, 库存速查, 还有多少库存, 在库]
+    sql: "SELECT product_model, warehouse, batch_no, on_hand_qty, reserved_qty, (on_hand_qty - reserved_qty) AS available_qty, safety_stock, age_days, last_move_date FROM finished_inventory ORDER BY product_model, warehouse"
+
+  finished_stock_by_model:
+    desc: "WMS：按产品型号查成品库存与可发量 ATP（available = on_hand - reserved）"
+    tables: [finished_inventory]
+    keywords: [型号成品, 成品可发, 型号可发, 型号库存]
+    sql: "SELECT product_model, warehouse, batch_no, on_hand_qty, reserved_qty, (on_hand_qty - reserved_qty) AS available_qty, safety_stock, age_days FROM finished_inventory WHERE product_model = :model ORDER BY warehouse"
+
+  # ---- 来料批次综合 ----
+  incoming_batch_recent:
+    desc: "QMS/WMS：近期来料批次综合（含 IQC 结论：合格/不合格/待检/让步接收）"
+    tables: [incoming_batch]
+    keywords: [来料批次, 近期来料, 待检, 让步接收, 特采, IQC]
+    sql: "SELECT batch_no, part_no, part_name, supplier, arrival_time, qty, qualified_qty, inspect_status, warehouse, bin_location FROM incoming_batch ORDER BY arrival_time DESC LIMIT 10"
+
+  incoming_batch_scan:
+    desc: "QMS/WMS：来料批次全量扫描（供 Agent 按供应商/料号二次过滤，上限 60）"
+    tables: [incoming_batch]
+    keywords: [来料全量扫描, 批次扫描]
+    sql: "SELECT batch_no, part_no, part_name, supplier, arrival_time, qty, qualified_qty, inspect_status, warehouse, bin_location FROM incoming_batch ORDER BY arrival_time DESC LIMIT 60"
+
+  incoming_batch_by_no:
+    desc: "QMS/WMS：按批号查来料综合（数量/合格数/结论/库位/COA）"
+    tables: [incoming_batch]
+    keywords: [批号, 检验结论, COA, 到货批次, 该批次]
+    sql: "SELECT batch_no, part_no, part_name, supplier, arrival_time, qty, qualified_qty, inspect_status, warehouse, bin_location, coa_url FROM incoming_batch WHERE batch_no = :batch_no"
+
+  incoming_batch_by_supplier:
+    desc: "SRM：供应商来料合格率排行（按供应商汇总批次数/不合格数/合格率，无参）"
+    tables: [incoming_batch]
+    keywords: [供应商合格率, 来料合格率, 供应商评级, 供应商质量, 供应商排行]
+    sql: "SELECT supplier, COUNT(*) AS batch_cnt, SUM(qty) AS total_qty, SUM(qualified_qty) AS qualified_qty, SUM(CASE WHEN inspect_status='fail' THEN 1 ELSE 0 END) AS fail_cnt, ROUND(100.0 * SUM(CASE WHEN inspect_status='pass' THEN 1 ELSE 0 END) / COUNT(*), 1) AS pass_rate FROM incoming_batch GROUP BY supplier ORDER BY fail_cnt DESC, supplier"
+
+  batch_trace_full:
+    desc: "QMS：批次综合追溯（来料综合 incoming_batch 关联传统来料结论与不良记录，正/反向）"
+    tables: [incoming_batch, material_batch, quality_defect]
+    keywords: [批次追溯, 追溯, 全链路追溯, 正向追溯, 反向追溯]
+    sql: "SELECT b.batch_no, b.part_no, b.part_name, b.supplier, b.arrival_time, b.qty, b.qualified_qty, b.inspect_status, b.warehouse, b.bin_location, m.incoming_result AS legacy_result, q.defect_type, q.defect_qty FROM incoming_batch b LEFT JOIN material_batch m ON b.batch_no = m.batch_no LEFT JOIN quality_defect q ON b.batch_no = q.batch_no WHERE b.batch_no = :batch_no"
 

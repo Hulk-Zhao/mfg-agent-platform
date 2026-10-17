@@ -9,16 +9,25 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from ..core.spc import build_pareto, compute_capability
+
 __all__ = [
     "summarize_pqe",
     "summarize_sqe_supplier",
+    "summarize_capability",
+    "summarize_pareto",
     "sqe_assessment_template",
     "make_qa_lead",
     "make_pqe_process",
     "make_sqe_supplier",
+    "make_spc_capability",
+    "make_spc_pareto",
 ]
 
 _BATCH_RE = re.compile(r"BATCH-[A-Za-z0-9\-]+")
+
+# SPC 过程能力预警：一次最多分析的特性数（防止无界取数拖慢链路）
+_SPC_MAX_CHARACTERISTICS = 3
 
 
 def _extract_batch_no(task: Any, ctx: Any) -> str:
@@ -209,6 +218,154 @@ def make_sqe_supplier(t2s: Any):
         if not rows:
             payload["data_gap"] = [f"供应商侧：批号{batch_no or '未知'}无来料检验记录"]
         status = "degraded" if (qr is None or qr.fallback or not rows) else "ok"
+        return {"domain": "quality", "status": status,
+                "payload": payload, "summary": summary}
+    return handler
+
+
+# ---------- S6：SPC 过程能力异常预警 ----------
+
+
+def _spc_spec(rows: list[dict]) -> tuple[Any, Any]:
+    """从测量行取规格限（USL/LSL）：取首个非空值，缺失即 None（触发诚实降级）。"""
+    usl = lsl = None
+    for r in rows:
+        if usl is None and r.get("usl") is not None:
+            usl = r.get("usl")
+        if lsl is None and r.get("lsl") is not None:
+            lsl = r.get("lsl")
+        if usl is not None and lsl is not None:
+            break
+    return usl, lsl
+
+
+def _spc_subgroups(rows: list[dict]) -> list[list[float]]:
+    """按 ``subgroup_no`` 聚合测量值 → 子组序列（供 Xbar-R 组内 σ 口径）。"""
+    grouped: dict[int, list[float]] = {}
+    for r in rows:
+        try:
+            sg = int(r.get("subgroup_no"))
+            value = float(r.get("value"))
+        except (TypeError, ValueError):
+            continue
+        grouped.setdefault(sg, []).append(value)
+    return [grouped[key] for key in sorted(grouped)]
+
+
+def summarize_capability(caps: list[dict]) -> str:
+    """过程能力判定摘要（真实指数，不编造；缺口显式说明）。"""
+    if not caps:
+        return ("无 SPC 测量特性（data_gap）：spc_measurement 暂无数据，"
+                "请先经 spc.ingest 导入测量值")
+    parts: list[str] = []
+    for cap in caps:
+        name = cap.get("characteristic") or "—"
+        if cap.get("data_gap"):
+            parts.append(f"{name}：不可判定（数据缺口）")
+        else:
+            parts.append(f"{name} Cpk={cap.get('cpk')}（{cap.get('verdict')}）")
+    valid = [c for c in caps if not c.get("data_gap") and c.get("cpk") is not None]
+    if valid:
+        worst = min(valid, key=lambda c: c.get("cpk"))
+        parts.append(f"最低能力：{worst.get('characteristic')} "
+                     f"Cpk={worst.get('cpk')}（{worst.get('verdict')}）")
+    return f"过程能力：{len(caps)}个特性；" + "；".join(parts)
+
+
+def summarize_pareto(pareto: dict) -> str:
+    """不良柏拉图摘要（关键少数 = 累计首达 80% 的项目集合）。"""
+    if pareto.get("data_gap"):
+        return ("不良柏拉图：无不良数据（data_gap：quality_defect 无可统计项）")
+    vital = pareto.get("vital_few") or []
+    names = "、".join(str(v.get("name")) for v in vital) or "—"
+    return (f"不良柏拉图：{pareto.get('count')}类，合计{int(pareto.get('total') or 0)}pcs；"
+            f"关键少数 {pareto.get('vital_few_count')} 类（{names}）"
+            f"累计{pareto.get('vital_few_cum_pct')}")
+
+
+def make_spc_capability(t2s: Any):
+    """SPC 过程能力判定节点：特性清单 → 逐特性取测量值 → 双西格玛能力指数 → 越限判定。
+
+    口径（勿走样）：``Cp/Cpk`` 用组内 σ（Xbar-R，R̄/d2）；``Pp/Ppk`` 用整体 σ(ddof=1)；
+    指数与判定一律来自 ``core.spc.compute_capability``（确定性纯函数），绝不编造。
+    缺测量值/缺规格限/子组不足 → 该特性 ``data_gap``，并令 ``spc_alert=True`` 促人工确认。
+    """
+
+    def handler(task: Any, ctx: Any, sink: Any) -> dict:
+        sink.emit({"type": "tool_start", "tool": "SQL查询",
+                   "detail": "查询有测量值的特性清单（SPC 过程能力）"})
+        qr0 = t2s.query_registered("spc_characteristics_recent", {}, task.user_ctx)
+        chars = qr0.rows
+        sink.emit({"type": "tool_end", "tool": "SQL查询",
+                   "detail": f"返回{len(chars)}个特性"})
+        caps: list[dict] = []
+        provenance: list[dict] = [qr0.to_dict()]
+        gaps: list[str] = []
+        for r in chars[:_SPC_MAX_CHARACTERISTICS]:
+            name = str(r.get("characteristic") or "").strip()
+            if not name:
+                continue
+            sink.emit({"type": "tool_start", "tool": "SQL查询",
+                       "detail": f"读取特性「{name}」测量值"})
+            qr = t2s.query_registered("spc_measurements_by_characteristic",
+                                      {"characteristic": name}, task.user_ctx)
+            rows = qr.rows
+            provenance.append(qr.to_dict())
+            sink.emit({"type": "tool_end", "tool": "SQL查询",
+                       "detail": f"返回{len(rows)}条测量值"})
+            usl, lsl = _spc_spec(rows)
+            if usl is None or lsl is None:
+                caps.append({"characteristic": name, "data_gap": True,
+                             "verdict": "不可判定",
+                             "warnings": ["测量值缺少 USL/LSL 规格限，能力指数不可算"]})
+                gaps.append(f"过程能力：特性「{name}」缺规格限（usl/lsl）")
+                continue
+            cap = compute_capability(characteristic=name, usl=usl, lsl=lsl,
+                                     subgroups=_spc_subgroups(rows))
+            caps.append(cap)
+            if cap.get("data_gap"):
+                gaps.append(f"过程能力：特性「{name}」不可判定"
+                            f"（{'；'.join(cap.get('warnings') or [])}）")
+
+        alert = (not caps) or any(
+            c.get("data_gap") or c.get("verdict") in ("偏低", "不合格") for c in caps)
+        summary = summarize_capability(caps)
+        payload: dict[str, Any] = {
+            "spc_capabilities": caps,
+            "spc_alert": alert,
+            "spc_capability_summary": summary,
+            "provenance": provenance,
+        }
+        if gaps:
+            payload["data_gap"] = gaps
+        status = "degraded" if (not caps or gaps) else "ok"
+        return {"domain": "quality", "status": status,
+                "payload": payload, "summary": summary}
+    return handler
+
+
+def make_spc_pareto(t2s: Any):
+    """SPC 不良柏拉图节点：全量不良分布 → 关键少数定位（deterministic，不编造）。"""
+
+    def handler(task: Any, ctx: Any, sink: Any) -> dict:
+        sink.emit({"type": "tool_start", "tool": "SQL查询",
+                   "detail": "查询全量不良分布（柏拉图取数）"})
+        qr = t2s.query_registered("quality_defect_pareto_all", {}, task.user_ctx)
+        sink.emit({"type": "tool_end", "tool": "SQL查询",
+                   "detail": f"返回{len(qr.rows)}类不良"})
+        items = [{"name": r.get("defect_type"), "qty": r.get("total_qty")}
+                 for r in qr.rows if r.get("defect_type")]
+        pareto = build_pareto(items)
+        summary = summarize_pareto(pareto)
+        payload: dict[str, Any] = {
+            "spc_pareto_items": pareto.get("items") or [],
+            "spc_pareto_vital_few": pareto.get("vital_few") or [],
+            "spc_pareto_summary": summary,
+            "provenance": [qr.to_dict()],
+        }
+        if pareto.get("data_gap"):
+            payload["data_gap"] = ["不良柏拉图：无可统计的不良项"]
+        status = "degraded" if (qr.fallback or pareto.get("data_gap")) else "ok"
         return {"domain": "quality", "status": status,
                 "payload": payload, "summary": summary}
     return handler

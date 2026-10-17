@@ -14,13 +14,14 @@
    *  uid：稳定用户标识——一人一签（G6）按 uid 判定，不按姓名。
    *  每个岗位对应**一个**治理角色：同一身份持多个会签角色 = 会签造假入口。
    *  演示三方会签的正确方式是换身份登录。 */
-  /** 登录岗位按域分 4 组（renderLogin 渲染组标题 · sticky）。
+  /** 登录岗位按域分 5 组（renderLogin 渲染组标题 · sticky）。
    *  仅影响登录页排版；ROLES 仍是单一事实源数组。 */
   const ROLE_GROUPS = [
     { id: "mgmt",   name: "经营层",       roles: ["gm"] },
     { id: "quality", name: "质量域",      roles: ["qd", "sqe", "pqe", "qa"] },
-    { id: "make",   name: "制造与工程",    roles: ["mfg", "eqm", "eq", "rdm", "rd", "pe"] },
-    { id: "func",   name: "供应链与职能",  roles: ["scm", "pln", "mc", "procm", "proc", "whm", "wh", "biz", "finm", "fin"] },
+    { id: "make",   name: "制造与设备",    roles: ["mfg", "eqm", "eq", "mt", "ehs"] },
+    { id: "eng",    name: "研发与工程",    roles: ["rdm", "rd", "pe", "ie", "npi", "pm", "te", "me", "rdt"] },
+    { id: "func",   name: "供应链与职能",  roles: ["scm", "pln", "mc", "procm", "proc", "whm", "wh", "biz", "finm", "fin", "hr", "cs"] },
   ];
 
   const ROLES = [
@@ -89,6 +90,42 @@
     { id: "finm", name: "财务经理",  abbr: "FIN-M", uid: "u-finm", user: "秦岚", dept: "finance",      roles: ["finance_manager"],
       greeting: "财务管理视图", desc: "聚焦成本核算 / COPQ / 索赔金额口径终批，价格字段可见",
       scope: "成本 · 价格（可见）· COPQ", scenarios: ["成本核算", "索赔金额终批", "质量成本分析"], tone: "gray" },
+
+    // ---------- 研发/工程/项目岗位（P0：补齐"有智能体无门户岗位"的门面缺口） ----------
+    // 说明：IE / NPI / PM / TE / ME / 研发测试 / 行政人事 七个智能体此前已在
+    // agents/agentic.py 注册，但门户缺对应登录岗位；本段补齐，使「一人一岗一治理角色」全覆盖。
+    { id: "ie",  name: "IE 工业工程",   abbr: "IE",  uid: "u-ie",  user: "高翔", dept: "rd_engineering", roles: ["ie_engineer"],
+      greeting: "工业工程视图", desc: "聚焦标准工时 / 产能测算 / 线平衡 / 效率改善与人力配置",
+      scope: "工时 · 产能 · 线平衡", scenarios: ["标准工时测算", "线平衡改善", "产能与人力配置"], tone: "teal" },
+    { id: "npi", name: "NPI 导入工程师", abbr: "NPI", uid: "u-npi", user: "田甜", dept: "rd_engineering", roles: ["npi_engineer"],
+      greeting: "新品导入视图", desc: "聚焦 EVT/DVT/PVT/MP 阶段 / 试产安排 / DFM 问题 / 导入进度与风险",
+      scope: "NPI · 试产 · DFM", scenarios: ["阶段转段判定", "试产安排", "DFM 评审"], tone: "indigo" },
+    { id: "pm",  name: "项目经理",     abbr: "PM",  uid: "u-pm",  user: "陈锋", dept: "pm",             roles: ["project_manager"],
+      greeting: "项目管理视图", desc: "聚焦跨部门里程碑 / 风险跟踪 / 资源冲突 / 项目健康度",
+      scope: "项目 · 里程碑 · 风险", scenarios: ["里程碑跟踪", "跨部门协调", "项目风险升级"], tone: "blue" },
+    { id: "te",  name: "TE 工程测试",  abbr: "TE",  uid: "u-te",  user: "许阳", dept: "rd_engineering", roles: ["test_engineer"],
+      greeting: "工程测试视图", desc: "聚焦测试执行 / 测试报告 / 失效分析 / 可靠性测试（跌落、高低温、寿命）",
+      scope: "测试执行 · 可靠性 · 失效分析", scenarios: ["可靠性测试", "测试报告", "失效分析"], tone: "purple" },
+    { id: "me",  name: "ME 结构工程",  abbr: "ME",  uid: "u-me",  user: "邱帆", dept: "rd_engineering", roles: ["me_engineer"],
+      greeting: "结构工程视图", desc: "聚焦结构设计 / 模具 / 公差配合 / 装配与变形断裂问题",
+      scope: "结构 · 模具 · 公差（CAD 源未接入）", scenarios: ["结构设计评审", "模具与公差", "装配问题分析"], tone: "olive" },
+    { id: "rdt", name: "研发测试工程师", abbr: "RD-T", uid: "u-rdt", user: "谭睿", dept: "rd_engineering", roles: ["rd_test_engineer"],
+      greeting: "研发测试视图", desc: "聚焦软件 / 固件测试 / Bug 管理 / 版本回归（Bug 系统源未接入）",
+      scope: "软件测试 · 固件 · Bug", scenarios: ["版本回归", "Bug 管理与判定", "固件验证"], tone: "indigo" },
+    { id: "hr",  name: "行政人事",     abbr: "HR",  uid: "u-hr",  user: "尹姿", dept: "admin",          roles: ["admin_hr"],
+      greeting: "行政人事视图", desc: "聚焦行政流程（用章 / 会议室 / 访客）/ 培训与资质 / 考勤假期",
+      scope: "行政 · 人事 · 培训", scenarios: ["用章审批", "培训与资质", "考勤假期"], tone: "gray" },
+
+    // ---------- 安全环保 / 客户服务 / 设备维保岗位（P1：补齐部门岗位与治理角色） ----------
+    { id: "ehs", name: "EHS 安全环保", abbr: "EHS", uid: "u-ehs", user: "孟浩", dept: "ehs",          roles: ["ehs"],
+      greeting: "安全环保视图", desc: "聚焦安全隐患 / 环保危废 / 消防与职业健康 / 事故闭环",
+      scope: "安全 · 环保 · 职业健康", scenarios: ["安全隐患排查", "危废合规", "事故调查与闭环"], tone: "amber" },
+    { id: "cs",  name: "客户服务",     abbr: "CS",  uid: "u-cs",  user: "苏晴", dept: "service",       roles: ["customer_service"],
+      greeting: "客户服务视图", desc: "聚焦客诉受理 / 售后与退换货 / 服务时效 / 对客口径协同",
+      scope: "客诉受理 · 售后 · 服务时效", scenarios: ["客诉受理分派", "售后与退换货", "服务时效跟进"], tone: "purple" },
+    { id: "mt",  name: "设备维保技师", abbr: "MT",  uid: "u-mt",  user: "陆凯", dept: "equipment",     roles: ["maintenance_tech"],
+      greeting: "设备维保视图", desc: "聚焦点检 / 保养 / 维修工单执行 / 备件领用与停机窗口发起",
+      scope: "点检 · 保养 · 维修执行", scenarios: ["点检保养计划", "维修工单执行", "停机窗口发起"], tone: "teal" },
   ];
 
   /** 工作台 · 今日预警摘要（按角色取不同范围，演示数据） */
@@ -97,110 +134,162 @@
    *  接真实数据后：值改由 GET /api/v2/metrics?role= 下发，配置结构不变。 */
   const ROLE_KPIS = {
     gm: [
-      { icon: "orders", tone: "blue", num: "92.4%", label: "订单准交率 OTD", trend: "近 4 周 +1.8pct", up: false , ask: "最近一周有哪些订单存在延期风险？"},
+      { icon: "orders", tone: "blue", num: "92.4%", label: "订单准交率 OTD", trend: "近 4 周 +1.8pct", up: false , ask: "最近一周有哪些订单存在延期风险？", drill: { screen: "orders", kpi: "otd" }},
       { icon: "activity", tone: "red", num: "386", label: "客诉 PPM（本月）", trend: "华为终端 S 级订单临期", up: true , ask: "本月客诉集中在哪些问题？"},
       { icon: "warn", tone: "red", num: "5", label: "跨部门风险工单", trend: "2 张待升级", up: true , ask: "现在有哪些跨部门工单超时了？"},
     ],
     mfg: [
-      { icon: "activity", tone: "amber", num: "78.6%", label: "设备综合效率 OEE", trend: "SMT-1 停线恢复中", up: false , ask: "SMT-1现在设备参数异常吗？"},
+      { icon: "activity", tone: "amber", num: "78.6%", label: "设备综合效率 OEE", trend: "SMT-1 停线恢复中", up: false , ask: "SMT-1现在设备参数异常吗？", drill: { screen: "manufacturing", kpi: "oee" }},
       { icon: "clock", tone: "red", num: "2.4h", label: "今日累计停线", trend: "刮刀压力异常已定位", up: true , ask: "A型号在SMT-1停线，何时复线？"},
-      { icon: "check", tone: "green", num: "96.2%", label: "直通率 FPY", trend: "环比 +0.4pct", up: false , ask: "今天的直通率FPY是多少？"},
+      { icon: "check", tone: "green", num: "96.2%", label: "直通率 FPY", trend: "环比 +0.4pct", up: false , ask: "今天的直通率FPY是多少？", drill: { screen: "quality", kpi: "fpy" }},
     ],
     sqe: [
-      { icon: "box", tone: "amber", num: "2", label: "来料不合格批次", trend: "锡膏/IC 批次处置中", up: true , ask: "今天锡膏批次有问题"},
+      { icon: "box", tone: "amber", num: "2", label: "来料不合格批次", trend: "锡膏/IC 批次处置中", up: true , ask: "今天锡膏批次有问题", drill: { screen: "quality", kpi: "incoming_pass_rate" }},
       { icon: "warn", tone: "red", num: "3", label: "SCAR 未关闭", trend: "1 张 SLA 剩余 6h", up: true , ask: "来料不合格批次有哪些需要处置？"},
       { icon: "check", tone: "blue", num: "1", label: "本月特采笔数", trend: "全部留痕可追溯", up: false , ask: "最近有多少特采放行？"},
     ],
     pqe: [
       { icon: "activity", tone: "red", num: "0.89", label: "锡膏印刷 CPK", trend: "低于 1.33 改善中", up: true , ask: "今天锡膏批次有问题"},
-      { icon: "warn", tone: "amber", num: "77pcs", label: "主导不良（锡膏偏移）", trend: "贴片偏移 46pcs 已围堵", up: true , ask: "华为投诉BATCH-A-1008"},
+      { icon: "warn", tone: "amber", num: "77pcs", label: "主导不良（锡膏偏移）", trend: "贴片偏移 46pcs 已围堵", up: true , ask: "华为投诉BATCH-A-1008", drill: { screen: "quality", kpi: "defect_rate" }},
       { icon: "approve", tone: "blue", num: "2", label: "8D 在办", trend: "1 张待我会签", up: false , ask: "锡膏印刷CPK最近趋势如何？"},
     ],
     qa: [
       { icon: "check", tone: "blue", num: "18", label: "今日放行批次", trend: "全部留痕", up: false , ask: "今天锡膏批次有问题"},
-      { icon: "warn", tone: "amber", num: "2", label: "待合规审核项", trend: "特采 1 笔需合规确认", up: true , ask: "华为投诉BATCH-A-1008"},
+      { icon: "warn", tone: "amber", num: "2", label: "待合规审核项", trend: "特采 1 笔需合规确认", up: true , ask: "华为投诉BATCH-A-1008", drill: { screen: "quality", kpi: "std_conformity" }},
       { icon: "clock", tone: "red", num: "1", label: "8D 待关闭", trend: "D8 关闭待质量总监", up: true , ask: "8D报告哪些待关闭？"},
     ],
     mc: [
-      { icon: "box", tone: "red", num: "3", label: "缺料项", trend: "锡膏 M7020 延迟 36h", up: true , ask: "A型号能发多少货"},
-      { icon: "activity", tone: "amber", num: "87%", label: "齐套率", trend: "A 型号欠 3100pcs", up: false , ask: "锡膏M7020什么时候到货？"},
+      { icon: "box", tone: "red", num: "3", label: "缺料项", trend: "锡膏 M7020 延迟 36h", up: true , ask: "A型号能发多少货", drill: { screen: "orders", kpi: "material_shortage_rate" }},
+      { icon: "activity", tone: "amber", num: "87%", label: "齐套率", trend: "A 型号欠 3100pcs", up: false , ask: "锡膏M7020什么时候到货？", drill: { screen: "orders", kpi: "kit_rate" }},
       { icon: "clock", tone: "blue", num: "4", label: "在途批次", trend: "预计 48h 内到货", up: false , ask: "A型号缺料影响哪些订单？"},
     ],
     biz: [
-      { icon: "orders", tone: "blue", num: "92.4%", label: "OTD 准交率", trend: "环比 +1.8pct", up: false , ask: "A型号能发多少货"},
-      { icon: "warn", tone: "red", num: "2", label: "临期订单", trend: "华为 S 级需对客口径", up: true , ask: "华为投诉BATCH-A-1008"},
+      { icon: "orders", tone: "blue", num: "92.4%", label: "OTD 准交率", trend: "环比 +1.8pct", up: false , ask: "A型号能发多少货", drill: { screen: "orders", kpi: "otd" }},
+      { icon: "warn", tone: "red", num: "2", label: "临期订单", trend: "华为 S 级需对客口径", up: true , ask: "华为投诉BATCH-A-1008", drill: { screen: "orders", kpi: "delay_rate" }},
       { icon: "clock", tone: "amber", num: "1.6h", label: "客诉平均响应", trend: "目标 ≤2h", up: false , ask: "哪些订单本周临期？"},
     ],
     proc: [
-      { icon: "check", tone: "green", num: "94.1%", label: "供应商交期达成", trend: "千住金属延迟 1 批", up: false , ask: "今天锡膏批次有问题"},
+      { icon: "check", tone: "green", num: "94.1%", label: "供应商交期达成", trend: "千住金属延迟 1 批", up: false , ask: "今天锡膏批次有问题", drill: { screen: "quality", kpi: "incoming_pass_rate" }},
       { icon: "activity", tone: "amber", num: "1", label: "索赔在途", trend: "来料不合格费用分摊中", up: true , ask: "千住金属最近的交期达成情况？"},
       { icon: "box", tone: "blue", num: "0", label: "价格异动", trend: "本季无", up: false , ask: "来料不合格如何索赔？"},
     ],
     wh: [
-      { icon: "check", tone: "green", num: "99.2%", label: "库存准确率", trend: "月盘差异 3 项", up: false , ask: "A型号能发多少货"},
+      { icon: "check", tone: "green", num: "99.2%", label: "库存准确率", trend: "月盘差异 3 项", up: false , ask: "A型号能发多少货", drill: { screen: "orders", kpi: "material_shortage_rate" }},
       { icon: "box", tone: "blue", num: "142", label: "今日出入库", trend: "出货 6 单待拣", up: false , ask: "A型号ATP可承诺量是多少？"},
       { icon: "warn", tone: "amber", num: "1", label: "待发货协同", trend: "A 型号 ATP 400pcs", up: true , ask: "今天有哪些发货单待拣？"},
     ],
     rd: [
       { icon: "clock", tone: "blue", num: "3", label: "ECN 在办", trend: "2 张待会签", up: false , ask: "SMT-1设备参数异常吗？"},
-      { icon: "activity", tone: "green", num: "DVT", label: "NPI 当前阶段", trend: "B 型号按计划", up: false , ask: "B型号NPI进展如何？"},
+      { icon: "activity", tone: "green", num: "DVT", label: "NPI 当前阶段", trend: "B 型号按计划", up: false , ask: "B型号NPI进展如何？", drill: { screen: "orders", kpi: "milestone_done_rate" }},
       { icon: "warn", tone: "amber", num: "2", label: "根因待补数据", trend: "BOM/工艺参数源未接入", up: true , ask: "BOM/ECN数据为什么缺失？"},
     ],
     eq: [
-      { icon: "warn", tone: "red", num: "2", label: "设备预警", trend: "SMT-1 刮刀压力异常", up: true , ask: "SMT-1现在设备参数异常吗？"},
+      { icon: "warn", tone: "red", num: "2", label: "设备预警", trend: "SMT-1 刮刀压力异常", up: true , ask: "SMT-1现在设备参数异常吗？", drill: { screen: "manufacturing", kpi: "availability" }},
       { icon: "clock", tone: "amber", num: "1", label: "停机窗口待确认", trend: "PRT-01 点检后开窗", up: true , ask: "A型号在SMT-1停线，何时复线？"},
-      { icon: "activity", tone: "green", num: "76.4%", label: "设备综合效率 OEE", trend: "低于目标 2.2pct", up: false , ask: "设备综合效率OEE是多少？"},
+      { icon: "activity", tone: "green", num: "76.4%", label: "设备综合效率 OEE", trend: "低于目标 2.2pct", up: false , ask: "设备综合效率OEE是多少？", drill: { screen: "manufacturing", kpi: "oee" }},
     ],
     pe: [
-      { icon: "approve", tone: "blue", num: "1", label: "8D 待我会签", trend: "制程根因结论", up: false , ask: "锡膏印刷CPK最近趋势如何？"},
+      { icon: "approve", tone: "blue", num: "1", label: "8D 待我会签", trend: "制程根因结论", up: false , ask: "锡膏印刷CPK最近趋势如何？", drill: { screen: "orders", kpi: "task_backlog_rate" }},
       { icon: "activity", tone: "amber", num: "0.89", label: "锡膏印刷 CPK", trend: "工艺窗口待收敛", up: true , ask: "今天锡膏批次有问题"},
       { icon: "warn", tone: "red", num: "1", label: "DFM 待评审", trend: "B 型号结构改版", up: true , ask: "B型号DFM评审进展如何？"},
     ],
     pln: [
-      { icon: "orders", tone: "blue", num: "92.4%", label: "订单准交率 OTD", trend: "本周排产已锁定", up: false , ask: "最近一周有哪些订单存在延期风险？"},
+      { icon: "orders", tone: "blue", num: "92.4%", label: "订单准交率 OTD", trend: "本周排产已锁定", up: false , ask: "最近一周有哪些订单存在延期风险？", drill: { screen: "orders", kpi: "otd" }},
       { icon: "activity", tone: "amber", num: "3", label: "产能瓶颈工序", trend: "组装段负荷 112%", up: true , ask: "当前产能负荷如何？"},
       { icon: "warn", tone: "red", num: "1", label: "紧急插单待评估", trend: "S 级客户加急 500pcs", up: true , ask: "有哪些订单需要插单或改期？"},
     ],
     fin: [
       { icon: "box", tone: "blue", num: "¥ 86.4", label: "A 型号 BOM 成本", trend: "环比 -1.2%", up: false , ask: "BOM成本是多少？"},
-      { icon: "warn", tone: "amber", num: "2", label: "待核算索赔", trend: "供应商 SCAR 赔付中", up: true , ask: "供应商索赔金额是多少？"},
+      { icon: "warn", tone: "amber", num: "2", label: "待核算索赔", trend: "供应商 SCAR 赔付中", up: true , ask: "供应商索赔金额是多少？", drill: { screen: "orders", kpi: "task_backlog_rate" }},
       { icon: "activity", tone: "red", num: "¥ 31.2万", label: "本月质量成本 COPQ", trend: "返工+报废占比 62%", up: true , ask: "质量成本COPQ分析"},
     ],
     // ---------- 部门负责人看板（决策/审批视角） ----------
     qd: [
-      { icon: "approve", tone: "amber", num: "2", label: "8D 待终批", trend: "1 张 SLA 剩余 6h", up: true , ask: "8D报告哪些待关闭？"},
+      { icon: "approve", tone: "amber", num: "2", label: "8D 待终批", trend: "1 张 SLA 剩余 6h", up: true , ask: "8D报告哪些待关闭？", drill: { screen: "orders", kpi: "task_backlog_rate" }},
       { icon: "warn", tone: "red", num: "386", label: "客诉 PPM（本月）", trend: "华为终端 S 级升级", up: true , ask: "本月客诉集中在哪些问题？"},
       { icon: "activity", tone: "amber", num: "1", label: "不合格品处置待终裁", trend: "锡膏批次退货 1 批", up: true , ask: "来料不合格批次有哪些需要处置？"},
     ],
     eqm: [
-      { icon: "warn", tone: "red", num: "2", label: "设备预警", trend: "SMT-1 刮刀压力异常", up: true , ask: "SMT-1现在设备参数异常吗？"},
+      { icon: "warn", tone: "red", num: "2", label: "设备预警", trend: "SMT-1 刮刀压力异常", up: true , ask: "SMT-1现在设备参数异常吗？", drill: { screen: "manufacturing", kpi: "availability" }},
       { icon: "approve", tone: "amber", num: "1", label: "停机窗口待审批", trend: "PRT-01 点检后开窗", up: true , ask: "A型号在SMT-1停线，何时复线？"},
-      { icon: "activity", tone: "green", num: "76.4%", label: "设备可用率 OEE", trend: "低于目标 2.2pct", up: false , ask: "设备综合效率OEE是多少？"},
+      { icon: "activity", tone: "green", num: "76.4%", label: "设备可用率 OEE", trend: "低于目标 2.2pct", up: false , ask: "设备综合效率OEE是多少？", drill: { screen: "manufacturing", kpi: "oee" }},
     ],
     rdm: [
       { icon: "clock", tone: "blue", num: "3", label: "ECN 在办", trend: "2 张待我会签", up: false , ask: "SMT-1设备参数异常吗？"},
-      { icon: "activity", tone: "green", num: "DVT", label: "NPI 里程碑", trend: "B 型号按计划", up: false , ask: "B型号NPI进展如何？"},
+      { icon: "activity", tone: "green", num: "DVT", label: "NPI 里程碑", trend: "B 型号按计划", up: false , ask: "B型号NPI进展如何？", drill: { screen: "orders", kpi: "milestone_done_rate" }},
       { icon: "approve", tone: "blue", num: "2", label: "研发会签待办", trend: "8D 根因结论待确认", up: false , ask: "锡膏印刷CPK最近趋势如何？"},
     ],
     scm: [
-      { icon: "orders", tone: "blue", num: "92.4%", label: "订单准交率 OTD", trend: "本周排产已锁定", up: false , ask: "最近一周有哪些订单存在延期风险？"},
+      { icon: "orders", tone: "blue", num: "92.4%", label: "订单准交率 OTD", trend: "本周排产已锁定", up: false , ask: "最近一周有哪些订单存在延期风险？", drill: { screen: "orders", kpi: "otd" }},
       { icon: "approve", tone: "blue", num: "1", label: "交付承诺待终批", trend: "华为 S 级对客 ETA", up: true , ask: "A型号能发多少货"},
-      { icon: "box", tone: "red", num: "3", label: "缺料项", trend: "锡膏 M7020 延迟 36h", up: true , ask: "A型号缺料影响哪些订单？"},
+      { icon: "box", tone: "red", num: "3", label: "缺料项", trend: "锡膏 M7020 延迟 36h", up: true , ask: "A型号缺料影响哪些订单？", drill: { screen: "orders", kpi: "material_shortage_rate" }},
     ],
     procm: [
-      { icon: "check", tone: "green", num: "94.1%", label: "供应商交期达成", trend: "千住金属延迟 1 批", up: false , ask: "千住金属最近的交期达成情况？"},
+      { icon: "check", tone: "green", num: "94.1%", label: "供应商交期达成", trend: "千住金属延迟 1 批", up: false , ask: "千住金属最近的交期达成情况？", drill: { screen: "quality", kpi: "incoming_pass_rate" }},
       { icon: "approve", tone: "amber", num: "1", label: "来料处置待会签", trend: "退货 / 特采二选一", up: true , ask: "来料不合格批次有哪些需要处置？"},
       { icon: "activity", tone: "amber", num: "1", label: "索赔在途", trend: "来料不合格费用分摊中", up: true , ask: "来料不合格如何索赔？"},
     ],
     whm: [
-      { icon: "check", tone: "green", num: "99.2%", label: "库存准确率", trend: "月盘差异 3 项", up: false , ask: "A型号能发多少货"},
+      { icon: "check", tone: "green", num: "99.2%", label: "库存准确率", trend: "月盘差异 3 项", up: false , ask: "A型号能发多少货", drill: { screen: "orders", kpi: "material_shortage_rate" }},
       { icon: "approve", tone: "amber", num: "1", label: "发货协同待终批", trend: "A 型号 ATP 400pcs", up: true , ask: "今天有哪些发货单待拣？"},
       { icon: "box", tone: "blue", num: "142", label: "今日出入库", trend: "出货 6 单待拣", up: false , ask: "A型号ATP可承诺量是多少？"},
     ],
     finm: [
       { icon: "box", tone: "blue", num: "¥ 86.4", label: "A 型号 BOM 成本", trend: "环比 -1.2%", up: false , ask: "BOM成本是多少？"},
-      { icon: "approve", tone: "amber", num: "2", label: "索赔金额待终批", trend: "SCAR 赔付口径确认", up: true , ask: "供应商索赔金额是多少？"},
+      { icon: "approve", tone: "amber", num: "2", label: "索赔金额待终批", trend: "SCAR 赔付口径确认", up: true , ask: "供应商索赔金额是多少？", drill: { screen: "orders", kpi: "task_backlog_rate" }},
       { icon: "activity", tone: "red", num: "¥ 31.2万", label: "本月质量成本 COPQ", trend: "返工+报废占比 62%", up: true , ask: "质量成本COPQ分析"},
+    ],
+    // ---------- 研发/工程/项目岗位看板（P0） ----------
+    ie: [
+      { icon: "clock", tone: "blue", num: "42.6h", label: "标准工时（A型号）", trend: "较上版 -3.2h", up: false , ask: "A型号的标准工时是多少？"},
+      { icon: "activity", tone: "amber", num: "112%", label: "组装段负荷", trend: "瓶颈工序待平衡", up: true , ask: "当前产能负荷如何？", drill: { screen: "manufacturing", kpi: "production_achieve" }},
+      { icon: "check", tone: "green", num: "82.4%", label: "线平衡率", trend: "目标 ≥85%", up: false , ask: "A型号产线线平衡率多少？"},
+    ],
+    npi: [
+      { icon: "activity", tone: "green", num: "DVT", label: "NPI 当前阶段（B型号）", trend: "按计划推进", up: false , ask: "B型号NPI进展如何？", drill: { screen: "orders", kpi: "milestone_done_rate" }},
+      { icon: "clock", tone: "blue", num: "2", label: "待办试产批", trend: "PVT 试产排程中", up: false , ask: "B型号试产安排如何？"},
+      { icon: "warn", tone: "amber", num: "1", label: "DFM 待评审", trend: "结构改版待确认", up: true , ask: "B型号DFM评审进展如何？"},
+    ],
+    pm: [
+      { icon: "clock", tone: "blue", num: "3", label: "在办项目", trend: "1 项里程碑临期", up: false , ask: "当前有哪些项目里程碑临期？", drill: { screen: "orders", kpi: "milestone_done_rate" }},
+      { icon: "warn", tone: "red", num: "2", label: "项目风险项", trend: "1 项待升级协调", up: true , ask: "当前项目有哪些风险？"},
+      { icon: "activity", tone: "green", num: "88%", label: "项目健康度", trend: "B 型号按计划", up: false , ask: "B型号项目健康度如何？"},
+    ],
+    te: [
+      { icon: "check", tone: "blue", num: "6", label: "本周测试执行", trend: "全部留痕", up: false , ask: "B型号的测试执行情况如何？"},
+      { icon: "warn", tone: "amber", num: "1", label: "可靠性不通过", trend: "高低温测试待复测", up: true , ask: "B型号可靠性测试结果如何？", drill: { screen: "quality", kpi: "test_pass_rate" }},
+      { icon: "activity", tone: "green", num: "92%", label: "测试覆盖率", trend: "目标 ≥90%", up: false , ask: "B型号测试覆盖率是多少？"},
+    ],
+    me: [
+      { icon: "clock", tone: "blue", num: "2", label: "结构变更在办", trend: "模具改版 1 项", up: false , ask: "B型号结构变更进展如何？"},
+      { icon: "warn", tone: "amber", num: "1", label: "装配问题待分析", trend: "卡扣间隙超标", up: true , ask: "B型号装配间隙问题如何？", drill: { screen: "quality", kpi: "defect_rate" }},
+      { icon: "activity", tone: "red", num: "1", label: "公差超差项", trend: "模具调整中", up: true , ask: "B型号公差配合是否合格？"},
+    ],
+    rdt: [
+      { icon: "clock", tone: "blue", num: "4", label: "在办 Bug", trend: "1 项阻塞版本", up: true , ask: "当前有哪些阻塞版本的Bug？"},
+      { icon: "check", tone: "green", num: "V1.8.2", label: "当前测试版本", trend: "回归中", up: false , ask: "当前测试版本回归情况如何？", drill: { screen: "quality", kpi: "test_pass_rate" }},
+      { icon: "warn", tone: "amber", num: "2", label: "待判定遗留", trend: "版本放行前待确认", up: true , ask: "有哪些Bug遗留待判定？"},
+    ],
+    hr: [
+      { icon: "check", tone: "blue", num: "3", label: "待办用章审批", trend: "全部留痕可追溯", up: false , ask: "有哪些用章申请待审批？", drill: { screen: "orders", kpi: "task_backlog_rate" }},
+      { icon: "activity", tone: "amber", num: "2", label: "培训资质临期", trend: "1 项本月到期", up: true , ask: "哪些培训资质即将到期？"},
+      { icon: "clock", tone: "green", num: "96%", label: "本月出勤率", trend: "持平", up: false , ask: "本月考勤情况如何？"},
+    ],
+    // ---------- 安全环保 / 客户服务 / 设备维保岗位看板（P1） ----------
+    ehs: [
+      { icon: "warn", tone: "red", num: "2", label: "安全隐患待整改", trend: "1 项临期", up: true , ask: "当前有哪些安全隐患待整改？", drill: { screen: "orders", kpi: "task_backlog_rate" }},
+      { icon: "check", tone: "blue", num: "0", label: "本月安全事件", trend: "保持零事故", up: false , ask: "本月是否有安全事件？"},
+      { icon: "activity", tone: "amber", num: "1", label: "危废转移待办", trend: "合规联单待归档", up: true , ask: "危废转移联单办理进度如何？"},
+    ],
+    cs: [
+      { icon: "warn", tone: "red", num: "2", label: "待受理客诉", trend: "华为 S 级 1 件", up: true , ask: "当前有哪些客诉待受理？", drill: { screen: "quality", kpi: "complaint_close_rate" }},
+      { icon: "clock", tone: "amber", num: "1.6h", label: "客诉平均响应", trend: "目标 ≤2h", up: false , ask: "客诉平均响应时间是多少？"},
+      { icon: "check", tone: "green", num: "3", label: "售后工单在办", trend: "退换货 1 单", up: false , ask: "当前有哪些售后工单在办？"},
+    ],
+    mt: [
+      { icon: "clock", tone: "blue", num: "4", label: "今日待执行点检", trend: "SMT 线体 2 项", up: false , ask: "今天有哪些设备点检任务？"},
+      { icon: "warn", tone: "amber", num: "2", label: "维修工单在办", trend: "PRT-01 待更换刮刀", up: true , ask: "SMT-1现在设备参数异常吗？"},
+      { icon: "check", tone: "green", num: "98%", label: "保养计划达成", trend: "本月按计划", up: false , ask: "本月设备保养计划达成率如何？", drill: { screen: "manufacturing", kpi: "availability" }},
     ],
   };
 
@@ -224,6 +313,16 @@
     procm: { spc: 1, shortage: 2, order: 2, sla: 1 },
     whm: { spc: 0, shortage: 1, order: 3, sla: 1 },
     finm: { spc: 1, shortage: 1, order: 2, sla: 1 },
+    ie:  { spc: 1, shortage: 0, order: 1, sla: 1 },
+    npi: { spc: 1, shortage: 1, order: 1, sla: 0 },
+    pm:  { spc: 0, shortage: 0, order: 2, sla: 1 },
+    te:  { spc: 1, shortage: 0, order: 0, sla: 1 },
+    me:  { spc: 1, shortage: 0, order: 1, sla: 1 },
+    rdt: { spc: 0, shortage: 0, order: 1, sla: 1 },
+    hr:  { spc: 0, shortage: 0, order: 1, sla: 0 },
+    ehs: { spc: 1, shortage: 0, order: 0, sla: 1 },
+    cs:  { spc: 1, shortage: 0, order: 2, sla: 1 },
+    mt:  { spc: 1, shortage: 0, order: 1, sla: 1 },
   };
 
   /** 工作台 · 待办中心（后端不可达时的演示数据；标注"演示数据"） */
@@ -3290,11 +3389,11 @@
           { "name": "SMT-2 · B型号", "line": "SMT-2", "model": "B型号", "value": 0.5, "status": "ok", "numerator": 10, "denominator": 2000, "rank": 5 }
         ] },
         { "key": "report_rate", "label": "报工完成率", "unit": "%", "target": 95.0, "higher_is_better": true, "items": [
-          { "name": "WO-B-1014", "line": "DIP-2", "model": "B型号", "value": 60.0, "status": "danger", "numerator": 3, "denominator": 5, "rank": 1 },
-          { "name": "WO-C-1011", "line": "SMT-2", "model": "C型号", "value": 66.7, "status": "danger", "numerator": 2, "denominator": 3, "rank": 2 },
-          { "name": "WO-B-1013", "line": "DIP-2", "model": "B型号", "value": 80.0, "status": "danger", "numerator": 4, "denominator": 5, "rank": 3 },
-          { "name": "WO-A-1014", "line": "SMT-1", "model": "A型号", "value": 100.0, "status": "ok", "numerator": 4, "denominator": 4, "rank": 4 },
-          { "name": "WO-C-1013", "line": "DIP-1", "model": "C型号", "value": 100.0, "status": "ok", "numerator": 5, "denominator": 5, "rank": 5 }
+          { "name": "WO-B-1014", "wo": "WO-B-1014", "line": "DIP-2", "model": "B型号", "value": 60.0, "status": "danger", "numerator": 3, "denominator": 5, "rank": 1 },
+          { "name": "WO-C-1011", "wo": "WO-C-1011", "line": "SMT-2", "model": "C型号", "value": 66.7, "status": "danger", "numerator": 2, "denominator": 3, "rank": 2 },
+          { "name": "WO-B-1013", "wo": "WO-B-1013", "line": "DIP-2", "model": "B型号", "value": 80.0, "status": "danger", "numerator": 4, "denominator": 5, "rank": 3 },
+          { "name": "WO-A-1014", "wo": "WO-A-1014", "line": "SMT-1", "model": "A型号", "value": 100.0, "status": "ok", "numerator": 4, "denominator": 4, "rank": 4 },
+          { "name": "WO-C-1013", "wo": "WO-C-1013", "line": "DIP-1", "model": "C型号", "value": 100.0, "status": "ok", "numerator": 5, "denominator": 5, "rank": 5 }
         ] },
         { "key": "test_fpy", "label": "测试直通率", "unit": "%", "target": 98.0, "higher_is_better": true, "items": [
           { "name": "C型号", "line": "", "model": "C型号", "value": 83.3, "status": "danger", "numerator": 5, "denominator": 6, "rank": 1 },
@@ -3345,11 +3444,24 @@
           { "name": "DIP-1 · C型号", "line": "DIP-1", "model": "C型号", "value": 98.1, "status": "ok", "numerator": 883, "denominator": 900, "rank": 5 }
         ] },
       ],
+      "pareto": [
+        { "name": "锡膏偏移", "value": 77, "share": 28.6, "cum_share": 28.6 },
+        { "name": "贴片偏移", "value": 46, "share": 17.1, "cum_share": 45.7 },
+        { "name": "虚焊", "value": 42, "share": 15.6, "cum_share": 61.3 },
+        { "name": "元件缺失", "value": 38, "share": 14.1, "cum_share": 75.4 },
+        { "name": "极性反", "value": 33, "share": 12.3, "cum_share": 87.7 },
+        { "name": "其他", "value": 33, "share": 12.3, "cum_share": 100.0 }
+      ],
+      "pareto_label": "不良类型",
+      "pareto_kpi": "defect_rate",
+      "pareto_vital": ["锡膏偏移", "贴片偏移", "虚焊", "元件缺失", "极性反"],
+      "pareto_threshold": 80.0,
       "notes": [
         "不良率 = 不良数 ÷ 受检总数。",
         "直通率 FPY = 一次通过良品数 ÷ 投入数（≈ 1 − 不良率）。",
         "标准三率 = 标准完整率 × 标准完善率 × 标准遵守率 = 符合率（完整率：该有的标准是否齐全；完善率：标准与现场是否一致；遵守率：现场是否按标准作业）。",
-        "TOP5 统一为「最需关注的最差 5 名」，方向随指标极性自动翻转：越高越好取最低 5、越低越好取最高 5。"
+        "TOP5 统一为「最需关注的最差 5 名」，方向随指标极性自动翻转：越高越好取最低 5、越低越好取最高 5。",
+        "累计不良柏拉图：窗口内按不良类型降序累积，关键少数 = 累计占比首达 80% 的类型（与 SPC 柏拉图 spc.pareto 同源口径）；点击类型可下钻其产线 · 型号分解。"
       ],
       "standard_three_rates": {
         "definition": "标准三率 = 标准完整率 × 标准完善率 × 标准遵守率 = 符合率",
@@ -3365,7 +3477,578 @@
     }
   };
 
+  /* 订单履约看板演示数据（与后端 /api/v2/dashboard/orders 响应逐字段同构）。
+     口径与真实链路一致（seed_v3 明细预聚合）：OTD 20/28、OTIF 19/28、
+     延期率 8/28、齐套率 259/280；TOP5 为「最需关注的最差 5 名」。 */
+  const ORDERS_DASHBOARD = {
+    "screen": "orders",
+    "generated_at": "2026-10-18 09:20:00",
+    "source": "demo",
+    "degraded": true,
+    "degraded_reason": "后端离线 · 演示数据（口径与真实链路一致）",
+    "window": { "start": "2026-10-08", "end": "2026-10-14", "days": 7, "label": "最近 7 天（演示窗口）" },
+    "kpis": [
+      { "key": "otd", "label": "OTD 准时交付率", "value": 71.4, "unit": "%", "numerator": 20, "denominator": 28,
+        "target": 98.0, "higher_is_better": true, "status": "danger", "delta": -26.6,
+        "definition": "准时交付（实际发货日 ≤ 客户要求交付日）订单数 ÷ 订单总数。", "formula": "20 / 28",
+        "ask": "最近7天各客户 OTD 准时交付率如何？最低的是哪个客户？",
+        "trend": [100.0, 75.0, 33.3, 50.0, 80.0, 75.0, 75.0] },
+      { "key": "otif", "label": "OTIF 准时足额率", "value": 67.9, "unit": "%", "numerator": 19, "denominator": 28,
+        "target": 95.0, "higher_is_better": true, "status": "danger", "delta": -27.1,
+        "definition": "同时满足准时且足额的订单数 ÷ 订单总数。", "formula": "19 / 28",
+        "ask": "最近7天各客户 OTIF 准时足额率如何？最低的是哪个客户？",
+        "trend": [100.0, 75.0, 33.3, 50.0, 80.0, 75.0, 50.0] },
+      { "key": "delay_rate", "label": "延期订单率", "value": 28.6, "unit": "%", "numerator": 8, "denominator": 28,
+        "target": 5.0, "higher_is_better": false, "status": "danger", "delta": 23.6,
+        "definition": "延期天数 > 0 的订单数 ÷ 订单总数（越低越好）。", "formula": "8 / 28",
+        "ask": "最近7天各客户延期订单率如何？最高的是哪个客户？延期原因有哪些？",
+        "trend": [0.0, 25.0, 66.7, 50.0, 20.0, 25.0, 25.0] },
+      { "key": "kit_rate", "label": "齐套率", "value": 93.7, "unit": "%", "numerator": 251, "denominator": 268,
+        "target": 95.0, "higher_is_better": true, "status": "warn", "delta": -1.3,
+        "definition": "已齐套料数 ÷ 应齐套料数。", "formula": "251 / 268",
+        "ask": "最近7天各型号订单齐套率如何？最低的是哪个型号？缺料集中在哪些料号？",
+        "trend": [100.0, 89.5, 88.2, 89.5, 96.3, 94.1, 97.1] },
+    ],
+    "rankings": [
+      { "key": "otd", "label": "OTD 准时交付率", "unit": "%", "target": 98.0, "higher_is_better": true, "items": [
+        { "name": "华为终端 · S", "entity": { "customer": "华为终端", "level": "S" }, "line": "", "model": "", "wo": "", "value": 33.3, "status": "danger", "numerator": 2, "denominator": 6, "rank": 1 },
+        { "name": "OPPO · B", "entity": { "customer": "OPPO", "level": "B" }, "line": "", "model": "", "wo": "", "value": 66.7, "status": "danger", "numerator": 2, "denominator": 3, "rank": 2 },
+        { "name": "小米 · A", "entity": { "customer": "小米", "level": "A" }, "line": "", "model": "", "wo": "", "value": 75.0, "status": "danger", "numerator": 3, "denominator": 4, "rank": 3 },
+        { "name": "比亚迪 · A", "entity": { "customer": "比亚迪", "level": "A" }, "line": "", "model": "", "wo": "", "value": 75.0, "status": "danger", "numerator": 3, "denominator": 4, "rank": 4 },
+        { "name": "联想 · B", "entity": { "customer": "联想", "level": "B" }, "line": "", "model": "", "wo": "", "value": 75.0, "status": "danger", "numerator": 3, "denominator": 4, "rank": 5 },
+      ] },
+      { "key": "otif", "label": "OTIF 准时足额率", "unit": "%", "target": 95.0, "higher_is_better": true, "items": [
+        { "name": "华为终端 · S", "entity": { "customer": "华为终端", "level": "S" }, "line": "", "model": "", "wo": "", "value": 33.3, "status": "danger", "numerator": 2, "denominator": 6, "rank": 1 },
+        { "name": "联想 · B", "entity": { "customer": "联想", "level": "B" }, "line": "", "model": "", "wo": "", "value": 50.0, "status": "danger", "numerator": 2, "denominator": 4, "rank": 2 },
+        { "name": "OPPO · B", "entity": { "customer": "OPPO", "level": "B" }, "line": "", "model": "", "wo": "", "value": 66.7, "status": "danger", "numerator": 2, "denominator": 3, "rank": 3 },
+        { "name": "小米 · A", "entity": { "customer": "小米", "level": "A" }, "line": "", "model": "", "wo": "", "value": 75.0, "status": "danger", "numerator": 3, "denominator": 4, "rank": 4 },
+        { "name": "比亚迪 · A", "entity": { "customer": "比亚迪", "level": "A" }, "line": "", "model": "", "wo": "", "value": 75.0, "status": "danger", "numerator": 3, "denominator": 4, "rank": 5 },
+      ] },
+      { "key": "delay_rate", "label": "延期订单率", "unit": "%", "target": 5.0, "higher_is_better": false, "items": [
+        { "name": "华为终端 · S", "entity": { "customer": "华为终端", "level": "S" }, "line": "", "model": "", "wo": "", "value": 66.7, "status": "danger", "numerator": 4, "denominator": 6, "rank": 1 },
+        { "name": "OPPO · B", "entity": { "customer": "OPPO", "level": "B" }, "line": "", "model": "", "wo": "", "value": 33.3, "status": "danger", "numerator": 1, "denominator": 3, "rank": 2 },
+        { "name": "小米 · A", "entity": { "customer": "小米", "level": "A" }, "line": "", "model": "", "wo": "", "value": 25.0, "status": "danger", "numerator": 1, "denominator": 4, "rank": 3 },
+        { "name": "比亚迪 · A", "entity": { "customer": "比亚迪", "level": "A" }, "line": "", "model": "", "wo": "", "value": 25.0, "status": "danger", "numerator": 1, "denominator": 4, "rank": 4 },
+        { "name": "联想 · B", "entity": { "customer": "联想", "level": "B" }, "line": "", "model": "", "wo": "", "value": 25.0, "status": "danger", "numerator": 1, "denominator": 4, "rank": 5 },
+      ] },
+      { "key": "kit_rate", "label": "齐套率", "unit": "%", "target": 95.0, "higher_is_better": true, "items": [
+        { "name": "A型号", "entity": { "model": "A型号" }, "line": "", "model": "A型号", "wo": "", "value": 92.2, "status": "warn", "numerator": 94, "denominator": 102, "rank": 1 },
+        { "name": "B型号", "entity": { "model": "B型号" }, "line": "", "model": "B型号", "wo": "", "value": 94.0, "status": "warn", "numerator": 94, "denominator": 100, "rank": 2 },
+        { "name": "C型号", "entity": { "model": "C型号" }, "line": "", "model": "C型号", "wo": "", "value": 95.5, "status": "ok", "numerator": 63, "denominator": 66, "rank": 3 },
+      ] },
+    ],
+    "notes": [
+      "OTD 准时交付率 = 实际发货日 ≤ 客户要求交付日 的订单数 ÷ 窗口内订单总数（订单按客户要求交付日 due_date 归入统计窗口）。",
+      "OTIF 准时足额率 = 同时满足「准时」与「足额（齐套发齐）」的订单数 ÷ 订单总数，比 OTD 更严格，是客户面向的核心履约指标。",
+      "延期订单率 = 预计/实际延期天数 > 0 的订单数 ÷ 订单总数（越低越好）。",
+      "齐套率 = 已齐套料数 ÷ 应齐套料数（物料齐套对按期交付的保障度）。",
+      "TOP5 统一为「最需关注的最差 5 名」，方向随指标极性自动翻转：越高越好取最低 5、越低越好取最高 5。",
+    ],
+    "pipeline": [
+      { "stage": "已下单", "count": 0, "delayed": 0 },
+      { "stage": "计划", "count": 1, "delayed": 1 },
+      { "stage": "采购", "count": 2, "delayed": 2 },
+      { "stage": "生产", "count": 3, "delayed": 3 },
+      { "stage": "质检", "count": 1, "delayed": 1 },
+      { "stage": "发货", "count": 21, "delayed": 1 },
+    ],
+    "risk_orders": [
+      { "order_no": "SO-2026-10247", "customer": "华为终端", "customer_level": "S", "product_model": "A型号", "qty": 12000, "stage": "质检", "risk_type": "客诉", "delay_days": 4, "progress": 45, "shortage_note": "PCB 批次 BATCH-A-1008（深南电路）客诉待 8D 闭环", "owner": "业务·张伟" },
+      { "order_no": "SO-2026-10218", "customer": "华为终端", "customer_level": "S", "product_model": "B型号", "qty": 6000, "stage": "采购", "risk_type": "缺料", "delay_days": 3, "progress": 30, "shortage_note": "主控芯片 IC-100 交期顺延", "owner": "业务·张伟" },
+      { "order_no": "SO-2026-10205", "customer": "联想", "customer_level": "B", "product_model": "C型号", "qty": 6000, "stage": "采购", "risk_type": "缺料", "delay_days": 3, "progress": 38, "shortage_note": "屏蔽罩齐套率 78%，采购在途", "owner": "业务·王强" },
+      { "order_no": "SO-2026-10231", "customer": "华为终端", "customer_level": "S", "product_model": "A型号", "qty": 8000, "stage": "生产", "risk_type": "缺料", "delay_days": 2, "progress": 62, "shortage_note": "锡膏 M7020（千住金属）到货延迟 36h", "owner": "业务·张伟" },
+      { "order_no": "SO-2026-10230", "customer": "小米", "customer_level": "A", "product_model": "B型号", "qty": 3000, "stage": "发货", "risk_type": "延期风险", "delay_days": 2, "progress": 100, "shortage_note": "", "owner": "业务·李娜" },
+      { "order_no": "SO-2026-10236", "customer": "OPPO", "customer_level": "B", "product_model": "B型号", "qty": 4000, "stage": "生产", "risk_type": "缺料", "delay_days": 2, "progress": 60, "shortage_note": "元件立碑频发，暂停投料", "owner": "业务·周敏" },
+      { "order_no": "SO-2026-10186", "customer": "比亚迪", "customer_level": "A", "product_model": "A型号", "qty": 5000, "stage": "生产", "risk_type": "停线", "delay_days": 1, "progress": 81, "shortage_note": "受 SMT-1 停线牵连，复线后追产", "owner": "业务·陈刚" },
+      { "order_no": "SO-2026-10255", "customer": "华为终端", "customer_level": "S", "product_model": "A型号", "qty": 5000, "stage": "计划", "risk_type": "延期风险", "delay_days": 1, "progress": 20, "shortage_note": "", "owner": "业务·张伟" },
+    ],
+  };
+  // 订单看板复用同一套下钻生成器：DASHBOARD.drill.orders 由 DRILL_META.orders 生成
+  DASHBOARD.orders = ORDERS_DASHBOARD;
+
+  /* SPC 过程能力看板演示数据（与后端 /api/v2/dashboard/spc 响应逐字段同构）。
+     口径与真实链路一致（core/spc 双西格玛内核 + seed_v3 明细预聚合）：
+     焊点高度 Cpk=1.461/合格、锡膏厚度 1.146/偏低、回流焊峰值温度 0.615/不合格；
+     不良柏拉图与 spc.pareto 同源（关键少数 = 累计首达 80% → 前 5 项）。 */
+  const SPC_DASHBOARD = {
+    "screen": "spc",
+    "generated_at": "2026-10-18 09:20:00",
+    "source": "demo",
+    "degraded": true,
+    "degraded_reason": "后端离线 · 演示数据（口径与真实链路一致）",
+    "window": { "start": "2026-10-08", "end": "2026-10-14", "days": 7, "label": "最近 7 天（演示窗口）" },
+    "kpis": [
+      { "key": "spc_capability", "characteristic": "焊点高度(mm)", "label": "焊点高度(mm) 过程能力",
+        "value": 1.461, "unit": "", "cp": 1.520, "cpk": 1.461, "pp": 1.421, "ppk": 1.396,
+        "sigma_within": 0.033, "sigma_overall": 0.035, "n_total": 100, "n_subgroups": 20,
+        "spec": { "usl": 0.9, "lsl": 0.6 }, "verdict": "合格", "status": "ok",
+        "target": 1.33, "higher_is_better": true, "delta": 0.13, "data_gap": false, "warnings": [],
+        "over_rate": 0.0, "over_num": 0, "over_den": 100,
+        "definition": "双西格玛口径：Cp/Cpk 用组内 σ（Xbar-R）；Pp/Ppk 用整体 σ。判定线：≥1.33 合格 / ≥1.00 偏低 / <1.00 不合格。",
+        "formula": "Cpk=1.461",
+        "ask": "焊点高度(mm) 的过程能力 Cpk 如何？是否需要加严检验或工程介入？",
+        "entity": { "characteristic": "焊点高度(mm)" }, "trend": [] },
+      { "key": "spc_capability", "characteristic": "锡膏厚度(μm)", "label": "锡膏厚度(μm) 过程能力",
+        "value": 1.146, "unit": "", "cp": 1.149, "cpk": 1.146, "pp": 1.10, "ppk": 1.05,
+        "sigma_within": 5.8, "sigma_overall": 6.1, "n_total": 100, "n_subgroups": 20,
+        "spec": { "usl": 160, "lsl": 120 }, "verdict": "偏低", "status": "warn",
+        "target": 1.33, "higher_is_better": true, "delta": -0.18, "data_gap": false, "warnings": [],
+        "over_rate": 3.0, "over_num": 3, "over_den": 100,
+        "definition": "双西格玛口径：Cp/Cpk 用组内 σ（Xbar-R）；Pp/Ppk 用整体 σ。判定线：≥1.33 合格 / ≥1.00 偏低 / <1.00 不合格。",
+        "formula": "Cpk=1.146",
+        "ask": "锡膏厚度(μm) 的过程能力 Cpk 如何？是否需要加严检验或工程介入？",
+        "entity": { "characteristic": "锡膏厚度(μm)" }, "trend": [] },
+      { "key": "spc_capability", "characteristic": "回流焊峰值温度(℃)", "label": "回流焊峰值温度(℃) 过程能力",
+        "value": 0.615, "unit": "", "cp": 0.625, "cpk": 0.615, "pp": 0.58, "ppk": 0.55,
+        "sigma_within": 4.0, "sigma_overall": 4.3, "n_total": 100, "n_subgroups": 20,
+        "spec": { "usl": 250, "lsl": 235 }, "verdict": "不合格", "status": "danger",
+        "target": 1.33, "higher_is_better": true, "delta": -0.72, "data_gap": false, "warnings": [],
+        "over_rate": 8.0, "over_num": 8, "over_den": 100,
+        "definition": "双西格玛口径：Cp/Cpk 用组内 σ（Xbar-R）；Pp/Ppk 用整体 σ。判定线：≥1.33 合格 / ≥1.00 偏低 / <1.00 不合格。",
+        "formula": "Cpk=0.615",
+        "ask": "回流焊峰值温度(℃) 的过程能力 Cpk 如何？是否需要加严检验或工程介入？",
+        "entity": { "characteristic": "回流焊峰值温度(℃)" }, "trend": [] },
+    ],
+    "capabilities": [
+      { "characteristic": "焊点高度(mm)", "verdict": "合格", "data_gap": false, "warnings": [],
+        "cp": 1.520, "cpk": 1.461, "pp": 1.421, "ppk": 1.396,
+        "sigma_within": 0.033, "sigma_overall": 0.035, "n_total": 100, "n_subgroups": 20,
+        "spec": { "usl": 0.9, "lsl": 0.6 } },
+      { "characteristic": "锡膏厚度(μm)", "verdict": "偏低", "data_gap": false, "warnings": [],
+        "cp": 1.149, "cpk": 1.146, "pp": 1.10, "ppk": 1.05,
+        "sigma_within": 5.8, "sigma_overall": 6.1, "n_total": 100, "n_subgroups": 20,
+        "spec": { "usl": 160, "lsl": 120 } },
+      { "characteristic": "回流焊峰值温度(℃)", "verdict": "不合格", "data_gap": false, "warnings": [],
+        "cp": 0.625, "cpk": 0.615, "pp": 0.58, "ppk": 0.55,
+        "sigma_within": 4.0, "sigma_overall": 4.3, "n_total": 100, "n_subgroups": 20,
+        "spec": { "usl": 250, "lsl": 235 } },
+    ],
+    "pareto": [
+      { "name": "元件立碑", "value": 120, "share": 29.6, "cum_share": 29.6, "status": "danger",
+        "entity": { "defect_type": "元件立碑" }, "ask": "元件立碑 不良 120 件占比 29.6%，如何降低该类缺陷？" },
+      { "name": "锡珠", "value": 86, "share": 21.2, "cum_share": 50.8, "status": "warn",
+        "entity": { "defect_type": "锡珠" }, "ask": "锡珠 不良 86 件占比 21.2%，如何降低该类缺陷？" },
+      { "name": "连锡", "value": 62, "share": 15.3, "cum_share": 66.1, "status": "warn",
+        "entity": { "defect_type": "连锡" }, "ask": "连锡 不良 62 件占比 15.3%，如何降低该类缺陷？" },
+      { "name": "少锡/虚焊", "value": 45, "share": 11.1, "cum_share": 77.2, "status": "warn",
+        "entity": { "defect_type": "少锡/虚焊" }, "ask": "少锡/虚焊 不良 45 件占比 11.1%，如何降低该类缺陷？" },
+      { "name": "元件偏移", "value": 32, "share": 7.9, "cum_share": 85.1, "status": "warn",
+        "entity": { "defect_type": "元件偏移" }, "ask": "元件偏移 不良 32 件占比 7.9%，如何降低该类缺陷？" },
+      { "name": "极性反", "value": 24, "share": 5.9, "cum_share": 91.0, "status": "ok",
+        "entity": { "defect_type": "极性反" }, "ask": "极性反 不良 24 件占比 5.9%，如何降低该类缺陷？" },
+      { "name": "外观划伤", "value": 16, "share": 3.9, "cum_share": 94.9, "status": "ok",
+        "entity": { "defect_type": "外观划伤" }, "ask": "外观划伤 不良 16 件占比 3.9%，如何降低该类缺陷？" },
+      { "name": "元件缺失", "value": 11, "share": 2.7, "cum_share": 97.6, "status": "ok",
+        "entity": { "defect_type": "元件缺失" }, "ask": "元件缺失 不良 11 件占比 2.7%，如何降低该类缺陷？" },
+      { "name": "锡膏偏移", "value": 7, "share": 1.7, "cum_share": 99.3, "status": "ok",
+        "entity": { "defect_type": "锡膏偏移" }, "ask": "锡膏偏移 不良 7 件占比 1.7%，如何降低该类缺陷？" },
+      { "name": "其他", "value": 3, "share": 0.7, "cum_share": 100.0, "status": "ok",
+        "entity": { "defect_type": "其他" }, "ask": "其他 不良 3 件占比 0.7%，如何降低该类缺陷？" },
+    ],
+    "rankings": [
+      { "key": "spc_capability", "label": "子组超差率", "unit": "%", "target": 5.0, "higher_is_better": false, "items": [
+        { "name": "回流焊峰值温度(℃)", "entity": { "characteristic": "回流焊峰值温度(℃)" }, "line": "", "model": "", "wo": "", "value": 8.0, "status": "danger", "numerator": 8, "denominator": 100, "rank": 1 },
+        { "name": "锡膏厚度(μm)", "entity": { "characteristic": "锡膏厚度(μm)" }, "line": "", "model": "", "wo": "", "value": 3.0, "status": "ok", "numerator": 3, "denominator": 100, "rank": 2 },
+        { "name": "焊点高度(mm)", "entity": { "characteristic": "焊点高度(mm)" }, "line": "", "model": "", "wo": "", "value": 0.0, "status": "ok", "numerator": 0, "denominator": 100, "rank": 3 },
+      ] },
+      { "key": "spc_pareto", "label": "缺陷类型不良率", "unit": "%", "target": 10.0, "higher_is_better": false, "items": [
+        { "name": "元件立碑", "entity": { "defect_type": "元件立碑" }, "line": "", "model": "", "wo": "", "value": 18.0, "status": "danger", "numerator": 36, "denominator": 200, "rank": 1 },
+        { "name": "连锡", "entity": { "defect_type": "连锡" }, "line": "", "model": "", "wo": "", "value": 13.0, "status": "warn", "numerator": 26, "denominator": 200, "rank": 2 },
+        { "name": "少锡/虚焊", "entity": { "defect_type": "少锡/虚焊" }, "line": "", "model": "", "wo": "", "value": 6.0, "status": "ok", "numerator": 12, "denominator": 200, "rank": 3 },
+        { "name": "锡珠", "entity": { "defect_type": "锡珠" }, "line": "", "model": "", "wo": "", "value": 4.5, "status": "ok", "numerator": 9, "denominator": 200, "rank": 4 },
+        { "name": "元件偏移", "entity": { "defect_type": "元件偏移" }, "line": "", "model": "", "wo": "", "value": 3.0, "status": "ok", "numerator": 6, "denominator": 200, "rank": 5 },
+      ] },
+    ],
+    "notes": [
+      "过程能力指数双西格玛口径：Cp/Cpk 用组内 σ（Xbar-R，R̄/d2）；Pp/Ppk 用整体 σ（样本标准差 ddof=1），保证 Pp ≠ Cp。",
+      "判定线：Cpk ≥ 1.33 合格；1.00 ≤ Cpk < 1.33 偏低；Cpk < 1.00 不合格。",
+      "L1 卡片展示 Cpk（无量纲指数，由确定性内核 core/spc 计算）；下钻采用「子组超差率」，以复用统一聚合引擎（Cpk 与超差率是同一过程的两面）。",
+      "不良柏拉图与 SPC 工具 spc.pareto 同源（quality_defect 全量聚合，关键少数 = 累计首达 80%）。",
+      "缺测量值 / 缺规格限时该特性标数据缺口（data_gap），绝不编造指数。",
+    ],
+    "data_gap": false,
+  };
+  DASHBOARD.spc = SPC_DASHBOARD;
+
+  /* ---------------- 看板下钻（L2/L3）离线降级数据 ----------------
+     直接镜像上面的 rankings 分组行（离线仅含 TOP5 子集，故标注 degraded）：
+     真实链路下 L2 是该指标「按维度全量分解」，L3 是单实体逐日 + 原始记录。 */
+  // SPC 下钻离线模板：L3「关联原始记录」列（与后端 record_cols / _COL_CN 一致）
+  const _SPC_MEAS_COLS = [
+    { key: "measured_at", label: "测量时间" }, { key: "characteristic", label: "特性" },
+    { key: "subgroup_no", label: "子组号" }, { key: "seq", label: "序号" },
+    { key: "value", label: "测量值" }, { key: "usl", label: "规格上限" },
+    { key: "lsl", label: "规格下限" }, { key: "source", label: "数据来源" },
+  ];
+  const _SPC_DEFECT_COLS = [
+    { key: "inspect_time", label: "检验时间" }, { key: "batch_no", label: "批次" },
+    { key: "product_model", label: "型号" }, { key: "line_code", label: "产线" },
+    { key: "defect_type", label: "不良类型" }, { key: "defect_qty", label: "不良数" },
+    { key: "total_qty", label: "受检总数" },
+  ];
+  const DRILL_META = {
+    manufacturing: {
+      availability: { label: "稼动率", target: 90.0, higher_is_better: true, dimension: "产线 · 型号",
+        definition: "实际运行分钟 ÷ 计划运行分钟（分母已排除计划停机）。",
+        ask: "最近7天各产线稼动率如何？最低的是哪条线？" },
+      scrap_rate: { label: "报废率", target: 2.0, higher_is_better: false, dimension: "产线 · 型号",
+        definition: "报废数 ÷ 总产出数（不可返修的判废比例）。",
+        ask: "最近7天各产线报废率如何？最高的是哪条线？" },
+      report_rate: { label: "报工完成率", target: 95.0, higher_is_better: true, dimension: "工单号",
+        definition: "已报工工序数 ÷ 应报工工序数。",
+        ask: "最近7天哪些工单报工完成率偏低？" },
+      test_fpy: { label: "测试直通率", target: 98.0, higher_is_better: true, dimension: "型号",
+        definition: "首次测试通过数 ÷ 测试总数（重测才过不计入）。",
+        ask: "最近7天各型号测试直通率如何？" },
+      oee: { label: "设备综合效率 OEE", target: 85.0, higher_is_better: true, dimension: "产线 · 型号",
+        definition: "OEE 按记录平均（production_output.oee 各记录均值）。",
+        ask: "最近7天各产线 OEE 如何？最低的是哪条线？",
+        rows: [
+          { name: "SMT-2 · B型号", entity: { line: "SMT-2", model: "B型号" }, value: 78.8, numerator: 1.6, denominator: 2, status: "warn", trend: [] },
+          { name: "SMT-1 · A型号", entity: { line: "SMT-1", model: "A型号" }, value: 85.8, numerator: 2.6, denominator: 3, status: "ok", trend: [] },
+          { name: "DIP-1 · C型号", entity: { line: "DIP-1", model: "C型号" }, value: 90.6, numerator: 1.8, denominator: 2, status: "ok", trend: [] },
+        ] },
+      production_achieve: { label: "产出达成率", target: 95.0, higher_is_better: true, dimension: "产线 · 型号",
+        definition: "实际产出数 ÷ 计划产出数。",
+        ask: "最近7天各产线产出达成率如何？最低的是哪条线？",
+        rows: [
+          { name: "SMT-2 · B型号", entity: { line: "SMT-2", model: "B型号" }, value: 92.3, numerator: 2770, denominator: 3000, status: "warn", trend: [] },
+          { name: "SMT-1 · A型号", entity: { line: "SMT-1", model: "A型号" }, value: 97.3, numerator: 5840, denominator: 6000, status: "ok", trend: [] },
+          { name: "DIP-1 · C型号", entity: { line: "DIP-1", model: "C型号" }, value: 100.0, numerator: 1800, denominator: 1800, status: "ok", trend: [] },
+        ] },
+    },
+    quality: {
+      defect_rate: { label: "不良率", target: 2.0, higher_is_better: false, dimension: "产线 · 型号",
+        definition: "不良数 ÷ 受检总数。",
+        ask: "最近7天各产线不良率如何？最高的是哪条线？" },
+      fpy: { label: "直通率 FPY", target: 98.0, higher_is_better: true, dimension: "产线 · 型号",
+        definition: "一次通过良品数 ÷ 投入数（≈ 1 − 不良率）。",
+        ask: "最近7天各产线直通率如何？最低的是哪条线？" },
+      incoming_pass_rate: { label: "来料批次合格率", target: 90.0, higher_is_better: true, dimension: "供应商",
+        definition: "IQC 判定合格（pass）批次数 ÷ 窗口内来料批次总数。",
+        ask: "最近7天各供应商来料批次合格率如何？最低的是哪家？",
+        rows: [
+          { name: "国巨", entity: { supplier: "国巨" }, value: 0.0, numerator: 0, denominator: 1, status: "danger", trend: [] },
+          { name: "天马微电子", entity: { supplier: "天马微电子" }, value: 0.0, numerator: 0, denominator: 1, status: "danger", trend: [] },
+          { name: "三星电机", entity: { supplier: "三星电机" }, value: 50.0, numerator: 1, denominator: 2, status: "danger", trend: [] },
+          { name: "千住金属", entity: { supplier: "千住金属" }, value: 50.0, numerator: 1, denominator: 2, status: "danger", trend: [] },
+        ] },
+      test_pass_rate: { label: "测试通过率", target: 95.0, higher_is_better: true, dimension: "测试类型",
+        definition: "测试通过数 ÷ 测试总数（按测试类型分解）。",
+        ask: "最近7天各测试类型通过率如何？最低的是哪类？",
+        rows: [
+          { name: "软件", entity: { test_type: "软件" }, value: 80.0, numerator: 4, denominator: 5, status: "danger", trend: [] },
+          { name: "可靠性", entity: { test_type: "可靠性" }, value: 87.5, numerator: 7, denominator: 8, status: "warn", trend: [] },
+          { name: "功能", entity: { test_type: "功能" }, value: 100.0, numerator: 9, denominator: 9, status: "ok", trend: [] },
+        ] },
+      std_conformity: { label: "标准三率符合率", target: 88.2, higher_is_better: true, dimension: "型号 · 工序",
+        definition: "作业标准符合项数 ÷ 审核项总数（符合率 = 完整率 × 完善率 × 遵守率）。",
+        ask: "最近7天各型号工序标准符合率如何？最低的是哪一项？",
+        rows: [
+          { name: "B型号 · 测试", entity: { model: "B型号", pstep: "测试" }, value: 70.0, numerator: 14, denominator: 20, status: "danger", trend: [] },
+          { name: "B型号 · 波峰焊", entity: { model: "B型号", pstep: "波峰焊" }, value: 75.0, numerator: 15, denominator: 20, status: "danger", trend: [] },
+          { name: "B型号 · 贴片", entity: { model: "B型号", pstep: "贴片" }, value: 75.0, numerator: 15, denominator: 20, status: "danger", trend: [] },
+          { name: "C型号 · 包装", entity: { model: "C型号", pstep: "包装" }, value: 80.0, numerator: 16, denominator: 20, status: "warn", trend: [] },
+          { name: "C型号 · 插件", entity: { model: "C型号", pstep: "插件" }, value: 80.0, numerator: 16, denominator: 20, status: "warn", trend: [] },
+        ] },
+      complaint_close_rate: { label: "客诉闭环率", target: 80.0, higher_is_better: true, dimension: "客户 · 型号",
+        definition: "已关闭（closed）客诉单数 ÷ 客诉单总数（快照口径，不做时间窗口过滤）。",
+        ask: "各客户型号的客诉闭环率如何？哪些还没闭环？",
+        rows: [
+          { name: "华为终端 · A型号", entity: { customer: "华为终端", model: "A型号" }, value: 0.0, numerator: 0, denominator: 1, status: "danger", trend: [] },
+          { name: "OPPO · A型号", entity: { customer: "OPPO", model: "A型号" }, value: 0.0, numerator: 0, denominator: 1, status: "danger", trend: [] },
+          { name: "美的 · B型号", entity: { customer: "美的", model: "B型号" }, value: 0.0, numerator: 0, denominator: 1, status: "danger", trend: [] },
+          { name: "大疆 · C型号", entity: { customer: "大疆", model: "C型号" }, value: 100.0, numerator: 1, denominator: 1, status: "ok", trend: [] },
+          { name: "小米 · B型号", entity: { customer: "小米", model: "B型号" }, value: 100.0, numerator: 1, denominator: 1, status: "ok", trend: [] },
+        ] },
+    },
+    orders: {
+      otd: { label: "OTD 准时交付率", target: 98.0, higher_is_better: true, dimension: "客户 · 等级",
+        definition: "准时交付（实际发货日 ≤ 客户要求交付日）订单数 ÷ 订单总数。",
+        ask: "最近7天各客户 OTD 准时交付率如何？最低的是哪个客户？" },
+      otif: { label: "OTIF 准时足额率", target: 95.0, higher_is_better: true, dimension: "客户 · 等级",
+        definition: "同时满足准时且足额的订单数 ÷ 订单总数。",
+        ask: "最近7天各客户 OTIF 准时足额率如何？最低的是哪个客户？" },
+      delay_rate: { label: "延期订单率", target: 5.0, higher_is_better: false, dimension: "客户 · 等级",
+        definition: "延期天数 > 0 的订单数 ÷ 订单总数（越低越好）。",
+        ask: "最近7天各客户延期订单率如何？最高的是哪个客户？延期原因有哪些？" },
+      kit_rate: { label: "齐套率", target: 95.0, higher_is_better: true, dimension: "型号",
+        definition: "已齐套料数 ÷ 应齐套料数。",
+        ask: "最近7天各型号订单齐套率如何？最低的是哪个型号？缺料集中在哪些料号？" },
+      material_shortage_rate: { label: "缺料项占比", target: 10.0, higher_is_better: false, dimension: "仓库",
+        definition: "在库量低于安全库存的物料行数 ÷ 物料行总数（快照口径）。",
+        ask: "当前各仓库缺料项占比如何？缺料集中在哪些料号？",
+        rows: [
+          { name: "电子料仓", entity: { warehouse: "电子料仓" }, value: 70.0, numerator: 7, denominator: 10, status: "danger", trend: [] },
+          { name: "包材仓", entity: { warehouse: "包材仓" }, value: 50.0, numerator: 1, denominator: 2, status: "danger", trend: [] },
+          { name: "结构件仓", entity: { warehouse: "结构件仓" }, value: 20.0, numerator: 1, denominator: 5, status: "danger", trend: [] },
+          { name: "标准件仓", entity: { warehouse: "标准件仓" }, value: 0.0, numerator: 0, denominator: 1, status: "ok", trend: [] },
+        ] },
+      milestone_done_rate: { label: "里程碑达成率", target: 80.0, higher_is_better: true, dimension: "型号",
+        definition: "已完成（done）里程碑数 ÷ 里程碑总数（快照口径）。",
+        ask: "各型号项目里程碑达成率如何？哪些里程碑临期或延期？",
+        rows: [
+          { name: "C型号", entity: { model: "C型号" }, value: 0.0, numerator: 0, denominator: 2, status: "danger", trend: [] },
+          { name: "B型号", entity: { model: "B型号" }, value: 33.3, numerator: 1, denominator: 3, status: "danger", trend: [] },
+          { name: "A型号", entity: { model: "A型号" }, value: 100.0, numerator: 1, denominator: 1, status: "ok", trend: [] },
+        ] },
+      task_backlog_rate: { label: "待人工确认占比", target: 50.0, higher_is_better: false, dimension: "流程",
+        definition: "待人工确认（waiting_hitl）工单数 ÷ 工单总数（快照口径）。",
+        ask: "当前各流程待人工确认工单占比如何？哪些 SLA 临近？",
+        rows: [
+          { name: "hitl_complaint_reply", entity: { wf: "hitl_complaint_reply" }, value: 100.0, numerator: 48, denominator: 48, status: "danger", trend: [] },
+          { name: "hitl_disposition", entity: { wf: "hitl_disposition" }, value: 100.0, numerator: 45, denominator: 45, status: "danger", trend: [] },
+          { name: "hitl_eta", entity: { wf: "hitl_eta" }, value: 100.0, numerator: 50, denominator: 50, status: "danger", trend: [] },
+          { name: "hitl_restart", entity: { wf: "hitl_restart" }, value: 100.0, numerator: 50, denominator: 50, status: "danger", trend: [] },
+          { name: "hitl_delivery_commit", entity: { wf: "hitl_delivery_commit" }, value: 100.0, numerator: 7, denominator: 7, status: "danger", trend: [] },
+        ] },
+    },
+    // ---- SPC 过程能力（screen=spc）----
+    // 结构对齐 manufacturing / quality：L2 为按维度分解；每行自带 columns + records，
+    // 供 mfgDrillFallback 定位实体后拼出 L3「关联原始记录」。
+    spc: {
+      spc_capability: { label: "子组超差率", target: 5.0, higher_is_better: false, unit: "%", dimension: "特性",
+        definition: "越限测量值条数 ÷ 测量条数（子组口径的过程越限比例，与 Cpk 同源：Cpk 高则超差率低）。",
+        ask: "各特性的过程超差率如何？哪个特性最需要加严？",
+        rows: [
+          { name: "回流焊峰值温度(℃)", entity: { characteristic: "回流焊峰值温度(℃)" }, line: "", model: "", wo: "",
+            value: 8.0, status: "danger", numerator: 8, denominator: 100, rank: 1, trend: [],
+            columns: _SPC_MEAS_COLS, records: [
+              { measured_at: "2026-10-14 08:12:00", characteristic: "回流焊峰值温度(℃)", subgroup_no: 20, seq: 3, value: 252.6, usl: 250, lsl: 235, source: "AOI 在线" },
+              { measured_at: "2026-10-13 20:41:00", characteristic: "回流焊峰值温度(℃)", subgroup_no: 19, seq: 5, value: 251.1, usl: 250, lsl: 235, source: "AOI 在线" },
+              { measured_at: "2026-10-12 14:05:00", characteristic: "回流焊峰值温度(℃)", subgroup_no: 16, seq: 2, value: 251.8, usl: 250, lsl: 235, source: "回流炉温记录" },
+            ] },
+          { name: "锡膏厚度(μm)", entity: { characteristic: "锡膏厚度(μm)" }, line: "", model: "", wo: "",
+            value: 3.0, status: "ok", numerator: 3, denominator: 100, rank: 2, trend: [],
+            columns: _SPC_MEAS_COLS, records: [
+              { measured_at: "2026-10-14 09:03:00", characteristic: "锡膏厚度(μm)", subgroup_no: 20, seq: 1, value: 161.4, usl: 160, lsl: 120, source: "SPI 在线" },
+              { measured_at: "2026-10-13 10:22:00", characteristic: "锡膏厚度(μm)", subgroup_no: 17, seq: 4, value: 159.7, usl: 160, lsl: 120, source: "SPI 在线" },
+              { measured_at: "2026-10-11 16:48:00", characteristic: "锡膏厚度(μm)", subgroup_no: 12, seq: 5, value: 160.9, usl: 160, lsl: 120, source: "SPI 离线抽检" },
+            ] },
+          { name: "焊点高度(mm)", entity: { characteristic: "焊点高度(mm)" }, line: "", model: "", wo: "",
+            value: 0.0, status: "ok", numerator: 0, denominator: 100, rank: 3, trend: [],
+            columns: _SPC_MEAS_COLS, records: [
+              { measured_at: "2026-10-14 09:35:00", characteristic: "焊点高度(mm)", subgroup_no: 20, seq: 2, value: 0.752, usl: 0.9, lsl: 0.6, source: "AOI 在线" },
+              { measured_at: "2026-10-12 11:19:00", characteristic: "焊点高度(mm)", subgroup_no: 15, seq: 1, value: 0.741, usl: 0.9, lsl: 0.6, source: "AOI 在线" },
+              { measured_at: "2026-10-09 15:52:00", characteristic: "焊点高度(mm)", subgroup_no: 7, seq: 4, value: 0.766, usl: 0.9, lsl: 0.6, source: "人工抽检" },
+            ] },
+        ] },
+      spc_pareto: { label: "缺陷类型不良率", target: 10.0, higher_is_better: false, unit: "%", dimension: "不良类型",
+        definition: "各缺陷类型不良数 ÷ 受检总数（柏拉图关键少数取证）。",
+        ask: "各缺陷类型不良率如何？最集中的不良模式是哪类？",
+        rows: [
+          { name: "元件立碑", entity: { defect_type: "元件立碑" }, line: "", model: "", wo: "",
+            value: 18.0, status: "danger", numerator: 36, denominator: 200, rank: 1, trend: [],
+            columns: _SPC_DEFECT_COLS, records: [
+              { inspect_time: "2026-10-14 10:21:00", batch_no: "BATCH-A-1008", product_model: "A型号", line_code: "SMT-1", defect_type: "元件立碑", defect_qty: 6, total_qty: 200 },
+              { inspect_time: "2026-10-12 08:47:00", batch_no: "BATCH-A-1002", product_model: "B型号", line_code: "SMT-2", defect_type: "元件立碑", defect_qty: 4, total_qty: 200 },
+            ] },
+          { name: "连锡", entity: { defect_type: "连锡" }, line: "", model: "", wo: "",
+            value: 13.0, status: "warn", numerator: 26, denominator: 200, rank: 2, trend: [],
+            columns: _SPC_DEFECT_COLS, records: [
+              { inspect_time: "2026-10-13 19:12:00", batch_no: "BATCH-C-2005", product_model: "C型号", line_code: "DIP-1", defect_type: "连锡", defect_qty: 5, total_qty: 200 },
+              { inspect_time: "2026-10-11 13:58:00", batch_no: "BATCH-B-2001", product_model: "B型号", line_code: "DIP-1", defect_type: "连锡", defect_qty: 3, total_qty: 200 },
+            ] },
+          { name: "少锡/虚焊", entity: { defect_type: "少锡/虚焊" }, line: "", model: "", wo: "",
+            value: 6.0, status: "ok", numerator: 12, denominator: 200, rank: 3, trend: [],
+            columns: _SPC_DEFECT_COLS, records: [
+              { inspect_time: "2026-10-14 09:44:00", batch_no: "BATCH-A-1008", product_model: "A型号", line_code: "SMT-1", defect_type: "少锡/虚焊", defect_qty: 3, total_qty: 200 },
+              { inspect_time: "2026-10-10 17:30:00", batch_no: "BATCH-A-1001", product_model: "A型号", line_code: "SMT-1", defect_type: "少锡/虚焊", defect_qty: 2, total_qty: 200 },
+            ] },
+          { name: "锡珠", entity: { defect_type: "锡珠" }, line: "", model: "", wo: "",
+            value: 4.5, status: "ok", numerator: 9, denominator: 200, rank: 4, trend: [],
+            columns: _SPC_DEFECT_COLS, records: [
+              { inspect_time: "2026-10-13 11:06:00", batch_no: "BATCH-B-2001", product_model: "B型号", line_code: "SMT-2", defect_type: "锡珠", defect_qty: 2, total_qty: 200 },
+              { inspect_time: "2026-10-12 20:25:00", batch_no: "BATCH-B-1004", product_model: "B型号", line_code: "SMT-2", defect_type: "锡珠", defect_qty: 2, total_qty: 200 },
+            ] },
+          { name: "元件偏移", entity: { defect_type: "元件偏移" }, line: "", model: "", wo: "",
+            value: 3.0, status: "ok", numerator: 6, denominator: 200, rank: 5, trend: [],
+            columns: _SPC_DEFECT_COLS, records: [
+              { inspect_time: "2026-10-14 15:09:00", batch_no: "BATCH-C-2005", product_model: "C型号", line_code: "SMT-2", defect_type: "元件偏移", defect_qty: 2, total_qty: 200 },
+              { inspect_time: "2026-10-09 10:38:00", batch_no: "BATCH-C-1003", product_model: "C型号", line_code: "SMT-2", defect_type: "元件偏移", defect_qty: 1, total_qty: 200 },
+            ] },
+        ] },
+    },
+  };
+
+  /* ---------------- 三级下钻（工段 / 工序 / 工位）离线模板 ----------------
+     指标 → 工段/工序/工位清单 + 缺陷模式；行级分子/分母按权重分摊（末位取余数，
+     求和严格回原值），口径与真实链路一致，仅供后端离线时演示。 */
+  const DRILL_STAGE_TPL = {
+    availability: { label: "停机原因", modes: ["抛料停机", "换料调机", "设备故障", "计划保养"], steps: [
+      ["SMT段", "锡膏印刷", [["SPI-01", "印刷机#1", "EQ-SPI-01"], ["SPI-02", "印刷机#2", "EQ-SPI-02"]]],
+      ["SMT段", "贴片", [["SMT-M1", "贴片机#1", "EQ-SMT-M1"], ["SMT-M2", "贴片机#2", "EQ-SMT-M2"]]],
+      ["SMT段", "回流焊", [["RF-01", "回流炉#1", "EQ-RF-01"]]],
+      ["DIP段", "插件", [["DIP-I1", "插件线#1", "EQ-DIP-I1"]]],
+      ["DIP段", "波峰焊", [["WS-01", "波峰炉#1", "EQ-WS-01"]]]] },
+    scrap_rate: { label: "报废原因", modes: ["连锡报废", "元件损伤", "外观不良"], steps: [
+      ["SMT段", "锡膏印刷", [["SPI-01", "印刷机#1", "EQ-SPI-01"]]],
+      ["SMT段", "贴片", [["SMT-M1", "贴片机#1", "EQ-SMT-M1"]]],
+      ["DIP段", "波峰焊", [["WS-01", "波峰炉#1", "EQ-WS-01"]]]] },
+    test_fpy: { label: "测试失效项", modes: ["ICT 开路", "功能失效", "老化失效"], steps: [
+      ["测试段", "ICT", [["ICT-01", "ICT 治具#1", "EQ-ICT-01"]]],
+      ["测试段", "功能测试", [["FCT-01", "功能测试台#1", "EQ-FCT-01"], ["FCT-02", "功能测试台#2", "EQ-FCT-02"]]],
+      ["测试段", "老化", [["AGE-01", "老化房A", "EQ-AGE-01"]]]] },
+    defect_rate: { label: "不良模式", modes: ["元件立碑", "锡膏偏移", "连锡", "外观划伤"], steps: [
+      ["SMT段", "锡膏印刷", [["SPI-01", "印刷机#1", "EQ-SPI-01"], ["SPI-02", "印刷机#2", "EQ-SPI-02"]]],
+      ["SMT段", "贴片", [["SMT-M1", "贴片机#1", "EQ-SMT-M1"], ["SMT-M2", "贴片机#2", "EQ-SMT-M2"]]],
+      ["SMT段", "回流焊", [["RF-01", "回流炉#1", "EQ-RF-01"]]]] },
+    fpy: { label: "不良模式", modes: ["元件立碑", "锡膏偏移", "连锡"], steps: [
+      ["SMT段", "贴片", [["SMT-M1", "贴片机#1", "EQ-SMT-M1"], ["SMT-M2", "贴片机#2", "EQ-SMT-M2"]]],
+      ["SMT段", "回流焊", [["RF-01", "回流炉#1", "EQ-RF-01"]]]] },
+    // 报工完成率口径取自 work_report，无工位层 → 只到工序
+    report_rate: { label: "缺陷模式", modes: [], steps: [
+      ["SMT段", "贴片", []], ["DIP段", "插件", []], ["DIP段", "波峰焊", []],
+      ["测试段", "测试", []], ["组装段", "包装", []]] },
+  };
+  const _SPLIT_W = [3, 2, 2, 1, 1, 1];
+  const _SPLIT_SH = ["白班", "夜班"];
+  const _SPLIT_OP = ["张建国", "周慧", "刘敏", "王振"];
+
+  function demoStatus(v, target, hi) {
+    if (hi) return v >= target ? "ok" : (v >= target * 0.9 ? "warn" : "danger");
+    return v <= target ? "ok" : (v <= target * 1.5 ? "warn" : "danger");
+  }
+
+  /** 行级 → 工段/工序/工位/班次 拆分（末位取余数，求和严格回原值）。 */
+  function splitDemoBreakdown(row, tpl, target, hi) {
+    const steps = tpl.steps || [];
+    const modes = tpl.modes || [];
+    const num = row.numerator || 0, den = row.denominator || 0;
+    const tot = steps.reduce((a, _s, i) => a + _SPLIT_W[i % _SPLIT_W.length], 0) || 1;
+    let accN = 0, accD = 0;
+    const parts = [];
+    steps.forEach((s, i) => {
+      const last = i === steps.length - 1;
+      const w = _SPLIT_W[i % _SPLIT_W.length];
+      const n = last ? num - accN : Math.round(num * w / tot);
+      const d = last ? den - accD : Math.round(den * w / tot);
+      accN += n; accD += d;
+      const v = d ? Math.round(1000 * n / d) / 10 : 0;
+      parts.push({ stage: s[0], step: s[1], stations: s[2] || [], num: n, den: d, value: v,
+                   loss: (hi ? Math.max(d - n, 0) : Math.max(n, 0)) });
+    });
+    const totalLoss = parts.reduce((a, p) => a + p.loss, 0) || 1;
+    const stages = [], stations = [];
+    parts.forEach((p) => {
+      const share = Math.round(1000 * p.loss / totalLoss) / 10;
+      let st = stages.find((x) => x.stage === p.stage);
+      if (!st) { st = { stage: p.stage, num: 0, den: 0, value: 0, loss: 0, steps: [] };
+                 stages.push(st); }
+      st.steps.push({ step: p.step, stage: p.stage, num: p.num, den: p.den, value: p.value,
+                      loss: p.loss, share: share, status: demoStatus(p.value, target, hi) });
+      st.num += p.num; st.den += p.den; st.loss += p.loss;
+      // 工位：先按工位分摊，再按班次二次分摊（两级都取余数保证求和回原值）
+      const sn = p.stations.length;
+      const sw = (sn + 1) * sn / 2 || 1;
+      let saN = 0, saD = 0;
+      p.stations.forEach((s, j) => {
+        const lastS = j === sn - 1;
+        const sN = lastS ? p.num - saN : Math.round(p.num * (sn - j) / sw);
+        const sD = lastS ? p.den - saD : Math.round(p.den * (sn - j) / sw);
+        saN += sN; saD += sD;
+        let shN = 0, shD = 0;
+        _SPLIT_SH.forEach((sh, k) => {
+          const lastSh = k === _SPLIT_SH.length - 1;
+          const n2 = lastSh ? sN - shN : Math.round(sN * 0.55);
+          const d2 = lastSh ? sD - shD : Math.round(sD * 0.55);
+          shN += n2; shD += d2;
+          const v2 = d2 ? Math.round(1000 * n2 / d2) / 10 : 0;
+          stations.push({ stage: p.stage, step: p.step, station_no: s[0], station_name: s[1],
+                          equipment_no: s[2], shift: sh, operator: _SPLIT_OP[(j + k) % _SPLIT_OP.length],
+                          cycle_time_s: 32, defect_mode: modes[(j + k) % Math.max(1, modes.length)] || "—",
+                          num: n2, den: d2, value: v2, status: demoStatus(v2, target, hi) });
+        });
+      });
+    });
+    stages.forEach((st) => { st.value = st.den ? Math.round(1000 * st.num / st.den) / 10 : 0; });
+    const mw = (modes.length + 1) * modes.length / 2 || 1;
+    let mA = 0;
+    const pareto = modes.map((m, i) => {
+      const last = i === modes.length - 1;
+      const v = last ? totalLoss - mA : Math.round(totalLoss * (modes.length - i) / mw);
+      mA += v;
+      return { name: m, value: v, share: Math.round(1000 * v / totalLoss) / 10 };
+    }).filter((x) => x.value > 0);
+    return { stages: stages, stations: stations, pareto: pareto,
+             pareto_label: tpl.label || "缺陷模式" };
+  }
+
+  DASHBOARD.drill = {};
+  Object.keys(DRILL_META).forEach((screen) => {
+    const src = DASHBOARD[screen];
+    DASHBOARD.drill[screen] = {};
+    Object.keys(DRILL_META[screen]).forEach((kpi) => {
+      const meta = DRILL_META[screen][kpi];
+      const tpl = DRILL_STAGE_TPL[kpi];
+      const ranking = (src.rankings || []).find((r) => r.key === kpi);
+      DASHBOARD.drill[screen][kpi] = Object.assign({
+        level: 2, screen: screen, kpi: kpi, unit: "%",
+        source: "demo", generated_at: src.generated_at, window: src.window,
+        degraded: true,
+        degraded_reason: "后端离线 · 演示数据（离线仅含 TOP5 分组，逐日/原始记录需后端在线）",
+        rows: ((ranking && ranking.items) || []).map((it) => {
+          const row = Object.assign({}, it, { trend: [] });
+          return tpl ? Object.assign(row, splitDemoBreakdown(row, tpl, meta.target,
+            meta.higher_is_better)) : row;
+        }),
+      }, meta);
+    });
+  });
+
+  /* 企业综合助手 · 制造数据速查（后端离线时的兜底演示数据）
+     结构对齐 GET /api/v2/office/snapshot 的 data.blocks（字段名一致，便于同构渲染）。 */
+  const OFFICE_SNAPSHOT = {
+    source: "演示数据（后端离线兜底）",
+    degraded: true,
+    blocks: {
+      material_stock: {
+        authorized: true, ok: true, count: 6,
+        note: "材料库存（按料号×仓库；可用量=在库-预留，冻结量不计可用）",
+        rows: [
+          { part_no: "CAP-0402-10uF", part_name: "贴片电容10uF", category: "电子料", warehouse: "电子料仓", bin_location: "A-01-03", on_hand_qty: 150000, reserved_qty: 40000, available_qty: 110000, safety_stock: 50000, age_days: 12 },
+          { part_no: "RES-0603-1k", part_name: "贴片电阻1kΩ", category: "电子料", warehouse: "电子料仓", bin_location: "A-01-07", on_hand_qty: 40000, reserved_qty: 5000, available_qty: 35000, safety_stock: 60000, age_days: 34 },
+          { part_no: "IC-MCU-32bit", part_name: "主控MCU", category: "电子料", warehouse: "电子料仓", bin_location: "A-02-01", on_hand_qty: 5000, reserved_qty: 4500, available_qty: 500, safety_stock: 8000, age_days: 20 },
+          { part_no: "CAP-0805-22uF", part_name: "贴片电容22uF", category: "电子料", warehouse: "电子料仓", bin_location: "A-01-05", on_hand_qty: 25000, reserved_qty: 0, available_qty: 25000, safety_stock: 15000, age_days: 9 },
+          { part_no: "CON-TYPEC-16P", part_name: "TYPE-C连接器", category: "结构件", warehouse: "结构件仓", bin_location: "B-01-02", on_hand_qty: 60000, reserved_qty: 20000, available_qty: 40000, safety_stock: 30000, age_days: 8 },
+          { part_no: "PACK-BOX-A", part_name: "包装彩盒A", category: "包材", warehouse: "包材仓", bin_location: "E-01-03", on_hand_qty: 4500, reserved_qty: 0, available_qty: 4500, safety_stock: 5000, age_days: 210 },
+        ],
+      },
+      shortage: {
+        authorized: true, ok: true, count: 3,
+        note: "缺料清单（可用量低于安全库存，含缺口）",
+        rows: [
+          { part_no: "RES-0603-1k", part_name: "贴片电阻1kΩ", category: "电子料", available_qty: 35000, safety_stock: 60000, shortage_qty: 25000 },
+          { part_no: "IC-MCU-32bit", part_name: "主控MCU", category: "电子料", available_qty: 2000, safety_stock: 8000, shortage_qty: 6000 },
+          { part_no: "LCD-5.5-IPS", part_name: "5.5寸液晶屏", category: "电子料", available_qty: 700, safety_stock: 3000, shortage_qty: 2300 },
+        ],
+      },
+      finished_stock: {
+        authorized: true, ok: true, count: 5,
+        note: "成品库存（型号×仓库；可发量 ATP=在库-预留）",
+        rows: [
+          { product_model: "A型号", warehouse: "深圳成品仓", batch_no: "BATCH-A-1015", on_hand_qty: 1200, reserved_qty: 800, available_qty: 400, safety_stock: 1000, age_days: 2 },
+          { product_model: "B型号", warehouse: "深圳成品仓", batch_no: "BATCH-B-1014", on_hand_qty: 5000, reserved_qty: 500, available_qty: 4500, safety_stock: 2000, age_days: 3 },
+          { product_model: "C型号", warehouse: "华东成品仓", batch_no: "BATCH-C-1009", on_hand_qty: 1500, reserved_qty: 600, available_qty: 900, safety_stock: 800, age_days: 6 },
+          { product_model: "D型号", warehouse: "深圳成品仓", batch_no: "BATCH-D-1001", on_hand_qty: 3200, reserved_qty: 1200, available_qty: 2000, safety_stock: 1500, age_days: 5 },
+          { product_model: "E型号", warehouse: "保税仓", batch_no: "BATCH-E-1001", on_hand_qty: 700, reserved_qty: 650, available_qty: 50, safety_stock: 600, age_days: 7 },
+        ],
+      },
+      incoming_batch: {
+        authorized: true, ok: true, count: 5,
+        note: "近期来料批次（IQC 结论：合格/不合格/待检/让步接收）",
+        rows: [
+          { batch_no: "MAT-SCR-1018", part_no: "SCREW-M8-20", part_name: "内六角螺栓M8×20", supplier: "东莞紧固", arrival_time: "2026-10-14 15:00:00", qty: 100000, qualified_qty: 100000, inspect_status: "pass", warehouse: "标准件仓", bin_location: "D-01-01" },
+          { batch_no: "MAT-CON-1014", part_no: "CON-TYPEC-16P", part_name: "TYPE-C连接器", supplier: "立讯精密", arrival_time: "2026-10-14 09:30:00", qty: 80000, qualified_qty: 80000, inspect_status: "pass", warehouse: "结构件仓", bin_location: "B-01-02" },
+          { batch_no: "MAT-SOL-1015", part_no: "SOLDER-PASTE-SAC305", part_name: "无铅锡膏SAC305", supplier: "千住金属", arrival_time: "2026-10-13 08:00:00", qty: 200, qualified_qty: 200, inspect_status: "pass", warehouse: "辅料仓", bin_location: "C-01-01" },
+          { batch_no: "MAT-LCD-1024", part_no: "LCD-5.5-IPS", part_name: "5.5寸液晶屏", supplier: "天马微电子", arrival_time: "2026-10-12 13:15:00", qty: 1200, qualified_qty: 1200, inspect_status: "pending", warehouse: "电子料仓", bin_location: "A-03-04" },
+          { batch_no: "MAT-CAP-1013", part_no: "CAP-0805-22uF", part_name: "贴片电容22uF", supplier: "三星电机", arrival_time: "2026-10-09 08:45:00", qty: 30000, qualified_qty: 0, inspect_status: "fail", warehouse: "电子料仓", bin_location: "A-01-05" },
+        ],
+      },
+    },
+  };
+
   window.DEMO = {
-    ROLES, ROLE_GROUPS, ALERT_SUMMARY, ROLE_KPIS, DEMO_TODOS, ORDERS, ALERTS, REPORTS, DEMO_人工确认, CHAT_DEMO, CHAT_DEMOS, DASHBOARD,
+    ROLES, ROLE_GROUPS, ALERT_SUMMARY, ROLE_KPIS, DEMO_TODOS, ORDERS, ORDERS_DASHBOARD, SPC_DASHBOARD, ALERTS, REPORTS, DEMO_人工确认, CHAT_DEMO, CHAT_DEMOS, DASHBOARD, OFFICE_SNAPSHOT,
   };
 })();

@@ -39,7 +39,25 @@ class SharedContext:
 
     def __init__(self) -> None:
         self._records: dict[str, list[ContextRecord]] = {}
+        # 节点执行留痕（与事实层分离的独立通道）：审批中心「流程进展 / 各域耗时」
+        # 数据源。只增，不参与 snapshot()，避免污染给 LLM 的事实面。
+        self._trace: list[dict[str, Any]] = []
         self._lock = threading.Lock()
+
+    def record_node(self, node_id: str, label: str, domain: str,
+                    status: str, elapsed_ms: float) -> None:
+        """记录一个节点的执行留痕（线程安全，按执行顺序追加）。"""
+        with self._lock:
+            self._trace.append({
+                "node": str(node_id), "label": str(label), "domain": str(domain),
+                "status": str(status), "elapsed_ms": round(float(elapsed_ms), 1),
+                "ts": datetime.now(timezone.utc).isoformat(),
+            })
+
+    def node_trace(self) -> list[dict[str, Any]]:
+        """节点执行留痕快照（按执行顺序的浅拷贝，供上游节点取用）。"""
+        with self._lock:
+            return [dict(item) for item in self._trace]
 
     def merge(self, domain: str, data: dict[str, Any], source: str = "") -> None:
         """把 data 中每个 key 作为一条只增记录写入（线程安全，支持并行域写入）。"""

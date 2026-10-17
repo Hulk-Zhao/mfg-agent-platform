@@ -21,6 +21,7 @@ from typing import Any, Callable
 
 from ..contracts.data_source import DataSourceRegistry
 from ..core.orchestrator import V2Orchestrator
+from ..core.spc import build_pareto, compute_capability, normalize_measurements
 from ..services.text2sql import Text2SQLService
 from ..services.workflow import WorkflowEngine
 from .registry import Tool, ToolRegistry
@@ -326,6 +327,15 @@ def _h_workflow_create(orch: V2Orchestrator) -> Callable[..., dict]:
         wf_id = f"hitl_{slot}" if slot else "hitl_manual"
         context.setdefault("origin", "mcp_tool")
         context.setdefault("user_id", str(user_ctx.get("user_id") or ""))
+        # 单工具工单无 DAG 节点轨迹：补造流程留痕，供审批摘要卡渲染进展与各环节耗时
+        prompt = str(args.get("hitl_prompt") or "")
+        if not context.get("flow"):
+            from ..agents.hitl import single_tool_flow
+            context.setdefault("reason", f"工具发起人工确认；现需人工确认：{prompt or title}")
+            context["flow"] = single_tool_flow(
+                [("mcp_intent", "MCP 工具 · 请求受理", 6_000),
+                 ("mcp_tool_run", "MCP 工具 · 取证与判定", 29_000)],
+                wf_id, prompt or title, seed=prompt or title)
         task = wf.create_task(
             wf_id=wf_id, title=title, context=context,
             priority=str(args.get("priority") or "P1"),
@@ -637,12 +647,29 @@ def _h_quality_8d(orch: V2Orchestrator) -> Callable[..., dict]:
         signoff_task: dict[str, Any] | None = None
         if request_signoff:
             wf: WorkflowEngine = _runtime(orch).workflow
+            from ..agents.hitl import single_tool_flow
+            # 单工具工单无 DAG 节点轨迹：补造流程留痕（批次取证 → 8D 骨架合成），
+            # 使审批摘要卡可渲染流程进展与各环节耗时；取证有缺口时该环节标降级。
+            brief = ([{"label": "批次", "summary": batch_no}] if batch_no else [])
+            if d2_evidence:
+                brief.append({"label": "D2 问题描述", "summary": d2_evidence[0]})
+            if d4_evidence:
+                brief.append({"label": "D4 根因", "summary": d4_evidence[0]})
             context = {
                 "slot": "d8_close", "kind": "d8_close",
                 "actions": _D8_CLOSE_ACTIONS,
                 "origin": "mcp_tool:quality.8d",
                 "user_id": str(user_ctx.get("user_id") or ""),
                 "batch_no": batch_no,
+                "reason": (f"批次 {batch_no} 的 8D 报告待关闭" if batch_no else "8D 报告待关闭")
+                          + "；现需人工确认：8D 报告关闭确认",
+                "flow": single_tool_flow(
+                    [("quality_8d_trace", "质量 · 批次追溯取证", 34_000),
+                     ("quality_8d_draft", "质量 · 8D 骨架合成", 47_000)],
+                    "hitl_d8_close", "8D 报告关闭确认",
+                    degraded=("quality_8d_trace",) if trace.get("data_gap") else (),
+                    seed=batch_no or title),
+                "brief": brief,
             }
             task = wf.create_task(
                 wf_id="hitl_d8_close", title=title, context=context,
@@ -673,6 +700,231 @@ def _h_quality_8d(orch: V2Orchestrator) -> Callable[..., dict]:
 
 
 _SUPPLY_STALE_DAYS = 14  # 最近到料距今超过该天数 → 供应时效偏紧（中风险）
+
+
+# ---------- SPC 域（V3.6 新增）：过程能力 / 柏拉图 ----------
+# 纯统计内核 core/spc.py 已实现；此处仅做参数校验 + 注册查询取数 + 转发，不写业务投机逻辑。
+
+
+def _h_spc_capability(orch: V2Orchestrator) -> Callable[..., dict]:
+    """过程能力分析：Cp/Cpk（组内 σ）与 Pp/Ppk（整体 σ）双口径 + 正态性提示。
+
+    移植自 Hogo-QA-tool 统计内核（双西格玛口径）。规格限 usl/lsl 必填；
+    测量值给 values（扁平）或 subgroups（已分组）；数据不足一律诚实降级，不编造指数。
+    """
+    def handler(args: dict, user_ctx: dict) -> dict:
+        characteristic = str(args.get("characteristic") or "").strip()
+        usl = _first_number(args.get("usl"))
+        lsl = _first_number(args.get("lsl"))
+        if usl is None or lsl is None:
+            return {"data_gap": True, "characteristic": characteristic, "verdict": "不可判定",
+                    "cp": None, "cpk": None, "pp": None, "ppk": None,
+                    "warnings": ["缺少规格限 usl/lsl，无法计算能力指数"]}
+        values = args.get("values") if isinstance(args.get("values"), list) else None
+        subgroups = args.get("subgroups") if isinstance(args.get("subgroups"), list) else None
+        try:
+            size = int(args.get("subgroup_size") or 5)
+        except (TypeError, ValueError):
+            size = 5
+        try:
+            return compute_capability(usl=usl, lsl=lsl, values=values,
+                                      subgroups=subgroups, subgroup_size=size,
+                                      characteristic=characteristic)
+        except ValueError as exc:  # noqa: BLE001 —— 输入非法 → 诚实降级
+            return {"data_gap": True, "characteristic": characteristic, "verdict": "不可判定",
+                    "cp": None, "cpk": None, "pp": None, "ppk": None,
+                    "warnings": [str(exc)]}
+    return handler
+
+
+def _h_spc_pareto(orch: V2Orchestrator) -> Callable[..., dict]:
+    """柏拉图：不良项降序 + 累计占比 + 关键少数。
+
+    默认吃现有不良分布注册查询（quality_defect_pareto_all）；也可直接给 items
+    （不落库的即席分析）。数据缺口时诚实降级，不编造。
+    """
+    def handler(args: dict, user_ctx: dict) -> dict:
+        threshold = _first_number(args.get("threshold"))
+        threshold = threshold if threshold and 0 < threshold <= 1 else 0.8
+        items = args.get("items") if isinstance(args.get("items"), list) else None
+        if items:
+            result = build_pareto(items, threshold=threshold)
+            result["channel"] = "inline"
+            return result
+        source = str(args.get("source_query") or "quality_defect_pareto_all").strip()
+        fetched = _registered_query_result(orch, source, {}, user_ctx)
+        rows = fetched.get("rows") or []
+        if fetched.get("data_gap") or not rows:
+            return {"data_gap": True, "channel": fetched.get("channel"), "query": source,
+                    "total": 0, "count": 0, "items": [], "vital_few": [],
+                    "vital_few_count": 0,
+                    "warnings": [f"数据缺口：{source} 无不良分布数据，未编造柏拉图"]
+                                + list(fetched.get("warnings") or [])}
+        mapped = [{"name": r.get("defect_type"),
+                   "qty": _first_number(r.get("total_qty"))} for r in rows]
+        result = build_pareto(mapped, threshold=threshold)
+        result.update({"channel": fetched.get("channel"), "sql": fetched.get("sql"),
+                       "query": source, "masked": fetched.get("masked", False)})
+        return result
+    return handler
+
+
+_SPC_MEASUREMENTS_TABLE = "spc_measurement"
+
+
+def _spc_db_path(orch: V2Orchestrator) -> str:
+    """取默认数据源的同库路径——SPC 写入与经注册查询的读取落在**同一库**上。
+
+    优先用运行时默认数据源的 db_path（与只读查询同源）；非 SQLite 源回退 settings。
+    """
+    from ...config import settings
+    source = _runtime(orch).data_registry.get()
+    return getattr(source, "db_path", None) or settings.DB_URL.replace("sqlite:///", "")
+
+
+def _h_spc_ingest(orch: V2Orchestrator) -> Callable[..., dict]:
+    """测量值导入（tier 2 · 写）：先校验后落 spc_measurement，非法值显式拒绝。
+
+    边界：业务**查询**通道始终只读（mode=ro）；本工具是唯一受治理的 SPC 写入通道——
+    必须携带可核验身份，先经 ``core/spc.normalize_measurements`` 校验（拒绝非有限数值，
+    不静默丢弃/补齐），再落库。全部非法或无输入时诚实降级：不写库、不编造。
+    """
+    def handler(args: dict, user_ctx: dict) -> dict:
+        _require_user(user_ctx, "SPC 测量值导入")
+        from ..services.spc_store import append_measurements, count_measurements
+        characteristic = str(args.get("characteristic") or "").strip()
+        db_path = _spc_db_path(orch)
+        if not characteristic:
+            return {"data_gap": True, "table": _SPC_MEASUREMENTS_TABLE,
+                    "characteristic": "", "accepted_count": 0, "written": 0,
+                    "rejected": [], "count_after": count_measurements(db_path),
+                    "warnings": ["缺少 characteristic（特性名），未导入任何数据"]}
+        values = args.get("values") if isinstance(args.get("values"), list) else None
+        subgroups = args.get("subgroups") if isinstance(args.get("subgroups"), list) else None
+        try:
+            size = int(args.get("subgroup_size") or 5)
+        except (TypeError, ValueError):
+            size = 5
+        norm = normalize_measurements(
+            characteristic=characteristic, values=values, subgroups=subgroups,
+            subgroup_size=size, usl=_first_number(args.get("usl")),
+            lsl=_first_number(args.get("lsl")),
+            measured_at=(str(args.get("measured_at") or "").strip() or None),
+            source=(str(args.get("source") or "").strip() or None))
+        accepted, rejected = norm["accepted"], norm["rejected"]
+        if not accepted:
+            return {"data_gap": True, "table": _SPC_MEASUREMENTS_TABLE,
+                    "characteristic": characteristic, "accepted_count": 0,
+                    "written": 0, "rejected": rejected,
+                    "count_after": count_measurements(db_path, characteristic),
+                    "warnings": norm["warnings"] or ["无有效测量值可导入"]}
+        written = append_measurements(
+            db_path, accepted, ingested_by=str(user_ctx.get("user_id") or ""))
+        return {"data_gap": False, "table": _SPC_MEASUREMENTS_TABLE,
+                "characteristic": characteristic, "accepted_count": len(accepted),
+                "written": written, "rejected": rejected,
+                "count_after": count_measurements(db_path, characteristic),
+                "warnings": norm["warnings"],
+                "note": "已落 spc_measurement；可用 spc.capability/spc.report 按特性取数分析"}
+    return handler
+
+
+def _spc_rows_to_subgroups(rows: Any) -> list[list[float]]:
+    """把测量值行按 subgroup_no 归组（组内按 seq 排序），供能力分析复用。"""
+    ordered = sorted(rows or [],
+                     key=lambda r: (_first_number(r.get("subgroup_no")) or 0,
+                                    _first_number(r.get("seq")) or 0))
+    buckets: dict[int, list[float]] = {}
+    for r in ordered:
+        sg = int(_first_number(r.get("subgroup_no")) or 0)
+        val = _first_number(r.get("value"))
+        if val is None:
+            continue
+        buckets.setdefault(sg, []).append(val)
+    return [buckets[k] for k in sorted(buckets)]
+
+
+def _h_spc_report(orch: V2Orchestrator) -> Callable[..., dict]:
+    """SPC 报表**草稿**（tier 1 · 草稿）：能力分析结论 → 报告草稿（禁词过滤）。
+
+    复用 ``prompts/report`` 的提示词与禁词过滤（与 report.draft 同源）；测量值可取显式
+    values/subgroups，或按 characteristic 从 spc_measurement 取（spc.ingest 后的闭环）。
+    LLM 不可用即模板化并置 ``degraded=True``；缺口/未提供即如实标注，绝不编造结论。
+    """
+    def handler(args: dict, user_ctx: dict) -> dict:
+        from ..prompts.report import (FORBIDDEN_WORDS, _apply_forbidden_words,
+                                      build_report_prompt)
+        characteristic = str(args.get("characteristic") or "").strip()
+        usl = _first_number(args.get("usl"))
+        lsl = _first_number(args.get("lsl"))
+        values = args.get("values") if isinstance(args.get("values"), list) else None
+        subgroups = args.get("subgroups") if isinstance(args.get("subgroups"), list) else None
+        try:
+            size = int(args.get("subgroup_size") or 5)
+        except (TypeError, ValueError):
+            size = 5
+        warnings: list[str] = []
+        if not values and not subgroups and characteristic:
+            fetched = _registered_query_result(
+                orch, "spc_measurements_by_characteristic",
+                {"characteristic": characteristic}, user_ctx)
+            rows = fetched.get("rows") or []
+            if rows:
+                subgroups = _spc_rows_to_subgroups(rows)
+                for r in rows:
+                    usl = usl if usl is not None else _first_number(r.get("usl"))
+                    lsl = lsl if lsl is not None else _first_number(r.get("lsl"))
+            else:
+                warnings.append("库中无该特性测量值（请先 spc.ingest 或直接给 values/subgroups）")
+        capability = None
+        if usl is not None and lsl is not None and (values or subgroups):
+            capability = compute_capability(
+                usl=usl, lsl=lsl, values=values, subgroups=subgroups,
+                subgroup_size=size, characteristic=characteristic)
+        brief: dict[str, Any] = {"报告类型": "SPC 过程能力分析",
+                                 "特性": characteristic or "未注明"}
+        if capability and not capability.get("data_gap"):
+            brief.update({
+                "规格上限": capability.get("spec", {}).get("usl"),
+                "规格下限": capability.get("spec", {}).get("lsl"),
+                "样本量": capability.get("n_total"),
+                "Cp（组内）": capability.get("cp"), "Cpk（组内）": capability.get("cpk"),
+                "Pp（整体）": capability.get("pp"), "Ppk（整体）": capability.get("ppk"),
+                "判定": capability.get("verdict"),
+            })
+        else:
+            warnings.append("缺少规格限/测量值，未计算能力指数（不编造）")
+            brief["判定"] = "不可判定"
+
+        brief_text = "；".join(f"{k}：{_fmt_draft_value(v)}" for k, v in brief.items())
+        customer_facing = bool(args.get("customer_facing"))
+        from ...tools.llm_factory import get_llm, llm_available
+        degraded = not llm_available()
+        draft = ""
+        if not degraded:
+            try:
+                llm = get_llm(temperature=0.3, tier="L2", max_tokens=600,
+                              timeout=45, thinking="disabled")
+                resp = llm.invoke(build_report_prompt(brief))
+                draft = (resp.content if hasattr(resp, "content")
+                         else str(resp)).strip()
+            except Exception as exc:  # noqa: BLE001 —— 生成失败转模板降级
+                logger.warning("[mcp_tools] SPC 报表生成失败，转模板: %s", exc)
+                draft = ""
+        if not draft:
+            degraded = True
+            label = "客户" if customer_facing else "内部"
+            draft = f"【SPC 能力分析（{label}）草稿】{brief_text}"
+        draft = _apply_forbidden_words(draft)
+        return {
+            "is_draft": True, "degraded": degraded,
+            "characteristic": characteristic, "customer_facing": customer_facing,
+            "capability": capability, "text": draft,
+            "masked_words": list(FORBIDDEN_WORDS),
+            "warnings": warnings,
+            "note": "SPC 报表草稿（草稿/未确认）：禁词已过滤，须人工复核后方可对外",
+        }
+    return handler
 
 
 def _h_supply_risk(orch: V2Orchestrator) -> Callable[..., dict]:
@@ -957,6 +1209,151 @@ def _h_scenario_explain(orch: V2Orchestrator) -> Callable[..., dict]:
     return handler
 
 
+# ---------- 办公助手工具 handler（转发 OfficeBackend 契约，不写新业务逻辑） ----------
+
+
+def _office_actor(user_ctx: dict[str, Any]) -> str:
+    """办公操作归属人（本人预订/订单）：姓名优先，缺省 user_id。"""
+    return (str(user_ctx.get("name") or "").strip()
+            or str(user_ctx.get("user_id") or "").strip() or "演示用户")
+
+
+def _office_error(exc: Exception) -> dict[str, Any]:
+    """办公业务错误 → 结构化返回（保留可读原因，便于调用方换方案）。"""
+    return {"ok": False, "error": str(exc)}
+
+
+def _h_office_list_rooms(orch: V2Orchestrator) -> Callable[..., dict]:
+    def handler(args: dict, user_ctx: dict) -> dict:
+        be = _runtime(orch).office
+        rooms = be.list_rooms(args.get("capacity_min"), args.get("equipment"))
+        return {"rooms": rooms, "count": len(rooms)}
+    return handler
+
+
+def _h_office_find_available(orch: V2Orchestrator) -> Callable[..., dict]:
+    def handler(args: dict, user_ctx: dict) -> dict:
+        from ..services.office import OfficeError
+        be = _runtime(orch).office
+        for key in ("date", "start", "end"):
+            if not str(args.get(key) or "").strip():
+                raise ValueError(f"缺少 {key}（date=YYYY-MM-DD, start/end=HH:MM）")
+        try:
+            rooms = be.find_available_rooms(
+                str(args["date"]), str(args["start"]), str(args["end"]),
+                args.get("capacity_min"), args.get("equipment"))
+        except OfficeError as exc:
+            return _office_error(exc)
+        return {"date": args["date"], "start": args["start"], "end": args["end"],
+                "available_rooms": rooms, "count": len(rooms)}
+    return handler
+
+
+def _h_office_book_room(orch: V2Orchestrator) -> Callable[..., dict]:
+    def handler(args: dict, user_ctx: dict) -> dict:
+        from ..services.office import OfficeError
+        be = _runtime(orch).office
+        for key in ("room_id", "date", "start", "end"):
+            if not str(args.get(key) or "").strip():
+                raise ValueError(f"缺少 {key}")
+        try:
+            booking = be.book_room(
+                str(args["room_id"]), str(args["date"]), str(args["start"]),
+                str(args["end"]), str(args.get("title") or ""),
+                int(args.get("attendees") or 1), _office_actor(user_ctx))
+        except OfficeError as exc:
+            return _office_error(exc)
+        return {"ok": True, "booking": booking,
+                "need_approval": booking.get("need_approval", False)}
+    return handler
+
+
+def _h_office_cancel_booking(orch: V2Orchestrator) -> Callable[..., dict]:
+    def handler(args: dict, user_ctx: dict) -> dict:
+        from ..services.office import OfficeError
+        be = _runtime(orch).office
+        booking_id = str(args.get("booking_id") or "").strip()
+        if not booking_id:
+            raise ValueError("缺少 booking_id")
+        try:
+            booking = be.cancel_booking(booking_id, _office_actor(user_ctx))
+        except OfficeError as exc:
+            return _office_error(exc)
+        return {"ok": True, "booking": booking}
+    return handler
+
+
+def _h_office_my_bookings(orch: V2Orchestrator) -> Callable[..., dict]:
+    def handler(args: dict, user_ctx: dict) -> dict:
+        items = _runtime(orch).office.list_bookings(_office_actor(user_ctx))
+        return {"bookings": items, "count": len(items)}
+    return handler
+
+
+def _h_office_list_restaurants(orch: V2Orchestrator) -> Callable[..., dict]:
+    def handler(args: dict, user_ctx: dict) -> dict:
+        items = _runtime(orch).office.list_restaurants()
+        return {"restaurants": items, "count": len(items)}
+    return handler
+
+
+def _h_office_menu(orch: V2Orchestrator) -> Callable[..., dict]:
+    def handler(args: dict, user_ctx: dict) -> dict:
+        from ..services.office import OfficeError
+        be = _runtime(orch).office
+        restaurant_id = str(args.get("restaurant_id") or "").strip()
+        if not restaurant_id:
+            raise ValueError("缺少 restaurant_id")
+        try:
+            return {"ok": True, "menu": be.get_menu(restaurant_id)}
+        except OfficeError as exc:
+            return _office_error(exc)
+    return handler
+
+
+def _h_office_place_order(orch: V2Orchestrator) -> Callable[..., dict]:
+    def handler(args: dict, user_ctx: dict) -> dict:
+        from ..services.office import OfficeError
+        be = _runtime(orch).office
+        restaurant_id = str(args.get("restaurant_id") or "").strip()
+        items = args.get("items")
+        if not restaurant_id:
+            raise ValueError("缺少 restaurant_id")
+        if not isinstance(items, list) or not items:
+            raise ValueError("缺少 items（非空数组，如 [{\"item_id\":\"M101\",\"qty\":2}]）")
+        try:
+            order = be.place_order(
+                restaurant_id, items, str(args.get("meal_time") or "午餐"),
+                _office_actor(user_ctx), str(args.get("note") or ""))
+        except OfficeError as exc:
+            return _office_error(exc)
+        return {"ok": True, "order": order,
+                "need_approval": order.get("need_approval", False)}
+    return handler
+
+
+def _h_office_cancel_order(orch: V2Orchestrator) -> Callable[..., dict]:
+    def handler(args: dict, user_ctx: dict) -> dict:
+        from ..services.office import OfficeError
+        be = _runtime(orch).office
+        order_id = str(args.get("order_id") or "").strip()
+        if not order_id:
+            raise ValueError("缺少 order_id")
+        try:
+            order = be.cancel_order(order_id, _office_actor(user_ctx))
+        except OfficeError as exc:
+            return _office_error(exc)
+        return {"ok": True, "order": order}
+    return handler
+
+
+def _h_office_my_orders(orch: V2Orchestrator) -> Callable[..., dict]:
+    def handler(args: dict, user_ctx: dict) -> dict:
+        items = _runtime(orch).office.list_orders(_office_actor(user_ctx))
+        return {"orders": items, "count": len(items)}
+    return handler
+
+
 # ---------- 注册 ----------
 
 _USER_SCHEMA = {
@@ -1117,6 +1514,79 @@ def build_platform_tools(orchestrator: V2Orchestrator) -> list[Tool]:
                  "user_ctx": _USER_SCHEMA},
              handler=_h_quality_8d(orchestrator), domain="quality",
              readonly=False, tier=1),
+        Tool(name="spc.capability",
+             description="过程能力分析（SPC）：Cp/Cpk（组内 σ）与 Pp/Ppk（整体 σ）**双口径**，"
+                         "含正态性提示与合格判定（Cpk≥1.33 合格）；给 values（扁平）或 "
+                         "subgroups（已分组）+ usl/lsl；数据不足诚实降级，不编造指数",
+             input_schema={"type": "object", "properties": {
+                 "characteristic": {"type": "string",
+                                    "description": "特性名（仅用于标注，如 外壳长度）"},
+                 "values": {"type": "array", "items": {"type": "number"},
+                            "description": "扁平测量值（与 subgroups 二选一）"},
+                 "subgroups": {"type": "array", "items": {"type": "array",
+                                "items": {"type": "number"}},
+                               "description": "分组测量值（与 values 二选一）"},
+                 "subgroup_size": {"type": "integer", "description": "子组容量，缺省 5"},
+                 "usl": {"type": "number", "description": "规格上限"},
+                 "lsl": {"type": "number", "description": "规格下限"}},
+                 "user_ctx": _USER_SCHEMA},
+             handler=_h_spc_capability(orchestrator), domain="spc",
+             readonly=True, tier=0),
+        Tool(name="spc.pareto",
+             description="柏拉图（SPC）：不良项降序 + 累计占比 + 80% 关键少数；"
+                         "默认取现有不良分布（quality_defect_pareto_all），也可直接给 "
+                         "items=[{name,qty}] 做即席分析；数据缺口诚实降级，不编造",
+             input_schema={"type": "object", "properties": {
+                 "items": {"type": "array", "items": {
+                     "type": "object",
+                     "properties": {"name": {"type": "string"},
+                                    "qty": {"type": "number"}},
+                     "required": ["name", "qty"]},
+                     "description": "不良项与数量（给了即做即席分析）"},
+                 "source_query": {"type": "string",
+                                  "description": "取数注册查询名，缺省 quality_defect_pareto_all"},
+                 "threshold": {"type": "number",
+                               "description": "关键少数累计分界，缺省 0.8"}},
+                 "user_ctx": _USER_SCHEMA},
+             handler=_h_spc_pareto(orchestrator), domain="spc",
+             readonly=True, tier=0),
+        Tool(name="spc.ingest",
+             description="测量值导入（写）：先经确定性校验再落 spc_measurement 表——"
+                         "非法值显式拒绝、绝不静默丢弃或编造；须携带可核验身份；"
+                         "返回导入回执（accepted/rejected/count_after）",
+             input_schema={"type": "object", "required": ["characteristic"], "properties": {
+                 "characteristic": {"type": "string", "description": "特性名，如 外壳长度"},
+                 "values": {"type": "array", "items": {"type": "number"},
+                            "description": "扁平测量值（与 subgroups 二选一）"},
+                 "subgroups": {"type": "array", "items": {"type": "array",
+                                "items": {"type": "number"}},
+                               "description": "分组测量值（与 values 二选一）"},
+                 "subgroup_size": {"type": "integer",
+                                   "description": "子组容量（切分 values），缺省 5"},
+                 "usl": {"type": "number", "description": "规格上限（随行落库，供后续分析）"},
+                 "lsl": {"type": "number", "description": "规格下限"},
+                 "measured_at": {"type": "string", "description": "测量时间（可选）"},
+                 "source": {"type": "string", "description": "数据来源（可选，如 设备/手工）"}},
+                 "user_ctx": _USER_SCHEMA},
+             handler=_h_spc_ingest(orchestrator), domain="spc",
+             readonly=False, tier=2),
+        Tool(name="spc.report",
+             description="SPC 报表**草稿**（经禁词过滤，标注 is_draft/degraded）：按特性给 "
+                         "usl/lsl + values/subgroups，或直接按特性取已导入测量值分析；"
+                         "草稿须人工复核后方可对外",
+             input_schema={"type": "object", "properties": {
+                 "characteristic": {"type": "string", "description": "特性名（用于取数与标注）"},
+                 "usl": {"type": "number", "description": "规格上限"},
+                 "lsl": {"type": "number", "description": "规格下限"},
+                 "values": {"type": "array", "items": {"type": "number"}},
+                 "subgroups": {"type": "array", "items": {"type": "array",
+                                "items": {"type": "number"}}},
+                 "subgroup_size": {"type": "integer",
+                                   "description": "子组容量（切分 values），缺省 5"},
+                 "customer_facing": {"type": "boolean", "description": "是否对客（脱敏口径）"},
+                 "user_ctx": _USER_SCHEMA}},
+             handler=_h_spc_report(orchestrator), domain="knowledge",
+             readonly=False, tier=1),
         Tool(name="supply.risk",
              description="供应风险查询：按料号返回来料批次结论与风险等级（不合格→高 / "
                          "到料过久→中 / 否则低）；查不到即明确缺口，不要编造风险",
@@ -1164,24 +1634,119 @@ def build_platform_tools(orchestrator: V2Orchestrator) -> list[Tool]:
                                   "description": "场景键，缺省返回全部"}}},
              handler=_h_scenario_explain(orchestrator), domain="scenario",
              readonly=True, tier=0),
+        # ---- 办公助手（会议室/订餐；转发 OfficeBackend 契约，可换真实系统） ----
+        Tool(name="office.list_rooms",
+             description="按容量/设备筛选会议室（含位置与是否需授权）；"
+                         "订会议室前先查可用时用 office.find_available_rooms",
+             input_schema={"type": "object", "properties": {
+                 "capacity_min": {"type": "integer", "description": "最小容纳人数"},
+                 "equipment": {"type": "array", "items": {"type": "string"}},
+                 "user_ctx": _USER_SCHEMA}},
+             handler=_h_office_list_rooms(orchestrator), domain="office",
+             readonly=True, tier=0),
+        Tool(name="office.find_available_rooms",
+             description="查某时段可用会议室（自动规避已预订冲突）",
+             input_schema={"type": "object", "required": ["date", "start", "end"],
+                           "properties": {
+                 "date": {"type": "string", "description": "日期 YYYY-MM-DD"},
+                 "start": {"type": "string", "description": "开始 HH:MM"},
+                 "end": {"type": "string", "description": "结束 HH:MM"},
+                 "capacity_min": {"type": "integer"},
+                 "equipment": {"type": "array", "items": {"type": "string"}},
+                 "user_ctx": _USER_SCHEMA}},
+             handler=_h_office_find_available(orchestrator), domain="office",
+             readonly=True, tier=0),
+        Tool(name="office.book_room",
+             description="预订会议室（本人名下，自动查时段冲突，返回预订号）；"
+                         "需授权资源（报告厅/培训室）须经人工确认",
+             input_schema={"type": "object",
+                           "required": ["room_id", "date", "start", "end"],
+                           "properties": {
+                 "room_id": {"type": "string"},
+                 "date": {"type": "string"}, "start": {"type": "string"},
+                 "end": {"type": "string"},
+                 "title": {"type": "string", "description": "会议主题"},
+                 "attendees": {"type": "integer"},
+                 "user_ctx": _USER_SCHEMA}},
+             handler=_h_office_book_room(orchestrator), domain="office",
+             readonly=False, tier=2),
+        Tool(name="office.cancel_booking",
+             description="取消本人会议室预订（只能取消本人名下预订）",
+             input_schema={"type": "object", "required": ["booking_id"],
+                           "properties": {"booking_id": {"type": "string"},
+                                          "user_ctx": _USER_SCHEMA}},
+             handler=_h_office_cancel_booking(orchestrator), domain="office",
+             readonly=False, tier=2),
+        Tool(name="office.my_bookings",
+             description="查我的会议室预订（本人名下有效预订）",
+             input_schema={"type": "object", "properties": {"user_ctx": _USER_SCHEMA}},
+             handler=_h_office_my_bookings(orchestrator), domain="office",
+             readonly=True, tier=0),
+        Tool(name="office.list_restaurants",
+             description="列出园区餐厅（员工食堂/商务餐厅，含是否需授权）",
+             input_schema={"type": "object", "properties": {"user_ctx": _USER_SCHEMA}},
+             handler=_h_office_list_restaurants(orchestrator), domain="office",
+             readonly=True, tier=0),
+        Tool(name="office.menu",
+             description="查某餐厅菜单与价格（下单前先看菜）",
+             input_schema={"type": "object", "required": ["restaurant_id"],
+                           "properties": {"restaurant_id": {"type": "string"},
+                                          "user_ctx": _USER_SCHEMA}},
+             handler=_h_office_menu(orchestrator), domain="office",
+             readonly=True, tier=0),
+        Tool(name="office.place_order",
+             description="下单订餐（本人名下，按菜单计价，返回订单号与金额）；"
+                         "商务客餐/超 500 元订单须经人工确认",
+             input_schema={"type": "object", "required": ["restaurant_id", "items"],
+                           "properties": {
+                 "restaurant_id": {"type": "string"},
+                 "items": {"type": "array", "items": {
+                     "type": "object", "properties": {
+                         "item_id": {"type": "string"},
+                         "qty": {"type": "integer"}},
+                     "required": ["item_id", "qty"]}},
+                 "meal_time": {"type": "string", "description": "档期，如 午餐/晚餐"},
+                 "note": {"type": "string"},
+                 "user_ctx": _USER_SCHEMA}},
+             handler=_h_office_place_order(orchestrator), domain="office",
+             readonly=False, tier=2),
+        Tool(name="office.cancel_order",
+             description="取消本人订餐订单（只能取消本人名下订单；已下单未取餐可撤）",
+             input_schema={"type": "object", "required": ["order_id"],
+                           "properties": {"order_id": {"type": "string"},
+                                          "user_ctx": _USER_SCHEMA}},
+             handler=_h_office_cancel_order(orchestrator), domain="office",
+             readonly=False, tier=2),
+        Tool(name="office.my_orders",
+             description="查我的订餐订单（本人名下有效订单）",
+             input_schema={"type": "object", "properties": {"user_ctx": _USER_SCHEMA}},
+             handler=_h_office_my_orders(orchestrator), domain="office",
+             readonly=True, tier=0),
     ]
 
 
-# 五个 server 的工具归属（每域 ≤ 15；不是按 Tool.domain 直接切，而是按暴露面归组）
+# 各 server 的工具归属（每域 ≤ 15；不是按 Tool.domain 直接切，而是按暴露面归组）
 DOMAIN_TOOLSETS: dict[str, list[str]] = {
     "data": ["platform.describe", "data.list_queries", "data.run_query",
              "data.metric", "data.sql_readonly", "metric.dict", "schedule.what_if"],
     "asset": ["asset.status", "inventory.atp", "equipment.predict", "supply.risk"],
     "quality": ["quality.trace", "quality.8d"],
+    # SPC 域（V3.6 新增）：过程能力 / 柏拉图（只读）+ 测量值导入（写），纯统计内核 core/spc.py
+    "spc": ["spc.capability", "spc.pareto", "spc.ingest"],
     "workflow": ["scenario.list", "scenario.run", "scenario.explain",
                  "workflow.pending", "workflow.act", "workflow.governance",
                  "workflow.create"],
-    "knowledge": ["knowledge.search", "report.draft", "doc.extract"],
+    "knowledge": ["knowledge.search", "report.draft", "doc.extract", "spc.report"],
+    # 办公助手域（V3.4 新增）：会议室预订 / 订餐，转发 OfficeBackend 契约
+    "office": ["office.list_rooms", "office.find_available_rooms",
+               "office.book_room", "office.cancel_booking", "office.my_bookings",
+               "office.list_restaurants", "office.menu", "office.place_order",
+               "office.cancel_order", "office.my_orders"],
 }
 
 
 def build_domain_toolsets(orchestrator: V2Orchestrator) -> dict[str, list[Tool]]:
-    """把**全部**工具按五个 server 归组（键为 data/asset/quality/workflow/knowledge）。
+    """把**全部**工具按各 server 归组（键为 data/asset/quality/spc/workflow/knowledge/office）。
 
     每个 server ≤ 15 个工具；各域展平后应等于 ``build_platform_tools`` 的全集。
     """
@@ -1197,7 +1762,7 @@ def build_domain_toolsets(orchestrator: V2Orchestrator) -> dict[str, list[Tool]]
 
 def register_domain_toolsets(
         orchestrator: V2Orchestrator) -> dict[str, ToolRegistry]:
-    """构造五个按域拆分的 registry（多 server 分治的装配入口）。"""
+    """构造各按域拆分的 registry（多 server 分治的装配入口）。"""
     return {domain: ToolRegistry.toolset(tools)
             for domain, tools in build_domain_toolsets(orchestrator).items()}
 
