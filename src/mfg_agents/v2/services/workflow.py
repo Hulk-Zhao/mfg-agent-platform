@@ -49,6 +49,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "PermissionDenied",
+    "SignoffConflict",
     "SignoffIncomplete",
     "WorkflowEngine",
     "WorkflowTask",
@@ -61,6 +62,25 @@ __all__ = [
 
 class WorkflowTransitionError(Exception):
     """非法状态迁移（安全边界：防止跳过审批直接放行）。"""
+
+
+class SignoffConflict(WorkflowTransitionError):
+    """同一自然人重复会签（跨角色也不行）。
+
+    会签的全部意义是"多方独立确认"：同一个人以两个角色各签一次，在审核
+    视角等同会签造假。判定依据是 ``actor_id``（``user_ctx.user_id``），
+    **不按姓名判定**（重名/改名/伪造姓名都不可靠）。
+
+    Attributes:
+        actor_id: 触发冲突的用户标识。
+        signed_role_name: 该用户已会签的角色中文名（用于自解释提示）。
+    """
+
+    def __init__(self, message: str = "", actor_id: str = "",
+                 signed_role_name: str = "") -> None:
+        self.actor_id = actor_id
+        self.signed_role_name = signed_role_name
+        super().__init__(message or "同一人不得为多个角色会签")
 
 
 class PermissionDenied(Exception):
@@ -230,6 +250,9 @@ class WorkflowEngine:
         # 生产化说明：多实例部署需改为独立签名表 + (task_uid, role_key, actor, verb)
         # 唯一索引做 DB 级幂等，单实例用本进程内锁即可（见 README 生产化清单）。
         self._write_lock = threading.RLock()
+        # 写锁内的临时传递：_assert_* 校验出的 actor_id 供 _append_approval 落库
+        # （仅在 _write_lock 内读写，串行化保证线程安全）
+        self._last_actor_id: str = ""
         self._memory_conn: Optional[sqlite3.Connection] = None
         if self.db_path == ":memory:":
             # 内存库：建一个进程内持久连接，DDL/DML 共用同一库
@@ -361,12 +384,16 @@ class WorkflowEngine:
                        comment: str) -> WorkflowTask:
         """选定处置动作：按该动作的 cosign 列表生成会签要求（status 不变）。
 
+        注意：**改选动作会清空已完成的会签**（会签要求已变化，旧签名失效，
+        必须按新动作重新会签）；同动作重复选定则保留已签记录。
+
         Raises:
             WorkflowTransitionError: 状态非法 / 动作不存在 / 未声明治理链。
-            PermissionDenied: 操作者岗位不在该动作的 propose 角色内（fail-closed）。
+            PermissionDenied: 缺少 user_id，或操作者岗位不在该动作 propose 角色内。
             ValueError: 该动作 ``require_comment`` 但未填写决策依据。
         """
         task = self._require_governed_hitl(task_uid, "select_action")
+        actor_id = self._require_actor_identity(user_ctx, "选定处置动作")
         actions = self._actions_of(task)
         if not actions:
             raise WorkflowTransitionError("工单未携带可选处置动作（context.actions 为空）")
@@ -412,6 +439,15 @@ class WorkflowEngine:
         governance["required_signoffs"] = required_signoffs
         governance.setdefault("signoffs", [])
         governance.setdefault("approvals", [])
+        # propose 是独立 verb 记录（不占"一人一签"的会签名额）：
+        # 发起人也可以是会签人，但只能签一次。
+        governance["proposed_by"] = {
+            "actor": actor,
+            "actor_id": actor_id,
+            "role": role_keys[0] if role_keys else "",
+            "role_name": registry.role_name(role_keys[0]) if role_keys else "",
+            "ts": datetime.now(timezone.utc).isoformat(),
+        }
         if previous_key != str(action_key):
             # 改选动作 → 旧的会签事实失效（会签要求已变化，必须重新会签）
             governance["signoffs"] = []
@@ -435,9 +471,19 @@ class WorkflowEngine:
                 comment: str) -> WorkflowTask:
         """会签（多角色背书，缺一不可）。
 
+        **一人一签（G6 铁律）**：同一 ``user_id`` 在同一工单内只能会签一次，
+        不论角色——会签的意义是"多方独立确认"，同一人多次确认没有独立价值。
+        判定依据是 ``user_ctx.user_id``（不按姓名，避免重名/伪造）。
+
+        取舍说明：**「会签人之一可以终批」被允许**（质量总监既会签又终批是正常
+        业务），因此 ``approve`` 不受"一人一签"约束；唯一性作用域等价于
+        ``(task_uid, user_id, verb='cosign')``。``select_action``（propose）
+        同样不占会签名额，发起人可以再签一次。
+
         Raises:
             WorkflowTransitionError: 未选动作 / 该角色已会签 / 状态非法。
-            PermissionDenied: 操作者岗位不在该动作的会签人范围（fail-closed）。
+            SignoffConflict: 同一用户已在本工单以其他角色会签（409）。
+            PermissionDenied: 缺少 user_id，或岗位不在会签人范围（fail-closed）。
 
         身份唯一来源：角色一律由 ``user_ctx.roles``（或单值 ``role``）经
         PermissionRegistry 归一化得出，**不接受"代签他人角色"的参数**——
@@ -445,6 +491,7 @@ class WorkflowEngine:
         因为没有对应权限而被拒（fail-closed）。
         """
         task = self._require_governed_hitl(task_uid, "cosign")
+        actor_id = self._require_actor_identity(user_ctx, "会签")
         governance = dict(task.governance or {})
         if not governance.get("action_key"):
             raise WorkflowTransitionError("请先选定处置动作（select_action），再进行会签")
@@ -481,10 +528,22 @@ class WorkflowEngine:
                 required=registry.roles_with_permission_names(cosign_perm),
                 actual=[registry.role_name(role_key)])
 
+        # 一人一签（G6）：同一 user_id 不得以第二个角色再次会签
+        already = next((s for s in signoffs
+                        if str(s.get("actor_id") or "") == actor_id), None)
+        if already is not None:
+            signed_role_name = str(already.get("role_name") or already.get("role") or "")
+            raise SignoffConflict(
+                f"同一人不得为多个角色会签（{actor} 已以 {signed_role_name} 身份会签，"
+                f"请由其他会签人完成剩余会签）",
+                actor_id=actor_id, signed_role_name=signed_role_name)
+
         signoffs.append({
             "role": role_key,
             "role_name": registry.role_name(role_key),
             "actor": actor,
+            # 稳定用户标识：一人一签与审计的判定依据（不按姓名）
+            "actor_id": actor_id,
             # 身份类型：支撑「Agent 不得持 approve」的运行时校验（见 README）
             "actor_kind": registry.role(role_key).actor_kind if registry.role(role_key) else "human",
             "action": "cosign",
@@ -532,7 +591,8 @@ class WorkflowEngine:
             role_key = self._assert_approve_permission(task, role, user_ctx)
             self._assert_signoffs_complete(task)
             governance = self._append_approval(
-                task, role_key, approver, decision or "approve", comment)
+                task, role_key, approver, decision or "approve", comment,
+                actor_id=self._last_actor_id)
         comment_out = self._with_decision(decision, comment)
         return self._transition(task_uid, "done" if final else "running",
                                 approver, "approve", comment_out,
@@ -559,7 +619,8 @@ class WorkflowEngine:
         if task.is_governed():
             role_key = self._assert_reject_permission(task, role, user_ctx)
             governance = self._append_approval(
-                task, role_key, approver, "reject", comment)
+                task, role_key, approver, "reject", comment,
+                actor_id=self._last_actor_id)
         comment_out = self._with_decision(decision, comment)
         return self._transition(task_uid, "closed", approver, "reject",
                                 comment_out, governance=governance)
@@ -584,6 +645,31 @@ class WorkflowEngine:
             raise WorkflowTransitionError(
                 f"工单状态 {task.status} 不允许 {action}（需 waiting_hitl）")
         return task
+
+    @staticmethod
+    def _actor_id_of(user_ctx: Any) -> str:
+        """从 user_ctx 取稳定用户标识（不按姓名判定同一人）。"""
+        if isinstance(user_ctx, dict):
+            for key in ("user_id", "uid", "employee_id"):
+                value = str(user_ctx.get(key) or "").strip()
+                if value:
+                    return value
+        return ""
+
+    def _require_actor_identity(self, user_ctx: Any, verb_label: str,
+                               allowed_names: Optional[list[str]] = None) -> str:
+        """受治理工单必须可核验身份（缺 user_id → PermissionDenied / 403）。
+
+        理由：没有稳定 user_id 就无法判定"同一人不得为多个角色会签"，
+        也无法审计到自然人。此时**拒绝**而不是按姓名降级或默认放行。
+        """
+        actor_id = self._actor_id_of(user_ctx)
+        if actor_id:
+            return actor_id
+        raise PermissionDenied(
+            f"受治理工单的{verb_label}必须提供用户身份（user_ctx.user_id）："
+            f"缺少可核验身份时无法判定权限与会签独立性，禁止匿名{verb_label}",
+            required=list(allowed_names or []), actual=[])
 
     @staticmethod
     def _actions_of(task: WorkflowTask) -> list[dict[str, Any]]:
@@ -629,10 +715,17 @@ class WorkflowEngine:
 
     def _assert_approve_permission(self, task: WorkflowTask, role: Optional[str],
                                    user_ctx: Optional[dict]) -> str:
-        """终批权限校验：返回主责 role key。"""
+        """终批权限校验：返回主责 role key。
+
+        校验顺序（fail-fast）：**身份 → 权限 → Agent 兜底**。
+        缺 user_id 属于"身份不足以判定权限"，必须先于会签状态检查拒绝——
+        否则错误信息会误导（把授权问题报成流程问题）。
+        """
         registry = self.permission_registry
         approve_perm = registry.slot_permission(task.slot, "approve")
         allowed_names = registry.roles_with_permission_names(approve_perm)
+        actor_id = self._require_actor_identity(user_ctx, "终批", allowed_names)
+        self._last_actor_id = actor_id
         role_keys = registry.resolve_actor_roles(role, user_ctx)
         if not role_keys:
             raise PermissionDenied(
@@ -673,13 +766,18 @@ class WorkflowEngine:
 
     def _assert_reject_permission(self, task: WorkflowTask, role: Optional[str],
                                   user_ctx: Optional[dict]) -> str:
-        """驳回权限校验：持有 propose 或 approve 权限之一即可（止损通道）。"""
+        """驳回权限校验：持有 propose 或 approve 权限之一即可（止损通道）。
+
+        校验顺序与终批一致：**身份 → 权限**（缺 user_id 先拒）。
+        """
         registry = self.permission_registry
         propose_perm = registry.slot_permission(task.slot, "propose")
         approve_perm = registry.slot_permission(task.slot, "approve")
         allowed = sorted(set(registry.roles_with_permission(propose_perm))
                          | set(registry.roles_with_permission(approve_perm)))
         allowed_names = [registry.role_name(k) for k in allowed]
+        actor_id = self._require_actor_identity(user_ctx, "驳回", allowed_names)
+        self._last_actor_id = actor_id
         role_keys = registry.resolve_actor_roles(role, user_ctx)
         if not role_keys:
             raise PermissionDenied(
@@ -696,7 +794,8 @@ class WorkflowEngine:
         return role_keys[0]
 
     def _append_approval(self, task: WorkflowTask, role_key: str, actor: str,
-                         decision: str, comment: str) -> dict[str, Any]:
+                         decision: str, comment: str,
+                         actor_id: str = "") -> dict[str, Any]:
         """追加终批/驳回留痕（返回新的 governance 快照）。"""
         governance = dict(task.governance or {})
         approvals = [dict(a) for a in (governance.get("approvals") or [])]
@@ -705,6 +804,8 @@ class WorkflowEngine:
             "role": role_key,
             "role_name": self.permission_registry.role_name(role_key),
             "actor": actor,
+            # 稳定用户标识（G6：审计到自然人，不按姓名）
+            "actor_id": actor_id,
             "actor_kind": role_def.actor_kind if role_def else "human",
             "decision": str(decision or "").strip(),
             "comment": (comment or "").strip(),

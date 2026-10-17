@@ -721,13 +721,16 @@ def test_restart_scenario_governance_flow(engine):
     """复线决策：制造发起 → PQE + 设备工程会签 → 制造（现场负责人）终批。"""
     uid = _make_hitl_task(engine, wf_id="hitl_restart", slot="restart",
                           actions=_restart_actions(), title="复线决策确认")
-    mfg_ctx = {"roles": ["manufacturing"]}
+    mfg_ctx = {"user_id": "u-mfg", "dept": "manufacturing",
+               "roles": ["manufacturing"]}
     engine.select_action(uid, "confirm_restart", "李卫东", user_ctx=mfg_ctx)
     task = engine.get(uid)
     assert [r["role"] for r in task.signoff_status()["required"]] == [
         "pqe", "equipment"]
     engine.cosign(uid, "王倩", user_ctx=PQE_CTX)
-    engine.cosign(uid, "赵工", user_ctx={"roles": ["设备工程"]})
+    engine.cosign(uid, "赵工", user_ctx={"user_id": "u-equip",
+                                         "dept": "manufacturing",
+                                         "roles": ["设备工程"]})
     assert engine.approve(uid, "李卫东", user_ctx=mfg_ctx).status == "running"
 
 
@@ -996,7 +999,8 @@ def test_cosign_cannot_spoof_role(engine):
     _select_concession(engine, uid)
     with pytest.raises(PermissionDenied) as exc:
         engine.cosign(uid, "张三", role="qa",
-                      user_ctx={"roles": ["warehouse"]})
+                      user_ctx={"user_id": "u-wh", "dept": "warehouse",
+                                "roles": ["warehouse"]})
     assert "会签人范围" in str(exc.value)
     assert engine.get(uid).governance["signoffs"] == []
 
@@ -1039,9 +1043,12 @@ def test_d8_close_does_not_create_controlled_document(engine):
     uid = _make_hitl_task(engine, wf_id="hitl_d8_close", slot="d8_close",
                           actions=actions, title="8D 报告关闭确认")
     engine.select_action(uid, "close", "李静", user_ctx=QD_CTX, comment="措施已验证")
+    # 三方会签必须是三个不同自然人（user_id 不同）：PQE / SQE / 工程
     engine.cosign(uid, "王倩", user_ctx=PQE_CTX)
-    engine.cosign(uid, "王倩", user_ctx=SQE_CTX)
-    engine.cosign(uid, "林哲", user_ctx={"roles": ["工程"]})
+    engine.cosign(uid, "刘强", user_ctx=SQE_CTX)
+    engine.cosign(uid, "林哲", user_ctx={"user_id": "u-rd",
+                                         "dept": "rd_engineering",
+                                         "roles": ["工程"]})
     task = engine.approve(uid, "李静", user_ctx=QD_CTX, decision="关闭 8D")
     assert task.status == "running"
     assert len(task.governance["approvals"]) == 1
@@ -1053,3 +1060,103 @@ def test_d8_close_does_not_create_controlled_document(engine):
                   if "controlled" in t or "document" in t or "doc_" in t]
     assert doc_tables == [], (
         f"8D 关闭不应产生受控文档记录（裁定 2），却出现表: {doc_tables}")
+
+
+# ============================================================
+# 10. 会签独立性 G6：一人一签（同一 user_id 跨角色 → SignoffConflict）
+# ============================================================
+
+
+def test_same_user_cannot_cosign_twice_with_different_roles(engine):
+    """G6-S1：同一 user_id 以第二个角色会签 → SignoffConflict（409）。
+
+    会签的意义是"多方独立确认"，同一人多次确认没有独立价值——
+    在审核视角等同会签造假。判定依据是 user_id，不按姓名。
+    """
+    uid = _make_hitl_task(engine)
+    _select_concession(engine, uid)
+    engine.cosign(uid, "王倩", user_ctx={"user_id": "u-same",
+                                         "dept": "quality", "roles": ["pqe"]})
+    from mfg_agents.v2.services.workflow import SignoffConflict
+    with pytest.raises(SignoffConflict) as exc:
+        engine.cosign(uid, "王倩", user_ctx={"user_id": "u-same",
+                                             "dept": "sales",
+                                             "roles": ["business"]})
+    assert "已以" in str(exc.value) and "会签" in str(exc.value)
+    # 第三次换 QA 角色同样拒绝
+    with pytest.raises(SignoffConflict):
+        engine.cosign(uid, "王倩", user_ctx={"user_id": "u-same",
+                                             "dept": "quality",
+                                             "roles": ["qa"]})
+    # 进度停在第 1 票，不会因冲突产生多余记录
+    assert engine.get(uid).signoff_status()["progress"] == "1/3"
+
+
+def test_two_different_users_complete_all_cosigns(engine):
+    """G6 正例：不同 user_id 正常完成全部会签（防止把会签整体锁死）。"""
+    uid = _make_hitl_task(engine)
+    _select_concession(engine, uid)
+    engine.cosign(uid, "王倩", user_ctx=PQE_CTX)      # u-pqe
+    engine.cosign(uid, "陈昊", user_ctx=BIZ_CTX)      # u-biz
+    engine.cosign(uid, "李静", user_ctx=QA_CTX)       # u-qa
+    st = engine.get(uid).signoff_status()
+    assert st["progress"] == "3/3" and st["satisfied"] is True
+    # 会签人 user_id 互不相同（多方独立确认的真实体现）
+    ids = {s["actor_id"] for s in engine.get(uid).governance["signoffs"]}
+    assert ids == {"u-pqe", "u-biz", "u-qa"}
+
+
+def test_governed_task_requires_user_id(engine):
+    """G6-S3：受治理工单缺少 user_id → PermissionDenied（403，fail-closed）。
+
+    没有稳定 user_id 就无法判定"同一人不得为多个角色会签"，也无法审计
+    到自然人——因此拒绝，而不是按姓名降级或默认放行。
+    """
+    uid = _make_hitl_task(engine)
+    _select_concession(engine, uid)
+    with pytest.raises(PermissionDenied) as exc:
+        engine.cosign(uid, "王倩", user_ctx={"roles": ["pqe"]})
+    assert "user_id" in str(exc.value)
+    with pytest.raises(PermissionDenied):
+        engine.select_action(uid, "return_goods", "王倩",
+                             user_ctx={"roles": ["quality"]})
+    with pytest.raises(PermissionDenied):
+        engine.approve(uid, "李静", user_ctx={"roles": ["质量总监"]})
+    # signoffs 未被污染
+    assert engine.get(uid).governance["signoffs"] == []
+
+
+def test_actor_id_persisted_in_signoff_and_approval(engine):
+    """G6-S2：signoff/approval 记录的 actor_id 必须真实落库（不是 None）。"""
+    uid = _make_hitl_task(engine)
+    _select_concession(engine, uid)
+    engine.cosign(uid, "王倩", user_ctx=PQE_CTX)
+    engine.cosign(uid, "陈昊", user_ctx=BIZ_CTX)
+    engine.cosign(uid, "李静", user_ctx=QA_CTX)
+    task = engine.approve(uid, "李静", user_ctx=QD_CTX, decision="特采（让步接收）")
+    for s in task.governance["signoffs"]:
+        assert s.get("actor_id"), f"signoff 缺 actor_id: {s}"
+    for a in task.governance["approvals"]:
+        assert a.get("actor_id"), f"approval 缺 actor_id: {a}"
+    # 重放后仍可读回（落库而非仅内存）
+    reloaded = engine.get(uid)
+    assert [s["actor_id"] for s in reloaded.governance["signoffs"]] == [
+        "u-pqe", "u-biz", "u-qa"]
+
+
+def test_proposer_may_cosign_once_but_not_twice(engine):
+    """发起人边界：propose 不占会签名额——发起人可以再签一次（只签一次）。"""
+    uid = _make_hitl_task(engine)
+    _select_concession(engine, uid)  # 发起人 u-sqe（SQE）
+    # 发起人（u-sqe）以 PQE 身份会签：合法（一人一签只约束 cosign 之间）
+    engine.cosign(uid, "王倩", user_ctx={"user_id": "u-sqe",
+                                         "dept": "quality", "roles": ["pqe"]})
+    # 同一 user_id 换 QA 身份再签 → 冲突
+    from mfg_agents.v2.services.workflow import SignoffConflict
+    with pytest.raises(SignoffConflict):
+        engine.cosign(uid, "王倩", user_ctx={"user_id": "u-sqe",
+                                             "dept": "quality",
+                                             "roles": ["qa"]})
+    # proposed_by 已记录发起人身份（审计可见"谁发起"）
+    pb = engine.get(uid).governance.get("proposed_by") or {}
+    assert pb.get("actor_id") == "u-sqe"

@@ -162,9 +162,9 @@
     try {
       const task = action === "approve"
         ? await ctx.api.workflowApprove(taskUid, role.user, comment, false, decision,
-          govRoles(ctx), role.dept)
+          govRoles(ctx), role.dept, role.uid)
         : await ctx.api.workflowReject(taskUid, role.user, comment, decision,
-          govRoles(ctx), role.dept);
+          govRoles(ctx), role.dept, role.uid);
       const last = task.history && task.history.length ? task.history[task.history.length - 1] : null;
       map[taskUid] = {
         action, status: task.status,
@@ -1075,12 +1075,17 @@
   const ROLE_GOV = {
     gm: ["gm"],
     mfg: ["manufacturing"],
-    pqe: ["sqe", "pqe", "qa"],          // 质量域：可发起（SQE）、可会签（PQE/QA）
-    mc: ["material_control", "planning"],
+    sqe: ["sqe"],
+    pqe: ["pqe"],
+    qa: ["qa"],
+    mc: ["material_control"],
     biz: ["sales"],
     proc: ["procurement"],
     wh: ["warehouse"],
-    rd: ["rd_engineering", "equipment"],
+    rd: ["rd_engineering"],
+    // G6 会签独立性铁律：一个岗位只允许对应**一个**治理角色。
+    // 同一身份持多个会签角色 = 一个人可签多票 = 会签造假入口。
+    // 演示三方会签的正确方式：换身份登录（sqe/pqe/qa 已拆分为独立岗位）。
   };
 
   // 场景 YAML / 演示数据里的中文写法 → 治理角色 key（与 permissions.yaml aliases 同步）
@@ -1127,10 +1132,10 @@
     return ROLE_GOV[r.id] || [];
   }
 
-  /** 当前身份会传给后端的 user_ctx（roles 为权威来源） */
+  /** 当前身份会传给后端的 user_ctx（roles 为权威来源；uid 是一人一签的判定依据） */
   function govUserCtx(ctx) {
     const r = ctx.currentRole();
-    return { user_id: r.user, dept: r.dept, roles: govRoles(ctx) };
+    return { user_id: r.uid || r.user, dept: r.dept, roles: govRoles(ctx) };
   }
 
   function roleLabel(key) {
@@ -1339,7 +1344,7 @@
     const comment = cmtEl && cmtEl.value ? cmtEl.value.trim() : "";
     try {
       const task = await ctx.api.workflowCosign(taskUid, role.user,
-        govRoles(ctx), role.dept, comment);
+        govRoles(ctx), role.dept, comment, "", role.uid);
       _hitlGov[taskUid] = task;
       UI.toast(`已会签（${(task.signoff_status || {}).progress || ""}）`
         + `${task.signoff_status && task.signoff_status.satisfied ? "，会签已齐可终批" : ""}`,
@@ -1402,7 +1407,7 @@
     }
     try {
       const task = await ctx.api.workflowSelectAction(taskUid, action.key,
-        role.user, govRoles(ctx), role.dept, comment);
+        role.user, govRoles(ctx), role.dept, comment, role.uid);
       _hitlGov[taskUid] = task;
       const st = task.signoff_status || {};
       UI.toast(st.total

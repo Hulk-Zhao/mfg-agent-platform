@@ -403,34 +403,36 @@
     /** 治理权限目录（角色×权限矩阵 + 7 个 HITL 槽位；前端门控提示用） */
     governancePermissions() { return this._get("/api/v2/governance/permissions"); },
 
-    /** 选定处置动作（按该动作 propose/cosign 生成会签要求） */
-    workflowSelectAction(taskId, actionKey, approver, roles, dept, comment) {
+    /** 选定处置动作（按该动作 propose/cosign 生成会签要求）。uid：一人一签判定依据 */
+    workflowSelectAction(taskId, actionKey, approver, roles, dept, comment, uid) {
       return this._post(`/api/v2/workflow/${encodeURIComponent(taskId)}/select-action`,
         { approver, comment: comment || "", action_key: actionKey,
-          role: (roles || []).join(","), user_ctx: { dept, roles: roles || [] } });
+          role: (roles || []).join(","),
+          user_ctx: { user_id: uid || approver, dept, roles: roles || [] } });
     },
 
-    /** 会签（多角色背书，缺一不可） */
-    workflowCosign(taskId, approver, roles, dept, comment, decision) {
+    /** 会签（多角色背书，缺一不可）。uid：一人一签判定依据 */
+    workflowCosign(taskId, approver, roles, dept, comment, decision, uid) {
       return this._post(`/api/v2/workflow/${encodeURIComponent(taskId)}/cosign`,
         { approver, comment: comment || "", decision: decision || "",
-          role: (roles || []).join(","), user_ctx: { dept, roles: roles || [] } });
+          role: (roles || []).join(","),
+          user_ctx: { user_id: uid || approver, dept, roles: roles || [] } });
     },
 
-    /** 人工确认 审批通过（waiting_hitl → running / done） */
-    workflowApprove(taskId, approver, comment, final, decision, roles, dept) {
+    /** 人工确认 审批通过（waiting_hitl → running / done）。uid：一人一签判定依据 */
+    workflowApprove(taskId, approver, comment, final, decision, roles, dept, uid) {
       return this._post(`/api/v2/workflow/${encodeURIComponent(taskId)}/approve`,
         { approver, comment, final: !!final, decision: decision || "",
           role: (roles || []).join(","),
-          user_ctx: roles ? { dept, roles } : undefined });
+          user_ctx: roles ? { user_id: uid || approver, dept, roles } : undefined });
     },
 
-    /** 人工确认 审批驳回（→ closed） */
-    workflowReject(taskId, approver, comment, decision, roles, dept) {
+    /** 人工确认 审批驳回（→ closed）。uid：一人一签判定依据 */
+    workflowReject(taskId, approver, comment, decision, roles, dept, uid) {
       return this._post(`/api/v2/workflow/${encodeURIComponent(taskId)}/reject`,
         { approver, comment, decision: decision || "",
           role: (roles || []).join(","),
-          user_ctx: roles ? { dept, roles } : undefined });
+          user_ctx: roles ? { user_id: uid || approver, dept, roles } : undefined });
     },
   };
 

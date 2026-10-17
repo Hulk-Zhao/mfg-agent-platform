@@ -10,30 +10,39 @@
 (function () {
   "use strict";
 
-  /** 角色（演示：切换只影响看板数据范围与待办列表） */
+  /** 角色（演示：切换只影响看板数据范围与待办列表）。
+   *  uid：稳定用户标识——一人一签（G6）按 uid 判定，不按姓名。
+   *  每个岗位对应**一个**治理角色：同一身份持多个会签角色 = 会签造假入口。
+   *  演示三方会签的正确方式是换身份登录。 */
   const ROLES = [
-    { id: "gm",  name: "总经理",   user: "张启明", dept: "management",    roles: ["coordinator"],
+    { id: "gm",  name: "总经理",   uid: "u-gm",  user: "张启明", dept: "management",    roles: ["gm"],
       greeting: "全局运营视图", desc: "汇总五大域组运行态势，聚焦订单履约风险与升级事项",
       scope: "五域全局 · 只读汇总", scenarios: ["经营异常摘要", "跨部门升级", "订单履约风险"], tone: "blue" },
-    { id: "mfg", name: "制造经理", user: "李卫东", dept: "manufacturing", roles: ["manufacturing", "coordinator"],
+    { id: "mfg", name: "制造经理", uid: "u-mfg", user: "李卫东", dept: "manufacturing", roles: ["manufacturing"],
       greeting: "制造运营视图", desc: "聚焦停线 / OEE / 设备告警 / 复线进度，制造域工单优先",
       scope: "制造 · 设备 · 停线", scenarios: ["停线应急", "设备预警", "OEE 达成"], tone: "green" },
-    { id: "pqe", name: "PQE 质量工程", user: "王倩",   dept: "quality",       roles: ["quality"],
-      greeting: "品质工程视图", desc: "聚焦 SPC / 不良分布 / 客诉 8D，品质域待办优先（敏感字段按角色脱敏）",
+    { id: "sqe", name: "SQE 供应商质量", uid: "u-sqe", user: "刘强", dept: "quality", roles: ["sqe"],
+      greeting: "供应商质量视图", desc: "聚焦来料异常 / SCAR / 供应商处置发起（退货、换货、特采）",
+      scope: "来料 · 供应商 · SCAR", scenarios: ["来料异常处置", "SCAR 跟催", "特采发起"], tone: "amber" },
+    { id: "pqe", name: "PQE 制程质量", uid: "u-pqe", user: "王倩", dept: "quality", roles: ["pqe"],
+      greeting: "品质工程视图", desc: "聚焦 SPC / 不良分布 / 客诉 8D 会签，敏感字段按角色脱敏",
       scope: "质量域 · 供应商字段脱敏", scenarios: ["SPC / CPK", "客诉 8D", "不良分析"], tone: "amber" },
-    { id: "mc",  name: "物控专员", user: "赵敏",   dept: "supply_chain",  roles: ["supply_chain"],
+    { id: "qa",  name: "QA 质量保证", uid: "u-qa",  user: "李静", dept: "quality", roles: ["qa"],
+      greeting: "质量保证视图", desc: "聚焦合规把关 / 放行审核 / 8D 关闭会签",
+      scope: "合规 · 放行 · 审计", scenarios: ["放行审核", "8D 关闭", "质量体系"], tone: "olive" },
+    { id: "mc",  name: "物控专员", uid: "u-mc",  user: "赵敏", dept: "supply_chain",  roles: ["material_control"],
       greeting: "供应链视图", desc: "聚焦缺料 / 齐套率 / 到货批次，供应链域待办优先",
       scope: "物料 · 库存 · 齐套", scenarios: ["缺料预警", "齐套检查", "到货批次"], tone: "teal" },
-    { id: "biz", name: "业务经理", user: "陈昊",   dept: "sales",         roles: ["business"],
+    { id: "biz", name: "业务经理", uid: "u-biz", user: "陈昊", dept: "sales",         roles: ["sales"],
       greeting: "业务交付视图", desc: "聚焦对客 ETA / 订单临期 / 客诉响应，业务域待办优先",
       scope: "订单 · 对客 ETA · 出货", scenarios: ["交期承诺", "客诉响应", "出货风险"], tone: "purple" },
-    { id: "proc", name: "采购专员", user: "孙立",   dept: "procurement",   roles: ["procurement", "sqe"],
-      greeting: "采购与供应商视图", desc: "聚焦来料异常 / SCAR 跟催 / 供应商评级，价格字段可见",
-      scope: "供应商 · 价格（可见）", scenarios: ["来料异常", "SCAR 跟催", "供应商评级"], tone: "coral" },
-    { id: "wh",  name: "仓库主管", user: "周凯",   dept: "warehouse",     roles: ["warehouse"],
+    { id: "proc", name: "采购专员", uid: "u-proc", user: "孙立", dept: "procurement",   roles: ["procurement"],
+      greeting: "采购与供应商视图", desc: "聚焦来料异常会签 / SCAR 跟催 / 供应商索赔，价格字段可见",
+      scope: "供应商 · 价格（可见）", scenarios: ["来料会签", "SCAR 跟催", "供应商索赔"], tone: "coral" },
+    { id: "wh",  name: "仓库主管", uid: "u-wh", user: "周凯", dept: "warehouse",     roles: ["warehouse"],
       greeting: "仓储与发货视图", desc: "聚焦库存准确 / ATP 可承诺量 / 发货协同",
       scope: "库存 · 出入库 · 发货", scenarios: ["ATP 可承诺量", "发货协同", "库存准确"], tone: "gray" },
-    { id: "rd",  name: "研发工程师", user: "林哲",   dept: "rd_engineering", roles: ["rd_engineering"],
+    { id: "rd",  name: "研发工程师", uid: "u-rd", user: "林哲", dept: "rd_engineering", roles: ["rd_engineering"],
       greeting: "研发工程视图", desc: "聚焦 ECN / NPI / 根因分析（BOM 等数据源未接入时诚实标注缺口）",
       scope: "BOM · ECN · 工艺（部分无数据源）", scenarios: ["ECN 变更", "NPI 导入", "根因分析"], tone: "indigo" },
   ];
