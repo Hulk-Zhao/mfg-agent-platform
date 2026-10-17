@@ -309,6 +309,18 @@ def api_workflow_reject(task_id: str,
     return {"code": 0, "data": task.to_dict(), "message": "ok"}
 
 
+@app.get("/api/v2/agents/configs")
+def api_agents_configs() -> dict[str, Any]:
+    """域组智能体配置总览（帮助界面的数据来源：意图/边界/工具/HITL 准则）。"""
+    from ..agents.agentic import DOMAIN_AGENT_CONFIGS, AGENT_TOOLS_META
+
+    return {"code": 0,
+            "data": {"agents": [
+                {"key": k, **cfg} for k, cfg in DOMAIN_AGENT_CONFIGS.items()
+            ], "tools": AGENT_TOOLS_META},
+            "message": "ok"}
+
+
 @app.get("/api/v2/governance/permissions")
 def api_governance_permissions() -> dict[str, Any]:
     """治理权限目录快照（权限实体 / 角色×权限矩阵 / 7 个 HITL 槽位）。"""

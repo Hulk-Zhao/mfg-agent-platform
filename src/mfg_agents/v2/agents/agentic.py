@@ -25,6 +25,16 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["DOMAIN_AGENT_CONFIGS", "AgenticDomainAgent", "AgenticStep"]
 
+# Agent 可用工具元数据（帮助界面 / MCP / 前端展示共用；与 _tools() 保持同步）
+AGENT_TOOLS_META: list[dict[str, str]] = [
+    {"name": "query_metric", "desc": "查平台统一口径指标（当前：otd_rate 准交率）", "kind": "只读"},
+    {"name": "list_available_queries", "desc": "列出全部预注册查询（含 keywords 与参数）", "kind": "只读"},
+    {"name": "run_registered_query", "desc": "执行预注册查询（参数化、走表级 ACL 与脱敏）", "kind": "只读"},
+    {"name": "explore_data", "desc": "自然语言明细探查（SQL 生成 → 八道防线审核 → 只读执行）", "kind": "只读"},
+    {"name": "list_scenarios", "desc": "列出平台协同场景（复杂闭环问题的入口指引）", "kind": "只读"},
+    {"name": "create_hitl_task", "desc": "发起人工确认工单（Agent 只发起，永不放行）", "kind": "写/HITL"},
+]
+
 MAX_STEPS = 8          # 防卡死：单次任务最大工具循环步数
 TOOL_TIMEOUT_S = 45    # 单工具执行超时
 
@@ -83,6 +93,27 @@ DOMAIN_AGENT_CONFIGS: dict[str, dict[str, str]] = {
         "role": "你是研发工程域智能体，服务硬件/软件/结构/测试/工程。意图：回答 ECN、NPI、图纸、工艺参数、根因分析类问题。",
         "boundary": "边界：只回答研发工程域问题；当前 BOM/ECN/图纸数据源未接入，遇到时诚实说明数据缺口，不得编造。",
         "hitl_rule": "HITL 准则：涉及「ECN 会签」「图纸发放」时发起 create_hitl_task。",
+    },
+    "finance": {
+        "name": "财务智能体",
+        "role": ("你是财务域智能体，服务财务经理/成本会计/管理层。"
+                 "意图：回答成本构成、费用与报销、开票与应收、工单费用归集类问题。"),
+        "boundary": ("边界：只回答财务域问题；质量判定、生产排程不在职责内。"
+                     "当前财务数据源（ERP 财务模块）尚未接入——遇到成本/开票类"
+                     "数据请求时诚实说明数据缺口与建议接入源，绝不编造数字。"),
+        "hitl_rule": ("HITL 准则：涉及「费用审批」「开票确认」「成本核销」"
+                      "时发起 create_hitl_task；纯查询不需要。"),
+    },
+    "admin": {
+        "name": "行政人事智能体",
+        "role": ("你是职能支撑域智能体，服务行政/HR/各岗位员工。"
+                 "意图：回答行政流程（用章/会议室/访客）、培训与资质、"
+                 "考勤假期类问题，以及平台使用帮助。"),
+        "boundary": ("边界：只回答职能支撑与平台使用问题；生产/质量/供应链业务"
+                     "数据不在职责内（引导用户换对应问题或联系相关岗位）。"
+                     "行政系统数据源未接入时诚实说明。"),
+        "hitl_rule": ("HITL 准则：涉及「用章审批」「培训资质确认」时发起"
+                      " create_hitl_task；一般咨询不需要。"),
     },
     "gm": {
         "name": "经营总览智能体",
