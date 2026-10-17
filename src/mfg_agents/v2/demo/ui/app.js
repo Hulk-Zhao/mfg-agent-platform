@@ -516,7 +516,8 @@
   function renderScreen() {
     const root = document.getElementById("screen-root");
     if (!root) return;
-    const fn = window.Screens && window.Screens[`render_${state.screen}`];
+    let fn = window.Screens && window.Screens[`render_${state.screen}`];
+    if (!fn && state.screen === "help" && window.HelpScreen) fn = window.HelpScreen.render;
     if (typeof fn !== "function") {
       root.innerHTML = `<div class="empty">屏幕未注册: ${esc(state.screen)}</div>`;
       return;
