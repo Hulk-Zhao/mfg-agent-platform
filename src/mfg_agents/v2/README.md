@@ -165,9 +165,18 @@ registry.register(MySQLDataSource("mysql+pymysql://ro@erp/mfg", queries),
 
 ## 接入指南三：新增场景（写 YAML）
 
-新场景 = 新 YAML + 复用现有 Agent 节点，**零代码**。把文件放进
-`src/mfg_agents/v2/scenarios/`，启动时 ScenarioRegistry 自动注册
-（解析失败 fail-fast，不会静默跳过）。
+新场景 = 新 YAML + **复用已注册的 handler key**（agent / workflow / hitl），
+**不改框架代码**。把文件放进 `src/mfg_agents/v2/scenarios/`，启动时
+ScenarioRegistry 自动注册（解析失败 fail-fast，不会静默跳过）。
+
+> **关键前提**：YAML 里的 `agent:` / `workflow:` / `hitl:` 取值必须是**已注册的 key**
+> （见 `core/node_registry.py`）。本示例全部复用已注册 key——`business` /
+> `material_control` / `planning` / `procurement`（agent）、`delivery_risk_flow`
+> （通用 workflow 工厂）、`hitl_delivery_commit`（通用 HITL 工厂，prompt/审批人/按钮
+> 均由 step 参数覆盖）。**可直接拷贝运行**（已在离线环境实测通过）。
+> **若要语义专属的新 workflow id 或新 HITL kind**，需在 `node_registry` 注册一次
+> （+1 行，例如 `handlers["shortage_response_wf"] = make_workflow_handler(engine, notifier)`），
+> 那就不再是"纯零代码"，请如实说明。
 
 ```yaml
 key: material_shortage_v2        # 场景唯一键
@@ -177,24 +186,25 @@ domains: [supply_chain, manufacturing]
 triggers:
   - {type: keyword, words: [缺料, 断料, 齐套]}     # L0 快路径
   - {type: im_message}
-  - {type: event, topic: mfg.material.shortage.predicted}
-entry: scan
+entry: intake
 outputs: [shortage_list, response_tickets]
 steps:
-  - {id: scan, type: agent, agent: material_control, timeout_s: 30, on_error: degrade}
-  - id: evaluate                    # fan_out：四域并行评估
+  - {id: intake, type: agent, agent: business, label: 业务Agent · 意图识别, timeout_s: 10, on_error: degrade}
+  - {id: scan, type: agent, agent: material_control, label: 物控 · 缺料扫描, timeout_s: 30, on_error: degrade}
+  - id: evaluate                    # fan_out：多域并行评估
     type: fan_out
     join: all
     branches:
       - {id: planning, type: agent, agent: planning, timeout_s: 30, on_error: degrade}
       - {id: procurement, type: agent, agent: procurement, timeout_s: 30, on_error: degrade}
   - {id: join, type: fan_in}
-  - {id: dispatch, type: workflow, workflow: shortage_response_wf,
-     title: 缺料处置工单, assignees: [采购, 计划], sla_hours: 4}
-  - {id: urgent_po, type: hitl, agent: hitl_urgent_po,
+  - {id: dispatch, type: workflow, workflow: delivery_risk_flow,   # 已注册的通用 workflow 工厂
+     title: 缺料处置工单, assignees: [采购, 计划], notify_level: P1, sla_hours: 4, timeout_s: 15, on_error: degrade}
+  - {id: urgent_po, type: hitl, agent: hitl_delivery_commit,        # 已注册的通用 HITL 工厂
      prompt: 加急采购决策（金额>5万需采购总监确认）,
      approver_roles: [采购总监],
-     actions: [{key: approve, label: 同意加急}, {key: reject, label: 驳回}]}
+     actions: [{key: approve, label: 同意加急}, {key: reject, label: 驳回}],
+     timeout_s: 10, on_error: degrade}
 ```
 
 五步节点类型：`agent`（调域 Agent）/ `fan_out`（并行多分支，支持 `condition`+`else`
@@ -280,3 +290,7 @@ def material_control(task, ctx, sink) -> dict:
    降级为模板 + `data_gap`；生产接入 PLM/EAM/ERP 后替换（U2）。
 6. **意图/向量库未接线**：`intent/` 与 `VectorStore` 本次仅骨架，
    Router 与 `fa` 仍走原路径；切换列为后续独立需求（U3/U4）。
+7. **`VectorStore` 签名与 Chroma 适配器不完全一致（H-4）**：`VectorStore` 各方法
+   带 `collection` 参数，但 `ChromaVectorStore` 目前**恒用单 collection**
+   （`failure_cases`，行为与 `rag_tools` 一致）而忽略该参数。接入 Milvus 适配器
+   之前需**先收敛签名**（多集合语义落地），本轮不改实现。

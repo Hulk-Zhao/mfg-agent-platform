@@ -96,9 +96,12 @@ def test_s3_customer_complaint_8d_end_to_end(orchestrator):
     assert result.workflow_tasks[0]["ticket"]["wf_id"] == "complaint_8d_flow"
     # 过程分析来自真实 SQL（BATCH-A-1008 → 贴片偏移）
     assert "贴片偏移" in brief["过程分析"]
-    # data_gap 可见（工程根因无 BOM 数据源）
+    # data_gap 可见（工程根因无 BOM 数据源）；H-1：去重且保留来源域、无 report 域冗余
     gaps = [p for p in result.provenance if p.get("channel") == "data_gap"]
-    assert any("设计根因" in (g.get("note") or "") for g in gaps)
+    assert len(gaps) == 1                       # 唯一真实缺口=工程根因
+    assert gaps[0]["domain"] == "rd_engineering"
+    assert all(g.get("domain") != "report" for g in gaps)
+    assert "设计根因" in (gaps[0].get("note") or "")
     assert result.degraded is True
 
 
@@ -138,10 +141,14 @@ def test_s8_equipment_warning_end_to_end(orchestrator):
     assert result.hitl[0]["kind"] == "maintenance_window"
     assert result.hitl[0]["status"] == "waiting_hitl"
     assert result.workflow_tasks[0]["ticket"]["wf_id"] == "maintenance_flow"
-    # 工程参数/备件 → data_gap 可见（不编造）
+    # 工程参数/备件 → data_gap 可见（不编造）；H-1：去重 + 保留来源域（无 report 域）
     gaps = [p for p in result.provenance if p.get("channel") == "data_gap"]
     notes = " ".join((g.get("note") or "") for g in gaps)
     assert "参数基线" in notes and "备件" in notes
+    assert len(gaps) == 2                       # 参数基线 + 备件，各 1 条
+    assert {g["domain"] for g in gaps} == {"rd_engineering", "supply_chain"}
+    assert all(g.get("domain") != "report" for g in gaps)
+    assert len({g["note"] for g in gaps}) == 2  # 无重复 note
     assert brief.get("数据缺口")
     assert result.degraded is True
 

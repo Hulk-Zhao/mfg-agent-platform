@@ -75,14 +75,22 @@ def _fmt(value: Any) -> str:
 
 
 def _collect_gaps(ctx: Any) -> list[str]:
-    """汇总所有域写入的 ``data_gap``（只增历史，避免多域互相覆盖）。"""
+    """汇总所有域写入的 ``data_gap``（只增历史；**按 note 去重保序**）。
+
+    注意（H-1）：来源域归因由**各域 handler 自身**写入其 payload provenance
+    （domain=真实来源域）；报告节点只做聚合展示，**不再二次写入 provenance**，
+    避免同一条缺口被重复计入且 domain 被覆盖成 ``report``。
+    """
+    seen: set[str] = set()
     gaps: list[str] = []
     for record in ctx.history("data_gap"):
         value = record.value
-        if isinstance(value, (list, tuple)):
-            gaps.extend(str(x) for x in value)
-        elif value:
-            gaps.append(str(value))
+        items = value if isinstance(value, (list, tuple)) else ([value] if value else [])
+        for item in items:
+            note = str(item)
+            if note and note not in seen:
+                seen.add(note)
+                gaps.append(note)
     return gaps
 
 
@@ -141,9 +149,8 @@ def make_report_handler(scenario_key: str,
         provenance: list[dict] = [{
             "channel": "report", "scenario": scenario_key, "degraded": degraded,
             "masked_words": list(FORBIDDEN_WORDS)}]
-        for gap in gaps:
-            provenance.append({"channel": "data_gap", "domain": scenario_key,
-                               "note": gap})
+        # H-1：data_gap 的 provenance 归因由各域 handler 自带（domain=来源域），
+        # 报告节点不再重复写入，避免"同 note 重复 + domain 被覆盖为 report"。
         payload["provenance"] = provenance
         return {"domain": "report", "status": "ok",
                 "payload": payload, "summary": summary}

@@ -726,7 +726,10 @@
     if (input) input.disabled = true;
 
     const demos = window.DEMO.CHAT_DEMOS || {};
-    const demo = demos[text] || window.DEMO.CHAT_DEMO;
+    // H-2：仅按问题**精确匹配**已收录回放；未收录必须走"需在线模式"明确提示分支，
+    // 绝不静默回退到 line_stop（否则问题与结论不匹配 = 演示在说谎）。
+    const key = String(text == null ? "" : text).trim();
+    const demo = demos[text] || demos[key];
     if (!demo) {
       chat.messages.push({
         kind: "error", id: "m" + ++chat.seq,

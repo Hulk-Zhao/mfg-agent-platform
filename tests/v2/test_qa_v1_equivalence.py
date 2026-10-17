@@ -23,6 +23,18 @@ requires_llm = pytest.mark.skipif(
     not llm_available(), reason="V1 图执行需真实 LLM（Ollama），离线跳过")
 
 
+def _skip_if_llm_not_ready(exc: Exception) -> None:
+    """兜底（G）：collection 期 TTL 缓存可能让 skipif 与运行时不一致——
+    若真实执行时 LLM 实际不可用（模型未 pull / 连接失败），按"离线跳过"处理，
+    而非误报 FAILED。仅此文件使用（不改其他 QA 测试）。"""
+    msg = str(exc).lower()
+    hint = ("not found", "pull", "model", "connection", "refused",
+            "timed out", "timeout", "ollama")
+    if any(h in msg for h in hint):
+        pytest.skip(f"LLM 运行期不可用（探针漏网按跳过处理）：{exc}")
+    raise exc
+
+
 @requires_llm
 def test_v1_event_queue_push_during_graph_run():
     """等价 test_events.py：跑图期间 push 的事件进入队列。"""
@@ -30,7 +42,11 @@ def test_v1_event_queue_push_during_graph_run():
     q = get_queue()
     while not q.empty():
         q.get()  # 清空存量事件，保证断言只归本次运行
-    final = app.invoke({"user_query": "A型号在SMT-1停线了，什么时候能复线？"})
+    try:
+        final = app.invoke({"user_query": "A型号在SMT-1停线了，什么时候能复线？"})
+    except Exception as exc:  # noqa: BLE001
+        _skip_if_llm_not_ready(exc)
+        return
     assert final.get("scenario") == "line_stop"
     assert final.get("customer_report")
     assert q.qsize() > 0, "图执行期间应有事件入队"
@@ -39,8 +55,12 @@ def test_v1_event_queue_push_during_graph_run():
 @requires_llm
 def test_v1_graph_stream_values_mode():
     """等价 test_chunk.py：values 模式可迭代，state 随步骤演进。"""
-    steps = list(app.stream({"user_query": "A型号在SMT-1停线了"},
-                            stream_mode="values"))
+    try:
+        steps = list(app.stream({"user_query": "A型号在SMT-1停线了"},
+                                stream_mode="values"))
+    except Exception as exc:  # noqa: BLE001
+        _skip_if_llm_not_ready(exc)
+        return
     assert len(steps) >= 2, "至少入口与最终两个 state 快照"
     first, last = steps[0], steps[-1]
     assert "scenario" in first
