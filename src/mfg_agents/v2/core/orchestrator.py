@@ -36,6 +36,29 @@ logger = logging.getLogger(__name__)
 # V2 资源默认路径（相对本文件：src/mfg_agents/v2/...）
 _V2_DIR = Path(__file__).resolve().parent.parent
 
+# 项目根（data/seed_v3.sql 所在；布局：src/mfg_agents/v2 → 根需上溯 3 级）
+_SEED_SQL = _V2_DIR.parents[2] / "data" / "seed_v3.sql"
+
+
+def _apply_seed(db_path: str) -> None:
+    """执行演示数据扩充（幂等 INSERT OR IGNORE；只补历史数据不碰红线行）。
+
+    V3.1：员工自由提问需要"有东西可查"——扩充历史批次/客诉/产出/设备/
+    停线数据（2026-10-08 ~ 10-14），"今天"（10-15）的行与场景锚点一律不动，
+    由 tests/v2/test_scenarios_v2.py 的数据红线测试守护。
+    """
+    if not _SEED_SQL.exists():
+        return
+    import sqlite3
+
+    try:
+        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+        with sqlite3.connect(db_path, timeout=10.0) as conn:
+            conn.executescript(_SEED_SQL.read_text(encoding="utf-8"))
+        logger.info("[seed] 演示数据扩充完成: %s", _SEED_SQL.name)
+    except Exception as exc:  # noqa: BLE001 —— 种子失败不阻断启动（演示库可能只读）
+        logger.warning("[seed] 执行失败（不阻断）: %s", exc)
+
 
 @dataclass
 class V2Runtime:
@@ -53,6 +76,7 @@ class V2Runtime:
     def create_default(cls) -> "V2Runtime":
         """装配默认依赖（本地 SQLite 数据源 + YAML 场景/指标/查询库）。"""
         db_path = settings.DB_URL.replace("sqlite:///", "")
+        _apply_seed(db_path)
         queries = QueryLibrary.load(_V2_DIR / "data" / "queries.yaml")
         metrics = MetricLibrary.load(_V2_DIR / "data" / "metrics")
         data_registry = DataSourceRegistry()
@@ -100,6 +124,7 @@ class OrchestratorResult:
     degraded: bool = False
     degraded_reasons: list[str] = field(default_factory=list)
     fallback: Optional[str] = None
+    suggestions: list[dict[str, Any]] = field(default_factory=list)
     elapsed_ms: float = 0.0
     error: Optional[str] = None
 
@@ -113,6 +138,7 @@ class OrchestratorResult:
             "degraded": self.degraded,
             "degraded_reasons": self.degraded_reasons,
             "fallback": self.fallback,
+            "suggestions": self.suggestions,
             "elapsed_ms": round(self.elapsed_ms, 1), "error": self.error,
         }
 
@@ -152,6 +178,10 @@ class V2Orchestrator:
             result.report = (
                 "当前问题超出平台已覆盖范围（或路由置信度低），"
                 "已转人工兜底工单处理。")
+            result.suggestions = self._route_suggestions(query)
+            if result.suggestions:
+                result.report += (
+                    "你可以先试试下面的相近问题，或等待人工跟进。")
             result.degraded = True
             result.elapsed_ms = (time.perf_counter() - t0) * 1000
             logger.info("[orchestrator] %s 无匹配场景，转人工兜底: %s",
@@ -198,6 +228,55 @@ class V2Orchestrator:
         if route.low_confidence:
             reasons.append(f"路由低置信度（{route.confidence:.2f}）：建议人工复核")
         return reasons
+
+    # 兜底引导用的示例问法（场景 key → 员工视角的自然问法；与新员工能直接照抄提问）
+    _SCENARIO_EXAMPLES: dict[str, str] = {
+        "line_stop_v2": "A型号在SMT-1停线，何时复线？",
+        "incoming_quality_v2": "今天锡膏批次有问题",
+        "customer_complaint_v2": "华为投诉BATCH-A-1008",
+        "delivery_status_v2": "A型号能发多少货",
+        "equipment_warning_v2": "SMT-1设备参数异常吗",
+    }
+
+    def _route_suggestions(self, query: str) -> list[dict[str, Any]]:
+        """兜底引导：按场景触发词与问题的重叠度推荐相近问题（不是编造答案）。
+
+        员工自由提问未命中场景时，与其只给一句"转人工"，不如给 2-3 个
+        "你可能想问"——把兜底从死胡同变成入口。
+        """
+        scored: list[tuple[int, str]] = []
+        q = query.strip()
+        for meta in self.runtime.scenario_registry.list():
+            score = 0
+            for trig in meta.triggers:
+                for word in (trig.get("words") or []):
+                    w = str(word).strip()
+                    if w and w in q:
+                        score += len(w)  # 长词命中权重更高（信息量更大）
+            if score:
+                scored.append((score, meta.key))
+        scored.sort(reverse=True)
+        out: list[dict[str, Any]] = []
+        if scored:
+            for _, key in scored[:3]:
+                meta = self.runtime.scenario_registry.get(key)
+                out.append({
+                    "scenario_key": key,
+                    "name": meta.name,
+                    "example": self._SCENARIO_EXAMPLES.get(key, meta.name),
+                })
+            return out
+        # 无触发词命中：给平台能力示例（"不知道你想问什么，这些是能答的"）——
+        # 兜底永远给入口，不返回空建议
+        for key in list(self._SCENARIO_EXAMPLES)[:3]:
+            meta = self.runtime.scenario_registry.get(key)
+            out.append({
+                "scenario_key": key,
+                "name": meta.name,
+                "example": self._SCENARIO_EXAMPLES[key],
+            })
+        return out
+
 
     @staticmethod
     def _collect_provenance(ctx: SharedContext,

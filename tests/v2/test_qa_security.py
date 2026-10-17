@@ -364,8 +364,10 @@ class TestSensitiveFieldMasking:
         r2 = service.query_detail("各批次供应商是谁", PROCUREMENT_CTX)
         assert r2.masked is False
         assert all(row["s"] != "供应商***" for row in r2.rows)
+        # V3.1 数据扩充后全集（seed_v3.sql 新增 4 供应商；断言性质不变——全集匹配）
         assert {row["s"] for row in r2.rows} == {
-            "千住金属", "深南电路", "STMicroelectronics"}
+            "千住金属", "深南电路", "STMicroelectronics",
+            "三星电机", "风华高科", "兆易创新", "立讯精密"}
 
 
 # ---------- J. 已知限制锚定（Round 2.5 sqlglot 升级复核发现） ----------

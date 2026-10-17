@@ -6,7 +6,7 @@ name: 出货风险协同
 version: 1
 domains: [supply_chain, manufacturing]
 triggers:
-  - {type: keyword, words: [能发, 发货, 交期, 库存, 在途, ATP, 出货]}
+  - {type: keyword, words: [能发, 发货, 交期, 库存, 在途, ATP, 出货, 齐套, 缺料, 订单临期, 延期]}
   - {type: im_message}
   - {type: event, topic: mfg.order.delivery.risk}
 entry: intake

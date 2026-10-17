@@ -50,10 +50,10 @@ queries:
 
   # ---- S2 来料异常 ----
   iqc_batches_recent:
-    desc: "QMS：最近不合格来料批次（含 COA，供 SQE 判定）"
+    desc: "QMS：本周期不合格来料批次（含 COA，供 SQE 判定）。演示口径：窗口>=2026-10-11（演示今天为 10-15；历史更早的 fail 批次走明细探查可查，不进今日判定）"
     tables: [material_batch]
     keywords: [来料, IQC, 不合格, 批次, COA]
-    sql: "SELECT batch_no, part_no, part_name, supplier, incoming_result, coa_url, arrival_time FROM material_batch WHERE incoming_result = 'fail' ORDER BY arrival_time DESC LIMIT 5"
+    sql: "SELECT batch_no, part_no, part_name, supplier, incoming_result, coa_url, arrival_time FROM material_batch WHERE incoming_result = 'fail' AND date(arrival_time) >= '2026-10-11' ORDER BY arrival_time DESC LIMIT 5"
 
   batch_supplier_by_no:
     desc: "QMS：按批号查供应商与检验结论"

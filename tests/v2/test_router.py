@@ -47,8 +47,13 @@ def test_l0_hit_by_v1_scene_rules(router):
 
 
 def test_degraded_fuzzy_match_when_llm_unavailable(router):
-    """降级：LLM 不可用 + L0 未命中时，域组关键词模糊匹配并标记低置信。"""
-    result = router.route("请帮我查一下排产计划和物料齐套情况")
+    """降级：LLM 不可用 + L0 未命中时，域组关键词模糊匹配并标记低置信。
+
+    V3.1 注：原用例"排产计划和物料齐套情况"在触发词扩充（齐套/缺料加入
+    delivery_status_v2）后已被 L0 快路径直达——那是行为改善而非回归。
+    本用例改用不含任何场景触发词的供应链问法，继续锁定降级机制本身。
+    """
+    result = router.route("帮我看看物料准备方面还有什么安排")
     assert result.level == "degrade"
     assert result.low_confidence is True
     assert result.domain == "supply_chain"

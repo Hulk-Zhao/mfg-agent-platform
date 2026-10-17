@@ -23,12 +23,35 @@ def format_groups() -> str:
     return "\n".join(f"- {k}: {v}" for k, v in DOMAIN_GROUPS.items())
 
 
+# Few-shot 例句（V3.1 提示词优化：覆盖员工口语化问法，提升 L1 分类命中率）。
+# 选取原则：真实车间口语（非书面语）、每域 2 例、含代词省略与俗语。
+L1_FEWSHOT: str = """示例（员工口语 → 类别）：
+- "上周为什么停了那么多次线" → manufacturing
+- "贴片机又报警了，啥情况" → manufacturing
+- "齐套了没，还缺什么料" → supply_chain
+- "A型号这周能交多少货" → supply_chain
+- "客户退货那批处理得怎么样了" → quality
+- "最近良率是不是不太行" → quality
+- "新版图纸什么时候发下来" → rd_engineering
+- "ECN变更谁在跟" → rd_engineering
+- "报销单找谁批" → function
+- "今天中午吃什么" → out_of_scope
+
+"""
+
+
 def build_l1_prompt(query: str) -> str:
-    """构造 L1 闭集分类 prompt（与迁移前 f-string 逐字节一致）。"""
+    """构造 L1 闭集分类 prompt（V3.1：加入 few-shot 例句提升口语问法命中率）。
+
+    变更说明：V3.1 前无 few-shot（见 test_prompts_golden 的版本注记），
+    员工口语化提问分类不稳定——"齐套了没"这类省略主语的问法常被误判
+    out_of_scope。few-shot 是对分类准确率影响最大、成本最低的优化。
+    """
     return (
-        "你是制造业多智能体平台的意图分类器。将用户问题分类到以下六个类别之一"
+        "你是制造业协同平台的意图分类器。将用户问题分类到以下六个类别之一"
         "（闭集，禁止输出其他值）：\n"
         f"{format_groups()}\n\n"
+        f"{L1_FEWSHOT}"
         f"用户问题：{query}\n"
         '只输出 JSON：{"domain":"<类别>","confidence":<0~1>}'
     )

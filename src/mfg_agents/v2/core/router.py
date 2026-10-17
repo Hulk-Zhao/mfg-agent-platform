@@ -139,7 +139,7 @@ class TwoLevelRouter:
                                reason=intent.reason)
         return RouteResult(
             domain=intent.domain,
-            scenario_key=self._scenario_for_domain(intent.domain),
+            scenario_key=self._scenario_for_domain(intent.domain, query),
             confidence=intent.confidence,
             level="L1",
             low_confidence=intent.low_confidence,
@@ -174,7 +174,7 @@ class TwoLevelRouter:
         if best_domain is not None:
             return RouteResult(
                 domain=best_domain,
-                scenario_key=self._scenario_for_domain(best_domain),
+                scenario_key=self._scenario_for_domain(best_domain, query),
                 confidence=min(0.4 + 0.1 * best_score, 0.7),
                 level="degrade",
                 low_confidence=True,
@@ -187,14 +187,34 @@ class TwoLevelRouter:
 
     # ---------- 工具 ----------
 
-    def _scenario_for_domain(self, domain: str) -> Optional[str]:
-        """按域组找已注册场景（当前骨架仅 line_stop_v2，其余域返回 None）。"""
+    def _scenario_for_domain(self, domain: str, query: str = "") -> Optional[str]:
+        """按域组找已注册场景；同域多场景时按**触发词命中**消歧。
+
+        V3.1 修复：此前按注册字典序取第一个（customer < delivery），
+        导致 supply_chain 域的"齐套了没"被错误路由到客诉场景——
+        客诉场景的参与域含 supply_chain，字典序又恰好靠前。
+        现在同域多候选时，用场景触发词与问题的重叠数消歧（无信号回退首序）。
+        """
         if self.scenario_registry is None:
             return None
-        for meta in self.scenario_registry.list():
-            if domain in meta.domains:
-                return meta.key
-        return None
+        candidates = [m for m in self.scenario_registry.list()
+                      if domain in m.domains]
+        if not candidates:
+            return None
+        if len(candidates) == 1:
+            return candidates[0].key
+        q = (query or "").strip()
+
+        def trigger_score(meta: Any) -> int:
+            return sum(1 for trig in meta.triggers
+                       for w in (trig.get("words") or [])
+                       if str(w) and str(w) in q)
+
+        scored = sorted(((trigger_score(m), m.key) for m in candidates),
+                        reverse=True)
+        if scored[0][0] > 0:
+            return scored[0][1]
+        return candidates[0].key
 
     @staticmethod
     def _extract_entities(query: str) -> dict[str, Any]:

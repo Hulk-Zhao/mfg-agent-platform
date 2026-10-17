@@ -28,8 +28,14 @@ def test_domain_groups_bytes():
 
 
 def test_build_l1_prompt_bytes():
+    """V3.1 有意升级：L1 prompt 加入 few-shot 例句（口语问法命中率优化）。
+
+    golden 的职责是防"意外"改动；本次为有意的提示词升级，expected 同步
+    更新为新契约（FEWSHOT 段插入域组与用户问题之间）。断言同时锁定：
+    few-shot 必须覆盖全部五个业务域 + out_of_scope，防止例句被顺手删空。
+    """
     expected = (
-        "你是制造业多智能体平台的意图分类器。将用户问题分类到以下六个类别之一"
+        "你是制造业协同平台的意图分类器。将用户问题分类到以下六个类别之一"
         "（闭集，禁止输出其他值）：\n"
         "- supply_chain: 供应链域：订单/计划/物控/采购/库存/发货/交期/ATP\n"
         "- rd_engineering: 研发工程域：BOM/ECN/NPI/图纸/工艺/测试\n"
@@ -38,10 +44,27 @@ def test_build_l1_prompt_bytes():
         "- function: 职能支撑域：行政/财务/审批/开票/费用\n"
         "- out_of_scope: 闲聊或超出平台范围\n"
         "\n"
+        "示例（员工口语 → 类别）：\n"
+        '- "上周为什么停了那么多次线" → manufacturing\n'
+        '- "贴片机又报警了，啥情况" → manufacturing\n'
+        '- "齐套了没，还缺什么料" → supply_chain\n'
+        '- "A型号这周能交多少货" → supply_chain\n'
+        '- "客户退货那批处理得怎么样了" → quality\n'
+        '- "最近良率是不是不太行" → quality\n'
+        '- "新版图纸什么时候发下来" → rd_engineering\n'
+        '- "ECN变更谁在跟" → rd_engineering\n'
+        '- "报销单找谁批" → function\n'
+        '- "今天中午吃什么" → out_of_scope\n'
+        "\n"
         "用户问题：测试问题\n"
         '只输出 JSON：{"domain":"<类别>","confidence":<0~1>}'
     )
-    assert build_l1_prompt("测试问题") == expected
+    prompt = build_l1_prompt("测试问题")
+    assert prompt == expected
+    # few-shot 覆盖完整性：五个业务域 + out_of_scope 各至少 1 例
+    for domain in ("supply_chain", "rd_engineering", "quality",
+                   "manufacturing", "function", "out_of_scope"):
+        assert f"→ {domain}" in prompt, f"few-shot 缺少 {domain} 例句"
     assert prompts_routing.format_groups() == expected.split("\n\n")[0].split("：\n", 1)[1]
 
 
