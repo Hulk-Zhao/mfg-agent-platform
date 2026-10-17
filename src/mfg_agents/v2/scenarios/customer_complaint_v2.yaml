@@ -1,0 +1,121 @@
+# S3 客户投诉闭环 8D（QA 牵头 → PQE/供应商/工程/业务并行 → 8D 整改工单 → 双 HITL → 8D/对客报告）
+#
+# 说明（§8.4 U1）：MVP **不建 8D 表**，D1-D8 由 qa_lead 规则模板确定性合成，
+# 由 capa_flow 工单 context 承载；生产需持久化 D1-D8 步骤（见验证报告）。
+key: customer_complaint_v2
+name: 客户投诉闭环 8D
+version: 1
+domains: [quality, rd_engineering, supply_chain]
+triggers:
+  - {type: keyword, words: [投诉, 客诉, 8D, 客户, 不良率, 华为, 围堵]}
+  - {type: im_message}
+  - {type: event, topic: mfg.customer.complaint.created}
+entry: intake
+outputs: [d8_report, capa_ticket, customer_reply, complaint_summary]
+
+hitl:
+  - {step: hitl_d8_close, approver_roles: [质量总监, QA经理], condition: "complaint_found"}
+  - {step: hitl_complaint_reply, approver_roles: [业务经理], condition: "complaint_found"}
+
+steps:
+  # 1) 业务意图识别
+  - id: intake
+    type: agent
+    agent: business
+    label: 业务Agent · 意图识别
+    icon: "🧠"
+    timeout_s: 10
+    on_error: degrade
+
+  # 2) QA 牵头：客诉明细(D2) + 批次不良(D4) → 合成 8D 骨架(D1-D8)
+  - id: qa_lead
+    type: agent
+    agent: qa_lead
+    label: QA · 8D 牵头
+    icon: "🧭"
+    timeout_s: 30
+    on_error: degrade
+
+  # 3) 客诉成立时多域并行取证（过程/供应商/工程/业务）
+  - id: fanout
+    type: fan_out
+    condition: complaint_found
+    else: report_complaint
+    join: all
+    branches:
+      - id: pqe_process
+        type: agent
+        agent: pqe_process
+        label: PQE · 过程分析
+        icon: "🔬"
+        timeout_s: 30
+        on_error: degrade
+      - id: sqe_supplier
+        type: agent
+        agent: sqe_supplier
+        label: SQE · 供应商侧
+        icon: "📦"
+        timeout_s: 30
+        on_error: degrade
+      - id: engineering
+        type: agent
+        agent: engineering
+        label: 工程 · 设计根因
+        icon: "🛠️"
+        timeout_s: 30
+        on_error: degrade
+      - id: business_sales
+        type: agent
+        agent: business_sales
+        label: 业务 · 对客口径
+        icon: "🤝"
+        timeout_s: 30
+        on_error: degrade
+
+  # 4) 汇聚
+  - id: fanin
+    type: fan_in
+
+  # 5) 8D 整改工单
+  - id: capa_flow
+    type: workflow
+    workflow: complaint_8d_flow
+    title: 客诉 8D 整改工单
+    assignees: [QA, PQE, SQE, 工程, 业务]
+    notify_level: P1
+    sla_hours: 72
+    timeout_s: 15
+    on_error: degrade
+
+  # 6) HITL：8D 报告关闭确认
+  - id: hitl_d8_close
+    type: hitl
+    agent: hitl_d8_close
+    prompt: 8D 报告关闭确认
+    approver_roles: [质量总监, QA经理]
+    actions:
+      - {key: close_8d, label: 确认关闭}
+      - {key: reopen, label: 退回补充}
+    timeout_s: 10
+    on_error: degrade
+
+  # 7) HITL：对客回复确认（脱敏后）
+  - id: hitl_complaint_reply
+    type: hitl
+    agent: hitl_complaint_reply
+    prompt: 对客回复确认（脱敏后）
+    approver_roles: [业务经理]
+    actions:
+      - {key: confirm_reply, label: 确认回复}
+      - {key: revise_reply, label: 修改回复}
+    timeout_s: 10
+    on_error: degrade
+
+  # 8) 8D 报告 + 对客脱敏报告
+  - id: report_complaint
+    type: agent
+    agent: report_complaint
+    label: 报告Agent · 8D/对客报告
+    icon: "📄"
+    timeout_s: 60
+    on_error: degrade

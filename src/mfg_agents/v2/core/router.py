@@ -16,18 +16,11 @@ from typing import Any, Optional
 
 from ...tools.llm_factory import get_llm, llm_available
 from ..contracts.scenario import ScenarioRegistry
+# 域组定义与 L1 prompt 已迁移至 prompts/routing（§6.3，逐字节一致）；
+# 此处再导出 DOMAIN_GROUPS，保持 router 对外符号不变。
+from ..prompts.routing import DOMAIN_GROUPS, build_l1_prompt
 
 logger = logging.getLogger(__name__)
-
-# 五个域组定义（L1 prompt 的闭集；ARCHITECTURE-V2.md §2.1）
-DOMAIN_GROUPS: dict[str, str] = {
-    "supply_chain": "供应链域：订单/计划/物控/采购/库存/发货/交期/ATP",
-    "rd_engineering": "研发工程域：BOM/ECN/NPI/图纸/工艺/测试",
-    "quality": "质量域：来料检验IQC/不良分布/客诉/8D/SPC/CPK",
-    "manufacturing": "制造运营域：停线/OEE/产出/设备告警/工艺参数/复线",
-    "function": "职能支撑域：行政/财务/审批/开票/费用",
-    "out_of_scope": "闲聊或超出平台范围",
-}
 
 # 降级模糊匹配用的域组关键词（L1 不可用时的兜底）
 DOMAIN_KEYWORDS: dict[str, list[str]] = {
@@ -38,13 +31,13 @@ DOMAIN_KEYWORDS: dict[str, list[str]] = {
     "function": ["报销", "请假", "开票", "发票", "资产", "会议"],
 }
 
-# V1 场景 → V2 场景 key（仅迁移完成的场景可编排；其余返回 None 走人工兜底）
+# V1 场景 → V2 场景 key（S1-S5 全部迁移完成；未映射仍返回 None 走人工兜底）
 V1_SCENE_TO_V2: dict[str, Optional[str]] = {
     "line_stop": "line_stop_v2",
-    "incoming_quality": None,
-    "customer_complaint": None,
-    "delivery_risk": None,
-    "equipment_warning": None,
+    "incoming_quality": "incoming_quality_v2",
+    "customer_complaint": "customer_complaint_v2",
+    "delivery_risk": "delivery_status_v2",
+    "equipment_warning": "equipment_warning_v2",
 }
 
 # V1 场景 → 域组（供 L0 命中但场景未迁移时给出域归属）
@@ -135,14 +128,7 @@ class TwoLevelRouter:
     # ---------- L1：LLM 闭集分类 ----------
 
     def _route_l1(self, query: str) -> Optional[RouteResult]:
-        groups = "\n".join(f"- {k}: {v}" for k, v in DOMAIN_GROUPS.items())
-        prompt = (
-            "你是制造业多智能体平台的意图分类器。将用户问题分类到以下六个类别之一"
-            "（闭集，禁止输出其他值）：\n"
-            f"{groups}\n\n"
-            f"用户问题：{query}\n"
-            '只输出 JSON：{"domain":"<类别>","confidence":<0~1>}'
-        )
+        prompt = build_l1_prompt(query)
         try:
             llm = get_llm(temperature=0.0, tier="L1")
             resp = llm.invoke(prompt)

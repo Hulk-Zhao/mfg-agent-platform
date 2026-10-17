@@ -1,0 +1,108 @@
+# S8 设备预警与维护协同（设备取证 → 维保/窗口/参数/备件并行 → 维保工单 → HITL 停机窗口 → 简报）
+#
+# 设备取证复用现有 equipment handler（经 equipment_warn wrapper 补 has_alarm 条件键）；
+# 工程参数/备件当前无数据源 → degrade 模板 + data_gap（不编造）。
+key: equipment_warning_v2
+name: 设备预警与维护协同
+version: 1
+domains: [manufacturing, supply_chain, rd_engineering]
+triggers:
+  - {type: keyword, words: [设备, 参数, 预警, 维护, 告警, 维保]}
+  - {type: im_message}
+  - {type: event, topic: mfg.equipment.alarm.abnormal}
+entry: intake
+outputs: [maintenance_ticket, window_suggestion, equipment_summary, internal_brief]
+
+hitl:
+  - {step: hitl_maintenance_window, approver_roles: [制造现场负责人], condition: "window_required"}
+
+steps:
+  # 1) 业务意图识别
+  - id: intake
+    type: agent
+    agent: business
+    label: 业务Agent · 意图识别
+    icon: "🧠"
+    timeout_s: 10
+    on_error: degrade
+
+  # 2) 设备告警取证（复用现有 equipment handler + wrapper 补 has_alarm）
+  - id: equipment_check
+    type: agent
+    agent: equipment_warn
+    label: 设备Agent · 查EAM
+    icon: "⚙️"
+    timeout_s: 30
+    on_error: degrade
+
+  # 3) 有告警时四域并行（维保/窗口/参数/备件）
+  - id: fanout
+    type: fan_out
+    condition: has_alarm
+    else: report_equipment
+    join: all
+    branches:
+      - id: maintenance
+        type: agent
+        agent: maintenance
+        label: 制造 · 维保建议
+        icon: "🔧"
+        timeout_s: 30
+        on_error: degrade
+      - id: planning_window
+        type: agent
+        agent: planning_window
+        label: 计划 · 换产窗口
+        icon: "🗓️"
+        timeout_s: 30
+        on_error: degrade
+      - id: engineering_param
+        type: agent
+        agent: engineering_param
+        label: 工程 · 参数建议
+        icon: "🛠️"
+        timeout_s: 30
+        on_error: degrade
+      - id: spare_parts
+        type: agent
+        agent: spare_parts
+        label: 采购 · 备件需求
+        icon: "📦"
+        timeout_s: 30
+        on_error: degrade
+
+  # 4) 汇聚
+  - id: fanin
+    type: fan_in
+
+  # 5) 维保工单
+  - id: maintenance_flow
+    type: workflow
+    workflow: maintenance_flow
+    title: 维保工单
+    assignees: [设备, 工程, 计划]
+    notify_level: P1
+    sla_hours: 4
+    timeout_s: 15
+    on_error: degrade
+
+  # 6) HITL：停机窗口确认（如适用）
+  - id: hitl_maintenance_window
+    type: hitl
+    agent: hitl_maintenance_window
+    prompt: 停机窗口确认
+    approver_roles: [制造现场负责人]
+    actions:
+      - {key: confirm_window, label: 确认窗口}
+      - {key: adjust_window, label: 调整窗口}
+    timeout_s: 10
+    on_error: degrade
+
+  # 7) 设备简报
+  - id: report_equipment
+    type: agent
+    agent: report_equipment
+    label: 报告Agent · 设备简报
+    icon: "📄"
+    timeout_s: 60
+    on_error: degrade

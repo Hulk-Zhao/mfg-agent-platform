@@ -1,0 +1,104 @@
+# S2 来料异常联动（IQC 不合格 → 采购/计划/物控三方并行取证 → SCAR 工单 → HITL 处置）
+#
+# 统一范式：entry(business) → 牵头域判定(sqe_assess) → fan_out(condition=iqc_rejected,
+# else=report_incoming) → fan_in → workflow(scar_flow) → hitl(退换货/特采) → report。
+# 全部节点 on_error=degrade（离线可跑）；判定用规则、报告用模板，数字来自 SQL。
+key: incoming_quality_v2
+name: 来料异常联动
+version: 1
+domains: [quality, supply_chain]
+triggers:
+  - {type: keyword, words: [来料, IQC, 锡膏, 批次有问题, COA, 不合格]}
+  - {type: im_message}
+  - {type: event, topic: mfg.iqc.rejected}
+entry: intake
+outputs: [iqc_judgement, scar_ticket, disposition_card, internal_brief]
+
+hitl:
+  - {step: hitl_disposition, approver_roles: [SQE, PQE, 生产], condition: "iqc_rejected"}
+
+steps:
+  # 1) 业务意图识别（复用 V1 business_agent）
+  - id: intake
+    type: agent
+    agent: business
+    label: 业务Agent · 意图识别
+    icon: "🧠"
+    timeout_s: 10
+    on_error: degrade
+
+  # 2) SQE 来料不合格判定（degrade：按 incoming_result 规则给等级/处置建议）
+  - id: sqe_assess
+    type: agent
+    agent: sqe_assess
+    label: SQE · 来料不合格判定
+    icon: "🔬"
+    timeout_s: 30
+    on_error: degrade
+
+  # 3) 不合格时三方并行取证（condition 不满足直接跳报告）
+  - id: fanout
+    type: fan_out
+    condition: iqc_rejected
+    else: report_incoming
+    join: all
+    branches:
+      - id: procurement
+        type: agent
+        agent: procurement
+        label: 采购 · 供应商跟催
+        icon: "📦"
+        timeout_s: 30
+        on_error: degrade
+      - id: planning
+        type: agent
+        agent: planning
+        label: 计划 · 排产影响
+        icon: "🗓️"
+        timeout_s: 30
+        on_error: degrade
+      - id: material_control
+        type: agent
+        agent: material_control
+        label: 物控 · 库存/替代
+        icon: "📥"
+        timeout_s: 30
+        on_error: degrade
+
+  # 4) 汇聚
+  - id: fanin
+    type: fan_in
+
+  # 5) SCAR 处置工单（工作流引擎，确定性流程）
+  - id: scar_wf
+    type: workflow
+    workflow: scar_flow
+    title: 来料异常处置/SCAR 工单
+    assignees: [采购, 计划, 物控]
+    notify_level: P1
+    sla_hours: 4
+    timeout_s: 15
+    on_error: degrade
+
+  # 6) HITL：退换货/特采决策（waiting_hitl，绝不自动放行）
+  - id: hitl_disposition
+    type: hitl
+    agent: hitl_disposition
+    prompt: 退换货/特采决策确认
+    approver_roles: [SQE, PQE, 生产]
+    actions:
+      - {key: return_goods, label: 退货}
+      - {key: replace, label: 换货}
+      - {key: concession, label: 特采（三方会签）}
+      - {key: sort, label: 挑选}
+    timeout_s: 10
+    on_error: degrade
+
+  # 7) 内部简报（degraded 模板化）
+  - id: report_incoming
+    type: agent
+    agent: report_incoming
+    label: 报告Agent · 来料异常简报
+    icon: "📄"
+    timeout_s: 60
+    on_error: degrade

@@ -1,0 +1,119 @@
+# S4 出货风险协同（六域并行取证 → ATP 代码计算 → 风险工单 → HITL 交期承诺 → 简报）
+#
+# 查询类场景：fan_out 无 condition（始终推进全部六分支），ATP 由代码计算（on_hand - reserved）。
+key: delivery_status_v2
+name: 出货风险协同
+version: 1
+domains: [supply_chain, manufacturing]
+triggers:
+  - {type: keyword, words: [能发, 发货, 交期, 库存, 在途, ATP, 出货]}
+  - {type: im_message}
+  - {type: event, topic: mfg.order.delivery.risk}
+entry: intake
+outputs: [atp_result, risk_list, delivery_ticket, internal_brief]
+
+hitl:
+  - {step: hitl_delivery_commit, approver_roles: [业务经理]}
+
+steps:
+  # 1) 业务意图识别
+  - id: intake
+    type: agent
+    agent: business
+    label: 业务Agent · 意图识别
+    icon: "🧠"
+    timeout_s: 10
+    on_error: degrade
+
+  # 2) 供应链/制造六域并行取证（无 condition，始终推进）
+  - id: fanout
+    type: fan_out
+    join: all
+    branches:
+      - id: business_order
+        type: agent
+        agent: business_order
+        label: 业务 · 订单/交期
+        icon: "🤝"
+        timeout_s: 30
+        on_error: degrade
+      - id: planning
+        type: agent
+        agent: planning
+        label: 计划 · 排产
+        icon: "🗓️"
+        timeout_s: 30
+        on_error: degrade
+      - id: material_control
+        type: agent
+        agent: material_control
+        label: 物控 · 缺口
+        icon: "📥"
+        timeout_s: 30
+        on_error: degrade
+      - id: warehouse_atp
+        type: agent
+        agent: warehouse_atp
+        label: 仓库 · ATP
+        icon: "🏬"
+        timeout_s: 30
+        on_error: degrade
+      - id: manufacturing_output
+        type: agent
+        agent: manufacturing_output
+        label: 制造 · 产出
+        icon: "🏭"
+        timeout_s: 30
+        on_error: degrade
+      - id: logistics
+        type: agent
+        agent: logistics
+        label: 物流 · 在途
+        icon: "🚚"
+        timeout_s: 30
+        on_error: degrade
+
+  # 3) 汇聚
+  - id: fanin
+    type: fan_in
+
+  # 4) ATP 分析（代码计算可承诺量与缺口；LLM 仅生成建议文本）
+  - id: atp_analysis
+    type: agent
+    agent: atp_analysis
+    label: ATP 分析 · 可承诺量
+    icon: "📊"
+    timeout_s: 30
+    on_error: degrade
+
+  # 5) 出货风险协同工单
+  - id: delivery_risk_wf
+    type: workflow
+    workflow: delivery_risk_flow
+    title: 出货风险协同工单
+    assignees: [计划, 物控, 业务, 物流]
+    notify_level: P1
+    sla_hours: 8
+    timeout_s: 15
+    on_error: degrade
+
+  # 6) HITL：对客交期承诺确认
+  - id: hitl_delivery_commit
+    type: hitl
+    agent: hitl_delivery_commit
+    prompt: 对客交期承诺确认
+    approver_roles: [业务经理]
+    actions:
+      - {key: confirm_commit, label: 确认交期}
+      - {key: revise_commit, label: 调整交期}
+    timeout_s: 10
+    on_error: degrade
+
+  # 7) 出货风险简报（OTD 摘要 + 对客口径去敏）
+  - id: report_delivery
+    type: agent
+    agent: report_delivery
+    label: 报告Agent · 出货风险简报
+    icon: "📄"
+    timeout_s: 60
+    on_error: degrade
