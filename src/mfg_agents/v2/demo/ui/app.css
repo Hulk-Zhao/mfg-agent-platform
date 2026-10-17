@@ -1610,3 +1610,45 @@ a:hover { text-decoration: underline; }
 .role-name { font-size: 14px; }
 .role-grid::-webkit-scrollbar { width: 6px; }
 .role-grid::-webkit-scrollbar-thumb { background: #C7D6E6; border-radius: 3px; }
+
+/* ---------- 报告正文区块（修复"报告生成了但看不到"） ---------- */
+.report-block {
+  margin-top: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.report-block-title {
+  display: flex; align-items: center; gap: 6px;
+  background: #F4F8FC; color: var(--primary-deep);
+  font-size: 12.3px; font-weight: 650;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.report-block-body {
+  padding: 11px 13px;
+  font-size: 12.6px; line-height: 1.85; color: var(--text);
+  white-space: pre-wrap; word-break: break-word;
+  max-height: 340px; overflow: auto;
+}
+
+/* ---------- 报告正文区块（修复"报告生成了但看不到"） ---------- */
+.report-block {
+  margin-top: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.report-block-title {
+  display: flex; align-items: center; gap: 6px;
+  background: #F4F8FC; color: var(--primary-deep);
+  font-size: 12.3px; font-weight: 650;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.report-block-body {
+  padding: 11px 13px;
+  font-size: 12.6px; line-height: 1.85; color: var(--text);
+  white-space: pre-wrap; word-break: break-word;
+  max-height: 340px; overflow: auto;
+}

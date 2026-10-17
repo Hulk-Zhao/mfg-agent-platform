@@ -143,6 +143,22 @@ class OrchestratorResult:
         }
 
 
+# qa 直答通道 → 中文（业务语言）
+_QA_CHANNEL_CN: dict[str, str] = {
+    "metric": "指标库（口径统一）",
+    "registered": "预注册查询",
+    "detail": "明细探查",
+    "fallback": "人工兜底",
+}
+
+# qa 直答通道 → 中文（业务语言）
+_QA_CHANNEL_CN: dict[str, str] = {
+    "metric": "指标库（口径统一）",
+    "registered": "预注册查询",
+    "detail": "明细探查",
+    "fallback": "人工兜底",
+}
+
 # 节点 id → 中文环节名（降级原因用业务语言，不暴露内部术语）
 _NODE_CN: dict[str, str] = {
     "business": "业务受理", "confirm_stop": "停线确认",
@@ -172,6 +188,9 @@ class V2Orchestrator:
             query=query, run_id=run_id, route=route.to_dict(),
             scenario_key=route.scenario_key)
         result.degraded_reasons = self._degraded_reasons(route)
+
+        if route.strategy == "qa":
+            return self._handle_qa(result, query, user_ctx, t0)
 
         if route.scenario_key is None:
             result.fallback = "manual_ticket"
@@ -219,6 +238,110 @@ class V2Orchestrator:
         return result
 
     # ---------- 内部 ----------
+
+    def _handle_qa(self, result: OrchestratorResult, query: str,
+                   user_ctx: Optional[dict], t0: float) -> OrchestratorResult:
+        """数据直答（qa 策略）：轻量路径——不跑场景 DAG、不建工单、无 HITL。
+
+        头脑风暴结论（2026-10-17）："今天A型号的质量怎么样"这类查询型问题
+        被硬套客诉 8D 链路（10 节点+双 HITL+工单）是答非所问。简单数据
+        查询走 Text2SQL 统一通道（指标库→注册查询→明细探查）直接回答。
+        """
+        t2s = self.runtime.text2sql
+        qr = t2s.query(query, user_ctx=user_ctx)
+        # 三层递进：直答能答就直接答（指标/注册/明细）→ 全部失败才由
+        # Agentic 域智能体接管（自主决定查什么/组合什么/何时 HITL）→ 人工
+        light_hit = (qr.channel in ("metric", "registered", "detail")
+                     and qr.rows and qr.fallback is None)
+        if not light_hit and qr.fallback == "manual_ticket":
+            agentic = self._run_agentic(result.route.get("domain"), query, user_ctx, result.run_id)
+            if agentic is not None:
+                result.route = dict(result.route, strategy="agentic")
+                result.internal_brief = {
+                    "执行方式": "域智能体自主决策（Agentic）",
+                    "工具调用步数": len(agentic["steps"]),
+                    "数据缺口": "；".join(agentic["data_gaps"]) or "无",
+                }
+                result.provenance = agentic["steps"]
+                result.report = agentic["report"]
+                result.degraded_reasons = (["存在数据缺口：" + "；".join(agentic["data_gaps"])]
+                                           if agentic["data_gaps"] else [])
+                result.degraded = bool(result.degraded_reasons)
+                if agentic.get("hitl_task"):
+                    result.hitl = [self._agentic_hitl_card(
+                        agentic["hitl_task"], result.run_id)]
+                result.elapsed_ms = (time.perf_counter() - t0) * 1000
+                logger.info("[orchestrator] %s agentic 接管: domain=%s steps=%d",
+                            result.run_id, route.domain, len(agentic["steps"]))
+                return result
+        result.internal_brief = {"回答通道": _QA_CHANNEL_CN.get(qr.channel, qr.channel),
+                                 "数据行数": len(qr.rows or []),
+                                 "脱敏": qr.masked}
+        result.provenance = [qr.to_dict()]
+        result.report = self._qa_report(query, qr)
+        result.degraded = qr.channel in ("detail", "fallback") and bool(qr.fallback)
+        if qr.fallback == "manual_ticket":
+            result.fallback = "manual_ticket"
+            result.suggestions = self._route_suggestions(query)
+        result.degraded_reasons = list(qr.warnings or [])
+        result.degraded = bool(result.degraded_reasons)
+        result.elapsed_ms = (time.perf_counter() - t0) * 1000
+        logger.info("[orchestrator] %s qa 直答: channel=%s rows=%d",
+                    result.run_id, qr.channel, len(qr.rows or []))
+        return result
+
+    def _run_agentic(self, domain, query, user_ctx, run_id):
+        """运行域组 Agentic Agent；无对应域（function/None）返回 None 走原兜底。"""
+        from ..agents.agentic import DOMAIN_AGENT_CONFIGS, AgenticDomainAgent
+
+        agentic_domain = domain if domain in DOMAIN_AGENT_CONFIGS else None
+        if agentic_domain is None:
+            return None
+        try:
+            agent = AgenticDomainAgent(domain=agentic_domain,
+                                       orchestrator=self)
+            return agent.run(query, user_ctx=user_ctx)
+        except Exception as exc:  # noqa: BLE001 —— Agent 异常回落人工兜底（降级不崩）
+            logger.warning("[orchestrator] %s agentic 执行失败: %s", run_id, exc)
+            return None
+
+    def _agentic_hitl_card(self, hitl_task, run_id):
+        """把 Agent 发起的 HITL 工单包装为前端待确认卡（与场景 HITL 卡同构）。"""
+        try:
+            task = self.runtime.workflow.get(hitl_task["task_uid"])
+            d = task.to_dict()
+            return {"kind": (d.get("governance") or {}).get("slot") or d.get("wf_id", ""),
+                    "prompt": d.get("hitl_prompt") or d.get("title", ""),
+                    "task_uid": d["task_uid"], "approver_roles": d.get("assignees") or [],
+                    "actions": [], "slot": (d.get("governance") or {}).get("slot", ""),
+                    "governance": d.get("governance") or {},
+                    "signoff_status": task.signoff_status(),
+                    "run_id": run_id, "demo": False}
+        except Exception:  # noqa: BLE001
+            return {"kind": "", "prompt": hitl_task.get("note", ""),
+                    "task_uid": hitl_task.get("task_uid", ""), "approver_roles": [],
+                    "actions": [], "slot": "", "governance": {},
+                    "signoff_status": None, "run_id": run_id, "demo": False}
+
+    @staticmethod
+    def _qa_report(query: str, qr: Any) -> str:
+        """把 QueryResult 组装为可读直答（数字来自查询，带口径与脱敏说明）。"""
+        if qr.fallback == "manual_ticket":
+            return ("该问题需要人工跟进（明细探查通道当前不可用），"
+                    "已生成人工兜底工单。")
+        lines: list[str] = []
+        channel_cn = _QA_CHANNEL_CN.get(qr.channel, qr.channel)
+        lines.append(f"已通过{channel_cn}查询（{len(qr.rows or [])} 行）：")
+        for i, row in enumerate((qr.rows or [])[:5], 1):
+            kv = "；".join(f"{k}={v}" for k, v in list(row.items())[:6])
+            lines.append(f"{i}. {kv}")
+        if len(qr.rows or []) > 5:
+            lines.append(f"…共 {len(qr.rows)} 行，可在数据溯源中查看完整结果")
+        if qr.masked:
+            lines.append("（结果含敏感字段，已按你的岗位权限脱敏）")
+        for w in (qr.warnings or [])[:2]:
+            lines.append(f"注意：{w}")
+        return "\n".join(lines)
 
     @staticmethod
     def _degraded_reasons(route: RouteResult) -> list[str]:

@@ -58,6 +58,9 @@ class RouteResult:
     entities: dict[str, Any] = field(default_factory=dict)
     low_confidence: bool = False         # True 时调用方应提示人工复核
     reason: str = ""
+    # 多意图路由策略（V3.1）：不是所有问题都要跑重型场景链路——
+    # "scenario"=协同场景 DAG；"qa"=数据直答（无工单无 HITL）；"fallback"=转人工
+    strategy: str = "scenario"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -68,6 +71,7 @@ class RouteResult:
             "entities": self.entities,
             "low_confidence": self.low_confidence,
             "reason": self.reason,
+            "strategy": self.strategy,
         }
 
 
@@ -136,14 +140,24 @@ class TwoLevelRouter:
             return RouteResult(domain=None, scenario_key=None,
                                confidence=intent.confidence, level="L1",
                                low_confidence=intent.low_confidence,
-                               reason=intent.reason)
+                               reason=intent.reason,
+                               strategy="fallback")
+        # 多意图路由（V3.1）：域命中但无场景触发词命中 → 数据直答（qa），
+        # 不硬套场景 DAG——"今天A型号的质量怎么样"是查询，不是客诉闭环
+        scenario_key, trig_score = self._scenario_for_domain(intent.domain, query)
+        if trig_score > 0:
+            return RouteResult(
+                domain=intent.domain, scenario_key=scenario_key,
+                confidence=intent.confidence, level="L1",
+                low_confidence=intent.low_confidence,
+                reason=intent.reason + "（触发词命中，走协同场景）",
+                strategy="scenario")
         return RouteResult(
-            domain=intent.domain,
-            scenario_key=self._scenario_for_domain(intent.domain, query),
-            confidence=intent.confidence,
-            level="L1",
+            domain=intent.domain, scenario_key=None,
+            confidence=intent.confidence, level="L1",
             low_confidence=intent.low_confidence,
-            reason=intent.reason,
+            reason="数据查询型问题，走数据直答（无场景触发词命中）",
+            strategy="qa",
         )
 
     # ---------- 降级：规则模糊匹配（offline 兜底） ----------
@@ -179,6 +193,7 @@ class TwoLevelRouter:
                 level="degrade",
                 low_confidence=True,
                 reason=f"LLM 不可用，域组关键词模糊匹配 {best_score} 个",
+                strategy="scenario",
             )
         return RouteResult(
             domain=None, scenario_key=None, confidence=0.0, level="degrade",
@@ -196,13 +211,13 @@ class TwoLevelRouter:
         现在同域多候选时，用场景触发词与问题的重叠数消歧（无信号回退首序）。
         """
         if self.scenario_registry is None:
-            return None
+            return None, 0
         candidates = [m for m in self.scenario_registry.list()
                       if domain in m.domains]
         if not candidates:
-            return None
+            return None, 0
         if len(candidates) == 1:
-            return candidates[0].key
+            return candidates[0].key, 1
         q = (query or "").strip()
 
         def trigger_score(meta: Any) -> int:
@@ -212,9 +227,7 @@ class TwoLevelRouter:
 
         scored = sorted(((trigger_score(m), m.key) for m in candidates),
                         reverse=True)
-        if scored[0][0] > 0:
-            return scored[0][1]
-        return candidates[0].key
+        return (scored[0][1], scored[0][0])
 
     @staticmethod
     def _extract_entities(query: str) -> dict[str, Any]:

@@ -176,15 +176,23 @@ class TestTableLevelPermission:
     @pytest.mark.parametrize("sql,ctx,expected_table", [
         ("SELECT * FROM customer_complaint", MFG_CTX, "customer_complaint"),
         ("SELECT * FROM material_batch", WAREHOUSE_CTX, "material_batch"),
-        ("SELECT * FROM production_output", QUALITY_CTX, "production_output"),
+        # V3.1 注：production_output / line_stop_event 已对 quality 开放
+        # （质量分析 FPY/良率本职需要），原两行禁止断言移除，正向锁定见下一条
         ("SELECT * FROM quality_defect", WAREHOUSE_CTX, "quality_defect"),
         ("SELECT * FROM shipment", MFG_CTX, "shipment"),
         ("SELECT * FROM equipment_log", QUALITY_CTX, "equipment_log"),
-        ("SELECT * FROM line_stop_event", QUALITY_CTX, "line_stop_event"),
+        ("SELECT * FROM shipment", QUALITY_CTX, "shipment"),
+        ("SELECT * FROM inventory", QUALITY_CTX, "inventory"),
     ])
     def test_cross_role_table_access_blocked(self, sql, ctx, expected_table):
         with pytest.raises(SQLAuditError, match=expected_table):
             SQLAuditor.audit(sql, ctx)
+
+    def test_quality_can_read_production_and_linestop(self):
+        """V3.1 有意开放：质量域可读产出与停线表（FPY/良率分析本职需要）。"""
+        for sql in ("SELECT * FROM production_output",
+                    "SELECT * FROM line_stop_event"):
+            SQLAuditor.audit(sql, QUALITY_CTX)  # 不抛即通过
 
     def test_unknown_table_blocked(self):
         with pytest.raises(SQLAuditError, match="未注册"):

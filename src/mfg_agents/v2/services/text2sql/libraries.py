@@ -15,8 +15,9 @@ __all__ = ["TABLE_ACL", "MetricLibrary", "QueryLibrary"]
 
 # ---------- 表级权限（白名单，fail-closed；coordinator=总控跨域取证角色） ----------
 TABLE_ACL: dict[str, set[str]] = {
-    "production_output": {"manufacturing", "planning", "coordinator"},
-    "line_stop_event": {"manufacturing", "coordinator"},
+    # V3.1：quality 加入产出/停线表——质量分析（FPY/良率）本职需要产出与停线数据
+    "production_output": {"manufacturing", "planning", "coordinator", "quality"},
+    "line_stop_event": {"manufacturing", "coordinator", "quality"},
     "quality_defect": {"quality", "manufacturing", "coordinator"},
     "material_batch": {"procurement", "quality", "coordinator"},
     "equipment_log": {"manufacturing", "coordinator"},
@@ -82,6 +83,10 @@ class QueryLibrary:
         if name not in self._queries:
             raise KeyError(f"注册查询不存在: {name!r}")
         return self._queries[name]
+
+    def all(self) -> dict[str, dict]:
+        """全部注册查询（Agentic Agent 的工具目录来源；只读视图）。"""
+        return dict(self._queries)
 
     def match(self, question: str) -> Optional[str]:
         best_name: Optional[str] = None

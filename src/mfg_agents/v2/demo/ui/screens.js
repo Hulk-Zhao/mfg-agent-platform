@@ -785,6 +785,12 @@
     scroll.innerHTML = chat.messages.map((m) => renderChatMessage(ctx, m)).join("");
     bindChatActions(ctx, scroll);
     bindQuickComments(scroll);
+    // 兜底建议：点击"你可能想问"直接重新发问（把兜底从死胡同变成入口）
+    scroll.querySelectorAll("[data-sq]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        sendChatQueryRouter(ctx, scroll, btn.dataset.sq);
+      });
+    });
     scrollToBottom(scroll);
   }
 
@@ -1130,6 +1136,14 @@
         })() : ""}
         ${gapNotes.length ? `<div class="offline-banner" style="margin-bottom:12px">${UI.icon("info", 14)}<span><b>数据缺口（data_gap）：该数据当前无来源</b>，平台不编造数据，相关项已转人工/现场确认 —— ${UI.esc(gapNotes.join("；"))}</span></div>` : ""}
         <div class="brief-grid">${briefItems}${tickets}</div>
+        ${result.report ? `<div class="report-block">
+          <div class="report-block-title">${UI.icon("report", 13)}报告正文</div>
+          <div class="report-block-body">${UI.esc(result.report)}</div>
+        </div>` : ""}
+        ${result.report ? `<div class="report-block">
+          <div class="report-block-title">${UI.icon("report", 13)}报告正文</div>
+          <div class="report-block-body">${UI.esc(result.report)}</div>
+        </div>` : ""}
         ${etaMatch ? `<div style="margin-top:10px;font-size:12.5px;color:var(--text-2)">${UI.icon("clock", 13)} 预计复线时间：<b style="color:var(--text)">${UI.esc(etaMatch[1])} 小时</b> · 总耗时 ${UI.esc(String(result.elapsed_ms || "-"))}ms</div>` : ""}
         ${provenanceHtml(ctx, result)}
       </div>
@@ -1158,7 +1172,12 @@
         </div>
       </div>
       <div class="result-body">
-        <div class="offline-banner" style="margin-bottom:12px">${UI.icon("info", 14)}<span><b>当前问题超出平台已覆盖范围（或路由匹配度低），已转人工兜底工单处理。</b>人工兜底是平台设计的一部分——确定性流程之外的问题不臆造结论。可改问停线场景相关问题，例如「A型号在SMT-1停线，何时复线？」。</span></div>
+        <div class="offline-banner" style="margin-bottom:12px">${UI.icon("info", 14)}<span><b>当前问题超出平台已覆盖范围（或路由匹配度低），已转人工兜底工单处理。</b>人工兜底是平台设计的一部分——确定性流程之外的问题不臆造结论。</span></div>
+        ${(result.suggestions || []).length ? `<div class="fallback-suggest">
+          <div style="font-size:12.3px;font-weight:650;margin-bottom:6px">${UI.icon("sparkle", 13)} 你可能想问（点击直接提问）</div>
+          <div class="act-chips">${result.suggestions.map((s) =>
+            `<button type="button" class="chip chip-cmt" data-sq="${UI.esc(s.example)}">${UI.esc(s.name)}：${UI.esc(s.example)}</button>`).join("")}</div>
+        </div>` : ""}
         <div class="brief-grid">${items}</div>
         ${result.report ? `<div style="margin-top:10px;font-size:12.8px;color:var(--text-2);line-height:1.8">${UI.icon("file", 13)} ${UI.esc(result.report)}</div>` : ""}
       </div>
