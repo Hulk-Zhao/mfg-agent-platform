@@ -14,7 +14,9 @@ uv run python -m mfg_agents.db.init_db
 uv run python -m mfg_agents.knowledge.seed
 
 echo === [3/3] Starting FastAPI demo ===
-echo Open http://127.0.0.1:8004/demo-ui/ in your browser
-uv run python -m uvicorn mfg_agents.v2.demo.api:app --port 8004
+echo   Local:   http://127.0.0.1:8004/demo-ui/
+echo   Network: http://<your-LAN-IP>:8004/demo-ui/   (bound to 0.0.0.0)
+echo   Public:  double-click scripts\start_public.bat for an internet URL
+uv run python -m uvicorn mfg_agents.v2.demo.api:app --host 0.0.0.0 --port 8004
 
 pause

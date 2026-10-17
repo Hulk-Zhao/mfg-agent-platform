@@ -88,7 +88,7 @@ uv run python -m uvicorn mfg_agents.v2.demo.api:app --port 8004
 
 浏览器打开 **http://127.0.0.1:8004/demo-ui/**，选择岗位（如"总经理"）进入。
 
-> Windows 一键启动：双击 `scripts\start_local.bat`（等价于上述 2-5 步）。
+> Windows 一键启动：双击 `scripts\start_local.bat`（等价于上述 2-5 步，已绑定 `0.0.0.0`，同一局域网可直接访问）。
 
 ## Docker 一键部署
 
@@ -99,6 +99,20 @@ docker compose up -d --build
 ```
 
 访问 http://localhost:8004/demo-ui/ 。演示库与向量库持久化在 `app_data` 卷中，删除后下次启动自动重建。
+
+## 内网 / 外网访问（给外部用户演示）
+
+平台默认只监听本机回环地址。要让**外部用户**访问，按场景选一种：
+
+| 方式 | 适用场景 | 操作 | 链接特点 |
+|---|---|---|---|
+| 内网 | 同一局域网（同一办公室 / 同一 WiFi） | `scripts\start_local.bat` 已绑定 `0.0.0.0`，外部用户浏览器打开 `http://<你的内网IP>:8004/demo-ui/` | 内网 IP，重启不变 |
+| 公网 · Cloudflare | 外部用户在任何网络，免安装 | 双击 `scripts\start_public.bat`，把打印的 `https://xxxx.trycloudflare.com/demo-ui/` 发给对方 | 随机域名，每次重启变化；免费、无需账号 |
+| 公网 · cpolar | 国内网络访问 Cloudflare 不畅时 | 安装 cpolar 并执行一次 `cpolar authtoken <your-token>`，双击 `scripts\start_public_cpolar.bat`，复制界面上 "Forwarding" 的 https 链接 | 随机域名，免费版每次重启变化 |
+
+用完一律双击 `scripts\stop_public.bat` 停止隧道与服务——只按命令行匹配杀本项目的 uvicorn 进程，**不会影响机器上其他 Python 项目**。分步图文说明（含常见问题）见 [docs/PUBLIC-ACCESS.md](docs/PUBLIC-ACCESS.md)。
+
+> ⚠️ **安全提醒**：演示门户是 10 岗位免密登录，公网链接等同于"谁拿到链接谁就能进"。请只用于演示、用完即停；对客正式提供前必须接入认证体系（见文末生产化清单）。
 
 ## CLI 演示（不起 UI）
 
@@ -166,6 +180,7 @@ mfg-agent-platform/
 - **会签并发与幂等（多实例）**：当前单实例用 `WorkflowEngine` 进程内 `threading.RLock` 串行化「读-判断-写」。**多实例/多进程部署时进程内锁不成立**，需把签名改为独立表 `wf_signoff`（`task_uid, role_key, actor, verb, on_behalf_of, overdue_signoff, created_at`）并加唯一索引 `(task_uid, role_key, actor, verb)` 做 DB 级幂等。
 - **超时代签**：仅预留字段位（`on_behalf_of` / `overdue_signoff`），入口未开放；启用时须同时满足「理由必填 + 仅 gm/quality_director 可代签 + on_behalf_of 必填」。
 - **Agent 身份隔离**：权限目录已强制 Agent 角色不得持 `*.approve`，但 Agent 身份的凭据签发/鉴权仍依赖后续认证体系。
+- **公网暴露无认证**：`scripts/start_public.bat`（Cloudflare / cpolar 隧道）可让外部用户直接访问演示门户，但门户为 10 岗位免密登录，**链接即权限**。对外正式提供前必须叠加认证（至少：访问令牌门禁 + 登录态），并按角色收敛 HITL 审批接口的匿名写入。
 - **企微回调无重放防护**：同一合法签名重复提交会被再次接受，生产接入需在 API 层补 timestamp 窗口验重 + nonce 缓存。
 - **演示数据口径**：演示库锚定"演示今天 2026-10-15"（自洽，与真实日期无关）；看板 / 预警 / 报告中的部分页面为演示数据（页面已标注），生产接入按 DataSource 契约替换为真实 ERP/MES 数据源。
 

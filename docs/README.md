@@ -11,6 +11,7 @@
 | [V2-接口文档.md](V2-接口文档.md) | V2 API 文档：统一查询入口、SSE 事件流、HITL 回写、错误码 |
 | [V2-前端展示应用-说明.md](V2-前端展示应用-说明.md) | 演示门户说明：启动方式、六屏导览、真实链路 vs 演示数据 |
 | [V3-UX优化方案.md](V3-UX优化方案.md) | V3 前端体验优化：岗位场景模拟与优化项 |
+| [PUBLIC-ACCESS.md](PUBLIC-ACCESS.md) | 外网/内网访问指南：Cloudflare / cpolar 隧道给外部用户演示，零基础分步 + FAQ |
 | [class-diagram.mermaid](class-diagram.mermaid) | 类图 |
 | [sequence-diagram.mermaid](sequence-diagram.mermaid) | 时序图 |
 | [制造业多智能体协同办公平台-业务架构设计方案.html](制造业多智能体协同办公平台-业务架构设计方案.html) | 业务架构设计方案（HTML 版，浏览器直接打开） |

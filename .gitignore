@@ -30,6 +30,12 @@ logs/*.log
 .tmp-qa/
 .tmp-test/
 
+# ---- Tunnel binary + runtime logs (bin\cloudflared.exe auto-downloads on demand) ----
+bin/cloudflared.exe
+logs/cloudflared.log
+logs/api.log
+logs/public_url.txt
+
 # ---- OS / IDE ----
 .DS_Store
 Thumbs.db
