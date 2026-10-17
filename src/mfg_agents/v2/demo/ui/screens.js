@@ -1218,9 +1218,9 @@
 
     const briefItems = Object.keys(brief).map((k) => {
       const raw = brief[k];
-      // 结构化值（8D 等 dict）→ 专用排版，不再字符串化混排
-      if (raw && typeof raw === "object" && !Array.isArray(raw)) {
-        return d8GridHtml(k, raw);
+      // 结构化镜像键（label#structured，dict）→ 8D 网格专用排版
+      if (k.endsWith("#structured") && raw && typeof raw === "object" && !Array.isArray(raw)) {
+        return d8GridHtml(k.replace(/#structured$/, ""), raw);
       }
       let v = UI.esc(raw === true ? "True" : raw === false ? "False" : raw || "—");
       let extra = "";

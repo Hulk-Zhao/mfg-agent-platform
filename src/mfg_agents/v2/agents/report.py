@@ -61,6 +61,15 @@ _CUST_TEMPLATE: dict[str, Callable[[Any], str]] = {
 }
 
 
+def fmt_text(value: Any) -> str:
+    """结构化 dict → 可读文本（用于模板/LLM 上下文；前端结构化渲染用 dict 本体）。"""
+    if isinstance(value, dict):
+        return "；".join(f"{k}={fmt_text(v)}" for k, v in value.items())
+    if isinstance(value, (list, tuple)):
+        return "；".join(fmt_text(v) for v in value) if value else "—"
+    return _fmt(value) if not isinstance(value, (dict, list, tuple)) else str(value)
+
+
 def _fmt(value: Any) -> str:
     """把任意值转成简报可读文本（不编造，仅格式化真实结论）。"""
     if value is None:
@@ -119,6 +128,11 @@ def make_report_handler(scenario_key: str,
 
     def handler(task: Any, ctx: Any, sink: Any) -> dict:
         brief: dict[str, Any] = {label: _fmt(ctx.get(key)) for label, key in spec}
+        # 结构化镜像键（前端 8D 网格等专用排版用；镜像键不参与文本断言）
+        for label, key in spec:
+            raw = ctx.get(key)
+            if isinstance(raw, dict) and raw:
+                brief[f"{label}#structured"] = raw
         gaps = _collect_gaps(ctx)
         if gaps:
             brief["数据缺口"] = "；".join(gaps)
