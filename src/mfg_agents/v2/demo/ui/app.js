@@ -139,7 +139,7 @@
             </div>
           </div>
           <div class="login-brand-body">
-            <h1>16 个部门进度对齐<br/>一个入口完成协同</h1>
+            <h1>13 个智能体协同<br/>16 个部门一个入口<br/>一个入口完成协同</h1>
             <p>跨部门并行取证 · 跨域工单闭环 · 数据权限随岗位隔离</p>
             <ul class="login-points">
               <li><span>01</span><div><b>5 大协同场景</b>停线应急 / 来料异常 / 客诉 8D / 出货 ATP / 设备维保</div></li>
@@ -148,10 +148,10 @@
             </ul>
           </div>
           <div class="login-stats">
-            <div class="login-stat"><b>10</b><span>岗位身份</span></div>
+            <div class="login-stat"><b>13</b><span>智能体角色</span></div>
             <div class="login-stat"><b>5</b><span>协同场景</span></div>
-            <div class="login-stat"><b>15</b><span>治理角色</span></div>
-            <div class="login-stat"><b>387</b><span>自动化测试</span></div>
+            <div class="login-stat"><b>10</b><span>MCP 工具</span></div>
+            <div class="login-stat"><b>390</b><span>自动化测试</span></div>
           </div>
           <div class="login-brand-foot">演示环境 · 免密码 · 选择岗位身份进入对应数据视图</div>
         </section>

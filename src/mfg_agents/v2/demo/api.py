@@ -45,6 +45,28 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="mfg-agent-platform v2", version="2.0.0")
 
+# ---------- 动态 index：静态资源版本号 = 文件 mtime（文件一改缓存自动失效） ----------
+import os as _os
+import re as _re
+from fastapi.responses import HTMLResponse as _HTMLResponse
+from pathlib import Path as _Path
+
+_UI_DIR = _Path(__file__).resolve().parent / "ui"
+
+
+@app.get("/demo-ui/", include_in_schema=False)
+@app.get("/demo-ui/index.html", include_in_schema=False)
+def demo_ui_index() -> _HTMLResponse:
+    """index.html 动态渲染：JS/CSS 引用注入 ?v=<mtime>，根治浏览器缓存。"""
+    html = (_UI_DIR / "index.html").read_text(encoding="utf-8")
+    for f in ("demo-data.js", "app.js", "screens.js", "help-screen.js", "app.css"):
+        fp = _UI_DIR / f
+        v = int(fp.stat().st_mtime) if fp.exists() else 0
+        html = _re.sub(rf"({_re.escape(f)})\?v=[0-9]+", rf"\1?v={v}", html)
+    return _HTMLResponse(html)
+
+
+
 # A2A 协议端点（Agent Card + message/send + tasks/get；工具与 MCP 同源）
 from ..a2a import build_a2a_router  # noqa: E402
 app.include_router(build_a2a_router())
