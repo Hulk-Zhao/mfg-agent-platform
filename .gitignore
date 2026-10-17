@@ -25,6 +25,7 @@ models/
 
 # ---- Logs ----
 logs/*.log
+logs/*.txt
 
 # ---- Scratch / QA temp dirs ----
 .tmp-qa/
