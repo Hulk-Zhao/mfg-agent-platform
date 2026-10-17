@@ -73,6 +73,7 @@
     screen: "dashboard",
     role: "gm",
     backend: { online: false, base: "", checking: true },
+    perms: null,     // 治理权限目录快照（/api/v2/governance/permissions）
     screenState: {}, // 各屏持久状态（对话记录、审批处理结果等，重渲染不丢）
   };
 
@@ -279,6 +280,32 @@
    * 四、后端 API 客户端（含降级探测）
    * ============================================================ */
 
+  /**
+   * 后端错误响应 → Error（带 status/detail，便于前端做具体提示）。
+   * 403 的 detail 是"需：质量总监 / QA经理"这类中文串；
+   * 409 会签未完成时 detail 是 {message, missing, progress} 结构化对象。
+   */
+  function apiError(status, data) {
+    const detail = data ? data.detail : null;
+    let message = (data && data.message) || `HTTP ${status}`;
+    if (typeof detail === "string" && detail) {
+      message = detail;
+    } else if (detail && typeof detail === "object") {
+      message = detail.message || message;
+      if (Array.isArray(detail.missing) && detail.missing.length) {
+        const who = detail.missing.map((m) => m.role_name || m.role).join("、");
+        message = `${message}——待 ${who}${detail.progress ? `（${detail.progress}）` : ""}`;
+      }
+    }
+    const err = new Error(message);
+    err.status = status;
+    err.detail = detail;
+    err.kind = status === 403 ? "permission_denied"
+      : (status === 409 && detail && detail.missing) ? "signoff_incomplete"
+        : status === 409 ? "conflict" : status === 400 ? "bad_request" : "http";
+    return err;
+  }
+
   const api = {
     base() { return state.backend.base; },
     online() { return state.backend.online; },
@@ -320,7 +347,7 @@
       });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok || data.code !== 0) {
-        throw new Error(data.detail || data.message || `HTTP ${resp.status}`);
+        throw apiError(resp.status, data);
       }
       return data.data;
     },
@@ -329,7 +356,7 @@
       const resp = await fetch(`${this.base()}${path}`);
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok || data.code !== 0) {
-        throw new Error(data.detail || data.message || `HTTP ${resp.status}`);
+        throw apiError(resp.status, data);
       }
       return data.data;
     },
@@ -359,19 +386,51 @@
       return es;
     },
 
-    /** 人工确认 待办队列（真实工单） */
-    workflowPending() { return this._get("/api/v2/workflow/pending"); },
+    /** 人工确认 待办队列（审批即待办：传 roles 则只返回我的待办） */
+    workflowPending(roles) {
+      const list = (roles || []).filter(Boolean);
+      const qs = list.length
+        ? "?" + list.map((r) => `role=${encodeURIComponent(r)}`).join("&")
+        : "";
+      return this._get(`/api/v2/workflow/pending${qs}`);
+    },
+
+    /** 单工单详情（会签后局部刷新卡片） */
+    workflowTask(taskId) {
+      return this._get(`/api/v2/workflow/${encodeURIComponent(taskId)}`);
+    },
+
+    /** 治理权限目录（角色×权限矩阵 + 7 个 HITL 槽位；前端门控提示用） */
+    governancePermissions() { return this._get("/api/v2/governance/permissions"); },
+
+    /** 选定处置动作（按该动作 propose/cosign 生成会签要求） */
+    workflowSelectAction(taskId, actionKey, approver, roles, dept, comment) {
+      return this._post(`/api/v2/workflow/${encodeURIComponent(taskId)}/select-action`,
+        { approver, comment: comment || "", action_key: actionKey,
+          role: (roles || []).join(","), user_ctx: { dept, roles: roles || [] } });
+    },
+
+    /** 会签（多角色背书，缺一不可） */
+    workflowCosign(taskId, approver, roles, dept, comment, decision) {
+      return this._post(`/api/v2/workflow/${encodeURIComponent(taskId)}/cosign`,
+        { approver, comment: comment || "", decision: decision || "",
+          role: (roles || []).join(","), user_ctx: { dept, roles: roles || [] } });
+    },
 
     /** 人工确认 审批通过（waiting_hitl → running / done） */
-    workflowApprove(taskId, approver, comment, final, decision) {
+    workflowApprove(taskId, approver, comment, final, decision, roles, dept) {
       return this._post(`/api/v2/workflow/${encodeURIComponent(taskId)}/approve`,
-        { approver, comment, final: !!final, decision: decision || "" });
+        { approver, comment, final: !!final, decision: decision || "",
+          role: (roles || []).join(","),
+          user_ctx: roles ? { dept, roles } : undefined });
     },
 
     /** 人工确认 审批驳回（→ closed） */
-    workflowReject(taskId, approver, comment, decision) {
+    workflowReject(taskId, approver, comment, decision, roles, dept) {
       return this._post(`/api/v2/workflow/${encodeURIComponent(taskId)}/reject`,
-        { approver, comment, decision: decision || "" });
+        { approver, comment, decision: decision || "",
+          role: (roles || []).join(","),
+          user_ctx: roles ? { dept, roles } : undefined });
     },
   };
 
@@ -456,7 +515,7 @@
     try {
       fn(root, {
         state, api, UI: { icon, esc, badge, toast, spinner, fmtClock, fmtDateTime, fmtRemain, demoFlag, realFlag },
-        DEMO: window.DEMO,
+        DEMO: window.DEMO, perms: state.perms,
         navigate, refreshScreen, setRole, currentRole,
       });
     } catch (err) {
@@ -624,6 +683,7 @@
 
   async function startApp() {
     await api.probe();
+    await loadPermCatalog();
     updateChrome();
 
     const hash = location.hash.replace(/^#\/?/, "");
@@ -632,6 +692,22 @@
     if (!state.backend.online) {
       toast("后端离线：当前为演示模式（问数回放 / 看板演示数据）", "info", 5000);
     }
+  }
+
+  /**
+   * 加载治理权限目录（角色×权限矩阵 + HITL 槽位）。
+   * 前端只用它做"门控提示"（灰显/文案），安全校验始终在后端。
+   * 加载失败不阻塞：前端退化为"按钮可用 + 后端 403 给出明确原因"。
+   */
+  async function loadPermCatalog() {
+    if (!state.backend.online) return null;
+    try {
+      state.perms = await api.governancePermissions();
+    } catch (err) {
+      console.warn("[governance] 权限目录加载失败，前端门控退化为后端裁决:", err);
+      state.perms = null;
+    }
+    return state.perms;
   }
 
   async function boot() {

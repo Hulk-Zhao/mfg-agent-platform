@@ -123,9 +123,11 @@
     if (map[taskUid]) return;
     const role = ctx.currentRole();
 
-    // 动作校验：有可选动作时必须先选；需填依据的动作必须写理由
+    // 动作校验：有可选动作时必须先选定；需填依据的动作必须写理由
     const acts = normalizeActions(_hitlActions[taskUid] || []);
-    const sel = hitlSelMap(ctx)[taskUid];
+    const govStatus = signoffOf(taskUid, acts);
+    const sel = hitlSelMap(ctx)[taskUid]
+      || (govStatus.action_key ? { key: govStatus.action_key, label: govStatus.selected_action } : null);
     const commentEl = document.getElementById(`act-comment-${taskUid}`)
       || document.getElementById("hitl-comment");
     const commentText = commentEl && commentEl.value ? commentEl.value.trim() : "";
@@ -136,6 +138,12 @@
       }
       if (sel && sel.require_comment && !commentText) {
         ctx.UI.toast("该动作需填写决策依据（将写入工单留痕）", "warn", 3400);
+        return;
+      }
+      // 前端门控（后端仍二次校验）：会签未齐 / 无 approve 权限时直接提示
+      const gate = approveGate(ctx, taskUid, acts);
+      if (!gate.ok) {
+        ctx.UI.toast(gate.reason, "warn", 4600);
         return;
       }
     }
@@ -153,8 +161,10 @@
       + (commentText ? "；" + commentText : "");
     try {
       const task = action === "approve"
-        ? await ctx.api.workflowApprove(taskUid, role.user, comment, false, decision)
-        : await ctx.api.workflowReject(taskUid, role.user, comment, decision);
+        ? await ctx.api.workflowApprove(taskUid, role.user, comment, false, decision,
+          govRoles(ctx), role.dept)
+        : await ctx.api.workflowReject(taskUid, role.user, comment, decision,
+          govRoles(ctx), role.dept);
       const last = task.history && task.history.length ? task.history[task.history.length - 1] : null;
       map[taskUid] = {
         action, status: task.status,
@@ -163,15 +173,16 @@
         decision,
       };
       delete hitlSelMap(ctx)[taskUid];  // 处理后清除选择，避免跨工单串用
-      // 缓存刷新为审批后的工单（history 含 create + approve 两条留痕）
+      // 缓存刷新为审批后的工单（history 含 create + select_action + cosign + approve 留痕）
       ctx.state.screenState.hitlCache = ctx.state.screenState.hitlCache || {};
       ctx.state.screenState.hitlCache[taskUid] = task;
+      _hitlGov[taskUid] = task;
       // 审批后保持详情停在该工单，便于查看 before/after 与状态机留痕
       ctx.state.screenState.hitlSelected = taskUid;
       ctx.UI.toast(`工单 ${taskUid} 已${action === "approve" ? "同意" : "驳回"} → ${task.status}`, "ok", 4000);
       ctx.refreshScreen();
     } catch (err) {
-      ctx.UI.toast(`审批失败：${err && err.message ? err.message : String(err)}`, "err", 4500);
+      ctx.UI.toast(`审批失败：${apiErrorMessage(err)}`, "err", 5200);
     }
   }
 
@@ -654,7 +665,9 @@
 
   function bindChatActions(ctx, scroll) {
     scroll.querySelectorAll("[data-hitl-task]").forEach((card) => {
-      wireActionChips(card, ctx, card.dataset.hitlTask);
+      const taskUid = card.dataset.hitlTask;
+      wireActionChips(card, ctx, taskUid);
+      wireCosign(card, ctx, taskUid, _hitlActions[taskUid] || []);
     });
     scroll.querySelectorAll("[data-approve]").forEach((btn) => {
       btn.addEventListener("click", () => hitlAction(ctx, btn.dataset.approve, "approve"));
@@ -722,6 +735,9 @@
         kind: "hitl", id: "m" + ++chat.seq, taskUid: h.task_uid || "",
         prompt: h.prompt || "", approvers: h.approver_roles || [],
         actions: (h.actions || []).map((a) => (typeof a === "string" ? { key: a, label: a } : a)),
+        slot: h.slot || h.kind || "",
+        governance: h.governance || null,
+        signoffStatus: h.signoff_status || null,
         runId: result.run_id, demo: false,
       });
     });
@@ -1054,25 +1070,138 @@
 
   /* ---------- 人工确认 待确认卡片（对话流内） ---------- */
 
-  // 前端岗位 → 业务角色标签（与场景 YAML 的 propose/cosign 对齐；演示映射）
-  const ROLE_BIZ = {
-    gm: ["质量总监", "总经理"],
-    mfg: ["制造现场负责人", "生产", "设备工程"],
-    pqe: ["PQE", "QA", "SQE"],
-    mc: ["物控", "计划"],
-    biz: ["业务经理", "业务", "销售总监"],
-    proc: ["采购", "SQE"],
-    wh: ["仓库", "物流"],
-    rd: ["工程", "设备工程"],
+  // 演示岗位（前端登录身份）→ 治理角色 key（与 data/permissions.yaml 的 roles 对齐）。
+  // 后端以 user_ctx.roles 为权威，前端此映射只用于"预先灰显/提示"，不承担安全职责。
+  const ROLE_GOV = {
+    gm: ["gm"],
+    mfg: ["manufacturing"],
+    pqe: ["sqe", "pqe", "qa"],          // 质量域：可发起（SQE）、可会签（PQE/QA）
+    mc: ["material_control", "planning"],
+    biz: ["sales"],
+    proc: ["procurement"],
+    wh: ["warehouse"],
+    rd: ["rd_engineering", "equipment"],
   };
+
+  // 场景 YAML / 演示数据里的中文写法 → 治理角色 key（与 permissions.yaml aliases 同步）
+  const ROLE_KEY_BY_NAME = {
+    sqe: "sqe", pqe: "pqe", qa: "qa",
+    "质量总监": "quality_director", "品质总监": "quality_director",
+    "qa经理": "qa_manager", "qa主管": "qa_manager",
+    "制造现场负责人": "manufacturing", "制造": "manufacturing",
+    "制造经理": "manufacturing", "生产": "manufacturing", "生产主管": "manufacturing",
+    "设备工程": "equipment", "设备": "equipment",
+    "业务": "sales", "业务经理": "sales", "销售总监": "sales", "销售": "sales",
+    "计划": "planning",
+    "物控": "material_control", "supply_chain": "material_control",
+    "仓库": "warehouse", "物流": "warehouse",
+    "工程": "rd_engineering", "研发": "rd_engineering",
+    "采购": "procurement", "财务": "finance",
+    "总经理": "gm", coordinator: "gm",
+    quality: "sqe", business: "sales", manufacturing: "manufacturing",
+    procurement: "procurement", warehouse: "warehouse",
+    rd_engineering: "rd_engineering", planning: "planning",
+    material_control: "material_control", finance: "finance",
+  };
+
+  const ROLE_LABEL = {
+    gm: "总经理", quality_director: "质量总监", qa_manager: "QA经理",
+    qa: "QA", sqe: "SQE", pqe: "PQE", procurement: "采购", planning: "计划",
+    material_control: "物控", manufacturing: "制造", equipment: "设备工程",
+    sales: "业务", warehouse: "仓库", rd_engineering: "工程", finance: "财务",
+  };
+
+  /** 中文写法/别名 → 治理角色 key（未识别返回 null，与后端一样 fail-closed） */
+  function roleKey(name) {
+    const k = String(name == null ? "" : name).trim().toLowerCase();
+    return ROLE_KEY_BY_NAME[k] || null;
+  }
+
+  function roleKeysOf(names) {
+    return (names || []).map(roleKey).filter(Boolean);
+  }
+
+  /** 当前登录身份对应的治理角色 key 列表 */
+  function govRoles(ctx) {
+    const r = ctx.currentRole();
+    return ROLE_GOV[r.id] || [];
+  }
+
+  /** 当前身份会传给后端的 user_ctx（roles 为权威来源） */
+  function govUserCtx(ctx) {
+    const r = ctx.currentRole();
+    return { user_id: r.user, dept: r.dept, roles: govRoles(ctx) };
+  }
+
+  function roleLabel(key) {
+    return ROLE_LABEL[key] || key;
+  }
+
+  function roleLabels(keys) {
+    return (keys || []).map(roleLabel);
+  }
+
+  /** 权限目录（后端 /api/v2/governance/permissions 快照；未加载时返回 null） */
+  function permCatalog(ctx) {
+    return (ctx && ctx.perms) || null;
+  }
+
+  /** 持有某权限的角色中文名（用于"需：质量总监 / QA经理"提示） */
+  function rolesWithPerm(ctx, permKey) {
+    const cat = permCatalog(ctx);
+    if (!cat || !cat.roles) return [];
+    return cat.roles.filter((r) => (r.permissions || []).includes(permKey)).map((r) => r.name);
+  }
+
+  /** 当前身份是否持有某权限（目录未加载时返回 null = 未知，交由后端裁决） */
+  function hasPerm(ctx, permKey) {
+    const cat = permCatalog(ctx);
+    if (!cat || !cat.roles) return null;
+    const mine = govRoles(ctx);
+    return cat.roles.some((r) => mine.includes(r.key)
+      && (r.permissions || []).includes(permKey));
+  }
+
+  /** 工单的 HITL 槽位（restart/eta/disposition/...） */
+  function slotOf(task) {
+    const c = (task && task.context) || {};
+    const gov = (task && task.governance) || {};
+    const raw = gov.slot || c.slot || c.kind || "";
+    if (raw) return String(raw);
+    const wf = String((task && task.wf_id) || "");
+    return wf.indexOf("hitl_") === 0 ? wf.slice(5) : "";
+  }
+
+  /** 治理链本地视图（优先用后端返回的 signoff_status，其次本地推算） */
+  function govOf(taskUid) {
+    return _hitlGov[taskUid] || null;
+  }
+
+  function signoffOf(taskUid, actions) {
+    const gov = govOf(taskUid);
+    if (gov && gov.signoff_status) return gov.signoff_status;
+    const g = (gov && gov.governance) || {};
+    const required = g.required_signoffs || [];
+    const signedRoles = (g.signoffs || []).map((s) => s.role);
+    const signed = required.filter((r) => signedRoles.indexOf(r.role) >= 0);
+    const missing = required.filter((r) => signedRoles.indexOf(r.role) < 0)
+      .map((r) => ({ role: r.role, role_name: r.role_name || roleLabel(r.role) }));
+    return {
+      required, signed, missing,
+      satisfied: signed.length >= required.length,
+      progress: signed.length + "/" + required.length,
+      total: required.length, done: signed.length,
+      selected_action: g.selected_action || "",
+      action_key: g.action_key || "",
+    };
+  }
 
   // 动作缓存（渲染时写入，事件处理时读取；避免把 JSON 塞进 DOM 属性）
   const _hitlActions = {};
-
-  function roleBizLabels(ctx) {
-    const r = ctx.currentRole();
-    return ROLE_BIZ[r.id] || [r.name];
-  }
+  // 工单槽位缓存（离线演示时用于推算权限提示）
+  const _hitlSlot = {};
+  // 治理链缓存（select-action / cosign 后写入，渲染时读取）
+  const _hitlGov = {};
 
   function normalizeActions(actions) {
     return (actions || []).map((a, i) => (typeof a === "string"
@@ -1080,9 +1209,12 @@
       : a));
   }
 
-  function actionAllowed(a, labels) {
-    const propose = a.propose || [];
-    return !propose.length || propose.some((p) => labels.includes(p));
+  /** 动作是否可由当前身份发起（按动作的 propose 列表比对治理角色 key） */
+  function actionAllowed(ctx, a) {
+    const propose = roleKeysOf(a.propose || []);
+    if (!propose.length) return true;
+    const mine = govRoles(ctx);
+    return propose.some((k) => mine.includes(k));
   }
 
   function hitlSelMap(ctx) {
@@ -1093,13 +1225,16 @@
 
   function actionChipsHtml(ctx, taskUid, actions) {
     const UI = ctx.UI;
-    const labels = roleBizLabels(ctx);
     const sel = hitlSelMap(ctx)[taskUid];
+    const gov = signoffOf(taskUid, actions);
     return normalizeActions(actions).map((a, i) => {
-      const allowed = actionAllowed(a, labels);
-      const on = sel && sel.key === a.key;
+      const allowed = actionAllowed(ctx, a);
+      const on = (sel && sel.key === a.key)
+        || (gov.action_key && gov.action_key === a.key);
+      const cosignNames = (a.cosign || []).join("、");
       const title = allowed
-        ? ((a.cosign && a.cosign.length) ? "会签：" + a.cosign.join("、") : "可直接确认")
+        ? "发起：" + ((a.propose || []).join("/") || "全体")
+          + (cosignNames ? " · 会签：" + cosignNames : " · 无需会签")
         : "需 " + ((a.propose || []).join("/") || "对应岗位") + " 发起";
       return `<button type="button" class="act-chip${on ? " selected" : ""}${allowed ? "" : " disabled"}"
         data-act-task="${UI.esc(taskUid)}" data-act-idx="${i}" ${allowed ? "" : "disabled"}
@@ -1107,11 +1242,14 @@
     }).join("");
   }
 
-  function actionDetailInner(a) {
-    const UI = window.App.UI;
+  function actionDetailInner(ctx, a) {
+    const UI = ctx.UI;
     if (!a) return "选择动作后显示影响与会签要求";
+    const cosignKeys = roleKeysOf(a.cosign || []);
     return `<b>${UI.esc(a.label)}</b>${a.impact ? " · " + UI.esc(a.impact) : ""}`
-      + ((a.cosign && a.cosign.length) ? `<div>会签：${UI.esc(a.cosign.join("、"))}</div>` : "")
+      + (cosignKeys.length
+        ? `<div>需会签：${UI.esc(roleLabels(cosignKeys).join("、"))}（缺一不可）</div>`
+        : `<div>无需会签，可直接终批</div>`)
       + (a.followup ? `<div>后续：${UI.esc(a.followup)}</div>` : "")
       + (a.require_comment ? `<div class="act-req">该动作需填写决策依据</div>` : "");
   }
@@ -1119,8 +1257,163 @@
   function actionDetailHtml(ctx, taskUid, actions) {
     const UI = ctx.UI;
     const sel = hitlSelMap(ctx)[taskUid];
-    const a = sel ? normalizeActions(actions).find((x) => x.key === sel.key) : null;
-    return `<div class="act-detail" data-act-detail="${UI.esc(taskUid)}">${actionDetailInner(a)}</div>`;
+    const gov = signoffOf(taskUid, actions);
+    const key = (sel && sel.key) || gov.action_key;
+    const a = key ? normalizeActions(actions).find((x) => x.key === key) : null;
+    return `<div class="act-detail" data-act-detail="${UI.esc(taskUid)}">${actionDetailInner(ctx, a)}</div>`;
+  }
+
+  /* ---------- 会签面板（多人会签：进度 + 会签按钮 + 已签名单） ---------- */
+
+  function signoffPanelHtml(ctx, taskUid, actions) {
+    const UI = ctx.UI;
+    const gov = govOf(taskUid);
+    const status = signoffOf(taskUid, actions);
+    const slot = gov ? slotOf(gov) : "";
+    const selected = status.action_key || "";
+    if (!selected) return "";
+    const mine = govRoles(ctx);
+    const signedRoles = (status.signed || []).map((r) => r.role);
+    const myPending = (status.required || []).map((r) => r.role)
+      .filter((k) => mine.includes(k) && signedRoles.indexOf(k) < 0);
+    const cosignRows = (status.required || []).map((r) => {
+      const sign = ((gov && gov.governance && gov.governance.signoffs) || [])
+        .find((s) => s.role === r.role);
+      const on = !!sign;
+      return `<div class="signoff-row${on ? " signed" : ""}">
+        <span class="signoff-role">${UI.esc(r.role_name || roleLabel(r.role))}</span>
+        <span class="signoff-state">${on
+          ? UI.icon("check", 12) + " " + UI.esc(sign.actor || "已签")
+            + (sign.ts ? " · " + UI.esc(UI.fmtDateTime(sign.ts)) : "")
+          : "待会签"}</span>
+      </div>`;
+    }).join("");
+    const canCosign = myPending.length > 0 && (hasPerm(ctx, "hitl." + slot + ".cosign") !== false);
+    const tail = (status.required || []).length === 0
+      ? `<div class="signoff-note">${UI.icon("check", 12)} 该动作无需会签</div>`
+      : (status.satisfied
+        ? `<div class="signoff-note ok">${UI.icon("check", 12)} 会签已齐（${UI.esc(status.progress)}），可提交终批</div>`
+        : `<div class="signoff-note warn">会签未完成（${UI.esc(status.progress)}）：待
+            ${UI.esc((status.missing || []).map((m) => m.role_name).join("、"))}</div>`);
+    const btn = ((status.required || []).length && !status.satisfied)
+      ? `<button class="btn btn-sm btn-outline" id="hitl-cosign-${UI.esc(taskUid)}"
+           ${canCosign ? "" : "disabled title=\"当前岗位不在待会签名单内\""}>
+           ${UI.icon("approve", 13)}我要会签${myPending.length ? "（" + UI.esc(roleLabels(myPending).join("/")) + "）" : ""}</button>`
+      : "";
+    return `<div class="signoff-panel" data-signoff-task="${UI.esc(taskUid)}">
+      <div class="signoff-head">会签要求 · 进度 <b>${UI.esc(status.progress)}</b></div>
+      ${cosignRows}${tail}
+      ${btn ? `<div class="signoff-actions">${btn}</div>` : ""}
+    </div>`;
+  }
+
+  function wireCosign(root, ctx, taskUid, actions) {
+    const btn = root.querySelector(`#hitl-cosign-${taskUid}`);
+    if (!btn) return;
+    btn.addEventListener("click", () => hitlCosign(ctx, taskUid, actions));
+  }
+
+  /** 会签：调后端 cosign，成功后局部刷新治理链与卡片 */
+  async function hitlCosign(ctx, taskUid, actions) {
+    const UI = ctx.UI;
+    const role = ctx.currentRole();
+    const gov = govOf(taskUid) || {};
+    const status = signoffOf(taskUid, actions);
+    const slot = slotOf(gov);
+    if (!ctx.api.online()) {
+      // 离线演示：本地记一笔会签（不写后端），仅供界面演示
+      const g = (gov.governance = gov.governance || {});
+      g.signoffs = g.signoffs || [];
+      const mine = govRoles(ctx).filter((k) => (status.missing || [])
+        .some((m) => m.role === k))[0];
+      if (!mine) { UI.toast("当前岗位不在待会签名单内", "warn", 3200); return; }
+      g.signoffs.push({ role: mine, actor: role.user, action: "cosign",
+        ts: new Date().toISOString() });
+      gov.signoff_status = signoffOf(taskUid, actions);
+      UI.toast("演示模式：已在界面记录会签（未调用后端）", "info", 3600);
+      ctx.refreshScreen();
+      return;
+    }
+    const cmtEl = document.getElementById(`act-comment-${taskUid}`)
+      || document.getElementById("hitl-comment");
+    const comment = cmtEl && cmtEl.value ? cmtEl.value.trim() : "";
+    try {
+      const task = await ctx.api.workflowCosign(taskUid, role.user,
+        govRoles(ctx), role.dept, comment);
+      _hitlGov[taskUid] = task;
+      UI.toast(`已会签（${(task.signoff_status || {}).progress || ""}）`
+        + `${task.signoff_status && task.signoff_status.satisfied ? "，会签已齐可终批" : ""}`,
+        "ok", 3600);
+      ctx.refreshScreen();
+    } catch (err) {
+      UI.toast(`会签失败：${apiErrorMessage(err)}`, "err", 4500);
+    }
+  }
+
+  /** API 错误对象 → 人类可读提示（403 说需谁，409 说缺谁） */
+  function apiErrorMessage(err) {
+    const detail = err && err.detail;
+    if (detail && typeof detail === "object") {
+      if (detail.missing && detail.missing.length) {
+        return `${detail.message || "会签未完成"}——待 `
+          + detail.missing.map((m) => m.role_name || m.role).join("、")
+          + (detail.progress ? `（${detail.progress}）` : "");
+      }
+      return detail.message || JSON.stringify(detail);
+    }
+    return (err && err.message) ? err.message : String(err);
+  }
+
+  /** 点击动作 chip：选定处置动作（在线则真实调用 select-action 落库） */
+  async function selectAction(ctx, taskUid, action) {
+    const UI = ctx.UI;
+    const role = ctx.currentRole();
+    const sel = hitlSelMap(ctx);
+    const cmtEl = document.getElementById(`act-comment-${taskUid}`)
+      || document.getElementById("hitl-comment");
+    const comment = cmtEl && cmtEl.value ? cmtEl.value.trim() : "";
+    if (action.require_comment && !comment) {
+      UI.toast("该动作需填写决策依据：请先在上方意见框填写，再点选该动作", "warn", 4600);
+      if (cmtEl) cmtEl.focus();
+      return;
+    }
+    sel[taskUid] = { key: action.key, label: action.label,
+      require_comment: !!action.require_comment };
+    if (!ctx.api.online()) {
+      // 离线演示：本地按动作 cosign 推算会签要求
+      const required = (action.cosign || []).map(roleKey).filter(Boolean)
+        .filter((k, i, arr) => arr.indexOf(k) === i)
+        .map((k) => ({ role: k, role_name: roleLabel(k), kind: "cosign", min_count: 1 }));
+      _hitlGov[taskUid] = {
+        status: "waiting_hitl",
+        wf_id: "hitl_" + (_hitlSlot[taskUid] || ""),
+        context: { actions: _hitlActions[taskUid] || [], slot: _hitlSlot[taskUid] || "" },
+        governance: { selected_action: action.label, action_key: action.key,
+          slot: _hitlSlot[taskUid] || "",
+          required_signoffs: required, signoffs: [], approvals: [] },
+        signoff_status: { required, signed: [], missing: required,
+          satisfied: required.length === 0, progress: "0/" + required.length,
+          total: required.length, done: 0,
+          selected_action: action.label, action_key: action.key,
+          slot: _hitlSlot[taskUid] || "" },
+      };
+      ctx.refreshScreen();
+      return;
+    }
+    try {
+      const task = await ctx.api.workflowSelectAction(taskUid, action.key,
+        role.user, govRoles(ctx), role.dept, comment);
+      _hitlGov[taskUid] = task;
+      const st = task.signoff_status || {};
+      UI.toast(st.total
+        ? `已选定「${action.label}」→ 需会签 ${st.total} 人（${(st.required || []).map((r) => r.role_name).join("、")}）`
+        : `已选定「${action.label}」→ 无需会签，可直接终批`, "ok", 4200);
+      ctx.refreshScreen();
+    } catch (err) {
+      delete sel[taskUid];
+      UI.toast(`选定动作失败：${apiErrorMessage(err)}`, "err", 4800);
+      ctx.refreshScreen();
+    }
   }
 
   function wireActionChips(root, ctx, taskUid) {
@@ -1129,20 +1422,7 @@
       btn.addEventListener("click", () => {
         const a = actions[Number(btn.dataset.actIdx)];
         if (!a) return;
-        hitlSelMap(ctx)[taskUid] = {
-          key: a.key, label: a.label, require_comment: !!a.require_comment,
-        };
-        root.querySelectorAll(`[data-act-task="${taskUid}"]`).forEach((b) => {
-          b.classList.toggle("selected", b === btn);
-        });
-        const detail = root.querySelector(`[data-act-detail="${taskUid}"]`);
-        if (detail) detail.innerHTML = actionDetailInner(a);
-        const cmt = root.querySelector(`#act-comment-${taskUid}`);
-        if (cmt) {
-          cmt.placeholder = a.require_comment
-            ? "决策依据（该动作必填，将写入工单留痕）"
-            : "决策意见（可选，将写入工单留痕）";
-        }
+        selectAction(ctx, taskUid, a);
       });
     });
   }
@@ -1152,6 +1432,12 @@
     const processed = processedMap(ctx)[m.taskUid];
     const acts = normalizeActions(m.actions);
     _hitlActions[m.taskUid] = m.actions || [];
+    if (m.slot) _hitlSlot[m.taskUid] = String(m.slot);
+    if (m.governance && !_hitlGov[m.taskUid]) {
+      _hitlGov[m.taskUid] = { wf_id: "hitl_" + (m.slot || ""), context: { actions: m.actions },
+        governance: m.governance, signoff_status: m.signoffStatus || null };
+    }
+    const gate = approveGate(ctx, m.taskUid, acts, m.slot);
     return `<div class="hitl-card" data-hitl-task="${UI.esc(m.taskUid)}">
       <div class="hitl-card-head">${UI.icon("approve", 15)}待人工确认（不自动放行）</div>
       <div class="hitl-card-prompt">${UI.esc(m.prompt)}</div>
@@ -1163,15 +1449,44 @@
       ${acts.length ? `<div class="hitl-card-meta">可选动作（按岗位权限，灰显需对应岗位发起）：</div>
         <div class="act-chips">${actionChipsHtml(ctx, m.taskUid, m.actions)}</div>
         ${actionDetailHtml(ctx, m.taskUid, m.actions)}` : ""}
+      ${signoffPanelHtml(ctx, m.taskUid, m.actions)}
       ${processed ? "" : `<input class="input act-comment" id="act-comment-${UI.esc(m.taskUid)}" placeholder="决策意见（可选，将写入工单留痕）" />
       <div class="hitl-card-actions">
-        <button class="btn btn-primary btn-sm" data-approve="${UI.esc(m.taskUid)}">${UI.icon("check", 13)}同意</button>
+        <button class="btn btn-primary btn-sm" data-approve="${UI.esc(m.taskUid)}"
+          ${gate.ok ? "" : `disabled title="${UI.esc(gate.reason)}"`}>${UI.icon("check", 13)}同意</button>
         <button class="btn btn-danger btn-sm" data-reject="${UI.esc(m.taskUid)}">${UI.icon("x", 13)}驳回</button>
-      </div>`}
+      </div>
+      ${gate.ok ? "" : `<div class="gate-hint">${UI.icon("info", 12)} ${UI.esc(gate.reason)}</div>`}`}
       ${hitlProcessedBanner(ctx, m.taskUid)}
       ${m.demo ? `<div style="margin-top:9px">${UI.demoFlag("演示回放 · 未真实创建工单")}</div>` : ""}
     </div>`;
   }
+
+  /**
+   * 「同意」按钮门控：会签未齐 / 当前岗位无 approve 权限 → 禁用并说明原因。
+   * 后端仍会二次校验（前端只是 UX 提示，不承担安全职责）。
+   */
+  function approveGate(ctx, taskUid, actions, slotHint) {
+    const gov = govOf(taskUid);
+    const slot = (gov && slotOf(gov)) || slotHint || "";
+    if (!gov || !slot) return { ok: true, reason: "" };
+    const status = signoffOf(taskUid, actions);
+    if (!status.action_key) {
+      return { ok: false, reason: "请先选定处置动作（select_action）" };
+    }
+    if (!status.satisfied) {
+      return { ok: false, reason: `会签未完成（${status.progress}）：待 `
+        + status.missing.map((m) => m.role_name || m.role).join("、") };
+    }
+    const can = hasPerm(ctx, "hitl." + slot + ".approve");
+    if (can === false) {
+      const who = rolesWithPerm(ctx, "hitl." + slot + ".approve");
+      return { ok: false, reason: "当前岗位无该动作的审批权限（需："
+        + (who.length ? who.join(" / ") : "对应审批岗位") + "）" };
+    }
+    return { ok: true, reason: "" };
+  }
+
 
   /* ============================================================
    * 屏幕四：预警中心
@@ -1317,11 +1632,25 @@
     const UI = ctx.UI;
     let tasks = [];
     let demo = false;
+    let readonlyMode = false;
 
     if (ctx.api.online()) {
       try {
-        const raw = await ctx.api.workflowPending();
+        // 「审批即待办」：只拉当前岗位可动作的工单（后端按 my_action 过滤）
+        const raw = await ctx.api.workflowPending(govRoles(ctx));
         tasks = mergeProcessedTasks(ctx, raw);
+        tasks.forEach((t) => { if (t.task_uid && t.governance) _hitlGov[t.task_uid] = t; });
+        if (!tasks.length) {
+          // 兜底：当前岗位无待办时，只读展示队列中「待其他岗位处理」的工单，
+          // 避免审批中心出现"看起来没活"的误导（可动作工单仍只有我的待办）。
+          const all = await ctx.api.workflowPending();
+          const others = mergeProcessedTasks(ctx, all)
+            .filter((t) => t.task_uid && !processedMap(ctx)[t.task_uid]);
+          if (others.length) {
+            tasks = others.map((t) => ({ ...t, _readonly: true }));
+            readonlyMode = true;
+          }
+        }
       } catch (err) {
         demo = true;
       }
@@ -1340,12 +1669,16 @@
           task_uid: t.task_uid, wf_id: t.wf_id, title: t.title,
           hitl_prompt: t.title, status: "waiting_hitl", priority: t.priority,
           assignees: t.approver_roles, sla_due_at: due, created_at: created,
-          context: t.ctx, history: [], demo: true,
+          context: t.ctx, history: [], demo: true, my_action: null,
         };
       });
     }
     if (sourceEl) {
-      sourceEl.innerHTML = demo ? UI.demoFlag("后端离线 · 演示数据") : UI.realFlag("真实待办队列");
+      sourceEl.innerHTML = demo
+        ? UI.demoFlag("后端离线 · 演示数据")
+        : readonlyMode
+          ? UI.badge("当前岗位无待办 · 只读展示他人待办", "badge-amber")
+          : UI.realFlag("我的待办（" + roleLabels(govRoles(ctx)).join("/") + "）");
     }
 
     if (!tasks.length) {
@@ -1373,6 +1706,22 @@
     renderHitlDetail(ctx, current);
   }
 
+  // 「审批即待办」动作徽标：待我发起 / 待我会签 / 待我终批
+  const MY_ACTION_LABEL = {
+    select_action: "待我发起",
+    cosign: "待我会签",
+    approve: "待我终批",
+  };
+
+  function myActionBadge(ctx, t) {
+    const UI = ctx.UI;
+    const act = t.my_action || null;
+    if (!act) return "";
+    const cls = act === "approve" ? "badge-green"
+      : act === "cosign" ? "badge-amber" : "badge-blue";
+    return UI.badge(MY_ACTION_LABEL[act] || act, cls);
+  }
+
   function hitlListItemHtml(ctx, t) {
     const UI = ctx.UI;
     const st = ctx.state.screenState;
@@ -1380,19 +1729,32 @@
     const due = slaDueIso(t);
     const total = slaTotalMs(t);
     const selected = st.hitlSelected === t.task_uid;
+    const signoff = signoffOf(t.task_uid, (t.context && t.context.actions) || []);
+    const progress = signoff.total
+      ? `<span>会签 ${UI.esc(signoff.progress)}${signoff.satisfied ? " ✓" : ""}</span>` : "";
     return `<div class="hitl-list-item${selected ? " selected" : ""}${processed ? " processed" : ""}" data-select="${UI.esc(t.task_uid)}">
       <div class="hli-title">${UI.esc(t.hitl_prompt || t.title)}
         ${processed ? UI.badge("已处理", "badge-green") : UI.badge("待审批", "badge-red", true)}
+        ${myActionBadge(ctx, t)}
+        ${t._readonly ? UI.badge("只读", "badge-gray") : ""}
         ${t.demo ? UI.demoFlag("演示") : ""}
       </div>
       <div class="hli-meta">
         <span>${UI.esc(t.task_uid)}</span>
         <span>${UI.esc((t.assignees || []).join("、"))}</span>
         <span>${UI.esc(t.priority || "P1")}</span>
+        ${progress}
       </div>
       <div class="hli-sla">${processed ? "" : slaHtml(due, total)}</div>
     </div>`;
   }
+
+  // HITL 槽位 → 中文名（与 permissions.yaml 的 slots 对齐）
+  const SLOT_LABEL = {
+    restart: "复线决策", eta: "对客 ETA 承诺", disposition: "来料处置",
+    d8_close: "8D 报告关闭", complaint_reply: "对客回复",
+    delivery_commit: "交期承诺", maintenance_window: "停机窗口",
+  };
 
   function renderHitlDetail(ctx, t) {
     const UI = ctx.UI;
@@ -1402,10 +1764,18 @@
     const due = slaDueIso(t);
     const total = slaTotalMs(t);
     const processed = processedMap(ctx)[t.task_uid];
-    const kindLabel = t.wf_id === "hitl_eta" ? "对客 ETA 承诺" : t.wf_id === "impact_assessment" ? "影响评估反馈" : "复线决策";
+    const slot = slotOf(t);
+    if (slot) _hitlSlot[t.task_uid] = slot;
+    const kindLabel = SLOT_LABEL[slot]
+      || (t.wf_id === "impact_assessment" ? "影响评估反馈" : (t.wf_id || "工单"));
+    if (t.governance && !_hitlGov[t.task_uid]) _hitlGov[t.task_uid] = t;
+    const gate = approveGate(ctx, t.task_uid, (c.actions || []), slot);
 
     const ctxItems = [
       ["工单类型", kindLabel + "（" + (t.wf_id || "-") + "）"],
+      ["治理槽位", slot || "未纳管（老工单）"],
+      ["已选动作", signoffOf(t.task_uid, c.actions).selected_action || "-"],
+      ["我的待办", MY_ACTION_LABEL[t.my_action] || "只看不办"],
       ["run_id", c.run_id || "-"],
       ["线体 / 型号", (c.line_code || "-") + " / " + (c.product_model || "-")],
       ["风险评级", c.fa_rating || "-"],
@@ -1430,11 +1800,12 @@
           <div style="margin-left:auto;display:flex;gap:6px;flex-wrap:wrap">
             ${processed ? UI.badge("已处理 · " + processed.status, "badge-green") : UI.badge(t.status || "waiting_hitl", "badge-red", true)}
             ${UI.badge(t.priority || "P1", "badge-amber")}
+            ${myActionBadge(ctx, t)}
             ${t.demo ? UI.demoFlag("演示数据") : UI.realFlag("真实工单")}
           </div>
         </div>
         <div style="margin-top:12px;font-size:12.5px;color:var(--text-2);line-height:1.75">
-          ${UI.icon("info", 13)} 关键决策必须人工确认后放行（规则：分析服务只出建议，不参与审批与过账）。停线类工单 SLA 2 小时，超时自动升级。
+          ${UI.icon("info", 13)} 关键决策必须人工确认后放行（规则：分析服务只出建议，不参与审批与过账）。多人会签的动作需全部会签人签署后才可终批，岗位权限由后端 WorkflowEngine 校验。
         </div>
         <div style="margin-top:13px">${slaHtml(due, total)}</div>
         <div class="hitl-ctx-grid" style="margin-top:13px">${ctxItems}</div>
@@ -1444,20 +1815,26 @@
           _hitlActions[t.task_uid] = acts;
           return `<div class="section-title" style="margin:16px 0 4px">处置动作（按岗位权限，灰显需对应岗位发起）</div>
             <div class="act-chips">${actionChipsHtml(ctx, t.task_uid, acts)}</div>
-            ${actionDetailHtml(ctx, t.task_uid, acts)}`;
+            ${actionDetailHtml(ctx, t.task_uid, acts)}
+            ${signoffPanelHtml(ctx, t.task_uid, acts)}`;
         })()}
 
         ${history ? `<div class="section-title" style="margin:16px 0 4px">处理历史（状态机留痕）</div><div class="history-list">${history}</div>` : ""}
 
-        ${processed ? hitlProcessedBanner(ctx, t.task_uid) : `
+        ${processed ? hitlProcessedBanner(ctx, t.task_uid) : (t._readonly
+          ? `<div class="gate-hint">${UI.icon("info", 13)} 当前岗位对该工单无待办动作（只读视图）：审批/会签由对应岗位执行，安全校验在后端。</div>`
+          : `
         <div class="hitl-actions-bar">
           <input class="input hitl-comment" id="hitl-comment" placeholder="决策意见（可选，将写入工单 history）" />
-          <button class="btn btn-success" id="hitl-approve">${UI.icon("check", 14)}同意</button>
+          <button class="btn btn-success" id="hitl-approve"
+            ${gate.ok ? "" : `disabled title="${UI.esc(gate.reason)}"`}>${UI.icon("check", 14)}同意</button>
           <button class="btn btn-danger" id="hitl-reject">${UI.icon("x", 14)}驳回</button>
-        </div>`}
+        </div>
+        ${gate.ok ? "" : `<div class="gate-hint">${UI.icon("info", 13)} ${UI.esc(gate.reason)}</div>`}`)}
       </div>`;
 
     wireActionChips(document, ctx, t.task_uid);
+    wireCosign(document, ctx, t.task_uid, (c.actions || []));
     const approveBtn = document.getElementById("hitl-approve");
     const rejectBtn = document.getElementById("hitl-reject");
     if (approveBtn) approveBtn.addEventListener("click", () => hitlAction(ctx, t.task_uid, "approve"));
