@@ -1754,11 +1754,12 @@
         </div>
         <div class="card">
           ${list.length ? list.map((a) => `
-            <div class="alert-item">
+            <div class="alert-item alert-clickable" data-alert="${UI.esc(a.id)}" title="点击${st.expandedAlert === a.id ? "收起" : "查看细则"}">
               <div class="alert-level ${a.level}">${a.level}</div>
               <div class="alert-main">
                 <div class="alert-title">${UI.esc(a.title)} ${UI.badge(a.type, typeCls[a.type] || "badge-gray")}</div>
                 <div class="alert-detail">${UI.esc(a.detail)}</div>
+                ${st.expandedAlert === a.id ? alertDetailHtml(ctx, a) : ""}
                 <div class="alert-tags">
                   <span class="tag-label">联动部门：</span>
                   ${a.tags.map((t) => UI.badge(t, "badge-outline")).join("")}
@@ -1773,6 +1774,41 @@
     root.querySelectorAll("[data-filter]").forEach((btn) => {
       btn.addEventListener("click", () => { ctx.state.screenState.alertFilter = btn.dataset.filter; ctx.refreshScreen(); });
     });
+    root.querySelectorAll("[data-alert]").forEach((card) => {
+      card.addEventListener("click", () => {
+        st.expandedAlert = st.expandedAlert === card.dataset.alert ? null : card.dataset.alert;
+        ctx.refreshScreen();
+      });
+    });
+    root.querySelectorAll("[data-ask-alert]").forEach((btn) => {
+      btn.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        try { sessionStorage.setItem("chat_prefill", btn.dataset.askAlert); } catch (e) { /* 忽略 */ }
+        ctx.navigate("chat");
+      });
+    });
+  }
+
+  /** 预警细则（点开可见）：影响分析 + 引导式处置步骤 + 响应时间线 + 快速操作。 */
+  function alertDetailHtml(ctx, a) {
+    const UI = ctx.UI;
+    const askQ = {
+      "SPC越限": "最近锡膏印刷 CPK 越限的详细数据与趋势",
+      "缺料": "锡膏 M7020 的库存、在途与齐套情况",
+      "订单临期": "A型号的 ATP 可承诺量与出货风险",
+      "设备告警": "SMT-1设备参数异常吗",
+    }[a.type] || a.title;
+    return `<div class="alert-detail-panel">
+      <div class="adp-sec"><b>影响分析</b><span>${UI.esc(a.impact || "暂无")}</span></div>
+      ${(a.steps || []).length ? `<div class="adp-sec"><b>处置步骤（引导式）</b>
+        <ol class="adp-steps">${a.steps.map((st2) => `<li>${UI.esc(st2)}</li>`).join("")}</ol></div>` : ""}
+      ${(a.timeline || []).length ? `<div class="adp-sec"><b>响应时间线</b>
+        <div class="adp-timeline">${a.timeline.map((t) => `<div class="adp-tl-row"><span class="adp-tl-time">${UI.esc(t[0])}</span><span>${UI.esc(t[1])}</span><span class="adp-tl-who">${UI.esc(t[2])}</span></div>`).join("")}</div></div>` : ""}
+      <div class="adp-actions">
+        <button class="btn btn-outline btn-sm" data-ask-alert="${UI.esc(askQ)}">${UI.icon("chat", 13)}去问数分析</button>
+        ${a.status !== "已闭环" ? `<button class="btn btn-outline btn-sm" data-ask-alert="为预警 ${UI.esc(a.id)} 创建人工跟进工单">${UI.icon("approve", 13)}转人工跟进</button>` : ""}
+      </div>
+    </div>`;
   }
 
   /* ============================================================
@@ -2001,6 +2037,27 @@
     delivery_commit: "交期承诺", maintenance_window: "停机窗口",
   };
 
+  // 决策指引（按槽位：审批人该看什么、容易漏什么——降低经验依赖）
+  const DECISION_GUIDES = {
+    disposition: ["质量影响：不良是否影响功能/安全，还是仅外观？", "客户影响：该批次是否已发货？客户标准是否允许？", "成本与交期：退货/挑选的工时与费用 vs 特采的风险", "留痕：选择依据必须具体（写清参数/数据），便于追溯"],
+    restart: ["首件确认：复线后第一件是否已检验合格？", "参数复核：漂移根因是否已消除（非临时调整）？", "关联预警：相关 SPC/设备预警是否已闭环？"],
+    eta: ["产能确认：承诺时间是否有排产数据支撑？", "缓冲策略：是否预留合理缓冲（客户容忍度）？", "口径一致：与内部影响评估结论是否一致？"],
+    d8_close: ["措施验证：纠正措施是否有数据证明有效？", "预防措施：是否已纳入标准（SOP/控制计划）？", "客户确认：客户是否已认可关闭？"],
+    complaint_reply: ["口径一致：回复内容与 8D 结论是否一致？", "禁词检查：是否含停线/根因等内部词汇？", "承诺升级：是否做了内部无保障的承诺？"],
+    delivery_commit: ["ATP 核算：可承诺量是否经库存与排产双重确认？", "客户分级：重点客户是否需要更高优先级？", "物流排期：出货计划是否与仓库/物流确认？"],
+    maintenance_window: ["备件到位：维保所需备件是否确认可用？", "生产影响：停机窗口与排产的冲突是否评估？", "降速替代：是否可先降速运行观察？"],
+  };
+
+  function decisionGuideHtml(t) {
+    const slot = (t.governance || {}).slot || t.wf_id || "";
+    const tips = DECISION_GUIDES[slot];
+    if (!tips || !tips.length) return "";
+    return `<div class="decision-guide">
+      <div class="dg-title">决策指引（${slot} 槽位 · 审批前请逐项核对）</div>
+      <ul>${tips.map((x) => `<li>${x}</li>`).join("")}</ul>
+    </div>`;
+  }
+
   function renderHitlDetail(ctx, t) {
     const UI = ctx.UI;
     const box = document.getElementById("hitl-detail");
@@ -2065,6 +2122,7 @@
         })()}
 
         ${history ? `<div class="section-title" style="margin:16px 0 4px">处理历史（状态机留痕）</div><div class="history-list">${history}</div>` : ""}
+        ${decisionGuideHtml(t) }
 
         ${processed ? hitlProcessedBanner(ctx, t.task_uid) : (t._readonly
           ? `<div class="gate-hint">${UI.icon("info", 13)} 当前岗位对该工单无待办动作（只读视图）：审批/会签由对应岗位执行，安全校验在后端。</div>`

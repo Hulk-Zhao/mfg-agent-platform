@@ -1705,3 +1705,69 @@ a:hover { text-decoration: underline; }
 }
 .agent-sec.hitl { color: #7A5B00; background: #FDF6E7; border-radius: 7px; padding: 6px 9px; }
 .agent-sec.hitl b { color: #7A5B00; }
+
+/* ---------- 预警细则 + 审批决策指引 ---------- */
+.alert-clickable { cursor: pointer; transition: background .14s ease; }
+.alert-clickable:hover { background: #FAFCFF; }
+.alert-detail-panel {
+  margin: 10px 0 4px;
+  background: #F8FAFD;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 11px 13px;
+}
+.adp-sec { margin-bottom: 9px; font-size: 12.2px; line-height: 1.75; }
+.adp-sec b {
+  display: block; color: var(--primary-deep); font-size: 11.8px;
+  font-weight: 650; margin-bottom: 3px;
+}
+.adp-steps { margin: 0; padding-left: 18px; }
+.adp-steps li { margin-bottom: 3px; }
+.adp-timeline { display: flex; flex-direction: column; gap: 5px; }
+.adp-tl-row { display: flex; gap: 10px; align-items: baseline; }
+.adp-tl-time { flex: none; color: var(--primary); font-weight: 600; font-variant-numeric: tabular-nums; }
+.adp-tl-who { flex: none; margin-left: auto; color: var(--text-3); font-size: 11.3px; }
+.adp-actions { display: flex; gap: 8px; margin-top: 4px; }
+
+.decision-guide {
+  margin: 14px 0 4px;
+  background: #FDF6E7;
+  border: 1px solid #E5D5A0;
+  border-radius: 10px;
+  padding: 10px 13px;
+}
+.dg-title { font-size: 12.2px; font-weight: 650; color: #7A5B00; margin-bottom: 5px; }
+.decision-guide ul { margin: 0; padding-left: 18px; font-size: 12.2px; line-height: 1.8; color: var(--text-2); }
+
+/* ---------- 预警细则 + 审批决策指引 ---------- */
+.alert-clickable { cursor: pointer; transition: background .14s ease; }
+.alert-clickable:hover { background: #FAFCFF; }
+.alert-detail-panel {
+  margin: 10px 0 4px;
+  background: #F8FAFD;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 11px 13px;
+}
+.adp-sec { margin-bottom: 9px; font-size: 12.2px; line-height: 1.75; }
+.adp-sec b {
+  display: block; color: var(--primary-deep); font-size: 11.8px;
+  font-weight: 650; margin-bottom: 3px;
+}
+.adp-steps { margin: 0; padding-left: 18px; }
+.adp-steps li { margin-bottom: 3px; }
+.adp-timeline { display: flex; flex-direction: column; gap: 5px; }
+.adp-tl-row { display: flex; gap: 10px; align-items: baseline; }
+.adp-tl-time { flex: none; color: var(--primary); font-weight: 600; font-variant-numeric: tabular-nums; }
+.adp-tl-who { flex: none; margin-left: auto; color: var(--text-3); font-size: 11.3px; }
+.adp-actions { display: flex; gap: 8px; margin-top: 4px; }
+
+.decision-guide {
+  margin: 14px 0 4px;
+  background: #FDF6E7;
+  border: 1px solid #E5D5A0;
+  border-radius: 10px;
+  padding: 10px 13px;
+}
+.dg-title { font-size: 12.2px; font-weight: 650; color: #7A5B00; margin-bottom: 5px; }
+.decision-guide ul { margin: 0; padding-left: 18px; font-size: 12.2px; line-height: 1.8; color: var(--text-2); }
