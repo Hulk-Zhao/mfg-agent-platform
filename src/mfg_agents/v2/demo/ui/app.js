@@ -1,11 +1,11 @@
 /**
- * 制造业多智能体协同平台 · 智能门户（app.js）
+ * 智造协同平台 · 运营协同门户（app.js）
  *
  * 核心层：应用状态 / 后端 API 客户端（含降级探测）/ 侧边栏路由 / 通用 UI 组件。
  * 六屏渲染逻辑在 screens.js；演示数据在 demo-data.js。
  *
  * 设计纪律：
- * - 真实优先：问数 / SSE 事件流 / HITL 审批一律走真实后端；
+ * - 真实优先：问数 / SSE 事件流 / 人工确认 审批一律走真实后端；
  * - 降级不崩：后端不可达时进入演示模式，页面完整渲染 + 明确提示，无未捕获异常；
  * - 零依赖零构建：原生 JS + 内联 SVG。
  */
@@ -17,12 +17,12 @@
    * ============================================================ */
 
   const NAV_ITEMS = [
-    { id: "dashboard", label: "工作台", title: "工作台", sub: "制造业多智能体协同门户", icon: "grid", group: "运营视图" },
+    { id: "dashboard", label: "工作台", title: "工作台", sub: "制造运营协同门户", icon: "grid", group: "运营视图" },
     { id: "orders", label: "订单履约看板", title: "订单履约看板", sub: "订单全链路管道 · 风险订单 · 部门协同", icon: "orders", group: "运营视图" },
-    { id: "chat", label: "智能问数", title: "智能问数", sub: "对话式多智能体协同分析（真实后端链路）", icon: "chat", group: "智能协同", core: true },
+    { id: "chat", label: "协同问数", title: "协同问数", sub: "对话式跨部门协同分析（真实后端链路）", icon: "chat", group: "智能协同", core: true },
     { id: "alerts", label: "预警中心", title: "预警中心", sub: "多域预警与联动处置", icon: "alert", group: "智能协同" },
     { id: "reports", label: "报告中心", title: "报告中心", sub: "内部简报与对客脱敏报告", icon: "report", group: "智能协同" },
-    { id: "hitl", label: "HITL 审批中心", title: "HITL 审批中心", sub: "人工在环 · 关键决策审批（真实工单）", icon: "approve", group: "流程治理" },
+    { id: "hitl", label: "审批确认中心", title: "审批确认中心", sub: "人工在环 · 关键决策审批（真实工单）", icon: "approve", group: "流程治理" },
   ];
 
   // 后端候选基址：同源优先（http(s) 托管时），随后是本机 8004 端口
@@ -133,12 +133,12 @@
             <div class="login-logo">${icon("box", 22)}</div>
             <div>
               <div class="login-brand-name">智造协同平台</div>
-              <div class="login-brand-sub">Multi-Agent MFG OS</div>
+              <div class="login-brand-sub">Manufacturing Collaboration</div>
             </div>
           </div>
           <div class="login-brand-body">
             <h1>16 个部门进度对齐<br/>一个入口完成协同</h1>
-            <p>多智能体并行取证 · 跨域工单闭环 · 数据权限随岗位隔离</p>
+            <p>跨部门并行取证 · 跨域工单闭环 · 数据权限随岗位隔离</p>
             <ul class="login-points">
               <li><span>01</span><div><b>5 大协同场景</b>停线应急 / 来料异常 / 客诉 8D / 出货 ATP / 设备维保</div></li>
               <li><span>02</span><div><b>关键决策人在环</b>复线、对客 ETA、退换货、8D 关闭均需人工确认</div></li>
@@ -359,19 +359,19 @@
       return es;
     },
 
-    /** HITL 待办队列（真实工单） */
+    /** 人工确认 待办队列（真实工单） */
     workflowPending() { return this._get("/api/v2/workflow/pending"); },
 
-    /** HITL 审批通过（waiting_hitl → running / done） */
-    workflowApprove(taskId, approver, comment, final) {
+    /** 人工确认 审批通过（waiting_hitl → running / done） */
+    workflowApprove(taskId, approver, comment, final, decision) {
       return this._post(`/api/v2/workflow/${encodeURIComponent(taskId)}/approve`,
-        { approver, comment, final: !!final });
+        { approver, comment, final: !!final, decision: decision || "" });
     },
 
-    /** HITL 审批驳回（→ closed） */
-    workflowReject(taskId, approver, comment) {
+    /** 人工确认 审批驳回（→ closed） */
+    workflowReject(taskId, approver, comment, decision) {
       return this._post(`/api/v2/workflow/${encodeURIComponent(taskId)}/reject`,
-        { approver, comment });
+        { approver, comment, decision: decision || "" });
     },
   };
 
@@ -497,7 +497,7 @@
           results.push({ screen: "alerts", title: a.title, sub: `${a.id} · ${a.owner}`, type: "预警" });
         }
       });
-      window.DEMO.DEMO_HITL.forEach((t) => {
+      window.DEMO.DEMO_人工确认.forEach((t) => {
         if ((t.title + t.task_uid).includes(k)) {
           results.push({ screen: "hitl", title: t.title, sub: `${t.task_uid} · ${t.approver_roles.join("、")}`, type: "工单" });
         }

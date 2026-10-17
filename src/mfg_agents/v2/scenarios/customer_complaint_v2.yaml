@@ -94,8 +94,9 @@ steps:
     prompt: 8D 报告关闭确认
     approver_roles: [质量总监, QA经理]
     actions:
-      - {key: close_8d, label: 确认关闭}
-      - {key: reopen, label: 退回补充}
+      - {key: close, label: 关闭 8D, propose: [质量总监, QA经理], cosign: [PQE, SQE, 工程], require_comment: true, impact: "结案 · 措施需已验证", followup: "归档 / 更新经验库"}
+      - {key: return_supplement, label: 退回补充, propose: [质量总监, QA经理], require_comment: true, impact: "闭环延期 · 需补验证", followup: "退回责任部门 / 重新提交"}
+      - {key: extend, label: 延期关闭, propose: [质量总监], require_comment: true, impact: "客户等待 · 需沟通", followup: "对客说明 / 设定新期限"}
     timeout_s: 10
     on_error: degrade
 
@@ -106,8 +107,9 @@ steps:
     prompt: 对客回复确认（脱敏后）
     approver_roles: [业务经理]
     actions:
-      - {key: confirm_reply, label: 确认回复}
-      - {key: revise_reply, label: 修改回复}
+      - {key: reply_8d, label: 按 8D 结论回复, propose: [业务经理], cosign: [QA], impact: "口径需与 8D 一致", followup: "发送客户 / 留痕"}
+      - {key: reply_buffered, label: 加严承诺回复, propose: [业务经理], cosign: [QA], impact: "承诺升级 · 需内部保障", followup: "内部保障措施 / 发送客户"}
+      - {key: escalate, label: 升级处理, propose: [业务经理], impact: "重大客诉 · 高层介入", followup: "升级工单"}
     timeout_s: 10
     on_error: degrade
 

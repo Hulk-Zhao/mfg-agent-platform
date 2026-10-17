@@ -1,16 +1,22 @@
-"""意图分类器骨架（§6.2）。
+"""意图分类器（§6.2）。
 
-``IntentResult`` 与现有 ``RouteResult`` 字段一一对应，是其后继上位契约。
-``RuleLLMClassifier`` 本次**内部直接调用现 TwoLevelRouter**（行为等价），
-为后续"Router 改为 classifier.classify → selector.select"迁移铺路。
+- ``IntentResult`` 与 ``RouteResult`` 字段一一对应；
+- ``LLMClosedSetClassifier``：**已接线**——Router 的 L1 分类委托给它（闭集 5 域组）；
+- ``RuleLLMClassifier``：历史包装器（包装整个 Router），保留兼容，运行路径不再使用。
 """
 from __future__ import annotations
 
+import json
+import logging
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-__all__ = ["IntentResult", "IntentClassifier", "RuleLLMClassifier"]
+__all__ = ["IntentResult", "IntentClassifier", "LLMClosedSetClassifier",
+           "RuleLLMClassifier"]
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -46,10 +52,52 @@ class IntentClassifier(ABC):
         """把用户问题分类为意图（域组 + 场景 key）。"""
 
 
-class RuleLLMClassifier(IntentClassifier):
-    """规则 + LLM 分类器：**包装现 TwoLevelRouter**（行为等价）。
+class LLMClosedSetClassifier(IntentClassifier):
+    """闭集域组分类器（Router L1 的正式实现，**已接线**）。
 
-    可注入自定义 router（测试友好）；未注入时按默认配置惰性构建。
+    只判断"域组"（5 域组 + out_of_scope）；场景 key 由 Router 依据场景注册表决定。
+    服务不可用 / 调用失败 / 输出不可解析 → 返回 None，由 Router 走关键词兜底。
+    """
+
+    def classify(self, query: str,
+                 user_ctx: Optional[dict] = None) -> Optional[IntentResult]:
+        from ...tools.llm_factory import get_llm, llm_available
+        from ..prompts.routing import DOMAIN_GROUPS, build_l1_prompt
+
+        if not llm_available():
+            return None
+        try:
+            llm = get_llm(temperature=0.0, tier="L1",
+                          max_tokens=80, timeout=20, thinking="disabled")
+            resp = llm.invoke(build_l1_prompt(query))
+            content = resp.content if hasattr(resp, "content") else str(resp)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("语义分类调用失败，转关键词兜底: %s", exc)
+            return None
+        match = re.search(r"\{.*\}", content, re.S)
+        if not match:
+            return None
+        try:
+            data = json.loads(match.group(0))
+        except json.JSONDecodeError:
+            return None
+        domain = str(data.get("domain", "")).strip()
+        if domain not in DOMAIN_GROUPS:
+            return None
+        confidence = float(data.get("confidence", 0.5) or 0.5)
+        if domain == "out_of_scope":
+            return IntentResult(domain=None, confidence=confidence, level="L1",
+                                low_confidence=confidence < 0.6,
+                                reason="语义匹配：超出平台覆盖范围")
+        return IntentResult(domain=domain, confidence=confidence, level="L1",
+                            low_confidence=confidence < 0.6,
+                            reason=f"语义匹配: {domain}")
+
+
+class RuleLLMClassifier(IntentClassifier):
+    """历史包装器（包装整个 TwoLevelRouter）——保留兼容，运行路径不再使用。
+
+    新代码请直接用 ``LLMClosedSetClassifier``（Router 已接线）。
     """
 
     def __init__(self, router: Any = None) -> None:

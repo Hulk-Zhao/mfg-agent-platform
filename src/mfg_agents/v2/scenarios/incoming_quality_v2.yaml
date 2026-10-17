@@ -87,10 +87,12 @@ steps:
     prompt: 退换货/特采决策确认
     approver_roles: [SQE, PQE, 生产]
     actions:
-      - {key: return_goods, label: 退货}
-      - {key: replace, label: 换货}
-      - {key: concession, label: 特采（三方会签）}
-      - {key: sort, label: 挑选}
+      - {key: return_goods, label: 退货, propose: [SQE], cosign: [采购], impact: "交期 +3~5 天 · 费用由供应商承担", followup: "采购发起索赔 / 物控锁定批次 / 计划重排"}
+      - {key: replace, label: 换货, propose: [SQE], cosign: [采购], impact: "交期 +5~10 天 · 需评估替代料", followup: "采购跟催新批次 / 物控锁批 / 计划调整"}
+      - {key: concession, label: 特采（让步接收）, propose: [SQE], cosign: [PQE, 业务, QA], require_comment: true, impact: "质量风险上升 · 需加严检验与批次追溯", followup: "加严检验 / SPC 加密 / 客户告知（按合同）"}
+      - {key: sort, label: 挑选/全检, propose: [PQE], cosign: [生产, 采购], impact: "工时成本上升 · 交付可控", followup: "制定挑选标准 / 生产排工时 / 供应商费用分摊"}
+      - {key: downgrade, label: 降级使用, propose: [QA], cosign: [业务], require_comment: true, impact: "仅限非功能项 · 需客户规格确认", followup: "客户确认 / 追溯标记"}
+      - {key: scrap, label: 报废, propose: [SQE], cosign: [财务], require_comment: true, impact: "成本损失 · 需补料", followup: "财务核销 / 采购补料"}
     timeout_s: 10
     on_error: degrade
 

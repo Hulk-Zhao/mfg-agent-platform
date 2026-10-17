@@ -1449,3 +1449,31 @@ a:hover { text-decoration: underline; }
   .login-panel { padding: 28px 22px 22px; }
   .role-grid { max-height: 62vh; }
 }
+
+/* ---------- 处置动作（按岗位权限） ---------- */
+
+.act-chips { display: flex; flex-wrap: wrap; gap: 7px; margin: 6px 0 8px; }
+.act-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  border: 1px solid var(--border-strong); background: #fff; color: var(--text);
+  border-radius: 8px; padding: 5px 10px; font-size: 12.5px; cursor: pointer;
+  transition: border-color .15s ease, background .15s ease, color .15s ease;
+}
+.act-chip:hover:not(.disabled) { border-color: var(--primary); color: var(--primary); background: var(--primary-light-2); }
+.act-chip.selected {
+  border-color: var(--primary); background: var(--primary-light); color: var(--primary-deep);
+  font-weight: 600; box-shadow: 0 0 0 2px rgba(24, 95, 165, .10);
+}
+.act-chip.disabled { opacity: .45; cursor: not-allowed; background: #F7F9FC; }
+.act-chip em {
+  font-style: normal; font-size: 10.5px; background: #fff; border: 1px solid var(--border);
+  border-radius: 4px; padding: 0 4px; color: var(--text-3);
+}
+.act-detail {
+  font-size: 12px; color: var(--text-2); background: #F8FAFD;
+  border: 1px dashed var(--border); border-radius: 8px;
+  padding: 8px 10px; line-height: 1.7; margin-bottom: 8px;
+}
+.act-detail b { color: var(--text); }
+.act-req { color: var(--warn); }
+.act-comment { margin: 4px 0 8px; }

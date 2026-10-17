@@ -81,14 +81,15 @@ def test_full_pipeline_stop_scenario(orchestrator):
 
 
 def test_degraded_mode_flags(orchestrator):
-    """degraded 硬性验收项：LLM 不可用 → 降级原因明确、结论模板化可审计。"""
+    """degraded 硬性验收项：分析服务不可用 → 受限原因明确、结论模板化可审计。"""
     result = orchestrator.handle(STOP_QUERY, USER_CTX)
     assert result.degraded is True
-    assert any("FA" in r for r in result.degraded_reasons)
+    assert any(("根因" in r) or ("FA" in r) for r in result.degraded_reasons)
     assert any("报告" in r for r in result.degraded_reasons)
     fa_prov = [p for p in result.provenance if p.get("channel") == "rag"]
-    assert fa_prov  # RAG 通道仍有检索记录
-    assert "degraded" in result.internal_brief["FA评级"]
+    assert fa_prov  # 历史案例通道仍有检索记录
+    assert ("模板化" in result.internal_brief["FA评级"]
+            or "degraded" in result.internal_brief["FA评级"])
 
 
 def test_pipeline_runs_multiple_times_stateless(orchestrator):

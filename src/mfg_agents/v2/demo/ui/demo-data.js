@@ -2,7 +2,7 @@
  * 演示数据模块（demo-data.js）
  *
  * 说明：本文件仅承载"演示数据"——看板 / 预警 / 报告 / 后端离线时的问数回放。
- * 问数 / 事件流 / HITL 审批在真实后端可达时一律走真实链路（见 app.js / screens.js），
+ * 问数 / 事件流 / 人工确认 审批在真实后端可达时一律走真实链路（见 app.js / screens.js），
  * 演示数据必须与真实链路输出保持同构（字段结构一致），切换时 UI 零适配。
  * 语义素材取自项目真实场景：A型号 / SMT-1 / 锡膏偏移 / 千住金属 / 深南电路 /
  * 华为终端 / BATCH-A-1008 / wf- 工单号 / PRT-01 刮刀压力 / OVN-02 回流焊。
@@ -181,7 +181,7 @@
         { k: "品质", v: "主导不良：锡膏偏移，共77pcs" },
         { k: "供应链", v: "今日1个批次到货，无来料异常" },
         { k: "设备", v: "近2小时3条设备异常：PRT-01 刮刀压力=0.8MPa（基准0.5）；PRT-01 钢网清洁周期=15min（基准4h）；OVN-02 回流温区3=245℃（基准235±5）" },
-        { k: "FA评级", v: "评级B，根因：设备参数异常（刮刀压力=0.8MPa（基准0.5））与锡膏偏移不良相关，疑似工艺偏差，预计2h复线" },
+        { k: "风险评级", v: "评级B，根因：设备参数异常（刮刀压力=0.8MPa（基准0.5））与锡膏偏移不良相关，疑似工艺偏差，预计2h复线" },
         { k: "仓储", v: "—" },
       ],
       workflow: "wf-07853f21e584 [running] 停线影响评估工单 | 受理: 计划,物控,业务 | SLA 2h | P1 通知",
@@ -210,12 +210,12 @@
       { ver: "v1.1", time: "2026-10-16 18:05", actor: "PQE · 王倩", badge: "已审定", badge_cls: "badge-blue",
         note: "脱敏词表修订：新增「根因 → 主因分析」映射，对客话术复核" },
       { ver: "v1.0", time: "2026-10-16 17:52", actor: "系统生成", badge: "历史版本", badge_cls: "badge-gray",
-        note: "初版内部简报（三域并行取证 + FA 评级 B）" },
+        note: "初版内部简报（三域并行取证 + 风险评级 B）" },
     ],
   };
 
-  /** HITL 审批中心 · 演示待办（后端不可达时使用；SLA 倒计时按当前时间动态计算） */
-  const DEMO_HITL = [
+  /** 审批确认中心 · 演示待办（后端不可达时使用；SLA 倒计时按当前时间动态计算） */
+  const DEMO_人工确认 = [
     { task_uid: "wf-1a06a9fa7625", kind: "restart", wf_id: "hitl_restart",
       title: "复线决策确认：是否按 FA 建议 ETA 复线？",
       approver_roles: ["制造现场负责人"], sla_hours_left: 1.3, priority: "P1",
@@ -233,14 +233,14 @@
              fa_rating: "B", eta_hours: 2, kind: "impact" } },
   ];
 
-  /** 智能问数 · 后端离线时的演示回放（**从真实运行输出采集生成**，非手写） */
+  /** 协同问数 · 后端离线时的演示回放（**从真实运行输出采集生成**，非手写） */
   const CHAT_DEMOS = {
     "A型号在SMT-1停线，何时复线？": {
       "events": [
         {
           "type": "agent_start",
           "node": "business",
-          "label": "业务Agent · 意图识别"
+          "label": "业务 · 问题识别"
         },
         {
           "type": "tool_start",
@@ -255,7 +255,7 @@
         {
           "type": "agent_end",
           "node": "business",
-          "label": "业务Agent · 意图识别",
+          "label": "业务 · 问题识别",
           "summary": "识别场景：line_stop | 型号：A型号 | 线体：SMT-1",
           "status": "ok",
           "elapsed_ms": 0.6
@@ -263,7 +263,7 @@
         {
           "type": "agent_start",
           "node": "confirm_stop",
-          "label": "制造Agent · 确认停线"
+          "label": "制造 · 确认停线"
         },
         {
           "type": "tool_start",
@@ -278,7 +278,7 @@
         {
           "type": "agent_end",
           "node": "confirm_stop",
-          "label": "制造Agent · 确认停线",
+          "label": "制造 · 确认停线",
           "summary": "SMT-1线A型号今日OEE=32.1%",
           "status": "ok",
           "elapsed_ms": 475.9
@@ -286,17 +286,17 @@
         {
           "type": "agent_start",
           "node": "equipment",
-          "label": "设备Agent · 查EAM"
+          "label": "设备 · 查设备日志"
         },
         {
           "type": "agent_start",
           "node": "quality",
-          "label": "品质Agent · 查QMS"
+          "label": "品质 · 查质量数据"
         },
         {
           "type": "agent_start",
           "node": "supply_chain",
-          "label": "供应链Agent · 查SCM"
+          "label": "供应链 · 查物料数据"
         },
         {
           "type": "tool_start",
@@ -326,7 +326,7 @@
         {
           "type": "agent_end",
           "node": "supply_chain",
-          "label": "供应链Agent · 查SCM",
+          "label": "供应链 · 查物料数据",
           "summary": "今日1个批次到货，无来料异常",
           "status": "ok",
           "elapsed_ms": 2.8
@@ -334,7 +334,7 @@
         {
           "type": "agent_end",
           "node": "equipment",
-          "label": "设备Agent · 查EAM",
+          "label": "设备 · 查设备日志",
           "summary": "近2小时3条设备异常：PRT-01 刮刀压力=0.8MPa（基准0.5）；PRT-01 钢网清洁周期=15min（基准4h）；OVN-02 回流温区3=245℃（基准235±5）",
           "status": "ok",
           "elapsed_ms": 3.6
@@ -347,7 +347,7 @@
         {
           "type": "agent_end",
           "node": "quality",
-          "label": "品质Agent · 查QMS",
+          "label": "品质 · 查质量数据",
           "summary": "主导不良：锡膏偏移，共77pcs",
           "status": "ok",
           "elapsed_ms": 3.7
@@ -368,7 +368,7 @@
         {
           "type": "agent_start",
           "node": "fa",
-          "label": "FA分析Agent · RAG推理"
+          "label": "根因分析 · 案例匹配"
         },
         {
           "type": "tool_start",
@@ -383,8 +383,8 @@
         {
           "type": "agent_end",
           "node": "fa",
-          "label": "FA分析Agent · RAG推理",
-          "summary": "评级B，根因：设备参数异常（刮刀压力=0.8MPa（基准0.5））与锡膏偏移不良相关，疑似工艺偏差，预计2h复线（degraded：LLM 不可用，模板化结论）",
+          "label": "根因分析 · 案例匹配",
+          "summary": "评级B，根因：设备参数异常（刮刀压力=0.8MPa（基准0.5））与锡膏偏移不良相关，疑似工艺偏差，预计2h复线（degraded：分析服务未就绪，模板化结论）",
           "status": "ok",
           "elapsed_ms": 1978.1
         },
@@ -430,12 +430,12 @@
         {
           "type": "agent_start",
           "node": "report",
-          "label": "报告Agent · 生成简报与对客报告"
+          "label": "报告 · 生成简报与对客报告"
         },
         {
           "type": "agent_end",
           "node": "report",
-          "label": "报告Agent · 生成简报与对客报告",
+          "label": "报告 · 生成简报与对客报告",
           "summary": "对客报告已生成（degraded 模板化 + 禁词表兜底）",
           "status": "ok",
           "elapsed_ms": 0.5
@@ -466,14 +466,14 @@
           "品质": "主导不良：锡膏偏移，共77pcs",
           "供应链": "今日1个批次到货，无来料异常",
           "设备": "近2小时3条设备异常：PRT-01 刮刀压力=0.8MPa（基准0.5）；PRT-01 钢网清洁周期=15min（基准4h）；OVN-02 回流温区3=245℃（基准235±5）",
-          "FA评级": "评级B，根因：设备参数异常（刮刀压力=0.8MPa（基准0.5））与锡膏偏移不良相关，疑似工艺偏差，预计2h复线（degraded：LLM 不可用，模板化结论）",
+          "风险评级": "评级B，根因：设备参数异常（刮刀压力=0.8MPa（基准0.5））与锡膏偏移不良相关，疑似工艺偏差，预计2h复线（degraded：分析服务未就绪，模板化结论）",
           "仓储": ""
         },
         "provenance": [
           {
             "channel": "registered",
             "query_name": "equip_alarms",
-            "desc": "EAM：线体设备异常告警（等价 V1 EquipmentAgent）",
+            "desc": "EAM：线体设备异常告警（等价 V1 Equipment）",
             "params": {
               "line": "SMT-1"
             },
@@ -507,7 +507,7 @@
           {
             "channel": "registered",
             "query_name": "mfg_oee",
-            "desc": "MES：指定线体/型号当日 OEE 与产出（等价 V1 ManufacturingAgent）",
+            "desc": "MES：指定线体/型号当日 OEE 与产出（等价 V1 Manufacturing）",
             "params": {
               "line": "SMT-1",
               "model": "A型号"
@@ -528,7 +528,7 @@
           {
             "channel": "registered",
             "query_name": "mfg_stop_ongoing",
-            "desc": "MES：进行中的停线事件（等价 V1 ManufacturingAgent）",
+            "desc": "MES：进行中的停线事件（等价 V1 Manufacturing）",
             "params": {
               "line": "SMT-1",
               "model": "A型号"
@@ -549,7 +549,7 @@
           {
             "channel": "registered",
             "query_name": "quality_defect_dist",
-            "desc": "QMS：不良分布聚合（等价 V1 QualityAgent）",
+            "desc": "QMS：不良分布聚合（等价 V1 Quality）",
             "params": {
               "line": "SMT-1",
               "model": "A型号"
@@ -583,7 +583,7 @@
           {
             "channel": "registered",
             "query_name": "supply_batches_today",
-            "desc": "SCM：今日到货来料批次（等价 V1 SupplyChainAgent）",
+            "desc": "SCM：今日到货来料批次（等价 V1 SupplyChain）",
             "params": {},
             "tables": [
               "material_batch"
@@ -692,7 +692,7 @@
             "task_uid": "wf-a5251c74daf4",
             "card": {
               "title": "[待确认] 复线决策确认：是否按 FA 建议 ETA 复线？",
-              "body": "复线决策确认：是否按 FA 建议 ETA 复线？\n线体: SMT-1 | 型号: A型号\nFA评级: B | 预估复线: 2h\n审批人: 制造现场负责人",
+              "body": "复线决策确认：是否按 FA 建议 ETA 复线？\n线体: SMT-1 | 型号: A型号\n风险评级: B | 预估复线: 2h\n审批人: 制造现场负责人",
               "actions": [
                 {
                   "key": "confirm_restart",
@@ -736,7 +736,7 @@
             "task_uid": "wf-a9f25e7a7692",
             "card": {
               "title": "[待确认] 对客 ETA 承诺确认：确认回复客户的预计恢复时间？",
-              "body": "对客 ETA 承诺确认：确认回复客户的预计恢复时间？\n线体: SMT-1 | 型号: A型号\nFA评级: B | 预估复线: 2h\n审批人: 业务经理",
+              "body": "对客 ETA 承诺确认：确认回复客户的预计恢复时间？\n线体: SMT-1 | 型号: A型号\n风险评级: B | 预估复线: 2h\n审批人: 业务经理",
               "actions": [
                 {
                   "key": "confirm_eta",
@@ -820,7 +820,7 @@
                 "业务"
               ],
               "title": "停线影响评估（SMT-1）",
-              "body": "停线影响评估工单\n线体: SMT-1 | 型号: A型号\nFA评级: B | 预估复线: 2h\n请评估排产/物料/对客影响（SLA 2h，超时自动升级）"
+              "body": "停线影响评估工单\n线体: SMT-1 | 型号: A型号\n风险评级: B | 预估复线: 2h\n请评估排产/物料/对客影响（SLA 2h，超时自动升级）"
             },
             "provenance": [
               {
@@ -850,8 +850,8 @@
         },
         "degraded": true,
         "degraded_reasons": [
-          "FA 分析 LLM 不可用：模板化结构化结论",
-          "报告生成 LLM 不可用：模板化 + 禁词表兜底"
+          "根因分析 分析服务未就绪：模板化结构化结论",
+          "报告生成 分析服务未就绪：模板化 + 禁词表兜底"
         ],
         "fallback": null,
         "elapsed_ms": 2768.6,
@@ -863,7 +863,7 @@
         {
           "type": "agent_start",
           "node": "intake",
-          "label": "业务Agent · 意图识别"
+          "label": "业务 · 问题识别"
         },
         {
           "type": "tool_start",
@@ -878,7 +878,7 @@
         {
           "type": "agent_end",
           "node": "intake",
-          "label": "业务Agent · 意图识别",
+          "label": "业务 · 问题识别",
           "summary": "识别场景：incoming_quality | 型号：A型号 | 线体：SMT-1",
           "status": "ok",
           "elapsed_ms": 0.4
@@ -1032,12 +1032,12 @@
         {
           "type": "agent_start",
           "node": "report_incoming",
-          "label": "报告Agent · 来料异常简报"
+          "label": "报告 · 来料异常简报"
         },
         {
           "type": "agent_end",
           "node": "report_incoming",
-          "label": "报告Agent · 来料异常简报",
+          "label": "报告 · 来料异常简报",
           "summary": "内部简报已生成（6 项）",
           "status": "ok",
           "elapsed_ms": 0.5
@@ -1223,7 +1223,7 @@
             "task_uid": "wf-8405f96d4725",
             "card": {
               "title": "[待确认] 退换货/特采决策确认",
-              "body": "退换货/特采决策确认\n线体: SMT-1 | 型号: A型号\nFA评级: ? | 预估复线: ?h\n审批人: SQE、PQE、生产",
+              "body": "退换货/特采决策确认\n线体: SMT-1 | 型号: A型号\n风险评级: ? | 预估复线: ?h\n审批人: SQE、PQE、生产",
               "actions": [
                 {
                   "key": "return_goods",
@@ -1344,7 +1344,7 @@
         },
         "degraded": true,
         "degraded_reasons": [
-          "报告生成 LLM 不可用：模板化 + 禁词表兜底"
+          "报告生成 分析服务未就绪：模板化 + 禁词表兜底"
         ],
         "fallback": null,
         "elapsed_ms": 160.9,
@@ -1356,7 +1356,7 @@
         {
           "type": "agent_start",
           "node": "intake",
-          "label": "业务Agent · 意图识别"
+          "label": "业务 · 问题识别"
         },
         {
           "type": "tool_start",
@@ -1371,7 +1371,7 @@
         {
           "type": "agent_end",
           "node": "intake",
-          "label": "业务Agent · 意图识别",
+          "label": "业务 · 问题识别",
           "summary": "识别场景：customer_complaint | 型号：A型号 | 线体：SMT-1",
           "status": "ok",
           "elapsed_ms": 0.3
@@ -1442,7 +1442,7 @@
         {
           "type": "tool_start",
           "tool": "规则模板",
-          "detail": "无 LLM/无数据源 → 模板化结论（不编造）"
+          "detail": "无 分析服务/无数据源 → 模板化结论（不编造）"
         },
         {
           "type": "tool_end",
@@ -1567,13 +1567,13 @@
         {
           "type": "agent_start",
           "node": "report_complaint",
-          "label": "报告Agent · 8D/对客报告"
+          "label": "报告 · 8D/对客报告"
         },
         {
           "type": "agent_end",
           "node": "report_complaint",
-          "label": "报告Agent · 8D/对客报告",
-          "summary": "内部简报已生成（6 项）；含数据缺口；对客报告（degraded 模板化）",
+          "label": "报告 · 8D/对客报告",
+          "summary": "内部简报已生成（6 项）；含数据缺口；对客报告（模板化）",
           "status": "ok",
           "elapsed_ms": 0.3
         }
@@ -1599,7 +1599,7 @@
         "report": "尊敬的客户：关于贵司反馈的批次质量问题，我们已立案并启动 8D 专项整改，对在库/在途批次实施围堵与复检。当前主因分析进行中，整改措施与关闭时间将以正式 8D 报告同步。感谢理解与支持。",
         "internal_brief": {
           "客诉摘要": "客诉 1 单（未闭环）；8D 骨架已合成，D2=华为终端",
-          "8D报告": "D1_team=质量牵头（QA）+ PQE + SQE + 工程 + 业务（客户接口）；D2_problem=华为终端 反馈：贴片元件偏移导致功能失效，不良率约2.3%（型号 A型号，批次 BATCH-A-1008）；D3_containment=在库/在途该批次冻结，已发货批次通知客户加严检验；D4_root_cause=过程不良以「贴片偏移」为主（46pcs），疑似贴装/工艺偏移；D5_permanent=工艺参数复核 + 首件全检 + 供应商来料加严（如需）；D6_validation=连续 3 批 CPK 达标且无同类不良后解除围堵；D7_prevent=更新 SOP/FMEA，纳入过程监控与供应商评级；D8_closure=待质量总监/QA 经理 HITL 确认关闭",
+          "8D报告": "D1_team=质量牵头（QA）+ PQE + SQE + 工程 + 业务（客户接口）；D2_problem=华为终端 反馈：贴片元件偏移导致功能失效，不良率约2.3%（型号 A型号，批次 BATCH-A-1008）；D3_containment=在库/在途该批次冻结，已发货批次通知客户加严检验；D4_root_cause=过程不良以「贴片偏移」为主（46pcs），疑似贴装/工艺偏移；D5_permanent=工艺参数复核 + 首件全检 + 供应商来料加严（如需）；D6_validation=连续 3 批 CPK 达标且无同类不良后解除围堵；D7_prevent=更新 SOP/FMEA，纳入过程监控与供应商评级；D8_closure=待质量总监/QA 经理 人工确认 确认关闭",
           "过程分析": "过程不良分布：1类，主导 贴片偏移（46pcs，合计46pcs）",
           "供应商侧": "批次供应商：供应商***（来料检验：合格）",
           "设计根因": "无 BOM/ECN/图纸数据源，未做设计根因推断",
@@ -1639,7 +1639,7 @@
             "channel": "template",
             "domain": "rd_engineering",
             "degraded": true,
-            "note": "规则模板生成（无 LLM/无数据源）"
+            "note": "规则模板生成（无 分析服务/无数据源）"
           },
           {
             "channel": "data_gap",
@@ -1668,7 +1668,7 @@
           {
             "channel": "registered",
             "query_name": "shipment_status",
-            "desc": "TMS：型号发货单状态与 ETA（等价 V1 WarehouseAgent）",
+            "desc": "TMS：型号发货单状态与 ETA（等价 V1 Warehouse）",
             "params": {
               "model": "A型号"
             },
@@ -1782,7 +1782,7 @@
             "task_uid": "wf-012d7aea6786",
             "card": {
               "title": "[待确认] 8D 报告关闭确认",
-              "body": "8D 报告关闭确认\n线体: SMT-1 | 型号: A型号\nFA评级: ? | 预估复线: ?h\n审批人: 质量总监、QA经理",
+              "body": "8D 报告关闭确认\n线体: SMT-1 | 型号: A型号\n风险评级: ? | 预估复线: ?h\n审批人: 质量总监、QA经理",
               "actions": [
                 {
                   "key": "close_8d",
@@ -1827,7 +1827,7 @@
             "task_uid": "wf-777eda1737fb",
             "card": {
               "title": "[待确认] 对客回复确认（脱敏后）",
-              "body": "对客回复确认（脱敏后）\n线体: SMT-1 | 型号: A型号\nFA评级: ? | 预估复线: ?h\n审批人: 业务经理",
+              "body": "对客回复确认（脱敏后）\n线体: SMT-1 | 型号: A型号\n风险评级: ? | 预估复线: ?h\n审批人: 业务经理",
               "actions": [
                 {
                   "key": "confirm_reply",
@@ -1947,7 +1947,7 @@
         },
         "degraded": true,
         "degraded_reasons": [
-          "报告生成 LLM 不可用：模板化 + 禁词表兜底"
+          "报告生成 分析服务未就绪：模板化 + 禁词表兜底"
         ],
         "fallback": null,
         "elapsed_ms": 166.0,
@@ -1959,7 +1959,7 @@
         {
           "type": "agent_start",
           "node": "intake",
-          "label": "业务Agent · 意图识别"
+          "label": "业务 · 问题识别"
         },
         {
           "type": "tool_start",
@@ -1974,7 +1974,7 @@
         {
           "type": "agent_end",
           "node": "intake",
-          "label": "业务Agent · 意图识别",
+          "label": "业务 · 问题识别",
           "summary": "识别场景：delivery_risk | 型号：A型号 | 线体：SMT-1",
           "status": "ok",
           "elapsed_ms": 0.2
@@ -2190,13 +2190,13 @@
         {
           "type": "agent_start",
           "node": "report_delivery",
-          "label": "报告Agent · 出货风险简报"
+          "label": "报告 · 出货风险简报"
         },
         {
           "type": "agent_end",
           "node": "report_delivery",
-          "label": "报告Agent · 出货风险简报",
-          "summary": "内部简报已生成（7 项）；对客报告（degraded 模板化）",
+          "label": "报告 · 出货风险简报",
+          "summary": "内部简报已生成（7 项）；对客报告（模板化）",
           "status": "ok",
           "elapsed_ms": 0.4
         }
@@ -2382,7 +2382,7 @@
             "task_uid": "wf-b18739545dd8",
             "card": {
               "title": "[待确认] 对客交期承诺确认",
-              "body": "对客交期承诺确认\n线体: SMT-1 | 型号: A型号\nFA评级: ? | 预估复线: ?h\n审批人: 业务经理",
+              "body": "对客交期承诺确认\n线体: SMT-1 | 型号: A型号\n风险评级: ? | 预估复线: ?h\n审批人: 业务经理",
               "actions": [
                 {
                   "key": "confirm_commit",
@@ -2519,7 +2519,7 @@
         },
         "degraded": true,
         "degraded_reasons": [
-          "报告生成 LLM 不可用：模板化 + 禁词表兜底"
+          "报告生成 分析服务未就绪：模板化 + 禁词表兜底"
         ],
         "fallback": null,
         "elapsed_ms": 150.8,
@@ -2531,7 +2531,7 @@
         {
           "type": "agent_start",
           "node": "intake",
-          "label": "业务Agent · 意图识别"
+          "label": "业务 · 问题识别"
         },
         {
           "type": "tool_start",
@@ -2546,7 +2546,7 @@
         {
           "type": "agent_end",
           "node": "intake",
-          "label": "业务Agent · 意图识别",
+          "label": "业务 · 问题识别",
           "summary": "识别场景：equipment_warning | 型号：A型号 | 线体：SMT-1",
           "status": "ok",
           "elapsed_ms": 0.2
@@ -2554,7 +2554,7 @@
         {
           "type": "agent_start",
           "node": "equipment_check",
-          "label": "设备Agent · 查EAM"
+          "label": "设备 · 查设备日志"
         },
         {
           "type": "tool_start",
@@ -2569,7 +2569,7 @@
         {
           "type": "agent_end",
           "node": "equipment_check",
-          "label": "设备Agent · 查EAM",
+          "label": "设备 · 查设备日志",
           "summary": "近2小时3条设备异常：PRT-01 刮刀压力=0.8MPa（基准0.5）；PRT-01 钢网清洁周期=15min（基准4h）；OVN-02 回流温区3=245℃（基准235±5）",
           "status": "ok",
           "elapsed_ms": 1.3
@@ -2587,7 +2587,7 @@
         {
           "type": "tool_start",
           "tool": "规则模板",
-          "detail": "无 LLM/无数据源 → 模板化结论（不编造）"
+          "detail": "无 分析服务/无数据源 → 模板化结论（不编造）"
         },
         {
           "type": "tool_end",
@@ -2625,7 +2625,7 @@
         {
           "type": "tool_start",
           "tool": "规则模板",
-          "detail": "无 LLM/无数据源 → 模板化结论（不编造）"
+          "detail": "无 分析服务/无数据源 → 模板化结论（不编造）"
         },
         {
           "type": "tool_end",
@@ -2721,12 +2721,12 @@
         {
           "type": "agent_start",
           "node": "report_equipment",
-          "label": "报告Agent · 设备简报"
+          "label": "报告 · 设备简报"
         },
         {
           "type": "agent_end",
           "node": "report_equipment",
-          "label": "报告Agent · 设备简报",
+          "label": "报告 · 设备简报",
           "summary": "内部简报已生成（5 项）；含数据缺口",
           "status": "ok",
           "elapsed_ms": 0.3
@@ -2763,7 +2763,7 @@
           {
             "channel": "registered",
             "query_name": "equip_alarms",
-            "desc": "EAM：线体设备异常告警（等价 V1 EquipmentAgent）",
+            "desc": "EAM：线体设备异常告警（等价 V1 Equipment）",
             "params": {
               "line": "SMT-1"
             },
@@ -2791,7 +2791,7 @@
           {
             "channel": "registered",
             "query_name": "equip_alarms",
-            "desc": "EAM：线体设备异常告警（等价 V1 EquipmentAgent）",
+            "desc": "EAM：线体设备异常告警（等价 V1 Equipment）",
             "params": {
               "line": "SMT-1"
             },
@@ -2812,7 +2812,7 @@
             "channel": "template",
             "domain": "rd_engineering",
             "degraded": true,
-            "note": "规则模板生成（无 LLM/无数据源）"
+            "note": "规则模板生成（无 分析服务/无数据源）"
           },
           {
             "channel": "data_gap",
@@ -2847,7 +2847,7 @@
             "channel": "template",
             "domain": "supply_chain",
             "degraded": true,
-            "note": "规则模板生成（无 LLM/无数据源）"
+            "note": "规则模板生成（无 分析服务/无数据源）"
           },
           {
             "channel": "data_gap",
@@ -2942,7 +2942,7 @@
             "task_uid": "wf-95c419fa4013",
             "card": {
               "title": "[待确认] 停机窗口确认",
-              "body": "停机窗口确认\n线体: SMT-1 | 型号: A型号\nFA评级: ? | 预估复线: ?h\n审批人: 制造现场负责人",
+              "body": "停机窗口确认\n线体: SMT-1 | 型号: A型号\n风险评级: ? | 预估复线: ?h\n审批人: 制造现场负责人",
               "actions": [
                 {
                   "key": "confirm_window",
@@ -3053,7 +3053,7 @@
         },
         "degraded": true,
         "degraded_reasons": [
-          "报告生成 LLM 不可用：模板化 + 禁词表兜底"
+          "报告生成 分析服务未就绪：模板化 + 禁词表兜底"
         ],
         "fallback": null,
         "elapsed_ms": 123.2,
@@ -3066,6 +3066,6 @@
   const CHAT_DEMO = CHAT_DEMOS["A型号在SMT-1停线，何时复线？"];
 
   window.DEMO = {
-    ROLES, ALERT_SUMMARY, DEMO_TODOS, ORDERS, ALERTS, REPORTS, DEMO_HITL, CHAT_DEMO, CHAT_DEMOS,
+    ROLES, ALERT_SUMMARY, DEMO_TODOS, ORDERS, ALERTS, REPORTS, DEMO_人工确认, CHAT_DEMO, CHAT_DEMOS,
   };
 })();

@@ -157,14 +157,29 @@ class WorkflowEngine:
         return self._transition(task_uid, action_map[action], actor, action, comment)
 
     def approve(self, task_uid: str, approver: str,
-                comment: str = "", final: bool = False) -> WorkflowTask:
-        """HITL 审批通过：waiting_hitl → running（final=True 时 → done）。"""
-        return self._transition(task_uid, "done" if final else "running",
-                                approver, "approve", comment)
+                comment: str = "", final: bool = False,
+                decision: str = "") -> WorkflowTask:
+        """HITL 审批通过：waiting_hitl → running（final=True 时 → done）。
 
-    def reject(self, task_uid: str, approver: str, comment: str = "") -> WorkflowTask:
+        decision：所选处置动作（如"特采（让步接收）"），写入 history 供审计。
+        """
+        return self._transition(task_uid, "done" if final else "running",
+                                approver, "approve",
+                                self._with_decision(decision, comment))
+
+    def reject(self, task_uid: str, approver: str, comment: str = "",
+               decision: str = "") -> WorkflowTask:
         """HITL 审批驳回：→ closed。"""
-        return self._transition(task_uid, "closed", approver, "reject", comment)
+        return self._transition(task_uid, "closed", approver, "reject",
+                                self._with_decision(decision, comment))
+
+    @staticmethod
+    def _with_decision(decision: str, comment: str) -> str:
+        """把处置动作并入审批意见（history 可读、可审计）。"""
+        decision = (decision or "").strip()
+        if not decision:
+            return comment
+        return f"决策：{decision}；{comment}" if comment else f"决策：{decision}"
 
     def escalate(self, task_uid: str, reason: str,
                  actor: str = "system") -> WorkflowTask:

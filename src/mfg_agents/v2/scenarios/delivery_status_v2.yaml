@@ -104,8 +104,10 @@ steps:
     prompt: 对客交期承诺确认
     approver_roles: [业务经理]
     actions:
-      - {key: confirm_commit, label: 确认交期}
-      - {key: revise_commit, label: 调整交期}
+      - {key: commit_atp, label: 按可承诺量承诺, propose: [业务经理], cosign: [计划], impact: "已核算可承诺量 · 需排产确认", followup: "锁定库存 / 通知物流"}
+      - {key: partial_ship, label: 分批出货, propose: [业务经理], cosign: [仓库, 物流], impact: "先保重点客户 · 后续补齐", followup: "拆分订单 / 物流排期"}
+      - {key: expedite, label: 转加急生产, propose: [业务经理], cosign: [计划, 生产], require_comment: true, impact: "成本上升 · 交期缩短", followup: "加急工单 / 物料优先"}
+      - {key: escalate_sales, label: 升级销售总监, propose: [业务经理], impact: "重大订单 · 高层决策", followup: "升级工单"}
     timeout_s: 10
     on_error: degrade
 

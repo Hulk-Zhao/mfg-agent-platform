@@ -147,6 +147,7 @@ class WorkflowActionRequest(BaseModel):
     approver: str = "演示用户"
     comment: str = ""
     final: bool = False
+    decision: str = ""   # 所选处置动作（如"特采（让步接收）"），写入审批留痕
 
 
 def _workflow_engine() -> WorkflowEngine:
@@ -167,7 +168,8 @@ def api_workflow_approve(task_id: str,
     """HITL 审批通过：waiting_hitl → running（final=True 时 → done）。"""
     try:
         task = _workflow_engine().approve(task_id, req.approver,
-                                          req.comment, final=req.final)
+                                          req.comment, final=req.final,
+                                          decision=req.decision)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except WorkflowTransitionError as exc:
@@ -180,7 +182,8 @@ def api_workflow_reject(task_id: str,
                         req: WorkflowActionRequest) -> dict[str, Any]:
     """HITL 审批驳回：waiting_hitl → closed（回写审批人与意见）。"""
     try:
-        task = _workflow_engine().reject(task_id, req.approver, req.comment)
+        task = _workflow_engine().reject(task_id, req.approver, req.comment,
+                                         decision=req.decision)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except WorkflowTransitionError as exc:

@@ -100,8 +100,9 @@ steps:
     prompt: 复线决策确认：是否按 FA 建议 ETA 复线？
     approver_roles: [制造现场负责人]
     actions:
-      - {key: confirm_restart, label: 确认复线方案}
-      - {key: hold, label: 暂缓复线}
+      - {key: confirm_restart, label: 按建议复线, propose: [制造现场负责人], cosign: [PQE, 设备工程], impact: "恢复产出 · 需质量放行", followup: "首件确认 / 复线验证"}
+      - {key: hold, label: 暂缓复线, propose: [制造现场负责人], require_comment: true, impact: "停线时长增加 · 需更新交期", followup: "更新影响评估 / 通知业务"}
+      - {key: partial, label: 分批试产复线, propose: [制造现场负责人], cosign: [PQE], impact: "小批验证 · 风险可控", followup: "试产首件 / 加严巡检"}
     timeout_s: 10
     on_error: degrade
 
@@ -112,8 +113,9 @@ steps:
     prompt: 对客 ETA 承诺确认：确认回复客户的预计恢复时间？
     approver_roles: [业务经理]
     actions:
-      - {key: confirm_eta, label: 确认对客ETA}
-      - {key: revise_eta, label: 修改ETA}
+      - {key: commit_planned, label: 按评估时间承诺, propose: [业务经理], cosign: [计划], impact: "口径按评估 · 需产能确认", followup: "更新客户交期 / 通知物流"}
+      - {key: commit_buffered, label: 加缓冲承诺, propose: [业务经理], impact: "降低超期风险 · 客户体验略降", followup: "更新客户交期"}
+      - {key: escalate_exec, label: 升级销售总监, propose: [业务经理], impact: "重大客户 · 需高层决策", followup: "升级工单 / 高层沟通"}
     timeout_s: 10
     on_error: degrade
 

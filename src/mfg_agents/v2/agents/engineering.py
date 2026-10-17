@@ -58,12 +58,12 @@ def make_template_agent(domain: str, template_fn: TemplateFn, *,
         out = dict(template_fn(ctx, task))
         gaps = _as_list(out.get("data_gap"))
         sink.emit({"type": "tool_start", "tool": "规则模板",
-                   "detail": "无 LLM/无数据源 → 模板化结论（不编造）"})
+                   "detail": "无数据源 → 模板化结论（不臆造）"})
         sink.emit({"type": "tool_end", "tool": "规则模板",
                    "detail": "；".join(gaps) or "模板化结论"})
         provenance: list[dict] = [
             {"channel": "template", "domain": domain, "degraded": True,
-             "note": "规则模板生成（无 LLM/无数据源）"}]
+             "note": "规则模板生成（无数据源）"}]
         for gap in gaps:
             provenance.append({"channel": "data_gap", "domain": domain,
                                "note": gap})

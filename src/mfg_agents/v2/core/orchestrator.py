@@ -110,6 +110,19 @@ class OrchestratorResult:
         }
 
 
+# 节点 id → 中文环节名（降级原因用业务语言，不暴露内部术语）
+_NODE_CN: dict[str, str] = {
+    "business": "业务受理", "confirm_stop": "停线确认",
+    "quality": "品质", "supply_chain": "供应链", "equipment": "设备",
+    "planning": "计划", "material_control": "物控", "procurement": "采购",
+    "qa_lead": "QA", "pqe_process": "PQE", "sqe_supplier": "SQE",
+    "engineering": "工程", "business_sales": "业务",
+    "maintenance": "维保", "planning_window": "计划窗口",
+    "engineering_param": "工程参数", "spare_parts": "备件",
+    "fa": "根因分析", "report": "报告",
+}
+
+
 class V2Orchestrator:
     """智能总控（V2 骨架）：唯一任务入口与出口。"""
 
@@ -155,12 +168,13 @@ class V2Orchestrator:
         result.timings = dag.timings
         result.provenance = self._collect_provenance(ctx, dag)
         if ctx.get("fa_degraded"):
-            result.degraded_reasons.append("FA 分析 LLM 不可用：模板化结构化结论")
+            result.degraded_reasons.append("根因分析服务未就绪：已输出模板化结构结论")
         if ctx.get("report_degraded"):
-            result.degraded_reasons.append("报告生成 LLM 不可用：模板化 + 禁词表兜底")
+            result.degraded_reasons.append("报告生成服务未就绪：模板化输出 + 禁词过滤")
         for node in dag.degraded_nodes:
+            label = _NODE_CN.get(node, node)
             result.degraded_reasons.append(
-                f"节点 {node} 降级（数据缺口/超时），已输出可复核结论")
+                f"{label}环节数据不完整（缺少数据源），已标注缺口并输出可复核结论")
         result.degraded = bool(result.degraded_reasons) or bool(dag.degraded_nodes)
         result.elapsed_ms = (time.perf_counter() - t0) * 1000
         logger.info("[orchestrator] %s 场景 %s 完成，耗时 %.1fms，降级=%s",
@@ -173,7 +187,7 @@ class V2Orchestrator:
     def _degraded_reasons(route: RouteResult) -> list[str]:
         reasons: list[str] = []
         if route.level == "degrade":
-            reasons.append("LLM 不可用：路由降级为规则模糊匹配")
+            reasons.append("语义匹配服务未就绪，已按规则关键词匹配")
         if route.low_confidence:
             reasons.append(f"路由低置信度（{route.confidence:.2f}）：建议人工复核")
         return reasons

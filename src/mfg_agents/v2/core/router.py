@@ -8,17 +8,14 @@
 """
 from __future__ import annotations
 
-import json
 import logging
-import re
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-from ...tools.llm_factory import get_llm, llm_available
+from ...tools.llm_factory import llm_available
 from ..contracts.scenario import ScenarioRegistry
-# 域组定义与 L1 prompt 已迁移至 prompts/routing（§6.3，逐字节一致）；
-# 此处再导出 DOMAIN_GROUPS，保持 router 对外符号不变。
-from ..prompts.routing import DOMAIN_GROUPS, build_l1_prompt
+# 域组定义已迁移至 prompts/routing；此处再导出 DOMAIN_GROUPS，保持 router 对外符号不变。
+from ..prompts.routing import DOMAIN_GROUPS
 
 logger = logging.getLogger(__name__)
 
@@ -75,10 +72,14 @@ class RouteResult:
 
 
 class TwoLevelRouter:
-    """两级路由器：L0 关键词快路径 → L1 LLM 闭集分类 →（降级）规则模糊匹配。"""
+    """两级路由器：L0 关键词快路径 → L1 语义闭集分类 →（兜底）关键词模糊匹配。"""
 
-    def __init__(self, scenario_registry: Optional[ScenarioRegistry] = None) -> None:
+    def __init__(self, scenario_registry: Optional[ScenarioRegistry] = None,
+                 intent_classifier: Optional[Any] = None) -> None:
         self.scenario_registry = scenario_registry
+        # L1 分类已接线到 intent 模块（可注入替换，便于后续换独立分类模型）
+        from ..intent.classifier import LLMClosedSetClassifier
+        self.intent_classifier = intent_classifier or LLMClosedSetClassifier()
 
     def route(self, query: str, user_ctx: Optional[dict] = None) -> RouteResult:
         """路由入口：先 L0，未命中再 L1，LLM 不可用则降级。"""
@@ -125,40 +126,24 @@ class TwoLevelRouter:
                 )
         return None
 
-    # ---------- L1：LLM 闭集分类 ----------
+    # ---------- L1：语义闭集分类（委托 intent.classifier） ----------
 
     def _route_l1(self, query: str) -> Optional[RouteResult]:
-        prompt = build_l1_prompt(query)
-        try:
-            llm = get_llm(temperature=0.0, tier="L1",
-                          max_tokens=80, timeout=20, thinking="disabled")
-            resp = llm.invoke(prompt)
-            content = resp.content if hasattr(resp, "content") else str(resp)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("L1 分类调用失败，转降级: %s", exc)
+        intent = self.intent_classifier.classify(query)
+        if intent is None:
             return None
-        match = re.search(r"\{.*\}", content, re.S)
-        if not match:
-            return None
-        try:
-            data = json.loads(match.group(0))
-        except json.JSONDecodeError:
-            return None
-        domain = str(data.get("domain", "")).strip()
-        if domain not in DOMAIN_GROUPS:
-            return None
-        confidence = float(data.get("confidence", 0.5) or 0.5)
-        if domain == "out_of_scope":
-            return RouteResult(domain=None, scenario_key=None, confidence=confidence,
-                               level="L1", low_confidence=confidence < 0.6,
-                               reason="L1 判定超出平台范围")
+        if intent.domain is None:  # 超出平台范围
+            return RouteResult(domain=None, scenario_key=None,
+                               confidence=intent.confidence, level="L1",
+                               low_confidence=intent.low_confidence,
+                               reason=intent.reason)
         return RouteResult(
-            domain=domain,
-            scenario_key=self._scenario_for_domain(domain),
-            confidence=confidence,
+            domain=intent.domain,
+            scenario_key=self._scenario_for_domain(intent.domain),
+            confidence=intent.confidence,
             level="L1",
-            low_confidence=confidence < 0.6,
-            reason=f"L1 分类: {domain}",
+            low_confidence=intent.low_confidence,
+            reason=intent.reason,
         )
 
     # ---------- 降级：规则模糊匹配（offline 兜底） ----------

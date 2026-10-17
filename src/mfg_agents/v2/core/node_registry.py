@@ -125,7 +125,7 @@ def build_handlers(runtime: Any) -> dict[str, Any]:
                    f"型号：{state.get('product_model')} | "
                    f"线体：{state.get('line_code')}")
         sink.emit({"type": "tool_start", "tool": "意图识别",
-                   "detail": "两级路由（L0 规则快路径 / L1 闭集分类 / 降级模糊匹配）"})
+                   "detail": "问题匹配（规则优先 / 语义补充 / 关键词兜底）"})
         sink.emit({"type": "tool_end", "tool": "意图识别", "detail": summary})
         return {"domain": "orchestration", "status": "ok",
                 "payload": dict(state), "summary": summary}
@@ -267,7 +267,7 @@ def build_handlers(runtime: Any) -> dict[str, Any]:
             rating, eta, root, verif = _fa_template(defect, alarms)
         fa_summary = f"评级{rating}，根因：{root}，预计{eta}h复线"
         if degraded:
-            fa_summary += "（degraded：LLM 不可用，模板化结论）"
+            fa_summary += "（模板化结论：分析服务未就绪）"
         return {"domain": "fa", "status": "ok", "payload": {
             "fa_cases": cases, "fa_rating": rating, "root_cause": root,
             "eta_hours": eta, "verification_items": verif,

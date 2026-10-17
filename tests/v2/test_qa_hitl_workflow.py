@@ -73,12 +73,15 @@ class TestHitlWaiting:
             assert row["history_json"] and row["history_json"] != "[]"
 
     def test_hitl_cards_carry_actions(self, orchestrator):
-        """HITL 卡片带确认/暂缓按钮（IM 回写 advance 的入口）。"""
+        """HITL 卡片带结构化处置动作（发起角色 / 会签 / 影响 / 后续动作）。"""
         result = orchestrator.handle(STOP_QUERY, USER_CTX)
-        actions = {h["kind"]: [a["key"] for a in h["actions"]]
-                   for h in result.hitl}
-        assert actions["restart"] == ["confirm_restart", "hold"]
-        assert actions["eta"] == ["confirm_eta", "revise_eta"]
+        by_kind = {h["kind"]: h["actions"] for h in result.hitl}
+        assert [a["key"] for a in by_kind["restart"]] == [
+            "confirm_restart", "hold", "partial"]
+        assert [a["key"] for a in by_kind["eta"]] == [
+            "commit_planned", "commit_buffered", "escalate_exec"]
+        first = by_kind["restart"][0]
+        assert first["propose"] and first["cosign"] and first["impact"]
 
 
 # ---------- 2. 无自动放行路径 ----------

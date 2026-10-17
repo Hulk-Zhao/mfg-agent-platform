@@ -1,11 +1,11 @@
 /**
- * 制造业多智能体协同平台 · 六屏渲染（screens.js）
+ * 智造协同平台 · 六屏渲染（screens.js）
  *
- * 屏幕：工作台 / 订单履约看板 / 智能问数 / 预警中心 / 报告中心 / HITL 审批中心。
+ * 屏幕：工作台 / 订单履约看板 / 协同问数 / 预警中心 / 报告中心 / 审批确认中心。
  * 每个 render_xxx(root, ctx) 独立渲染，可重复调用（状态经 ctx.state.screenState 持久）。
  *
- * 真实链路：智能问数（POST /api/v2/query + SSE /api/v2/events）、
- *           HITL 审批（GET /api/v2/workflow/pending + approve/reject）。
+ * 真实链路：协同问数（POST /api/v2/query + SSE /api/v2/events）、
+ *           人工确认 审批（GET /api/v2/workflow/pending + approve/reject）。
  * 演示数据：订单看板 / 预警 / 报告 / 后端离线时的问数回放（均明确标注）。
  */
 (function () {
@@ -86,7 +86,7 @@
   }
 
   /* ============================================================
-   * 共享：HITL 审批动作（工作台 / 问数 / 审批中心共用）
+   * 共享：人工确认 审批动作（工作台 / 问数 / 审批中心共用）
    * ============================================================ */
 
   function processedMap(ctx) {
@@ -123,26 +123,46 @@
     if (map[taskUid]) return;
     const role = ctx.currentRole();
 
+    // 动作校验：有可选动作时必须先选；需填依据的动作必须写理由
+    const acts = normalizeActions(_hitlActions[taskUid] || []);
+    const sel = hitlSelMap(ctx)[taskUid];
+    const commentEl = document.getElementById(`act-comment-${taskUid}`)
+      || document.getElementById("hitl-comment");
+    const commentText = commentEl && commentEl.value ? commentEl.value.trim() : "";
+    if (action === "approve") {
+      if (acts.length && !sel) {
+        ctx.UI.toast("请先选择一个处置动作（按你的岗位权限）", "warn", 3200);
+        return;
+      }
+      if (sel && sel.require_comment && !commentText) {
+        ctx.UI.toast("该动作需填写决策依据（将写入工单留痕）", "warn", 3400);
+        return;
+      }
+    }
+    const decision = sel ? sel.label : "";
     if (!ctx.api.online()) {
       map[taskUid] = {
         action, status: action === "approve" ? "running" : "closed",
-        actor: role.user, time: new Date().toISOString(), demo: true,
+        actor: role.user, time: new Date().toISOString(), demo: true, decision,
       };
       ctx.UI.toast("后端离线——演示模式：已在界面标记为已处理（未真实调用后端）", "info", 4200);
       ctx.refreshScreen();
       return;
     }
-    const comment = action === "approve" ? "门户审批：同意" : "门户审批：驳回";
+    const comment = (action === "approve" ? "门户审批：同意" : "门户审批：驳回")
+      + (commentText ? "；" + commentText : "");
     try {
       const task = action === "approve"
-        ? await ctx.api.workflowApprove(taskUid, role.user, comment, false)
-        : await ctx.api.workflowReject(taskUid, role.user, comment);
+        ? await ctx.api.workflowApprove(taskUid, role.user, comment, false, decision)
+        : await ctx.api.workflowReject(taskUid, role.user, comment, decision);
       const last = task.history && task.history.length ? task.history[task.history.length - 1] : null;
       map[taskUid] = {
         action, status: task.status,
         actor: (last && last.actor) || role.user,
         time: task.updated_at || new Date().toISOString(),
+        decision,
       };
+      delete hitlSelMap(ctx)[taskUid];  // 处理后清除选择，避免跨工单串用
       // 缓存刷新为审批后的工单（history 含 create + approve 两条留痕）
       ctx.state.screenState.hitlCache = ctx.state.screenState.hitlCache || {};
       ctx.state.screenState.hitlCache[taskUid] = task;
@@ -185,9 +205,6 @@
         <div class="hero">
           <div class="hero-greeting">${greet}，${UI.esc(role.user)}${UI.icon("sparkle", 18)}</div>
           <div class="hero-sub">${UI.esc(today)} · ${UI.esc(role.greeting)}。${UI.esc(role.desc)}。</div>
-          <div class="role-switch" id="role-switch">
-            ${DEMO.ROLES.map((r) => `<button class="role-btn${r.id === role.id ? " active" : ""}" data-role="${r.id}">${UI.esc(r.name)}</button>`).join("")}
-          </div>
         </div>
 
         <div class="section-title">今日预警摘要 <span class="section-extra">统计范围：${UI.esc(role.name)}视角</span></div>
@@ -209,12 +226,12 @@
           </div>
           <div class="card stat-card">
             <div class="stat-icon blue">${UI.icon("approve", 19)}</div>
-            <div><div class="stat-num" id="dash-hitl-count">—</div><div class="stat-label">HITL 待审批</div>
+            <div><div class="stat-num" id="dash-hitl-count">—</div><div class="stat-label">待人工确认</div>
             <div class="stat-trend">${UI.icon("clock", 12)} 停线工单 SLA 2h</div></div>
           </div>
         </div>
 
-        <div class="section-title">待办中心 <span class="section-extra" id="todo-source">HITL 挂起项 · 加载中…</span></div>
+        <div class="section-title">待办中心 <span class="section-extra" id="todo-source">待确认事项 · 加载中…</span></div>
         <div class="card">
           <div class="card-head">
             <div class="card-title">${UI.icon("approve", 16)}人工在环待确认</div>
@@ -229,7 +246,7 @@
         <div class="grid grid-3">
           <button class="quick-entry" data-goto="chat">
             <span class="qe-ico" style="background:var(--primary-light);color:var(--primary)">${UI.icon("chat", 20)}</span>
-            智能问数<span style="font-size:11.5px;color:var(--text-3);font-weight:400">对话式多智能体协同分析</span>
+            协同问数<span style="font-size:11.5px;color:var(--text-3);font-weight:400">对话式跨部门协同分析</span>
           </button>
           <button class="quick-entry" data-goto="orders">
             <span class="qe-ico" style="background:var(--warn-bg);color:var(--warn)">${UI.icon("orders", 20)}</span>
@@ -237,7 +254,7 @@
           </button>
           <button class="quick-entry" data-goto="hitl">
             <span class="qe-ico" style="background:var(--ok-bg);color:var(--ok)">${UI.icon("approve", 20)}</span>
-            HITL 审批中心<span style="font-size:11.5px;color:var(--text-3);font-weight:400">复线决策 / 对客 ETA 审批</span>
+            审批确认中心<span style="font-size:11.5px;color:var(--text-3);font-weight:400">复线决策 / 对客 ETA 审批</span>
           </button>
         </div>
       </div>`;
@@ -260,7 +277,7 @@
     const UI = ctx.UI, DEMO = ctx.DEMO;
 
     if (!ctx.api.online()) {
-      if (source) source.innerHTML = `HITL 挂起项 · ${UI.demoFlag("后端离线 · 演示数据")}`;
+      if (source) source.innerHTML = `待确认事项 · ${UI.demoFlag("后端离线 · 演示数据")}`;
       if (count) count.textContent = String(DEMO.DEMO_TODOS.length);
       list.innerHTML = DEMO.DEMO_TODOS.map((t) => demoTodoHtml(ctx, t)).join("");
       bindTodoActions(ctx, list);
@@ -269,18 +286,18 @@
     try {
       const raw = await ctx.api.workflowPending();
       if (ctx.state.screen !== "dashboard") return;
-      if (source) source.innerHTML = `HITL 挂起项 · ${UI.realFlag("WorkflowEngine 待办队列")}`;
+      if (source) source.innerHTML = `待确认事项 · ${UI.realFlag("WorkflowEngine 待办队列")}`;
       if (count) count.textContent = String(raw.length);
       const tasks = mergeProcessedTasks(ctx, raw);
       if (!tasks.length) {
-        list.innerHTML = `<div class="empty">${UI.icon("check", 30)}<div style="margin-top:8px">当前无 HITL 挂起项——所有关键决策均已处理</div></div>`;
+        list.innerHTML = `<div class="empty">${UI.icon("check", 30)}<div style="margin-top:8px">当前无 待确认事项——所有关键决策均已处理</div></div>`;
         return;
       }
       list.innerHTML = tasks.slice(0, 4).map((t) => realTodoHtml(ctx, t)).join("");
       bindTodoActions(ctx, list);
     } catch (err) {
       if (ctx.state.screen !== "dashboard") return;
-      if (source) source.innerHTML = `HITL 挂起项 · ${UI.demoFlag("待办加载失败 · 演示数据")}`;
+      if (source) source.innerHTML = `待确认事项 · ${UI.demoFlag("待办加载失败 · 演示数据")}`;
       if (count) count.textContent = String(DEMO.DEMO_TODOS.length);
       list.innerHTML = DEMO.DEMO_TODOS.map((t) => demoTodoHtml(ctx, t)).join("");
       bindTodoActions(ctx, list);
@@ -301,7 +318,7 @@
           <span>工单 <b>${UI.esc(t.task_uid)}</b></span>
           <span>审批人 <b>${UI.esc(t.approver)}</b></span>
           <span>线体/型号 <b>${UI.esc(meta.line || "-")} / ${UI.esc(meta.model || "-")}</b></span>
-          <span>FA 评级 <b>${UI.esc(meta.rating || "-")}</b></span>
+          <span>风险评级 <b>${UI.esc(meta.rating || "-")}</b></span>
         </div>
         <div style="margin-top:8px;max-width:280px">${slaHtml(due, 7200000)}</div>
         ${hitlProcessedBanner(ctx, t.task_uid)}
@@ -451,7 +468,7 @@
   }
 
   /* ============================================================
-   * 屏幕三：智能问数（核心屏 · 真实后端）
+   * 屏幕三：协同问数（核心屏 · 真实后端）
    * ============================================================ */
 
   const PARALLEL_NODES = new Set([
@@ -475,25 +492,25 @@
   ];
   // 节点展示名（YAML label 未定义时的兜底；事件通常已带 label）
   const NODE_LABELS = {
-    business: "业务Agent · 意图识别",
-    confirm_stop: "制造Agent · 确认停线",
-    quality: "品质Agent · 查QMS",
-    supply_chain: "供应链Agent · 查SCM",
-    equipment: "设备Agent · 查EAM",
+    business: "业务 · 问题识别",
+    confirm_stop: "制造 · 确认停线",
+    quality: "品质 · 查质量数据",
+    supply_chain: "供应链 · 查物料数据",
+    equipment: "设备 · 查设备日志",
     fanin: "结果汇聚 · Fan-in",
-    fa: "FA分析Agent · RAG推理",
+    fa: "根因分析 · 案例匹配",
     impact_wf: "工作流 · 停线影响评估工单",
-    hitl_restart: "HITL · 复线决策确认",
-    hitl_eta: "HITL · 对客ETA承诺确认",
-    report: "报告Agent · 生成简报与对客报告",
+    hitl_restart: "人工确认 · 复线决策确认",
+    hitl_eta: "人工确认 · 对客ETA承诺确认",
+    report: "报告 · 生成简报与对客报告",
     // S2
     sqe_assess: "SQE · 来料不合格判定",
     procurement: "采购 · 供应商跟催",
     planning: "计划 · 排产影响",
     material_control: "物控 · 库存/替代",
     scar_wf: "工作流 · SCAR 处置工单",
-    hitl_disposition: "HITL · 退换货/特采决策",
-    report_incoming: "报告Agent · 来料异常简报",
+    hitl_disposition: "人工确认 · 退换货/特采决策",
+    report_incoming: "报告 · 来料异常简报",
     // S3
     qa_lead: "QA · 8D 牵头",
     pqe_process: "PQE · 过程分析",
@@ -501,9 +518,9 @@
     engineering: "工程 · 设计根因",
     business_sales: "业务 · 对客口径",
     capa_flow: "工作流 · 8D 整改工单",
-    hitl_d8_close: "HITL · 8D 报告关闭",
-    hitl_complaint_reply: "HITL · 对客回复确认",
-    report_complaint: "报告Agent · 8D/对客报告",
+    hitl_d8_close: "人工确认 · 8D 报告关闭",
+    hitl_complaint_reply: "人工确认 · 对客回复确认",
+    report_complaint: "报告 · 8D/对客报告",
     // S4
     business_order: "业务 · 订单/交期",
     warehouse_atp: "仓库 · ATP",
@@ -511,17 +528,17 @@
     logistics: "物流 · 在途",
     atp_analysis: "ATP 分析 · 可承诺量",
     delivery_risk_wf: "工作流 · 出货风险工单",
-    hitl_delivery_commit: "HITL · 对客交期承诺",
-    report_delivery: "报告Agent · 出货风险简报",
+    hitl_delivery_commit: "人工确认 · 对客交期承诺",
+    report_delivery: "报告 · 出货风险简报",
     // S8
-    equipment_check: "设备Agent · 查EAM",
+    equipment_check: "设备 · 查设备日志",
     maintenance: "制造 · 维保建议",
     planning_window: "计划 · 换产窗口",
     engineering_param: "工程 · 参数建议",
     spare_parts: "采购 · 备件需求",
     maintenance_flow: "工作流 · 维保工单",
-    hitl_maintenance_window: "HITL · 停机窗口确认",
-    report_equipment: "报告Agent · 设备简报",
+    hitl_maintenance_window: "人工确认 · 停机窗口确认",
+    report_equipment: "报告 · 设备简报",
   };
 
   function chatStore(ctx) {
@@ -536,7 +553,7 @@
     root.innerHTML = `
       <div class="content-inner" style="max-width:1040px">
         <div class="chat-screen-head">
-          <div class="page-title">${UI.icon("chat", 19)}智能问数</div>
+          <div class="page-title">${UI.icon("chat", 19)}协同问数</div>
           ${online
             ? UI.realFlag("真实链路 · 后端在线")
             : `<span class="offline-banner" style="padding:5px 11px">${UI.icon("warn", 13)}后端离线——当前为演示模式：对话使用预置演示结果回放（已标注演示）</span>`}
@@ -556,7 +573,7 @@
               <textarea class="chat-input" id="chat-input" rows="1" placeholder="请输入制造业协同问题，例如：A型号在SMT-1停线，何时复线？"></textarea>
               <button class="chat-send" id="chat-send" title="发送">${UI.icon("send", 17)}</button>
             </div>
-            <div class="chat-hint">问数链路：两级路由 → 场景 DAG（三域并行取证 → FA 分析 → 工作流工单 → HITL 人工确认 → 报告）· 全部结论带 provenance 可溯源</div>
+            <div class="chat-hint">问数链路：两级路由 → 场景 DAG（三域并行取证 → 根因分析 → 工作流工单 → 人工确认 → 报告）· 全部结论数据可追溯</div>
           </div>
         </div>
       </div>`;
@@ -636,6 +653,9 @@
   }
 
   function bindChatActions(ctx, scroll) {
+    scroll.querySelectorAll("[data-hitl-task]").forEach((card) => {
+      wireActionChips(card, ctx, card.dataset.hitlTask);
+    });
     scroll.querySelectorAll("[data-approve]").forEach((btn) => {
       btn.addEventListener("click", () => hitlAction(ctx, btn.dataset.approve, "approve"));
     });
@@ -701,7 +721,7 @@
       chat.messages.push({
         kind: "hitl", id: "m" + ++chat.seq, taskUid: h.task_uid || "",
         prompt: h.prompt || "", approvers: h.approver_roles || [],
-        actions: (h.actions || []).map((a) => a.label || a.key || ""),
+        actions: (h.actions || []).map((a) => (typeof a === "string" ? { key: a, label: a } : a)),
         runId: result.run_id, demo: false,
       });
     });
@@ -758,7 +778,7 @@
       chat.messages.push({
         kind: "hitl", id: "m" + ++chat.seq, taskUid: h.task_uid || "",
         prompt: h.prompt || "", approvers: h.approver_roles || [],
-        actions: (h.actions || []).map((a) => a.label || a.key || ""),
+        actions: (h.actions || []).map((a) => (typeof a === "string" ? { key: a, label: a } : a)),
         runId: demo.result.run_id, demo: true,
       });
     });
@@ -792,7 +812,7 @@
       const nodeId = flow.current || flow.order[flow.order.length - 1];
       if (nodeId && flow.nodes[nodeId]) {
         flow.nodes[nodeId].tools.push({
-          name: event.tool || (t === "llm_start" ? "LLM" : "工具"),
+          name: event.tool || (t === "llm_start" ? "分析服务" : "工具"),
           text: event.detail || "",
         });
       }
@@ -836,7 +856,7 @@
     else if (flow.status === "error") stateHtml = `${UI.icon("warn", 12)} 执行异常`;
     else stateHtml = `${UI.spinner()} 执行中（${running} 个节点运行中）`;
     return `<div class="flow-panel">
-      <div class="flow-head">${UI.icon("sparkle", 14)}Agent 执行过程<span class="flow-state">${stateHtml}</span></div>
+      <div class="flow-head">${UI.icon("sparkle", 14)} 执行过程<span class="flow-state">${stateHtml}</span></div>
       <div class="flow-body">${flowBodyHtml(ctx, flow)}</div>
     </div>`;
   }
@@ -875,7 +895,7 @@
       const n = t.name || "";
       if (n.indexOf("SQL") >= 0) cls = "sql";
       else if (n.indexOf("RAG") >= 0) cls = "rag";
-      else if (n.indexOf("LLM") >= 0) cls = "llm";
+      else if (n.indexOf("分析服务") >= 0) cls = "llm";
       return `<div class="flow-tool"><span class="flow-tool-tag ${cls}">${UI.esc(t.name)}</span><span>${UI.esc(t.text)}</span></div>`;
     }).join("");
     const summary = node.summary ? `<div class="flow-node-summary">${UI.esc(node.summary)}</div>` : "";
@@ -901,7 +921,7 @@
     const route = result.route || {};
     const brief = result.internal_brief || {};
     const degraded = !!result.degraded;
-    const faText = brief["FA评级"] || "";
+    const faText = brief["风险评级"] || "";
     const ratingMatch = /评级\s*([A-D])/.exec(faText);
     const etaMatch = /预计\s*(\d+(?:\.\d+)?)\s*h/i.exec(faText);
     // data_gap：无数据源的项（不编造）——前端必须显式渲染（架构纪律）
@@ -912,7 +932,7 @@
     const briefItems = Object.keys(brief).map((k) => {
       let v = UI.esc(brief[k] === true ? "True" : brief[k] === false ? "False" : brief[k] || "—");
       let extra = "";
-      if (k === "FA评级" && ratingMatch) {
+      if (k === "风险评级" && ratingMatch) {
         extra = ` <span class="rating-pill rating-${ratingMatch[1]}">${ratingMatch[1]}</span>`;
       }
       return `<div class="brief-item"><span class="k">${UI.esc(k)}</span><span class="v">${v}${extra}</span></div>`;
@@ -933,13 +953,21 @@
         <div class="badges">
           ${demo ? UI.demoFlag("演示回放") : UI.realFlag("真实链路")}
           ${UI.badge("路由 " + (route.level || "-"), route.level === "L0" ? "badge-blue" : "badge-amber")}
-          ${UI.badge("置信度 " + (route.confidence != null ? route.confidence : "-"), "badge-outline")}
-          ${degraded ? UI.badge("degraded 降级", "badge-amber") : UI.badge("完整模式", "badge-green")}
+          ${UI.badge("匹配度 " + (route.confidence != null ? route.confidence : "-"), "badge-outline")}
+          ${degraded ? UI.badge("受限模式", "badge-amber") : UI.badge("完整模式", "badge-green")}
           ${UI.badge(result.run_id || "", "badge-gray")}
         </div>
       </div>
       <div class="result-body">
-        ${degraded ? `<div class="degrade-banner" style="margin-bottom:12px">${UI.icon("warn", 14)}<span><b>degraded 模式：LLM 不可用</b>，结论为规则/模板化输出（${UI.esc((result.degraded_reasons || []).join("；"))}）。全部结论仍带 provenance 可溯源，可人工复核后放行。</span></div>` : ""}
+        ${degraded ? (() => {
+          const reasons = result.degraded_reasons || [];
+          const svcDown = reasons.some((r) => /服务|模型|分析/.test(r));
+          const dataGap = reasons.some((r) => /数据缺口|数据不完整|缺少数据源/.test(r));
+          const mode = svcDown ? "分析服务未就绪，部分结论采用模板化输出"
+            : dataGap ? "部分环节缺少数据源，相关结论已标注缺口"
+              : "部分环节采用受限输出";
+          return `<div class="degrade-banner" style="margin-bottom:12px">${UI.icon("warn", 14)}<span><b>受限模式：${UI.esc(mode)}</b>${reasons.length ? "（" + UI.esc(reasons.join("；")) + "）" : ""}。全部结论仍可追溯数据来源，可人工复核后放行。</span></div>`;
+        })() : ""}
         ${gapNotes.length ? `<div class="offline-banner" style="margin-bottom:12px">${UI.icon("info", 14)}<span><b>数据缺口（data_gap）：该数据当前无来源</b>，平台不编造数据，相关项已转人工/现场确认 —— ${UI.esc(gapNotes.join("；"))}</span></div>` : ""}
         <div class="brief-grid">${briefItems}${tickets}</div>
         ${etaMatch ? `<div style="margin-top:10px;font-size:12.5px;color:var(--text-2)">${UI.icon("clock", 13)} 预计复线时间：<b style="color:var(--text)">${UI.esc(etaMatch[1])} 小时</b> · 总耗时 ${UI.esc(String(result.elapsed_ms || "-"))}ms</div>` : ""}
@@ -955,7 +983,7 @@
     const items = [
       ["路由等级", route.level || "-"],
       ["匹配场景", route.scenario_key || "未匹配（超出已覆盖范围）"],
-      ["置信度", route.confidence != null ? String(route.confidence) : "-"],
+      ["匹配度", route.confidence != null ? String(route.confidence) : "-"],
       ["低置信标记", route.low_confidence ? "是（建议人工复核）" : "否"],
       ["路由依据", route.reason || "-"],
       ["抽取实体", JSON.stringify(route.entities || {})],
@@ -970,7 +998,7 @@
         </div>
       </div>
       <div class="result-body">
-        <div class="offline-banner" style="margin-bottom:12px">${UI.icon("info", 14)}<span><b>当前问题超出平台已覆盖范围（或路由置信度低），已转人工兜底工单处理。</b>人工兜底是平台设计的一部分——确定性流程之外的问题不臆造结论。可改问停线场景相关问题，例如「A型号在SMT-1停线，何时复线？」。</span></div>
+        <div class="offline-banner" style="margin-bottom:12px">${UI.icon("info", 14)}<span><b>当前问题超出平台已覆盖范围（或路由匹配度低），已转人工兜底工单处理。</b>人工兜底是平台设计的一部分——确定性流程之外的问题不臆造结论。可改问停线场景相关问题，例如「A型号在SMT-1停线，何时复线？」。</span></div>
         <div class="brief-grid">${items}</div>
         ${result.report ? `<div style="margin-top:10px;font-size:12.8px;color:var(--text-2);line-height:1.8">${UI.icon("file", 13)} ${UI.esc(result.report)}</div>` : ""}
       </div>
@@ -1003,11 +1031,11 @@
     const otherHtml = otherItems.map((p) => {
       const label = p.channel === "rag" ? `RAG 检索：${UI.esc(p.query || "")}（命中 ${UI.esc(String(p.case_count != null ? p.case_count : 0))} 条历史案例）`
         : p.channel === "workflow" ? `工作流工单：<b>${UI.esc(p.task_uid || "")}</b>（${UI.esc((p.assignees || []).join("、"))}）`
-        : p.channel === "hitl" ? `HITL 待确认：<b>${UI.esc(p.task_uid || "")}</b>（${UI.esc((p.approver_roles || []).join("、"))}）`
+        : p.channel === "hitl" ? `人工确认 待确认：<b>${UI.esc(p.task_uid || "")}</b>（${UI.esc((p.approver_roles || []).join("、"))}）`
         : p.channel === "report" ? `报告生成：degraded=${p.degraded ? "是" : "否"}，禁词表兜底 ${UI.esc(String((p.masked_words || []).length))} 词`
         : p.channel === "data_gap" ? `数据缺口（无来源，不编造）：${UI.esc(p.note || "")}`
         : p.channel === "compute" ? `代码计算：${UI.esc(p.formula || "")}（来源：${UI.esc(p.source || "")}）`
-        : p.channel === "template" ? `规则模板：${UI.esc(p.note || "模板化结论（degraded）")}`
+        : p.channel === "template" ? `规则模板：${UI.esc(p.note || "模板化结论")}`
         : UI.esc(JSON.stringify(p));
       return `<div class="prov-item"><div class="prov-item-head">${UI.badge(p.domain || p.channel || "-", "badge-purple")}<span style="font-size:12.3px;color:var(--text-2)">${label}</span></div></div>`;
     }).join("");
@@ -1019,31 +1047,127 @@
 
     if (!sqlItems.length && !otherItems.length && !timings.length) return "";
     return `<details class="prov">
-      <summary>${UI.icon("database", 14)}溯源 Provenance（SQL 原文 · 命中行 · 脱敏标记 · 节点耗时）<span class="prov-count">${sqlItems.length + otherItems.length + timings.length} 条</span></summary>
+      <summary>${UI.icon("database", 14)}数据溯源（SQL 原文 · 命中行 · 脱敏标记 · 节点耗时）<span class="prov-count">${sqlItems.length + otherItems.length + timings.length} 条</span></summary>
       <div class="prov-body">${sqlHtml}${otherHtml}${timingHtml}</div>
     </details>`;
   }
 
-  /* ---------- HITL 待确认卡片（对话流内） ---------- */
+  /* ---------- 人工确认 待确认卡片（对话流内） ---------- */
+
+  // 前端岗位 → 业务角色标签（与场景 YAML 的 propose/cosign 对齐；演示映射）
+  const ROLE_BIZ = {
+    gm: ["质量总监", "总经理"],
+    mfg: ["制造现场负责人", "生产", "设备工程"],
+    pqe: ["PQE", "QA", "SQE"],
+    mc: ["物控", "计划"],
+    biz: ["业务经理", "业务", "销售总监"],
+    proc: ["采购", "SQE"],
+    wh: ["仓库", "物流"],
+    rd: ["工程", "设备工程"],
+  };
+
+  // 动作缓存（渲染时写入，事件处理时读取；避免把 JSON 塞进 DOM 属性）
+  const _hitlActions = {};
+
+  function roleBizLabels(ctx) {
+    const r = ctx.currentRole();
+    return ROLE_BIZ[r.id] || [r.name];
+  }
+
+  function normalizeActions(actions) {
+    return (actions || []).map((a, i) => (typeof a === "string"
+      ? { key: "act" + i, label: a, propose: [], cosign: [], impact: "", followup: "" }
+      : a));
+  }
+
+  function actionAllowed(a, labels) {
+    const propose = a.propose || [];
+    return !propose.length || propose.some((p) => labels.includes(p));
+  }
+
+  function hitlSelMap(ctx) {
+    const st = ctx.state.screenState;
+    if (!st.hitlSel) st.hitlSel = {};
+    return st.hitlSel;
+  }
+
+  function actionChipsHtml(ctx, taskUid, actions) {
+    const UI = ctx.UI;
+    const labels = roleBizLabels(ctx);
+    const sel = hitlSelMap(ctx)[taskUid];
+    return normalizeActions(actions).map((a, i) => {
+      const allowed = actionAllowed(a, labels);
+      const on = sel && sel.key === a.key;
+      const title = allowed
+        ? ((a.cosign && a.cosign.length) ? "会签：" + a.cosign.join("、") : "可直接确认")
+        : "需 " + ((a.propose || []).join("/") || "对应岗位") + " 发起";
+      return `<button type="button" class="act-chip${on ? " selected" : ""}${allowed ? "" : " disabled"}"
+        data-act-task="${UI.esc(taskUid)}" data-act-idx="${i}" ${allowed ? "" : "disabled"}
+        title="${UI.esc(title)}">${UI.esc(a.label)}${(a.cosign && a.cosign.length) ? `<em>会签 ${a.cosign.length}</em>` : ""}</button>`;
+    }).join("");
+  }
+
+  function actionDetailInner(a) {
+    const UI = window.App.UI;
+    if (!a) return "选择动作后显示影响与会签要求";
+    return `<b>${UI.esc(a.label)}</b>${a.impact ? " · " + UI.esc(a.impact) : ""}`
+      + ((a.cosign && a.cosign.length) ? `<div>会签：${UI.esc(a.cosign.join("、"))}</div>` : "")
+      + (a.followup ? `<div>后续：${UI.esc(a.followup)}</div>` : "")
+      + (a.require_comment ? `<div class="act-req">该动作需填写决策依据</div>` : "");
+  }
+
+  function actionDetailHtml(ctx, taskUid, actions) {
+    const UI = ctx.UI;
+    const sel = hitlSelMap(ctx)[taskUid];
+    const a = sel ? normalizeActions(actions).find((x) => x.key === sel.key) : null;
+    return `<div class="act-detail" data-act-detail="${UI.esc(taskUid)}">${actionDetailInner(a)}</div>`;
+  }
+
+  function wireActionChips(root, ctx, taskUid) {
+    const actions = normalizeActions(_hitlActions[taskUid] || []);
+    root.querySelectorAll(`[data-act-task="${taskUid}"]`).forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const a = actions[Number(btn.dataset.actIdx)];
+        if (!a) return;
+        hitlSelMap(ctx)[taskUid] = {
+          key: a.key, label: a.label, require_comment: !!a.require_comment,
+        };
+        root.querySelectorAll(`[data-act-task="${taskUid}"]`).forEach((b) => {
+          b.classList.toggle("selected", b === btn);
+        });
+        const detail = root.querySelector(`[data-act-detail="${taskUid}"]`);
+        if (detail) detail.innerHTML = actionDetailInner(a);
+        const cmt = root.querySelector(`#act-comment-${taskUid}`);
+        if (cmt) {
+          cmt.placeholder = a.require_comment
+            ? "决策依据（该动作必填，将写入工单留痕）"
+            : "决策意见（可选，将写入工单留痕）";
+        }
+      });
+    });
+  }
 
   function hitlChatCardHtml(ctx, m) {
     const UI = ctx.UI;
     const processed = processedMap(ctx)[m.taskUid];
-    const actionLabels = (m.actions || []).map((a) => UI.badge(a, "badge-outline")).join(" ");
-    return `<div class="hitl-card">
-      <div class="hitl-card-head">${UI.icon("approve", 15)}待人工确认 · HITL（不自动放行）</div>
+    const acts = normalizeActions(m.actions);
+    _hitlActions[m.taskUid] = m.actions || [];
+    return `<div class="hitl-card" data-hitl-task="${UI.esc(m.taskUid)}">
+      <div class="hitl-card-head">${UI.icon("approve", 15)}待人工确认（不自动放行）</div>
       <div class="hitl-card-prompt">${UI.esc(m.prompt)}</div>
       <div class="hitl-card-meta">
         <span>审批人：<b>${UI.esc((m.approvers || []).join("、"))}</b></span>
         <span>工单：<b>${UI.esc(m.taskUid || "-")}</b></span>
         ${m.runId ? `<span>run_id：<b>${UI.esc(m.runId)}</b></span>` : ""}
       </div>
-      <div class="hitl-card-meta">可选动作：${actionLabels}</div>
+      ${acts.length ? `<div class="hitl-card-meta">可选动作（按岗位权限，灰显需对应岗位发起）：</div>
+        <div class="act-chips">${actionChipsHtml(ctx, m.taskUid, m.actions)}</div>
+        ${actionDetailHtml(ctx, m.taskUid, m.actions)}` : ""}
+      ${processed ? "" : `<input class="input act-comment" id="act-comment-${UI.esc(m.taskUid)}" placeholder="决策意见（可选，将写入工单留痕）" />
       <div class="hitl-card-actions">
-        ${processed ? "" : `
         <button class="btn btn-primary btn-sm" data-approve="${UI.esc(m.taskUid)}">${UI.icon("check", 13)}同意</button>
-        <button class="btn btn-danger btn-sm" data-reject="${UI.esc(m.taskUid)}">${UI.icon("x", 13)}驳回</button>`}
-      </div>
+        <button class="btn btn-danger btn-sm" data-reject="${UI.esc(m.taskUid)}">${UI.icon("x", 13)}驳回</button>
+      </div>`}
       ${hitlProcessedBanner(ctx, m.taskUid)}
       ${m.demo ? `<div style="margin-top:9px">${UI.demoFlag("演示回放 · 未真实创建工单")}</div>` : ""}
     </div>`;
@@ -1121,7 +1245,7 @@
               <div class="brief-grid" style="grid-template-columns:1fr">
                 ${R.internal.brief.map((b) => `<div class="brief-item"><span class="k">${UI.esc(b.k)}</span><span class="v">${UI.esc(b.v)}</span></div>`).join("")}
                 <div class="brief-item"><span class="k">工作流</span><span class="v">${UI.esc(R.internal.workflow)}</span></div>
-                <div class="brief-item"><span class="k">HITL</span><span class="v">${UI.esc(R.internal.hitl)}</span></div>
+                <div class="brief-item"><span class="k">人工确认</span><span class="v">${UI.esc(R.internal.hitl)}</span></div>
               </div>
             </div>
           </div>
@@ -1161,7 +1285,7 @@
   }
 
   /* ============================================================
-   * 屏幕六：HITL 审批中心
+   * 屏幕六：审批确认中心
    * ============================================================ */
 
   function render_hitl(root, ctx) {
@@ -1169,8 +1293,8 @@
     root.innerHTML = `
       <div class="content-inner">
         <div class="page-head">
-          <div class="page-title">${UI.icon("approve", 20)}HITL 审批中心</div>
-          <div class="page-desc">人工在环（Human-in-the-Loop）：复线决策、对客 ETA 等关键决策必须人工确认，绝不自动放行。${UI.realFlag("WorkflowEngine 待办队列")}</div>
+          <div class="page-title">${UI.icon("approve", 20)}审批确认中心</div>
+          <div class="page-desc">关键决策（复线、对客交期、退换货、8D 关闭等）须由对应岗位人工确认，绝不自动放行。${UI.realFlag("WorkflowEngine 待办队列")}</div>
         </div>
         <div class="hitl-layout">
           <div class="card">
@@ -1207,7 +1331,7 @@
     if (ctx.state.screen !== "hitl") return;
 
     if (demo) {
-      tasks = ctx.DEMO.DEMO_HITL.map((t) => {
+      tasks = ctx.DEMO.DEMO_人工确认.map((t) => {
         const left = Number(t.sla_hours_left);
         const hoursLeft = Number.isFinite(left) ? left : 1;
         const due = new Date(Date.now() + hoursLeft * 3600000).toISOString();
@@ -1226,7 +1350,7 @@
 
     if (!tasks.length) {
       listEl.innerHTML = `<div class="empty">${UI.icon("check", 30)}<div style="margin-top:8px">当前无待审批工单</div>
-        <div style="font-size:11.5px;margin-top:6px">可在「智能问数」发起停线问数，HITL 节点将生成真实待办</div></div>`;
+        <div style="font-size:11.5px;margin-top:6px">可在「协同问数」发起停线问数，人工确认 节点将生成真实待办</div></div>`;
       document.getElementById("hitl-detail").innerHTML = "";
       return;
     }
@@ -1284,7 +1408,7 @@
       ["工单类型", kindLabel + "（" + (t.wf_id || "-") + "）"],
       ["run_id", c.run_id || "-"],
       ["线体 / 型号", (c.line_code || "-") + " / " + (c.product_model || "-")],
-      ["FA 评级", c.fa_rating || "-"],
+      ["风险评级", c.fa_rating || "-"],
       ["预估复线", c.eta_hours != null ? c.eta_hours + " 小时" : "-"],
       ["受理人", (t.assignees || []).join("、") || "-"],
       ["创建时间", t.created_at ? UI.fmtDateTime(t.created_at) : "-"],
@@ -1310,21 +1434,30 @@
           </div>
         </div>
         <div style="margin-top:12px;font-size:12.5px;color:var(--text-2);line-height:1.75">
-          ${UI.icon("info", 13)} 关键决策必须人工确认后放行（架构铁律：LLM 不碰确定性流程）。停线类工单 SLA 2 小时，超时自动升级。
+          ${UI.icon("info", 13)} 关键决策必须人工确认后放行（规则：分析服务只出建议，不参与审批与过账）。停线类工单 SLA 2 小时，超时自动升级。
         </div>
         <div style="margin-top:13px">${slaHtml(due, total)}</div>
         <div class="hitl-ctx-grid" style="margin-top:13px">${ctxItems}</div>
+        ${(() => {
+          const acts = (t.context && t.context.actions) || [];
+          if (!acts.length) return "";
+          _hitlActions[t.task_uid] = acts;
+          return `<div class="section-title" style="margin:16px 0 4px">处置动作（按岗位权限，灰显需对应岗位发起）</div>
+            <div class="act-chips">${actionChipsHtml(ctx, t.task_uid, acts)}</div>
+            ${actionDetailHtml(ctx, t.task_uid, acts)}`;
+        })()}
 
         ${history ? `<div class="section-title" style="margin:16px 0 4px">处理历史（状态机留痕）</div><div class="history-list">${history}</div>` : ""}
 
         ${processed ? hitlProcessedBanner(ctx, t.task_uid) : `
         <div class="hitl-actions-bar">
-          <input class="input hitl-comment" id="hitl-comment" placeholder="审批意见（可选，将写入工单 history）" />
+          <input class="input hitl-comment" id="hitl-comment" placeholder="决策意见（可选，将写入工单 history）" />
           <button class="btn btn-success" id="hitl-approve">${UI.icon("check", 14)}同意</button>
           <button class="btn btn-danger" id="hitl-reject">${UI.icon("x", 14)}驳回</button>
         </div>`}
       </div>`;
 
+    wireActionChips(document, ctx, t.task_uid);
     const approveBtn = document.getElementById("hitl-approve");
     const rejectBtn = document.getElementById("hitl-reject");
     if (approveBtn) approveBtn.addEventListener("click", () => hitlAction(ctx, t.task_uid, "approve"));
