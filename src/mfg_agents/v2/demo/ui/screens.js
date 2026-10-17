@@ -656,6 +656,33 @@
     catch (e) { return []; }
   }
 
+  /** 报告归档（V3.1 竞品方案：报告作为一等对象——生成→归档→列表→详情→导出）。
+   *  问数生成的报告自动入报告中心（localStorage，最多 30 份）。 */
+  function saveReportArchive(result) {
+    try {
+      if (!result.report) return;
+      const items = JSON.parse(localStorage.getItem("report_archive") || "[]");
+      if (items.some((r) => r.run_id === result.run_id)) return;  // 幂等
+      items.unshift({
+        run_id: result.run_id || "",
+        scenario: result.scenario_key || (result.route || {}).scenario_key || "qa 直答",
+        title: (result.query || "").slice(0, 40) || "未命名报告",
+        strategy: (result.route || {}).strategy || "",
+        summary: String(result.report || "").replace(/\s+/g, " ").slice(0, 80),
+        content: String(result.report || ""),
+        brief: result.internal_brief || null,
+        provenance_count: (result.provenance || []).length,
+        ts: new Date().toISOString(),
+      });
+      localStorage.setItem("report_archive", JSON.stringify(items.slice(0, 30)));
+    } catch (e) { /* 隐私模式：归档不可用不影响主流程 */ }
+  }
+
+  function loadReportArchive() {
+    try { return JSON.parse(localStorage.getItem("report_archive") || "[]"); }
+    catch (e) { return []; }
+  }
+
   function saveChatHistory(question, result) {
     try {
       const items = chatHistory().filter((h) => h.q !== question);
@@ -881,6 +908,7 @@
 
     finalizeFlow(ctx, flow, result);
     saveChatHistory(result.query || (chat.messages[0] || {}).text || "", result);
+    saveReportArchive(result);
     chat.messages.push(resultCardMessage(ctx, result));
     (result.hitl || []).forEach((h) => {
       chat.messages.push({
@@ -1829,6 +1857,9 @@
           <div class="page-desc">内部简报与对客脱敏报告同屏对比；脱敏词高亮标注（悬停可见禁词原文）。${UI.demoFlag()}内容结构复刻 CLI demo 真实输出</div>
         </div>
 
+        <div class="section-title">协同问数生成 <span class="section-extra">自动归档最近 30 份 · 点击展开全文</span></div>
+        <div class="card" style="padding:6px 14px 10px" id="qa-archive-list"></div>
+
         <div class="report-cols">
           <div class="report-doc">
             <div class="report-doc-head internal">
@@ -1878,6 +1909,8 @@
             </div>`).join("")}
         </div>
       </div>`;
+
+    renderQaArchive(ctx);
   }
 
   /* ============================================================
@@ -2036,6 +2069,39 @@
     d8_close: "8D 报告关闭", complaint_reply: "对客回复",
     delivery_commit: "交期承诺", maintenance_window: "停机窗口",
   };
+
+  /** 报告中心 · 问数归档列表（点击展开全文；竞品方案：报告生命周期管理）。 */
+  function renderQaArchive(ctx) {
+    const box = document.getElementById("qa-archive-list");
+    if (!box) return;
+    const UI = ctx.UI;
+    const items = loadReportArchive();
+    if (!items.length) {
+      box.innerHTML = `<div class="empty" style="font-size:12.3px;color:var(--text-3)">暂无归档——在「协同问数」发起提问后，生成的报告会自动归档到这里</div>`;
+      return;
+    }
+    box.innerHTML = items.map((r, i) => `
+      <div class="qa-archive-item" data-rid="${i}">
+        <div class="qar-head">
+          <span class="badge badge-blue">${UI.esc(r.scenario)}</span>
+          <span style="font-size:12.5px;font-weight:600">${UI.esc(r.title)}</span>
+          <span style="margin-left:auto;font-size:11px;color:var(--text-3)">${UI.esc((r.ts || "").slice(5, 16).replace("T", " "))}</span>
+        </div>
+        <div style="font-size:12px;color:var(--text-2);margin-top:3px">${UI.esc(r.summary)}…</div>
+        ${r._open ? `<div class="report-block" style="margin-top:9px"><div class="report-block-title">报告全文（${UI.esc(r.strategy || "")} · 溯源 ${r.provenance_count} 条）</div><div class="report-block-body">${UI.esc(r.content)}</div></div>` : ""}
+      </div>`).join("");
+    box.querySelectorAll("[data-rid]").forEach((it) => {
+      it.style.cursor = "pointer";
+      it.addEventListener("click", () => {
+        const items2 = loadReportArchive();
+        const idx = Number(it.dataset.rid);
+        const all = JSON.parse(localStorage.getItem("report_archive") || "[]");
+        all[idx]._open = !all[idx]._open;
+        localStorage.setItem("report_archive", JSON.stringify(all));
+        renderQaArchive(ctx);
+      });
+    });
+  }
 
   // 决策指引（按槽位：审批人该看什么、容易漏什么——降低经验依赖）
   const DECISION_GUIDES = {
