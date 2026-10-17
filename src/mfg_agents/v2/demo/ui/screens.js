@@ -1183,6 +1183,25 @@
     </div>`;
   }
 
+  /** 8D 结构化渲染（D1-D8 网格排版；D4 根因 / D8 关闭高亮） */
+  function d8GridHtml(title, d) {
+    const UI = window.App && window.App.UI;
+    const esc = UI ? UI.esc : (x) => String(x ?? "");
+    const KEYS = [
+      ["D1_team", "D1 团队"], ["D2_problem", "D2 问题"], ["D3_containment", "D3 围堵"],
+      ["D4_root_cause", "D4 根因"], ["D5_permanent", "D5 纠正"],
+      ["D6_validation", "D6 验证"], ["D7_prevent", "D7 预防"], ["D8_closure", "D8 关闭"],
+    ];
+    const items = KEYS.map(([key, label]) => {
+      const val = d[key];
+      if (val === undefined || val === null) return "";
+      const hot = key === "D4_root_cause" ? " hot" : key === "D8_closure" ? " close" : "";
+      return `<div class="d8-item${hot}"><span class="d8-k">${esc(label)}</span><span class="d8-v">${esc(val)}</span></div>`;
+    }).join("");
+    return `<div class="brief-item d8-block" style="grid-column:1/-1"><span class="k">${esc(title)}</span>
+      <div class="d8-grid">${items}</div></div>`;
+  }
+
   function resultCardHtml(ctx, result, opts) {
     const UI = ctx.UI;
     const demo = opts && opts.demo;
@@ -1198,7 +1217,12 @@
         .map((p) => p.note).filter(Boolean)));
 
     const briefItems = Object.keys(brief).map((k) => {
-      let v = UI.esc(brief[k] === true ? "True" : brief[k] === false ? "False" : brief[k] || "—");
+      const raw = brief[k];
+      // 结构化值（8D 等 dict）→ 专用排版，不再字符串化混排
+      if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+        return d8GridHtml(k, raw);
+      }
+      let v = UI.esc(raw === true ? "True" : raw === false ? "False" : raw || "—");
       let extra = "";
       if (k === "风险评级" && ratingMatch) {
         extra = ` <span class="rating-pill rating-${ratingMatch[1]}">${ratingMatch[1]}</span>`;
@@ -1921,7 +1945,7 @@
   function render_hitl(root, ctx) {
     const UI = ctx.UI;
     root.innerHTML = `
-      <div class="content-inner">
+      <div class="content-inner hitl-screen">
         <div class="page-head">
           <div class="page-title">${UI.icon("approve", 20)}审批确认中心</div>
           <div class="page-desc">关键决策（复线、对客交期、退换货、8D 关闭等）须由对应岗位人工确认，绝不自动放行。${UI.realFlag("WorkflowEngine 待办队列")}</div>

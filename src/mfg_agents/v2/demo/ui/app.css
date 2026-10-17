@@ -1211,6 +1211,54 @@ a:hover { text-decoration: underline; }
 
 .hitl-layout { display: grid; grid-template-columns: 380px 1fr; gap: 14px; align-items: start; }
 
+/* ---------- 两栏独立滚动（仅审批中心 · 由 .hitl-screen 专属作用域约束，
+   不影响其他 5 屏的 .content 整页滚动） ----------
+   思路：.hitl-screen 撑满 .content 内容区（高度确定），
+   .hitl-layout 用 flex:1 + min-height:0 拿到确定可用高度，
+   左右两栏各自 overflow-y:auto + min-height:0 独立滚动。 */
+.hitl-screen {
+  /* 100vh - 顶栏 58px - .content 上下内边距(22+40)，恰好填满可视区、不产生整页滚动 */
+  height: calc(100vh - var(--topbar-h) - 62px);
+  display: flex;
+  flex-direction: column;
+}
+
+.hitl-screen .hitl-layout {
+  flex: 1;
+  min-height: 0;
+  align-items: stretch; /* 两栏等高、各自占满可用高度 */
+}
+
+/* 左栏：card 作为 flex 列容器（标题区固定 + 列表区滚动） */
+.hitl-screen .hitl-layout > .card {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* 列表标题不随列表滚动消失（防御性 sticky：滚动容器若回退到 card 也生效） */
+.hitl-screen .hitl-layout > .card > .card-head {
+  flex-shrink: 0;
+  position: sticky;
+  top: 0;
+  background: var(--card);
+  z-index: 2;
+}
+
+/* 左栏滚动容器：#hitl-list 自身（grid 子项滚动必须配 min-height:0） */
+.hitl-screen #hitl-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* 右栏滚动容器：#hitl-detail 自身（内部 .card card-pad 不设溢出，单层滚动条） */
+.hitl-screen #hitl-detail {
+  min-height: 0;
+  overflow-y: auto;
+}
+
 .hitl-list-item {
   padding: 13px 16px;
   border-bottom: 1px solid var(--border);
@@ -1323,6 +1371,13 @@ a:hover { text-decoration: underline; }
   .report-cols { grid-template-columns: 1fr; }
   .brief-grid { grid-template-columns: 1fr; }
   .hitl-ctx-grid { grid-template-columns: 1fr; }
+  /* 窄屏单栏堆叠：恢复为正常整页滚动（两栏各占一半高度在窄屏很难用） */
+  .hitl-screen { height: auto; display: block; }
+  .hitl-screen .hitl-layout { flex: none; }
+  .hitl-screen .hitl-layout > .card,
+  .hitl-screen .hitl-layout > .card > .card-head { overflow: visible; position: static; }
+  .hitl-screen #hitl-list,
+  .hitl-screen #hitl-detail { overflow: visible; }
 }
 
 @media (max-width: 960px) {
@@ -1832,3 +1887,18 @@ a:hover { text-decoration: underline; }
 .qa-archive-item:last-child { border-bottom: none; }
 .qa-archive-item:hover { background: #FAFCFF; }
 .qar-head { display: flex; align-items: center; gap: 9px; }
+
+/* ---------- 8D 结构化渲染 ---------- */
+.d8-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-top: 8px; }
+.d8-item {
+  display: flex; gap: 8px; align-items: baseline;
+  background: #F7FAFD; border: 1px solid var(--border);
+  border-radius: 7px; padding: 6px 9px;
+  font-size: 12px; line-height: 1.65;
+}
+.d8-k { flex: none; font-weight: 650; color: var(--primary-deep); font-size: 11.5px; }
+.d8-v { color: var(--text-2); min-width: 0; }
+.d8-item.hot { background: #FDF6E7; border-color: #E5D5A0; }
+.d8-item.hot .d8-k { color: #7A5B00; }
+.d8-item.close { background: #EAF6EF; border-color: #A8D5BC; }
+.d8-item.close .d8-k { color: #155E35; }
