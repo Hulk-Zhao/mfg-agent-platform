@@ -1,0 +1,25 @@
+# 行尾规范化：跨平台协作时避免「脚本在 Windows 检出后变成 CRLF 导致容器启动失败」。
+#
+# 背景：本仓库 Dockerfile 会 COPY entrypoint.sh 并作为 ENTRYPOINT 执行。
+# Windows 默认 core.autocrlf=true，检出时 LF → CRLF，`#!/bin/bash\r` 会让
+# 容器直接 exec format error。这里强制 shell 脚本永远以 LF 检出。
+
+# 默认：文本文件按 Git 判定归一化
+* text=auto
+
+# Shell 脚本必须 LF（容器内执行）
+*.sh text eol=lf
+
+# Windows 批处理必须 CRLF（cmd.exe 对纯 LF 的 goto/call 解析不稳定）
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 二进制：禁止任何转换
+*.png binary
+*.jpg binary
+*.ttf binary
+*.woff binary
+*.woff2 binary
+*.db binary
+*.pt binary
+*.model binary
