@@ -19,6 +19,7 @@
   const NAV_ITEMS = [
     { id: "dashboard", label: "工作台", title: "工作台", sub: "制造运营协同门户", icon: "grid", group: "运营视图" },
     { id: "orders", label: "订单履约看板", title: "订单履约看板", sub: "订单全链路管道 · 风险订单 · 部门协同", icon: "orders", group: "运营视图" },
+    { id: "mfgboard", label: "制造综合看板", title: "制造综合看板", sub: "制造 + 品质双看板 · 稼动率/报废率/报工完成率/直通率/标准三率", icon: "activity", group: "运营视图" },
     { id: "chat", label: "协同问数", title: "协同问数", sub: "对话式跨部门协同分析（真实后端链路）", icon: "chat", group: "智能协同", core: true },
     { id: "alerts", label: "预警中心", title: "预警中心", sub: "多域预警与联动处置", icon: "alert", group: "智能协同" },
     { id: "reports", label: "报告中心", title: "报告中心", sub: "内部简报与对客脱敏报告", icon: "report", group: "智能协同" },
@@ -100,22 +101,29 @@
 
   const USER_KEY = "mfg_gateway_user_v1";
 
-  function loadUser() {
-    try {
-      const raw = localStorage.getItem(USER_KEY);
-      if (!raw) return null;
-      const parsed = JSON.parse(raw);
-      const role = window.DEMO.ROLES.find((r) => r.id === parsed.roleId);
-      return role ? { roleId: role.id } : null;
-    } catch (err) {
-      return null;
-    }
-  }
-
   function saveUser(roleId) {
     try {
       localStorage.setItem(USER_KEY, JSON.stringify({ roleId, at: Date.now() }));
     } catch (err) { /* 隐私模式/存储禁用时忽略 */ }
+  }
+
+  /**
+   * 读取上次登录岗位（刷新/重开页面后恢复会话）。
+   * 岗位可能已被从 ROLES 移除或数据被手工篡改 → 一律降级为 null（回登录页），
+   * 绝不返回脏 roleId，否则 currentRole() 会静默回退到 ROLES[0]，表现为"进了别人的岗位"。
+   */
+  function loadUser() {
+    try {
+      const raw = localStorage.getItem(USER_KEY);
+      if (!raw) return null;
+      const data = JSON.parse(raw);
+      const id = data && data.roleId;
+      if (!id) return null;
+      const exists = window.DEMO.ROLES.some((r) => r.id === id);
+      return exists ? id : null;
+    } catch (err) {
+      return null;   // 隐私模式/存储禁用/JSON 损坏 → 当作未登录
+    }
   }
 
   function clearUser() {
@@ -480,6 +488,12 @@
     /** 治理权限目录（角色×权限矩阵 + 7 个 HITL 槽位；前端门控提示用） */
     governancePermissions() { return this._get("/api/v2/governance/permissions"); },
 
+    /** 制造看板（稼动率/报废率/报工完成率/测试直通率；全员可见） */
+    manufacturingDashboard() { return this._get("/api/v2/dashboard/manufacturing", 8000); },
+
+    /** 品质看板（不良率/直通率 FPY/标准三率；全员可见） */
+    qualityDashboard() { return this._get("/api/v2/dashboard/quality", 8000); },
+
     /** 选定处置动作（按该动作 propose/cosign 生成会签要求）。uid：一人一签判定依据 */
     workflowSelectAction(taskId, actionKey, approver, roles, dept, comment, uid) {
       return this._post(`/api/v2/workflow/${encodeURIComponent(taskId)}/select-action`,
@@ -817,14 +831,19 @@
 
   async function boot() {
     initChrome();
-    const saved = loadUser();
-    if (saved) {
-      state.role = saved.roleId;
+    // 刷新/重开保持会话：有有效登录态就直接进应用（所在屏由 location.hash 恢复，
+    // 见 startApp），没有才回登录页选择岗位。退出登录走 clearUser()，不受影响。
+    const savedRoleId = loadUser();
+    if (savedRoleId) {
+      state.role = savedRoleId;
+      const root = document.getElementById("login-root");
+      if (root) { root.hidden = true; root.innerHTML = ""; }
       updateChrome();
-      await startApp();
-    } else {
-      renderLogin();
+      startApp();
+      return;
     }
+    state.role = "";
+    renderLogin();
   }
 
   /* ============================================================
