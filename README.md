@@ -79,3 +79,20 @@ docker compose up -d --build
 ## 技术栈
 
 Python 3.11+ · LangGraph · LangChain · MySQL · ChromaDB · Streamlit · Docker Compose · UV
+
+## 生产化清单（当前为单实例演示实现）
+
+治理层（HITL 角色校验 + 多人会签）已落地的部分：声明式权限目录
+`src/mfg_agents/v2/data/permissions.yaml`（21 权限 = 7 HITL 槽位 × propose/cosign/approve，
+15 个角色）、`PermissionRegistry` 启动自检、`WorkflowEngine` 的
+`select_action → N×cosign → approve` 治理链。以下为上线前仍需推进的项：
+
+- **会签并发与幂等（多实例）**：当前单实例用 `WorkflowEngine` 进程内
+  `threading.RLock` 串行化「读-判断-写」，保证同一角色不会写出两条签名。
+  **多实例/多进程部署时进程内锁不成立**，需把签名改为独立表 `wf_signoff`
+  （`task_uid, role_key, actor, verb, on_behalf_of, overdue_signoff, created_at`）
+  并加唯一索引 `(task_uid, role_key, actor, verb)` 做 DB 级幂等。
+- **超时代签**：仅预留字段位（`on_behalf_of` / `overdue_signoff`），入口未开放；
+  启用时须同时满足「理由必填 + 仅 gm/quality_director 可代签 + on_behalf_of 必填」。
+- **Agent 身份隔离**：权限目录已强制 Agent 角色不得持 `*.approve`，
+  但 Agent 身份的凭据签发/鉴权仍依赖后续认证体系。

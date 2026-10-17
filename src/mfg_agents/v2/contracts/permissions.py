@@ -32,6 +32,8 @@ __all__ = [
     "get_permission_registry",
     "reset_permission_registry",
     "DEFAULT_PERMISSIONS_PATH",
+    "AGENT_ACTOR_ROLES",
+    "ACTOR_KINDS",
 ]
 
 # v2/data/permissions.yaml（与本模块同包层级：contracts/ → ../data/）
@@ -40,6 +42,14 @@ DEFAULT_PERMISSIONS_PATH = (
 )
 
 VALID_VERBS: tuple[str, ...] = ("propose", "cosign", "approve")
+
+ACTOR_KINDS: tuple[str, ...] = ("human", "agent")
+
+# 架构铁律「LLM/Agent 只出建议，不得自动放行」的**显式黑名单兜底**。
+# 正常情况下靠 RoleDef.actor_kind == "agent" 表达 Agent 身份；
+# 若未来新增 Agent 身份角色但漏标 actor_kind，必须同步把 role key 加到这里，
+# 否则启动自检不会拦住「Agent 持 approve」的破防配置。
+AGENT_ACTOR_ROLES: tuple[str, ...] = ("system_agent",)
 
 
 class PermissionRegistryError(Exception):
@@ -85,6 +95,8 @@ class RoleDef:
         dept: 归属部门（组织维度，便于按部门聚合待办）。
         permissions: 持有的权限 key 元组。
         aliases: YAML / 前端 / 用户上下文里可能出现的写法（归一化用）。
+        actor_kind: 身份类型 ``human`` / ``agent``。架构铁律：Agent 身份
+            **只允许 propose，不得持任何 ``*.approve``**（启动自检强制）。
     """
 
     key: str
@@ -92,11 +104,26 @@ class RoleDef:
     dept: str = ""
     permissions: tuple[str, ...] = ()
     aliases: tuple[str, ...] = ()
+    actor_kind: str = "human"
+
+    @property
+    def is_agent(self) -> bool:
+        """是否 Agent 身份（或落在显式黑名单内）。"""
+        return self.actor_kind == "agent" or self.key in AGENT_ACTOR_ROLES
+
+    def approve_permissions(self) -> list[str]:
+        """持有的终批类权限（``*.approve``）——Agent 身份必须为空。"""
+        return [p for p in self.permissions if str(p).endswith(".approve")]
 
 
 @dataclass(frozen=True)
 class SlotDef:
-    """HITL 槽位定义（一个 HITL 节点支持哪三个权限）。"""
+    """HITL 槽位定义（一个 HITL 节点支持哪三个权限）。
+
+    ``available_permissions`` 必须显式声明该槽位可用的权限 key 集合，
+    加载期校验「声明的权限必须存在于目录且归属本槽位」，避免
+    场景 YAML 里出现权限目录没有的槽位（启动即失败，不留到运行时）。
+    """
 
     key: str
     name: str
@@ -105,7 +132,16 @@ class SlotDef:
 
 
 class PermissionRegistry:
-    """权限目录 + 角色矩阵（只读，线程内共享；加载后不可变）。"""
+    """权限目录 + 角色矩阵（只读，线程内共享；加载后不可变）。
+
+    构造即做**启动期自检**（fail-fast，不留到运行时）：
+    1. 角色引用的权限必须在目录中存在；
+    2. ``actor_kind`` 只能是 human / agent；
+    3. **架构铁律：Agent 身份角色不得持有任何 ``*.approve``**；
+    4. 别名不得跨角色冲突；
+    5. 槽位必须显式声明 ``available_permissions``，且声明的权限必须存在
+       并归属该槽位（7 个 HITL 槽位之外的 kind 会在场景加载期被拒）。
+    """
 
     def __init__(self, permissions: Iterable[Permission],
                  roles: Iterable[RoleDef],
@@ -125,11 +161,30 @@ class PermissionRegistry:
                 raise PermissionRegistryError("角色缺少 key")
             if role.key in self._roles:
                 raise PermissionRegistryError(f"角色 key 重复: {role.key}")
+            if role.actor_kind not in ACTOR_KINDS:
+                raise PermissionRegistryError(
+                    f"角色 {role.key} 的 actor_kind 非法: {role.actor_kind!r}"
+                    f"（合法值：{list(ACTOR_KINDS)}）")
             unknown = [p for p in role.permissions if p not in self._permissions]
             if unknown:
                 raise PermissionRegistryError(
                     f"角色 {role.key} 引用了未定义的权限: {unknown}")
             self._roles[role.key] = role
+
+        # 架构铁律自检：Agent 身份不得持有终批权限（否则治理层对最活跃
+        # 写入方失效——Huly 的 primarySocialId === System 直接放行就是反例）
+        violations = [
+            f"{r.key}({r.name}) -> {r.approve_permissions()}"
+            for r in self._roles.values()
+            if r.is_agent and r.approve_permissions()
+        ]
+        if violations:
+            raise PermissionRegistryError(
+                "架构铁律被违反：Agent 身份角色不得持有 *.approve 权限。"
+                f"违规角色：{violations}。"
+                "LLM/Agent 只允许 propose（出建议），终批必须由人类角色执行；"
+                "如确需新增 Agent 身份角色，请将其 actor_kind 标为 agent 并"
+                "仅授予 *.propose，同时同步 permissions.py 的 AGENT_ACTOR_ROLES。")
 
         for role in self._roles.values():
             for alias in self._aliases_of(role):
@@ -143,7 +198,24 @@ class PermissionRegistry:
                         f"角色别名冲突: {alias!r} 同时属于 {existed} 与 {role.key}")
                 self._alias_index[index_key] = role.key
 
-        self._slots: dict[str, SlotDef] = {s.key: s for s in slots}
+        self._slots: dict[str, SlotDef] = {}
+        for slot in slots:
+            if not slot.key:
+                raise PermissionRegistryError("槽位缺少 key")
+            if slot.key in self._slots:
+                raise PermissionRegistryError(f"槽位 key 重复: {slot.key}")
+            if not slot.available_permissions:
+                raise PermissionRegistryError(
+                    f"槽位 {slot.key} 未声明 available_permissions"
+                    "（每个 HITL 槽位必须显式列出 propose/cosign/approve）")
+            for perm_key in slot.available_permissions:
+                if perm_key not in self._permissions:
+                    raise PermissionRegistryError(
+                        f"槽位 {slot.key} 声明的权限不存在于目录: {perm_key}")
+                if not perm_key.startswith(f"hitl.{slot.key}."):
+                    raise PermissionRegistryError(
+                        f"槽位 {slot.key} 声明的权限 {perm_key} 不归属该槽位")
+            self._slots[slot.key] = slot
 
     # ---------- 加载 ----------
 
@@ -180,6 +252,7 @@ class PermissionRegistry:
                 dept=str(item.get("dept", "")),
                 permissions=tuple(str(p) for p in (item.get("permissions") or [])),
                 aliases=tuple(str(a) for a in (item.get("aliases") or [])),
+                actor_kind=str(item.get("actor_kind", "human")).strip().lower(),
             )
             for item in (raw.get("roles") or [])
             if isinstance(item, dict)
@@ -302,6 +375,10 @@ class PermissionRegistry:
     def slot(self, slot_key: Any) -> Optional[SlotDef]:
         return self._slots.get(str(slot_key or ""))
 
+    def slot_keys(self) -> list[str]:
+        """全部合法 HITL 槽位 key（场景加载期白名单）。"""
+        return list(self._slots)
+
     def slot_name(self, slot_key: Any) -> str:
         slot = self.slot(slot_key)
         return slot.name if slot else str(slot_key or "")
@@ -324,6 +401,11 @@ class PermissionRegistry:
 
     # ---------- 诊断 ----------
 
+    def roles_by_kind(self, actor_kind: str) -> list[str]:
+        """按身份类型列角色 key（agent / human）。"""
+        return [r.key for r in self._roles.values()
+                if r.actor_kind == str(actor_kind)]
+
     def describe(self) -> dict[str, Any]:
         """目录快照（/api/v2/governance/permissions 与前端展示用）。"""
         return {
@@ -334,6 +416,7 @@ class PermissionRegistry:
             ],
             "roles": [
                 {"key": r.key, "name": r.name, "dept": r.dept,
+                 "actor_kind": r.actor_kind,
                  "permissions": list(r.permissions), "aliases": list(r.aliases)}
                 for r in self._roles.values()
             ],

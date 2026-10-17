@@ -28,6 +28,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+import threading
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -223,6 +224,12 @@ class WorkflowEngine:
         self.db_path = sqlite_path_from_url(db_url)
         self.default_sla_hours = default_sla_hours
         self.permission_registry = permission_registry or get_permission_registry()
+        # 并发双签防护：治理写路径（select_action/cosign/approve/reject）的
+        # 「读-判断-写」必须串行化。RLock 可重入，且对 :memory: 场景的共享
+        # sqlite3.Connection（check_same_thread 默认限制）同样有效。
+        # 生产化说明：多实例部署需改为独立签名表 + (task_uid, role_key, actor, verb)
+        # 唯一索引做 DB 级幂等，单实例用本进程内锁即可（见 README 生产化清单）。
+        self._write_lock = threading.RLock()
         self._memory_conn: Optional[sqlite3.Connection] = None
         if self.db_path == ":memory:":
             # 内存库：建一个进程内持久连接，DDL/DML 共用同一库
@@ -344,6 +351,14 @@ class WorkflowEngine:
                       role: Optional[str] = None,
                       user_ctx: Optional[dict] = None,
                       comment: str = "") -> WorkflowTask:
+        """选定处置动作（线程安全入口：内部持引擎写锁）。"""
+        with self._write_lock:
+            return self._select_action(task_uid, action_key, actor, role, user_ctx,
+                                       comment)
+
+    def _select_action(self, task_uid: str, action_key: str, actor: str,
+                       role: Optional[str], user_ctx: Optional[dict],
+                       comment: str) -> WorkflowTask:
         """选定处置动作：按该动作的 cosign 列表生成会签要求（status 不变）。
 
         Raises:
@@ -411,11 +426,23 @@ class WorkflowEngine:
                user_ctx: Optional[dict] = None,
                decision: str = "",
                comment: str = "") -> WorkflowTask:
+        """会签（线程安全入口：内部持引擎写锁）。"""
+        with self._write_lock:
+            return self._cosign(task_uid, actor, role, user_ctx, decision, comment)
+
+    def _cosign(self, task_uid: str, actor: str, role: Optional[str],
+                user_ctx: Optional[dict], decision: str,
+                comment: str) -> WorkflowTask:
         """会签（多角色背书，缺一不可）。
 
         Raises:
             WorkflowTransitionError: 未选动作 / 该角色已会签 / 状态非法。
             PermissionDenied: 操作者岗位不在该动作的会签人范围（fail-closed）。
+
+        身份唯一来源：角色一律由 ``user_ctx.roles``（或单值 ``role``）经
+        PermissionRegistry 归一化得出，**不接受"代签他人角色"的参数**——
+        本轮不存在代签入口，任何试图用 ``role`` 参数伪装他人身份的做法都会
+        因为没有对应权限而被拒（fail-closed）。
         """
         task = self._require_governed_hitl(task_uid, "cosign")
         governance = dict(task.governance or {})
@@ -458,9 +485,15 @@ class WorkflowEngine:
             "role": role_key,
             "role_name": registry.role_name(role_key),
             "actor": actor,
+            # 身份类型：支撑「Agent 不得持 approve」的运行时校验（见 README）
+            "actor_kind": registry.role(role_key).actor_kind if registry.role(role_key) else "human",
             "action": "cosign",
             "decision": (decision or "同意").strip(),
             "comment": (comment or "").strip(),
+            # 超时代签为 V3 后续阶段能力：本轮仅预留字段位（恒为 None），
+            # 且不存在任何"代签他人角色"的入口（fail-closed）
+            "on_behalf_of": None,
+            "overdue_signoff": False,
             "ts": datetime.now(timezone.utc).isoformat(),
         })
         governance["signoffs"] = signoffs
@@ -475,6 +508,14 @@ class WorkflowEngine:
                 comment: str = "", final: bool = False,
                 decision: str = "", role: Optional[str] = None,
                 user_ctx: Optional[dict] = None) -> WorkflowTask:
+        """HITL 审批通过（线程安全入口：内部持引擎写锁）。"""
+        with self._write_lock:
+            return self._approve(task_uid, approver, comment, final, decision,
+                                 role, user_ctx)
+
+    def _approve(self, task_uid: str, approver: str, comment: str, final: bool,
+                 decision: str, role: Optional[str],
+                 user_ctx: Optional[dict]) -> WorkflowTask:
         """HITL 审批通过：waiting_hitl → running（final=True 时 → done）。
 
         受治理工单（新工单）额外强制：
@@ -500,6 +541,14 @@ class WorkflowEngine:
     def reject(self, task_uid: str, approver: str, comment: str = "",
                decision: str = "", role: Optional[str] = None,
                user_ctx: Optional[dict] = None) -> WorkflowTask:
+        """HITL 审批驳回（线程安全入口：内部持引擎写锁）。"""
+        with self._write_lock:
+            return self._reject(task_uid, approver, comment, decision, role,
+                                user_ctx)
+
+    def _reject(self, task_uid: str, approver: str, comment: str,
+                decision: str, role: Optional[str],
+                user_ctx: Optional[dict]) -> WorkflowTask:
         """HITL 审批驳回：→ closed。
 
         驳回不要求会签齐备（会签未齐也可驳回止损），但仍校验岗位权限
@@ -595,6 +644,14 @@ class WorkflowEngine:
                 f"当前岗位无该动作的审批权限（需：{' / '.join(allowed_names)}）",
                 required=allowed_names, actual=registry.role_names(role_keys))
         for key in role_keys:
+            role_def = registry.role(key)
+            # 防御性兜底：权限目录已在加载期禁止 Agent 持 *.approve，
+            # 这里再拦一次，避免脏数据/被篡改的注册表让 Agent 放行决策
+            if role_def is not None and role_def.is_agent:
+                raise PermissionDenied(
+                    f"Agent 身份（{role_def.name}）不得终批：LLM/Agent 只出建议，"
+                    f"放行必须由人类角色执行（需：{' / '.join(allowed_names)}）",
+                    required=allowed_names, actual=[role_def.name])
             if registry.has_any([key], [approve_perm]):
                 return key
         return role_keys[0]
@@ -643,12 +700,17 @@ class WorkflowEngine:
         """追加终批/驳回留痕（返回新的 governance 快照）。"""
         governance = dict(task.governance or {})
         approvals = [dict(a) for a in (governance.get("approvals") or [])]
+        role_def = self.permission_registry.role(role_key)
         approvals.append({
             "role": role_key,
             "role_name": self.permission_registry.role_name(role_key),
             "actor": actor,
+            "actor_kind": role_def.actor_kind if role_def else "human",
             "decision": str(decision or "").strip(),
             "comment": (comment or "").strip(),
+            # 代签字段位（V3 后续阶段启用；本轮恒为 None / False）
+            "on_behalf_of": None,
+            "overdue_signoff": False,
             "ts": datetime.now(timezone.utc).isoformat(),
         })
         governance["approvals"] = approvals

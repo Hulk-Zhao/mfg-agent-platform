@@ -12,17 +12,47 @@
 #
 # 铁律：业务代码**不得**硬编码角色名或权限判断，一律经 PermissionRegistry 查询；
 #       未识别的角色/权限一律 fail-closed（拒绝，不放行）。
-version: 1
+#
+# 架构铁律（Agent 不得自动放行）：
+#   每个 role 必须声明 actor_kind: human | agent。
+#   **Agent 身份角色只允许 *.propose，不得持有任何 *.approve**——
+#   PermissionRegistry 构造期自检，违反即启动失败。
+#   若新增 Agent 身份角色却漏标 actor_kind，必须同步 contracts/permissions.py 的
+#   AGENT_ACTOR_ROLES 显式黑名单，否则自检不会拦住「Agent 持 approve」的破防配置。
+version: 2
 
 # ---------- 7 个 HITL 槽位（对应 5 场景 7 个 HITL 节点） ----------
+# available_permissions 必须显式声明（加载期校验：必须存在且归属本槽位）；
+# 场景 YAML 里出现这 7 个之外的 hitl kind，ScenarioRegistry 加载期即报错。
 slots:
-  - {key: restart,            name: 复线决策,       scene: line_stop_v2}
-  - {key: eta,                name: 对客 ETA 承诺,  scene: line_stop_v2}
-  - {key: disposition,        name: 来料处置,       scene: incoming_quality_v2}
-  - {key: d8_close,           name: 8D 报告关闭,    scene: customer_complaint_v2}
-  - {key: complaint_reply,    name: 对客回复,       scene: customer_complaint_v2}
-  - {key: delivery_commit,    name: 交期承诺,       scene: delivery_status_v2}
-  - {key: maintenance_window, name: 停机窗口,       scene: equipment_warning_v2}
+  - key: restart
+    name: 复线决策
+    scene: line_stop_v2
+    available_permissions: [hitl.restart.propose, hitl.restart.cosign, hitl.restart.approve]
+  - key: eta
+    name: 对客 ETA 承诺
+    scene: line_stop_v2
+    available_permissions: [hitl.eta.propose, hitl.eta.cosign, hitl.eta.approve]
+  - key: disposition
+    name: 来料处置
+    scene: incoming_quality_v2
+    available_permissions: [hitl.disposition.propose, hitl.disposition.cosign, hitl.disposition.approve]
+  - key: d8_close
+    name: 8D 报告关闭
+    scene: customer_complaint_v2
+    available_permissions: [hitl.d8_close.propose, hitl.d8_close.cosign, hitl.d8_close.approve]
+  - key: complaint_reply
+    name: 对客回复
+    scene: customer_complaint_v2
+    available_permissions: [hitl.complaint_reply.propose, hitl.complaint_reply.cosign, hitl.complaint_reply.approve]
+  - key: delivery_commit
+    name: 交期承诺
+    scene: delivery_status_v2
+    available_permissions: [hitl.delivery_commit.propose, hitl.delivery_commit.cosign, hitl.delivery_commit.approve]
+  - key: maintenance_window
+    name: 停机窗口
+    scene: equipment_warning_v2
+    available_permissions: [hitl.maintenance_window.propose, hitl.maintenance_window.cosign, hitl.maintenance_window.approve]
 
 # ---------- 权限目录（21 条 = 7 slot × 3 verb） ----------
 permissions:
@@ -63,6 +93,7 @@ roles:
   - key: gm
     name: 总经理
     dept: management
+    actor_kind: human
     aliases: [总经理, 总裁, 副总, GM, coordinator, management]
     permissions:
       - hitl.restart.approve
@@ -76,6 +107,7 @@ roles:
   - key: quality_director
     name: 质量总监
     dept: quality
+    actor_kind: human
     aliases: [质量总监, 品质总监, QD]
     permissions:
       - hitl.restart.approve
@@ -87,6 +119,7 @@ roles:
   - key: qa_manager
     name: QA经理
     dept: quality
+    actor_kind: human
     aliases: [QA经理, QA主管, 品质经理]
     permissions:
       - hitl.disposition.approve
@@ -96,6 +129,7 @@ roles:
   - key: qa
     name: QA
     dept: quality
+    actor_kind: human
     aliases: [QA, 质量保证, 质量管理]
     permissions:
       - hitl.disposition.propose
@@ -105,6 +139,7 @@ roles:
   - key: sqe
     name: SQE
     dept: quality
+    actor_kind: human
     aliases: [SQE, 供应商质量工程师, 来料质量工程师, quality]
     permissions:
       - hitl.disposition.propose
@@ -113,6 +148,7 @@ roles:
   - key: pqe
     name: PQE
     dept: quality
+    actor_kind: human
     aliases: [PQE, 制程质量工程师, 过程质量工程师]
     permissions:
       - hitl.disposition.propose
@@ -124,6 +160,7 @@ roles:
   - key: procurement
     name: 采购
     dept: procurement
+    actor_kind: human
     aliases: [采购, 采购经理, 采购专员, procurement, purchasing]
     permissions:
       - hitl.disposition.cosign
@@ -131,6 +168,7 @@ roles:
   - key: planning
     name: 计划
     dept: supply_chain
+    actor_kind: human
     aliases: [计划, 计划员, 计划经理, planning, PMC]
     permissions:
       - hitl.eta.cosign
@@ -140,6 +178,7 @@ roles:
   - key: material_control
     name: 物控
     dept: supply_chain
+    actor_kind: human
     aliases: [物控, 物控专员, 物料控制, material_control, supply_chain]
     permissions:
       - hitl.delivery_commit.cosign
@@ -147,6 +186,7 @@ roles:
   - key: manufacturing
     name: 制造
     dept: manufacturing
+    actor_kind: human
     aliases: [制造, 制造现场负责人, 生产, 生产主管, 制造经理, manufacturing, 车间主任]
     permissions:
       - hitl.restart.propose
@@ -159,6 +199,7 @@ roles:
   - key: equipment
     name: 设备工程
     dept: equipment
+    actor_kind: human
     aliases: [设备工程, 设备工程师, 设备, equipment, 维保]
     permissions:
       - hitl.restart.cosign
@@ -167,6 +208,7 @@ roles:
   - key: sales
     name: 业务
     dept: sales
+    actor_kind: human
     aliases: [业务, 业务经理, 业务员, 销售, 销售总监, 销售经理, sales, business]
     permissions:
       - hitl.eta.propose
@@ -180,6 +222,7 @@ roles:
   - key: warehouse
     name: 仓库
     dept: warehouse
+    actor_kind: human
     aliases: [仓库, 仓库主管, 仓储, 物流, warehouse, logistics]
     permissions:
       - hitl.delivery_commit.cosign
@@ -187,6 +230,7 @@ roles:
   - key: rd_engineering
     name: 工程
     dept: rd_engineering
+    actor_kind: human
     aliases: [工程, 工程师, 研发, 研发工程师, 工艺, 工艺工程师, rd_engineering, engineering]
     permissions:
       - hitl.d8_close.cosign
@@ -195,6 +239,7 @@ roles:
   - key: finance
     name: 财务
     dept: finance
+    actor_kind: human
     aliases: [财务, 财务经理, 成本会计, finance, cost]
     permissions:
       - hitl.disposition.cosign

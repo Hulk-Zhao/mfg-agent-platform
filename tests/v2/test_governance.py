@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -27,11 +28,14 @@ from fastapi.testclient import TestClient
 
 import mfg_agents.v2 as v2_pkg
 from mfg_agents.v2.contracts.permissions import (
+    AGENT_ACTOR_ROLES,
     DEFAULT_PERMISSIONS_PATH,
     PermissionRegistry,
+    PermissionRegistryError,
     get_permission_registry,
     reset_permission_registry,
 )
+from mfg_agents.v2.contracts.scenario import ScenarioLoadError, ScenarioRegistry
 from mfg_agents.v2.services.workflow import (
     PermissionDenied,
     SignoffIncomplete,
@@ -40,6 +44,10 @@ from mfg_agents.v2.services.workflow import (
 )
 
 SCENARIO_DIR = Path(v2_pkg.__file__).resolve().parent / "scenarios"
+
+# 7 个合法 HITL 槽位（与 permissions.yaml 的 slots 一致）
+LEGAL_SLOTS = ["restart", "eta", "disposition", "d8_close", "complaint_reply",
+               "delivery_commit", "maintenance_window"]
 
 # ---------- 演示身份（user_ctx.roles 为权威角色来源） ----------
 SQE_CTX: dict[str, Any] = {"user_id": "u-sqe", "dept": "quality",
@@ -808,3 +816,240 @@ def test_api_pending_role_query(api_client, engine):
                     json=_payload(SQE_CTX, action_key="concession", comment="加严检验"))
     resp = api_client.get("/api/v2/workflow/pending", params={"role": "pqe"}).json()
     assert resp["data"][0]["my_action"] == "cosign"
+
+
+# ============================================================
+# 10. 架构铁律：Agent 不得持 approve（YAML 结构 + 启动自检 + 单测不变量）
+# ============================================================
+
+
+def test_agent_identity_roles_never_hold_approve():
+    """架构铁律不变量：任何 Agent 身份角色都不得持有 *.approve。
+
+    理由：Huly 的 `primarySocialId === System` 直接放行权限，会让治理层对最
+    活跃的写入方（Agent/LLM）失效。我们的铁律是"LLM 只出建议，确定性流程
+    不许自动放行"——这条不能只靠口头纪律，必须是可执行断言。
+    """
+    registry = get_permission_registry()
+    roles = registry.describe()["roles"]
+    offenders = [
+        f"{r['key']}({r['name']}) 持有 {[p for p in r['permissions'] if p.endswith('.approve')]}"
+        for r in roles
+        if (r["actor_kind"] == "agent" or r["key"] in AGENT_ACTOR_ROLES)
+        and any(p.endswith(".approve") for p in r["permissions"])
+    ]
+    assert offenders == [], (
+        "架构铁律被违反：以下 Agent 身份角色持有终批权限（Agent 只能 propose）：\n"
+        + "\n".join(offenders))
+
+
+def test_registry_rejects_agent_role_with_approve(tmp_path):
+    """配置层面给出 Agent + approve → 加载期即失败（不是运行时才发现）。"""
+    bad = tmp_path / "bad_agent.yaml"
+    bad.write_text(
+        "permissions:\n"
+        "  - {key: hitl.eta.propose, name: 发起, scope: hitl}\n"
+        "  - {key: hitl.eta.approve, name: 终批, scope: hitl}\n"
+        "slots:\n"
+        "  - {key: eta, name: ETA, available_permissions: [hitl.eta.propose, hitl.eta.approve]}\n"
+        "roles:\n"
+        "  - {key: bot, name: 自动决策体, actor_kind: agent,"
+        " permissions: [hitl.eta.propose, hitl.eta.approve]}\n",
+        encoding="utf-8")
+    with pytest.raises(PermissionRegistryError) as exc:
+        PermissionRegistry.from_yaml(bad)
+    message = str(exc.value)
+    assert "Agent" in message and "bot" in message and "approve" in message, message
+
+    # 正对照：同一角色改成 human → 合法（证明规则只针对 Agent 身份）
+    ok = tmp_path / "ok_human.yaml"
+    ok.write_text(bad.read_text(encoding="utf-8").replace(
+        "actor_kind: agent", "actor_kind: human"), encoding="utf-8")
+    registry = PermissionRegistry.from_yaml(ok)
+    assert registry.has_any(["自动决策体"], ["hitl.eta.approve"]) is True
+
+
+# ============================================================
+# 11. 槽位白名单：启动期双注册表校验（PermissionRegistry + ScenarioRegistry）
+# ============================================================
+
+
+def test_every_slot_declares_available_permissions():
+    """7 个槽位必须显式声明 3 个权限，且都存在于目录、归属本槽位。"""
+    registry = get_permission_registry()
+    assert sorted(registry.slot_keys()) == sorted(LEGAL_SLOTS)
+    for slot_key in LEGAL_SLOTS:
+        slot = registry.slot(slot_key)
+        assert slot is not None
+        assert sorted(slot.available_permissions) == sorted(
+            f"hitl.{slot_key}.{verb}" for verb in ("propose", "cosign", "approve"))
+        for perm_key in slot.available_permissions:
+            assert registry.permission(perm_key) is not None
+
+
+def test_slot_with_undeclared_permission_fails_at_load(tmp_path):
+    """槽位声明了目录里没有的权限 → 权限注册表加载失败。"""
+    bad = tmp_path / "bad_slot.yaml"
+    bad.write_text(
+        "permissions:\n"
+        "  - {key: hitl.eta.approve, name: 终批, scope: hitl}\n"
+        "slots:\n"
+        "  - {key: eta, name: ETA, available_permissions: [hitl.eta.approve, hitl.eta.cosign]}\n"
+        "roles:\n"
+        "  - {key: gm, name: 总经理, actor_kind: human, permissions: [hitl.eta.approve]}\n",
+        encoding="utf-8")
+    with pytest.raises(PermissionRegistryError, match="不存在于目录"):
+        PermissionRegistry.from_yaml(bad)
+
+
+def test_all_scenarios_hitl_slots_are_whitelisted():
+    """5 个真实场景的 7 个 HITL 节点，槽位全部落在白名单内。"""
+    registry = get_permission_registry()
+    scenario_registry = ScenarioRegistry(SCENARIO_DIR)
+    loaded = scenario_registry.load()
+    nodes: list[dict[str, str]] = []
+    for meta in loaded.values():
+        nodes.extend(scenario_registry.hitl_nodes(meta))
+    assert len(nodes) == 7, f"HITL 节点数应为 7，实际 {len(nodes)}: {nodes}"
+    for node in nodes:
+        assert node["slot"] in registry.slot_keys(), node
+    assert {n["slot"] for n in nodes} == set(LEGAL_SLOTS)
+
+
+def test_illegal_hitl_slot_fails_at_scenario_load(tmp_path):
+    """非法 hitl kind → 场景加载期即报错（含文件名 / 节点 id / 合法清单）。"""
+    (tmp_path / "bad_scene.yaml").write_text(
+        "key: bad_scene\nname: 非法槽位场景\nsteps:\n"
+        "  - {id: intake, type: agent, agent: business}\n"
+        "  - {id: hitl_unknown_kind, type: hitl, agent: hitl_unknown_kind,"
+        "    prompt: 未知确认}\n",
+        encoding="utf-8")
+    registry = ScenarioRegistry(tmp_path)
+    with pytest.raises(ScenarioLoadError) as exc:
+        registry.load()
+    message = str(exc.value)
+    assert "bad_scene.yaml" in message
+    assert "hitl_unknown_kind" in message
+    assert "unknown_kind" in message
+    assert "合法槽位清单" in message and "disposition" in message, message
+
+
+def test_illegal_slot_in_hitl_section_also_fails(tmp_path):
+    """``hitl:`` 段里声明的非法节点同样在加载期被拦（不只 steps）。"""
+    (tmp_path / "bad_scene2.yaml").write_text(
+        "key: bad_scene2\nname: 非法槽位场景2\n"
+        "hitl:\n  - {step: hitl_overtime_approve, approver_roles: [厂长]}\n"
+        "steps:\n  - {id: intake, type: agent, agent: business}\n",
+        encoding="utf-8")
+    registry = ScenarioRegistry(tmp_path)
+    with pytest.raises(ScenarioLoadError, match="hitl_overtime_approve"):
+        registry.load()
+
+
+# ============================================================
+# 12. 并发双签：进程内锁保证"恰好一条会签记录"
+# ============================================================
+
+
+def test_concurrent_cosign_records_exactly_one(engine):
+    """两个线程同时对同一角色 cosign → 1 成功 + 1 "该角色已会签"，只落 1 条。"""
+    uid = _make_hitl_task(engine)
+    _select_concession(engine, uid)
+    barrier = threading.Barrier(2)
+    results: list[str] = []
+    lock = threading.Lock()
+
+    def worker(name: str) -> None:
+        barrier.wait(timeout=5)
+        try:
+            engine.cosign(uid, name, user_ctx=PQE_CTX)
+            outcome = "ok"
+        except WorkflowTransitionError as exc:
+            outcome = f"conflict:{exc}"
+        except Exception as exc:  # noqa: BLE001
+            outcome = f"error:{type(exc).__name__}:{exc}"
+        with lock:
+            results.append(outcome)
+
+    threads = [threading.Thread(target=worker, args=(f"王倩-{i}",)) for i in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=10)
+
+    assert sorted(r.split(":")[0] for r in results) == ["conflict", "ok"], results
+    assert any("已会签" in r for r in results if r.startswith("conflict")), results
+    task = engine.get(uid)
+    assert len(task.governance["signoffs"]) == 1
+    assert task.signoff_status()["progress"] == "1/3"
+    assert len([h for h in task.history if h["action"] == "cosign"]) == 1
+
+
+# ============================================================
+# 13. 代签：本轮不做入口，但必须 fail-closed
+# ============================================================
+
+
+def test_cosign_cannot_spoof_role(engine):
+    """试图用 role 参数伪装成别人会签 → 403（角色只认 user_ctx.roles）。"""
+    uid = _make_hitl_task(engine)
+    _select_concession(engine, uid)
+    with pytest.raises(PermissionDenied) as exc:
+        engine.cosign(uid, "张三", role="qa",
+                      user_ctx={"roles": ["warehouse"]})
+    assert "会签人范围" in str(exc.value)
+    assert engine.get(uid).governance["signoffs"] == []
+
+
+def test_signoff_and_approval_records_carry_on_behalf_of_slots(engine):
+    """签名/终批记录预留 on_behalf_of（本轮恒 None）与 actor_kind。"""
+    uid = _make_hitl_task(engine)
+    _select_concession(engine, uid)
+    engine.cosign(uid, "王倩", user_ctx=PQE_CTX)
+    engine.cosign(uid, "陈昊", user_ctx=BIZ_CTX)
+    engine.cosign(uid, "李静", user_ctx=QA_CTX)
+    task = engine.approve(uid, "李静", user_ctx=QD_CTX, decision="特采（让步接收）")
+
+    for signoff in task.governance["signoffs"]:
+        assert signoff["on_behalf_of"] is None      # 代签字段位已预留
+        assert signoff["overdue_signoff"] is False
+        assert signoff["actor_kind"] == "human"     # 支撑 Agent 不得终批的运行时校验
+    for approval in task.governance["approvals"]:
+        assert approval["on_behalf_of"] is None
+        assert approval["overdue_signoff"] is False
+        assert approval["actor_kind"] == "human"
+    # 落库后可读回（输出侧同样带出字段位）
+    data = engine.get(uid).to_dict()
+    assert data["governance"]["approvals"][0]["on_behalf_of"] is None
+    assert data["governance"]["signoffs"][0]["actor_kind"] == "human"
+
+
+# ============================================================
+# 14. 裁定 2：8D 关闭只落知识资产口径，不产生受控文档
+# ============================================================
+
+
+def test_d8_close_does_not_create_controlled_document(engine):
+    """8D 关闭走完治理链后：只写 signoffs/approvals，不产生 controlled_document。
+
+    裁定 2：8D 进知识库（knowledge_case），不进受控文档体系。
+    本用例锁定"治理层不得越界创建受控文档表/记录"。
+    """
+    actions = _hitl_step("customer_complaint_v2.yaml", "hitl_d8_close")["actions"]
+    uid = _make_hitl_task(engine, wf_id="hitl_d8_close", slot="d8_close",
+                          actions=actions, title="8D 报告关闭确认")
+    engine.select_action(uid, "close", "李静", user_ctx=QD_CTX, comment="措施已验证")
+    engine.cosign(uid, "王倩", user_ctx=PQE_CTX)
+    engine.cosign(uid, "王倩", user_ctx=SQE_CTX)
+    engine.cosign(uid, "林哲", user_ctx={"roles": ["工程"]})
+    task = engine.approve(uid, "李静", user_ctx=QD_CTX, decision="关闭 8D")
+    assert task.status == "running"
+    assert len(task.governance["approvals"]) == 1
+
+    with sqlite3.connect(engine.db_path) as conn:
+        tables = {str(r[0]).lower() for r in
+                  conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    doc_tables = [t for t in tables
+                  if "controlled" in t or "document" in t or "doc_" in t]
+    assert doc_tables == [], (
+        f"8D 关闭不应产生受控文档记录（裁定 2），却出现表: {doc_tables}")

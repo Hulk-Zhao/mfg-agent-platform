@@ -5,17 +5,24 @@
 
 加载纪律（B.3 第 5 条）：YAML 解析失败必须 fail-fast（启动即报错），
 不允许静默跳过——声明式配置的错误必须在启动时暴露，而不是运行时。
+
+HITL 槽位白名单（治理层）：每个 ``hitl`` 节点的槽位必须落在
+``v2/data/permissions.yaml`` 声明的 7 个 slot 内；否则**加载期**即抛
+``ScenarioLoadError``（含场景文件名 + 节点 id + 非法槽位 + 合法清单），
+绝不留到运行时才 ``KeyError``。这与权限注册表构成"双注册表启动校验"。
 """
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Iterable, Optional
 
 import yaml
 
 logger = logging.getLogger(__name__)
+
+_HITL_PREFIX = "hitl_"
 
 
 class ScenarioLoadError(Exception):
@@ -66,11 +73,87 @@ _REQUIRED_FIELDS = ("key", "name", "steps")
 
 
 class ScenarioRegistry:
-    """场景注册表：扫描目录注册 YAML 场景，提供 get / list。"""
+    """场景注册表：扫描目录注册 YAML 场景，提供 get / list。
 
-    def __init__(self, scenarios_dir: str | Path) -> None:
+    Args:
+        scenarios_dir: 场景 YAML 目录。
+        allowed_hitl_slots: HITL 槽位白名单（默认从 ``permissions.yaml`` 加载，
+            测试可显式注入）。
+    """
+
+    def __init__(self, scenarios_dir: str | Path,
+                 allowed_hitl_slots: Optional[Iterable[str]] = None) -> None:
         self.scenarios_dir = Path(scenarios_dir)
         self._scenarios: dict[str, ScenarioMeta] = {}
+        self._allowed_slots: Optional[list[str]] = (
+            [str(s) for s in allowed_hitl_slots] if allowed_hitl_slots is not None
+            else None)
+
+    # ---------- HITL 槽位白名单 ----------
+
+    def allowed_hitl_slots(self) -> list[str]:
+        """合法 HITL 槽位清单（惰性取自权限注册表，保证单一事实源）。"""
+        if self._allowed_slots is None:
+            try:
+                from .permissions import get_permission_registry
+                self._allowed_slots = sorted(get_permission_registry().slot_keys())
+            except Exception as exc:  # noqa: BLE001
+                raise ScenarioLoadError(
+                    "HITL 槽位白名单加载失败（v2/data/permissions.yaml）: "
+                    f"{exc}") from exc
+        return list(self._allowed_slots)
+
+    @staticmethod
+    def _slot_of(node_id: str, agent: str = "") -> str:
+        """节点 id / agent key → 槽位（约定 ``hitl_<slot>``）。"""
+        for candidate in (agent, node_id):
+            text = str(candidate or "").strip()
+            if text.startswith(_HITL_PREFIX):
+                return text[len(_HITL_PREFIX):]
+        text = str(node_id or "").strip()
+        return text
+
+    def hitl_nodes(self, meta: ScenarioMeta) -> list[dict[str, str]]:
+        """场景内全部 HITL 节点（type=hitl 的步骤 + ``hitl:`` 段声明）。"""
+        nodes: list[dict[str, str]] = []
+        seen: set[str] = set()
+        for step in meta.steps:
+            if str(step.get("type") or "").strip().lower() != "hitl":
+                continue
+            node_id = str(step.get("id"))
+            agent = str(step.get("agent") or "")
+            nodes.append({"id": node_id, "agent": agent,
+                          "slot": self._slot_of(node_id, agent),
+                          "declared_in": "steps"})
+            seen.add(node_id)
+        for item in meta.hitl:
+            if isinstance(item, dict):
+                node_id = str(item.get("step") or "")
+            else:
+                node_id = str(item)
+            if not node_id or node_id in seen:
+                continue
+            nodes.append({"id": node_id, "agent": "",
+                          "slot": self._slot_of(node_id),
+                          "declared_in": "hitl"})
+            seen.add(node_id)
+        return nodes
+
+    def _validate_hitl_slots(self, meta: ScenarioMeta, path: Path) -> None:
+        """加载期校验：HITL 槽位必须在白名单内（fail-fast，不等运行时）。"""
+        allowed = self.allowed_hitl_slots()
+        if not allowed:
+            raise ScenarioLoadError(
+                f"HITL 槽位白名单为空（v2/data/permissions.yaml 未声明 slots），"
+                f"拒绝加载场景: {path.name}")
+        for node in self.hitl_nodes(meta):
+            if node["slot"] in allowed:
+                continue
+            raise ScenarioLoadError(
+                f"HITL 槽位非法：场景 {path.name} 节点 {node['id']!r}"
+                f"（声明位置 {node['declared_in']}）的槽位为 {node['slot']!r}，"
+                f"不在合法槽位清单 {allowed} 内"
+                f"（合法槽位定义见 src/mfg_agents/v2/data/permissions.yaml 的 slots）")
 
     def load(self) -> dict[str, ScenarioMeta]:
         """扫描 scenarios_dir 下全部 *.yaml；任何文件解析/校验失败即抛错。"""
@@ -106,7 +189,7 @@ class ScenarioRegistry:
         for step in steps:
             if not isinstance(step, dict) or not step.get("id"):
                 raise ScenarioLoadError(f"场景 step 缺少 id: {path.name} -> {step!r}")
-        return ScenarioMeta(
+        meta = ScenarioMeta(
             key=str(data["key"]),
             name=str(data["name"]),
             version=int(data.get("version", 1)),
@@ -119,6 +202,8 @@ class ScenarioRegistry:
             source_file=str(path),
             raw=data,
         )
+        self._validate_hitl_slots(meta, path)
+        return meta
 
     def get(self, key: str) -> ScenarioMeta:
         if key not in self._scenarios:
