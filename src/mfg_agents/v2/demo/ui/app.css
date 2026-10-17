@@ -1668,3 +1668,4 @@ a:hover { text-decoration: underline; }
 }
 .flow-empty { padding: 12px 14px; font-size: 12.3px; color: var(--text-3); line-height: 1.7; }
 .flow-empty { padding: 12px 14px; font-size: 12.3px; color: var(--text-3); line-height: 1.7; }
+.chitchat-card { border-color: #C9DFF2; }

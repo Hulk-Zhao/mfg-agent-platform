@@ -136,12 +136,12 @@ class TwoLevelRouter:
         intent = self.intent_classifier.classify(query)
         if intent is None:
             return None
-        if intent.domain is None:  # 超出平台范围
+        if intent.domain is None:  # 非领域意图（闲聊/无关）：轻量回应+引导回领域
             return RouteResult(domain=None, scenario_key=None,
                                confidence=intent.confidence, level="L1",
                                low_confidence=intent.low_confidence,
                                reason=intent.reason,
-                               strategy="fallback")
+                               strategy="chitchat")
         # 多意图路由（V3.1）：域命中但无场景触发词命中 → 数据直答（qa），
         # 不硬套场景 DAG——"今天A型号的质量怎么样"是查询，不是客诉闭环
         scenario_key, trig_score = self._scenario_for_domain(intent.domain, query)

@@ -189,6 +189,9 @@ class V2Orchestrator:
             scenario_key=route.scenario_key)
         result.degraded_reasons = self._degraded_reasons(route)
 
+        if route.strategy == "chitchat":
+            return self._handle_chitchat(result, query, t0)
+
         if route.strategy == "qa":
             return self._handle_qa(result, query, user_ctx, t0)
 
@@ -238,6 +241,21 @@ class V2Orchestrator:
         return result
 
     # ---------- 内部 ----------
+
+    def _handle_chitchat(self, result: OrchestratorResult, query: str,
+                         t0: float) -> OrchestratorResult:
+        """非领域意图（闲聊/无关）：轻量回应 + 引导回领域问题。
+
+        与人工兜底的边界：闲聊**不建工单**（"你好"转人工是误导且浪费），
+        回复限长（两句内），并给可点击的领域问题示例把用户引回来。
+        """
+        result.report = (
+            "你好！我是制造业协同平台的问数助手，擅长回答跨部门的生产、"
+            "质量、交付类问题。下面是一些例子，点击即可直接提问～")
+        result.suggestions = self._route_suggestions("")
+        result.elapsed_ms = (time.perf_counter() - t0) * 1000
+        logger.info("[orchestrator] %s 闲聊轻回应（不建工单）", result.run_id)
+        return result
 
     def _handle_qa(self, result: OrchestratorResult, query: str,
                    user_ctx: Optional[dict], t0: float) -> OrchestratorResult:

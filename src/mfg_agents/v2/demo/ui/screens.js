@@ -807,6 +807,7 @@
     if (m.kind === "flow") body = flowPanelHtml(ctx, m);
     else if (m.kind === "result") body = resultCardHtml(ctx, m.result, { demo: !!m.demo });
     else if (m.kind === "qa") body = qaAnswerCardHtml(ctx, m.result, { demo: !!m.demo });
+    else if (m.kind === "chitchat") body = chitchatCardHtml(ctx, m.result, { demo: !!m.demo });
     else if (m.kind === "fallback") body = fallbackCardHtml(ctx, m.result, { demo: !!m.demo });
     else if (m.kind === "hitl") body = hitlChatCardHtml(ctx, m);
     else if (m.kind === "error") body = `<div class="result-card"><div class="result-head"><div class="result-title">${UI.icon("warn", 15)}执行异常</div></div><div class="result-body"><div class="offline-banner">${UI.icon("warn", 14)}<span>${UI.esc(m.text)}</span></div></div></div>`;
@@ -1086,6 +1087,9 @@
     // 三策略分流（V3.1）：qa=数据直答卡 / fallback=人工兜底卡 / 其余=场景结果卡。
     // 注意：qa 直答 scenario_key 也是空——不能再按"scenario_key 空=兜底"判定，
     // 否则查到真实数据的直答会被误渲染成"人工兜底"（截图反馈的 Bug）。
+    if (result && result.route && result.route.strategy === "chitchat") {
+      return { kind: "chitchat", id: "m" + ++chat.seq, result, demo: !!demo };
+    }
     if (result && result.route && result.route.strategy === "qa"
         && result.fallback !== "manual_ticket") {
       return { kind: "qa", id: "m" + ++chat.seq, result, demo: !!demo };
@@ -1094,6 +1098,24 @@
       return { kind: "fallback", id: "m" + ++chat.seq, result, demo: !!demo };
     }
     return { kind: "result", id: "m" + ++chat.seq, result, demo: !!demo };
+  }
+
+  /** 闲聊卡（chitchat 策略）：限长轻回应 + 引导回领域问题，不建工单。 */
+  function chitchatCardHtml(ctx, result, opts) {
+    const UI = ctx.UI;
+    const demo = opts && opts.demo;
+    const suggestions = result.suggestions || [];
+    return `<div class="result-card chitchat-card">
+      <div class="result-head">
+        <div class="result-title">${UI.icon("chat", 15)}打个招呼</div>
+        <div class="badges">${demo ? UI.demoFlag("演示回放") : UI.realFlag("真实链路")}</div>
+      </div>
+      <div class="result-body">
+        <div style="font-size:13px;line-height:1.9">${UI.esc(result.report || "")}</div>
+        ${suggestions.length ? `<div class="act-chips" style="margin-top:10px">${suggestions.map((sg) =>
+          `<button type="button" class="chip chip-cmt" data-sq="${UI.esc(sg.example)}">${UI.esc(sg.name)}：${UI.esc(sg.example)}</button>`).join("")}</div>` : ""}
+      </div>
+    </div>`;
   }
 
   /** 数据直答卡（qa 策略）：轻量呈现——结论 + 数据行 + 溯源，无场景节点无工单。 */
