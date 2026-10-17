@@ -66,4 +66,16 @@ order-fulfillment-board-acceptance/
 # ---- Dev scratch / planning notes (working documents, not part of the repo) ----
 spec.md
 tasks.md
+checklist.md
 1.3.3
+
+# ---- AI-assisted working documents (kept locally, not published) ----
+docs/ARCHITECTURE.md
+docs/V2-INCREMENT-DESIGN.md
+docs/PRD.md
+docs/PRD-V3.md
+docs/V3-UX优化方案.md
+docs/V2-前端展示应用-说明.md
+docs/办公助手Agent-竞品调研与植入评估.md
+docs/我的看板-竞品调研与下钻设计.md
+docs/订单履约看板-竞品调研与L2L3设计.md
