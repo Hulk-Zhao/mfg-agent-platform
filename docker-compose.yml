@@ -1,47 +1,15 @@
 # ============================================================
-# mfg-agent-platform Docker 编排
-# 参考 Itcast_qa_system 的成熟做法：
-#   - 自定义网络隔离
-#   - MySQL healthcheck 后再启动 app
-#   - entrypoint.sh 等待依赖
-#   - 复用宿主机 Ollama（host.docker.internal:11434）
+# mfg-agent-platform Docker 编排（V3 演示入口：FastAPI + SSE）
 #
-# 启动：docker compose up -d
+# V3 演示链路默认使用本地 SQLite（data/mfg_agent.db）+ 本地 ChromaDB
+# （data/chroma 持久化），无需外部数据库服务；entrypoint 首次启动
+# 自动完成演示库初始化与知识库种子写入。
+#
+# 启动：docker compose up -d --build
+# 访问：http://localhost:8004/demo-ui/
 # 停止：docker compose down
 # ============================================================
 services:
-  mysql:
-    image: mysql:8.0
-    container_name: mfg_mysql
-    environment:
-      MYSQL_ROOT_PASSWORD: demo123
-      MYSQL_DATABASE: mfg_agent
-    ports:
-      - "3306:3306"
-    volumes:
-      - ./data/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
-      - mysql_data:/var/lib/mysql
-    healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-pdemo123"]
-      interval: 5s
-      timeout: 3s
-      retries: 20
-      start_period: 10s
-    networks:
-      - mfg_net
-    restart: unless-stopped
-
-  chroma:
-    image: chromadb/chroma:latest
-    container_name: mfg_chroma
-    ports:
-      - "8000:8000"
-    volumes:
-      - chroma_data:/chroma/chroma
-    networks:
-      - mfg_net
-    restart: unless-stopped
-
   app:
     build:
       context: .
@@ -51,62 +19,44 @@ services:
         HTTPS_PROXY: ${DOCKER_BUILD_PROXY:-}
     image: mfg-agent-platform:latest
     container_name: mfg_app
-    depends_on:
-      mysql:
-        condition: service_healthy
-      chroma:
-        condition: service_started
     environment:
       PYTHONUNBUFFERED: 1
-      MYSQL_HOST: mysql
-      MYSQL_PORT: 3306
-      MYSQL_USER: root
-      MYSQL_PASSWORD: demo123
-      MYSQL_DB: mfg_agent
-      CHROMA_HOST: chroma
-      CHROMA_PORT: 8000
-      LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+      # LLM 提供方：ollama（本地）/ deepseek / openai；留空自动识别
+      LLM_PROVIDER: ${LLM_PROVIDER:-}
+      # 本地 Ollama：容器内经 host.docker.internal 访问宿主机
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3.5:9b}
+      # DeepSeek / OpenAI 兼容接口（按需填写，见 .env.example）
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-deepseek-chat}
+      DS_URL: ${DS_URL:-}
+      DS_KEY: ${DS_KEY:-}
     ports:
-      - "8501:8501"
+      - "8004:8004"
     volumes:
-      - ./logs:/app/logs
+      # 演示库与向量库持久化（删除后下次启动自动重建）
+      - app_data:/app/data
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    networks:
-      - mfg_net
     restart: unless-stopped
 
-  # 可选：若要把 Ollama 也容器化（GPU直通），取消下面注释
-  # ollama:
-  #   image: ollama/ollama:0.40.2
-  #   container_name: mfg_ollama
-  #   ports:
-  #     - "11434:11434"
-  #   volumes:
-  #     - D:/Ollama_Models:/root/.ollama
+  # ---- 可选：V1 原型（Streamlit，8 Agent + MySQL）遗留链路 ----
+  # 取消注释后可经 8501 访问 V1 UI；需要 MySQL 8.0
+  # mysql:
+  #   image: mysql:8.0
+  #   container_name: mfg_mysql
   #   environment:
-  #     - OLLAMA_MODELS=/root/.ollama
-  #     - OLLAMA_GPU_LAYERS=99
-  #   deploy:
-  #     resources:
-  #       reservations:
-  #         devices:
-  #           - driver: nvidia
-  #             count: all
-  #             capabilities: [gpu]
+  #     MYSQL_ROOT_PASSWORD: demo123
+  #     MYSQL_DATABASE: mfg_agent
+  #   ports:
+  #     - "3306:3306"
+  #   volumes:
+  #     - ./data/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+  #     - mysql_data:/var/lib/mysql
   #   networks:
   #     - mfg_net
   #   restart: unless-stopped
 
-networks:
-  mfg_net:
-    name: mfg_net
-
 volumes:
-  mysql_data:
-  chroma_data:
+  app_data:

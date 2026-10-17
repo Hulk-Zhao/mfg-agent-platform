@@ -1,0 +1,22 @@
+# 构建上下文瘦身：排除本地开发产物（均可在容器内重建）
+.git
+.venv
+models
+.tmp-qa
+.tmp-test
+.pytest_cache
+**/__pycache__
+*.pyc
+logs/*
+.env
+
+# 运行时数据（entrypoint 自动重建）
+data/*.db
+data/chroma
+data/knowledge_base_assistant
+
+# 文档与测试不进镜像
+docs
+tests
+*.md
+!README.md

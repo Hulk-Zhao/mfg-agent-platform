@@ -1,4 +1,4 @@
-# 参考 Itcast_qa_system/Dockerfile 的成熟做法
+# 多阶段依赖缓存：先装依赖再复制代码，改代码不重装依赖
 FROM python:3.12-slim-bookworm
 
 WORKDIR /app
@@ -34,16 +34,16 @@ RUN pip install --no-cache-dir \
 
 # 再复制项目代码（改代码不重装依赖）
 COPY src ./src
-COPY data ./data
+COPY data/init.sql data/seed_v3.sql ./data/
 
-RUN mkdir -p logs
+RUN mkdir -p logs data
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-EXPOSE 8501
+EXPOSE 8004
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-    CMD curl -f http://localhost:8501/_stcore/health || exit 1
+    CMD curl -f http://localhost:8004/api/v2/health || exit 1
 
 ENTRYPOINT ["/entrypoint.sh"]

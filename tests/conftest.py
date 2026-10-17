@@ -14,6 +14,7 @@ V1 基线的 tests/test_*.py 五个文件是**演示脚本**（顶层直接执�
 - 直接测试探针实现的用例：`@pytest.mark.llm_probe`（它们自行 mock 网络）。
 """
 import os
+from pathlib import Path
 
 import pytest
 
@@ -24,6 +25,19 @@ collect_ignore = [
     "test_stream.py",
     "test_chunk.py",
 ]
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _ensure_demo_db():
+    """确保演示库存在：全新克隆没有 data/mfg_agent.db（运行时产物不入库），
+    部分测试直接读取该库。仅在文件缺失时执行 init_db（幂等：DROP+CREATE+种子），
+    不覆盖本地已有库。"""
+    from mfg_agents.config import settings
+    db_file = settings.DB_URL.replace("sqlite:///", "")
+    if not Path(db_file).exists():
+        from mfg_agents.db.init_db import init_db
+        init_db()
+    yield
 
 
 def pytest_configure(config):

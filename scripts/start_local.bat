@@ -1,15 +1,20 @@
 @echo off
-chcp 65001 >nul
-title mfg-agent-platform - Start
+rem mfg-agent-platform - local start (V3 demo: FastAPI + SSE, port 8004)
+rem Requires: uv (https://docs.astral.sh/uv/) and Python 3.11+
 cd /d "%~dp0\.."
 
-echo === [1/3] 启动 MySQL + ChromaDB ===
-docker compose up -d mysql chroma
+if not exist .env copy .env.example .env
 
-echo === [2/3] 安装依赖（首次） ===
+echo === [1/3] Installing dependencies (first run) ===
 uv sync
+if errorlevel 1 exit /b 1
 
-echo === [3/3] 启动 Streamlit UI ===
-uv run streamlit run src/mfg_agents/ui/app.py
+echo === [2/3] Initializing demo database and knowledge base ===
+uv run python -m mfg_agents.db.init_db
+uv run python -m mfg_agents.knowledge.seed
+
+echo === [3/3] Starting FastAPI demo ===
+echo Open http://127.0.0.1:8004/demo-ui/ in your browser
+uv run python -m uvicorn mfg_agents.v2.demo.api:app --port 8004
 
 pause

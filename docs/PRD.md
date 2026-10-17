@@ -3,7 +3,7 @@
 | 项 | 内容 |
 |---|---|
 | 文档版本 | V1.0（评审稿） |
-| 作者 | Alice（产品经理） |
+| 作者 | 产品团队 |
 | 日期 | 2026-10-15 |
 | 语言 | 简体中文 |
 | 技术栈（延续现有基线） | Python 3.11+ · LangGraph · LangChain · FastAPI(SSE) · Streamlit · SQLite/MySQL · ChromaDB · Ollama(qwen3.5:9b)/DeepSeek · Docker Compose |
@@ -32,7 +32,7 @@
 | 场景 | 5 个：停线应急、来料异常、客户投诉、出货风险、设备预警（fan-out/fan-in 并行取证） |
 | 数据 | 8 张模拟表（production_output/line_stop_event/quality_defect/material_batch/equipment_log/inventory/shipment/customer_complaint），SQLite 本地 / MySQL Docker |
 | 知识 | ChromaDB 历史案例 RAG |
-| 技术 | Streamlit UI + FastAPI（SSE 事件流）、本地 Ollama qwen3.5:9b 或 DeepSeek API、Docker Compose；git 尚无提交 |
+| 技术 | Streamlit UI + FastAPI（SSE 事件流）、本地 Ollama qwen3.5:9b 或 DeepSeek API、Docker Compose |
 | 定位 | **事中应急查询型**：用户提问 → 路由 → 并行取证 → 报告 |
 | 缺失 | IM 入口、主动预警、工作流引擎、审批、用户权限、定时报告、跨部门进度看板 |
 

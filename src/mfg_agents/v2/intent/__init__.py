@@ -1,4 +1,4 @@
-"""意图识别演进位（§6.2，对齐 Itcast ``query_classifier`` + ``strategy_selector`` 分离）。
+"""意图识别演进位：意图分类与策略选择解耦的骨架。
 
 现状：``TwoLevelRouter.route()`` 一体化（L0 规则 + L1 LLM 分类 + 降级）→ RouteResult。
 目标：分类与策略选择**解耦**——

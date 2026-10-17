@@ -58,7 +58,7 @@ INSERT OR IGNORE INTO shipment (id, order_no, product_model, qty, ship_status, e
 (101, 'SO-C-2026-1012', 'C型号', 500, 'shipped', '2026-10-13 00:00:00');
 
 -- ============================================================
--- V3.2 财务/行政知识库（来源：E:/tools/assistant/data/knowledge_base 复制提炼）
+-- V3.2 财务/行政知识库（企业通用制度与流程知识整理）
 -- 鉴权（PM 裁定）：finance_policy 仅 finance/gm/coordinator 可查（高管限定）；
 --                admin_policy 全员可读（行政制度公开）。
 -- ============================================================

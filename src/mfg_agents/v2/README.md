@@ -5,7 +5,7 @@ V2 把 V1 原型中"硬编码的场景知识"抽取为声明式配置，并提�
 
 ```
 v2/
-├── base/                 # 基础设施层（对齐 Itcast base/）
+├── base/                 # 基础设施层
 │   └── logger.py         #   get_logger / configure（薄封装，不替换现有 logging）
 ├── contracts/            # 接入契约层
 │   ├── im_gateway.py     #   IMGateway ABC + InboundMessage / ReplyCard
@@ -13,7 +13,7 @@ v2/
 │   ├── data_source.py    #   DataSource ABC + SQLiteDataSource + Registry
 │   ├── scenario.py       #   ScenarioMeta + ScenarioRegistry（YAML 场景注册）
 │   └── vector_store.py   #   [新] VectorStore ABC + VectorHit + ChromaVectorStore（零依赖）
-├── prompts/              # [新] 提示词集中管理（对齐 Itcast prompts.py）
+├── prompts/              # [新] 提示词集中管理
 │   ├── routing.py        #   L1 路由分类 prompt（DOMAIN_GROUPS + 模板）
 │   ├── fa.py / report.py #   FA 提示词 / 报告提示词 + FORBIDDEN_WORDS + 3 个模板函数
 │   └── text2sql.py       #   明细探查 prompt（复用 V1 SCHEMA_PROMPT）

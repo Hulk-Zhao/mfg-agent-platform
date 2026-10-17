@@ -2,10 +2,10 @@
 
 | 项 | 内容 |
 |---|---|
-| 文档版本 | V3.4（增量 PRD，**不修改** `docs/PRD.md`；V3.1 五项裁定、V3.2 `on_behalf_of`+两条硬性要求、V3.3 G6 会签独立性、V3.4 **对齐阶段一实际交付与主理人口径修正**，见 §0.5、§8） |
+| 文档版本 | V3.4（增量 PRD，**不修改** `docs/PRD.md`；V3.1 五项裁定、V3.2 `on_behalf_of`+两条硬性要求、V3.3 G6 会签独立性、V3.4 **对齐阶段一实际交付与项目负责人口径修正**，见 §0.5、§8） |
 | 前置文档 | `docs/PRD.md`（V1 完整版）、`docs/ARCHITECTURE-V2.md`（987 行）、`docs/V2-HITL-角色协作设计.md` |
 | 对标输入 | `docs/PLATFORM-DEVELOP-对标分析.md`（Huly Platform 代码级分析） |
-| 作者 | Alice（产品经理） |
+| 作者 | 产品团队 |
 | 日期 | 2026-10-16 |
 | Language | 简体中文 |
 | Programming Language | 延续现有基线：Python 3.11 + LangGraph + FastAPI(SSE) + SQLite/MySQL + ChromaDB + 原生 JS（**不引入 TS/Node**） |
@@ -31,7 +31,7 @@ Agent 必须以 `actor_type='agent'` 显式落库，且不得持有任何 `*.app
 
 ---
 
-## 0.5 主理人裁定（2026-10-16，五项决策 + 一项补充）
+## 0.5 项目负责人裁定（2026-10-16，五项决策 + 一项补充）
 
 > 本节为**决策记录**，效力高于本 PRD 其余章节的"建议"。凡与本节冲突的表述，以本节为准。
 
@@ -78,11 +78,11 @@ Agent 必须以 `actor_type='agent'` 显式落库，且不得持有任何 `*.app
 
 **理由**：现场一定会绕过系统（用微信+口头），堵死等于数据失真——数据失真比"有瑕疵的留痕"更糟。但代签必须"贵"：填理由有心理成本、`overdue_signoff` 标记有声誉成本、只能用上级角色有权力成本、留痕"代了谁"有问责成本。**四条叠加才能让代签成为例外而非常态。**
 
-**C3 的边界说明（主理人裁定）**：不引入 `reports_to` 组织层级（理由见 §6.5 K6）。因此 C3 的实现含义是"**任何 `gm` / `quality_director` 可代任何角色的签**"——这在合规上不是漏洞而是授权边界：ISO 审核问的是"谁有权代签 + 有没有理由 + 能不能追溯"，不是"是否严格直接上级"。
+**C3 的边界说明（项目负责人裁定）**：不引入 `reports_to` 组织层级（理由见 §6.5 K6）。因此 C3 的实现含义是"**任何 `gm` / `quality_director` 可代任何角色的签**"——这在合规上不是漏洞而是授权边界：ISO 审核问的是"谁有权代签 + 有没有理由 + 能不能追溯"，不是"是否严格直接上级"。
 
 **C4 的必要性**：C3 放宽了"谁"（不校验直接上级），就必须收紧"代了谁"（`on_behalf_of` 必填）。**两者是一对补偿关系——放宽一层，必须补一层留痕，否则审计链断裂。**
 
-**本轮实施范围（主理人裁定）**：**本轮不实现代签入口**。本轮只交付 ① 字段位（`on_behalf_of: null` + `overdue_signoff: false` + `actor_kind` 已就位，后续接入代签无需改结构）② fail-closed 底线（`test_cosign_cannot_spoof_role`：actor=张三、`role="qa"`、`user_ctx.roles=["warehouse"]` → 403，锁定"不存在任何伪装/绕过入口"）。**C1-C3 与 C4 的四组反例测试顺延到代签轮**，届时按上表全测。
+**本轮实施范围（项目负责人裁定）**：**本轮不实现代签入口**。本轮只交付 ① 字段位（`on_behalf_of: null` + `overdue_signoff: false` + `actor_kind` 已就位，后续接入代签无需改结构）② fail-closed 底线（`test_cosign_cannot_spoof_role`：actor=张三、`role="qa"`、`user_ctx.roles=["warehouse"]` → 403，锁定"不存在任何伪装/绕过入口"）。**C1-C3 与 C4 的四组反例测试顺延到代签轮**，届时按上表全测。
 
 ### 裁定 5：scope 粒度 —— 阶段二 `dept` + `line`，`customer` / `project` 放阶段三
 
@@ -170,13 +170,13 @@ Agent 必须以 `actor_type='agent'` 显式落库，且不得持有任何 `*.app
 1. **（硬性）槽位白名单启动校验**：`permissions.yaml` 补全 7 个 slot 的 `available_permissions`；`PermissionRegistry` 加载时校验"槽位声明的权限必须存在于目录"，缺失则**启动失败**。同时 `ScenarioRegistry` 加载期校验：**7 个已声明 slot 之外的任何 `hitl` kind 一律 fail-fast**（不得等到运行时才抛 `KeyError`）。
 2. 无 propose 权限的角色调用 `select-action` → HTTP 403，错误体含"需：`<角色中文名列表>`"（由 `roles_with_permission_names()` 生成）。
 3. 会签未齐时调用 `approve` → 409，错误体含 `{"pending": ["SQE", "采购"]}`。
-4. **幂等 / 防重复（口径已按主理人裁定修正）**：同一角色重复 cosign → **第一次 200 成功，第二次 409「该角色已会签」**，且**最终只落 1 条记录**。并发下同样成立（`test_concurrent_cosign_records_exactly_one`：两线程同时签同一角色 → 结果恰为 `["conflict","ok"]`，signoffs == 1）。
+4. **幂等 / 防重复（口径已按项目负责人裁定修正）**：同一角色重复 cosign → **第一次 200 成功，第二次 409「该角色已会签」**，且**最终只落 1 条记录**。并发下同样成立（`test_concurrent_cosign_records_exactly_one`：两线程同时签同一角色 → 结果恰为 `["conflict","ok"]`，signoffs == 1）。
    > **原表述"第二次返回 200 且计数不变"已作废**——不变的部分是"记录不重复"，变的是状态码：重复会签属于无效请求，必须让调用方（含 IM 重复点击、Agent 重试）拿到**明确的冲突信号**，而不是一个假的成功。200 会掩盖重复提交，不利于排障。
 5. **审计留痕可追溯**：`governance_json` 覆盖 7 槽位 × 5 场景的全部 HITL 动作，字段位含 `role / role_name / actor / actor_kind / action / decision / comment / on_behalf_of / overdue_signoff / ts`；对任意 `task_uid` 能查出完整时间线且**顺序确定**。（独立审计表见 M1.3 生产化清单，本轮不建）
 6. **（硬性，架构铁律）Agent 绝不可持有 approve 权限**：① Agent 动作 `actor_kind='agent'`；② **`permissions.yaml` 结构层约束——任何 role 不得同时具备"节点 Agent 身份"与 `<slot>.approve` 权限**；③ **启动期自检或单测断言**：遍历全部 role，存在"agent 身份 + 任一 `*.approve`"组合则启动失败（报错含角色与原因）；④ 运行期再拦一次（`_assert_approve_permission`）+ `AGENT_ACTOR_ROLES` 黑名单兜底。三重防线缺一不可，目的是防止未来有人给 Agent 配了 `gm` 角色就整层破防。
 7. **（G4）HITL 待办能推送到 IM**：`hitl` 建单后企业微信卡片送达指定接收人，卡片上可见待签事项与"已签 N/M"进度。
 8. **（G5）待办按人过滤**：`pending_hitl(role_names)` + `action_for()`（select_action/cosign/approve/null）+ `GET /workflow/pending?role=`（可重复/逗号/不传返回全量）；同一任务对不同角色返回不同可见性（SQE 看到待签，采购未到序看不到）。
-9. **超时代签（裁定 4）——本轮范围已调整**：本轮**不实现代签入口**（主理人裁定）。本轮只交付两层：
+9. **超时代签（裁定 4）——本轮范围已调整**：本轮**不实现代签入口**（项目负责人裁定）。本轮只交付两层：
    - ① **字段位就位**：signoff / approval 记录已带 `on_behalf_of: null` + `overdue_signoff: false` + `actor_kind`，后续接入代签无需改表结构；
    - ② **fail-closed 底线**：`test_cosign_cannot_spoof_role`（actor=张三、`role="qa"`、`user_ctx.roles=["warehouse"]` → 403）锁定"不存在任何伪装/绕过入口"。
    - **C1-C4 的四组反例测试顺延到代签轮**（届时按 §0.5 裁定 4 全测：理由不可空 / 仅 gm 或 quality_director / `on_behalf_of` 必填 / 两字段同时缺失也拒绝）。
@@ -500,7 +500,7 @@ signoff_status() → {
 
 ## 8. 裁定记录（原"待拍板 5 问"已全部裁定）
 
-> 五个问题已于 2026-10-16 由主理人裁定，详见 **§0.5**。本表仅留存"提问 → 裁定"的对照，便于日后回溯决策依据。
+> 五个问题已于 2026-10-16 由项目负责人裁定，详见 **§0.5**。本表仅留存"提问 → 裁定"的对照，便于日后回溯决策依据。
 
 | # | 原问题 | 裁定 | 与产品原建议的差异 |
 |---|---|---|---|

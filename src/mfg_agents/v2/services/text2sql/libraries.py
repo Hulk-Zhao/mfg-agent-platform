@@ -14,16 +14,22 @@ import yaml
 __all__ = ["TABLE_ACL", "MetricLibrary", "QueryLibrary"]
 
 # ---------- 表级权限（白名单，fail-closed；coordinator=总控跨域取证角色） ----------
+# 角色口径与登录岗位（demo/ui demo-data.js ROLES）保持一致：
+#   gm=总经理（五域全局 · 只读汇总）→ 全域可读；
+#   material_control=物控（物料 · 库存 · 齐套）、sales=业务经理（订单 · 对客 ETA · 出货）
+#   为本岗位核心场景表。
 TABLE_ACL: dict[str, set[str]] = {
     # V3.1：quality 加入产出/停线表——质量分析（FPY/良率）本职需要产出与停线数据
-    "production_output": {"manufacturing", "planning", "coordinator", "quality"},
-    "line_stop_event": {"manufacturing", "coordinator", "quality"},
-    "quality_defect": {"quality", "manufacturing", "coordinator"},
-    "material_batch": {"procurement", "quality", "coordinator"},
-    "equipment_log": {"manufacturing", "coordinator"},
-    "inventory": {"warehouse", "supply_chain", "coordinator"},
-    "shipment": {"business", "warehouse", "coordinator"},
-    "customer_complaint": {"quality", "business", "coordinator"},
+    "production_output": {"manufacturing", "planning", "coordinator", "quality", "gm"},
+    "line_stop_event": {"manufacturing", "coordinator", "quality", "gm"},
+    "quality_defect": {"quality", "manufacturing", "coordinator", "gm"},
+    # V3.3：material_control 加入——齐套检查/到货批次是物控核心场景
+    "material_batch": {"procurement", "quality", "coordinator", "material_control", "gm"},
+    "equipment_log": {"manufacturing", "coordinator", "gm"},
+    "inventory": {"warehouse", "supply_chain", "coordinator", "gm"},
+    # sales=业务经理：对客 ETA / 出货风险 / 客诉响应核心场景
+    "shipment": {"business", "warehouse", "coordinator", "sales", "gm"},
+    "customer_complaint": {"quality", "business", "coordinator", "sales", "gm"},
     # V3.2 职能域：财务制度**高管限定**（PM 鉴权裁定——财务数据仅总经理/财务可咨询）
     "finance_policy": {"finance", "gm", "coordinator"},
     # 行政制度全员可读（公开制度，15 角色全量）

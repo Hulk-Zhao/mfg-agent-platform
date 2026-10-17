@@ -194,6 +194,29 @@ class TestTableLevelPermission:
                     "SELECT * FROM line_stop_event"):
             SQLAuditor.audit(sql, QUALITY_CTX)  # 不抛即通过
 
+    def test_login_persona_scopes_match_acl(self):
+        """登录岗位口径与 ACL 一致性（P0 回归）。
+
+        修复前 ACL 漏配 gm / material_control / sales：总经理（登录默认岗位，
+        "五域全局 · 只读汇总"）问停线场景被表级权限拦截整链降级；
+        物控查来料批次、业务经理查出货/客诉同样被拒。本测试锁定
+        demo/ui 登录岗位与其场景核心表的可达性。
+        """
+        GM_CTX = {"user_id": "u-gm", "dept": "management", "roles": ["gm"]}
+        for table in ("production_output", "line_stop_event", "quality_defect",
+                      "material_batch", "equipment_log", "inventory",
+                      "shipment", "customer_complaint"):
+            SQLAuditor.audit(f"SELECT * FROM {table}", GM_CTX)  # 不抛即通过
+
+        MC_CTX = {"user_id": "u-mc", "dept": "supply_chain",
+                  "roles": ["material_control"]}
+        SQLAuditor.audit("SELECT * FROM material_batch", MC_CTX)
+        SQLAuditor.audit("SELECT * FROM inventory", MC_CTX)
+
+        SALES_CTX = {"user_id": "u-biz", "dept": "sales", "roles": ["sales"]}
+        SQLAuditor.audit("SELECT * FROM shipment", SALES_CTX)
+        SQLAuditor.audit("SELECT * FROM customer_complaint", SALES_CTX)
+
     def test_unknown_table_blocked(self):
         with pytest.raises(SQLAuditError, match="未注册"):
             SQLAuditor.audit("SELECT * FROM hr_salaries", MFG_CTX)
