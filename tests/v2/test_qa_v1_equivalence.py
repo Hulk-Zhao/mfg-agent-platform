@@ -26,7 +26,13 @@ requires_llm = pytest.mark.skipif(
 def _skip_if_llm_not_ready(exc: Exception) -> None:
     """兜底（G）：collection 期 TTL 缓存可能让 skipif 与运行时不一致——
     若真实执行时 LLM 实际不可用（模型未 pull / 连接失败），按"离线跳过"处理，
-    而非误报 FAILED。仅此文件使用（不改其他 QA 测试）。"""
+    而非误报 FAILED。仅此文件使用（不改其他 QA 测试）。
+
+    R2-1：**AssertionError 必须先 re-raise**——否则 hint 中的裸子串 "model"/"ollama"
+    会把 `AssertionError("...model...")` 误判为"LLM 不可用"而 skip，吞掉真实断言失败。
+    """
+    if isinstance(exc, AssertionError):
+        raise exc
     msg = str(exc).lower()
     hint = ("not found", "pull", "model", "connection", "refused",
             "timed out", "timeout", "ollama")
