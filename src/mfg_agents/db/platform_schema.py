@@ -35,6 +35,7 @@ PLATFORM_DDL = [
       context_json TEXT DEFAULT '{}',
       hitl_prompt TEXT DEFAULT '',
       history_json TEXT DEFAULT '[]',
+      governance_json TEXT DEFAULT '{}',
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       sla_due_at TEXT
@@ -61,6 +62,34 @@ _METRIC_UPSERT = (
     "(id, name, owner, description, tables_json, keywords_json, sql, unit, version, updated_at) "
     "VALUES (:id, :name, :owner, :desc, :tables, :keywords, :sql, :unit, 1, :now)"
 )
+
+# 幂等加列清单（表名 → {列名: 列定义}）。
+# 治理层（多人会签）新增 governance_json；老演示库已有历史工单，
+# **不允许** DROP 重建，只允许 PRAGMA 探测后 ALTER TABLE ADD COLUMN。
+_ADDITIVE_COLUMNS: dict[str, dict[str, str]] = {
+    "platform_workflow_task": {
+        "governance_json": "TEXT DEFAULT '{}'",
+    },
+}
+
+
+def _existing_columns_sqlite(conn: sqlite3.Connection, table: str) -> set[str]:
+    """SQLite：读取表的现有列名集合（表不存在返回空集）。"""
+    rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    return {str(row[1]) for row in rows}
+
+
+def _migrate_sqlite(conn: sqlite3.Connection) -> None:
+    """幂等迁移：缺列则 ALTER TABLE ADD COLUMN（保留历史数据）。"""
+    for table, columns in _ADDITIVE_COLUMNS.items():
+        existing = _existing_columns_sqlite(conn, table)
+        if not existing:
+            continue  # 表刚由 DDL 创建（已含新列）或不存在
+        for column, definition in columns.items():
+            if column in existing:
+                continue
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+            logger.info("[platform] 迁移加列: %s.%s", table, column)
 
 
 def sqlite_path_from_url(db_url: str) -> str:
@@ -104,6 +133,21 @@ def ensure_platform_schema(db_url: str) -> None:
     with engine.begin() as conn:
         for ddl in PLATFORM_DDL:
             conn.execute(text(ddl))
+        # 非 SQLite（MySQL 等）：用 inspector 探测后幂等加列
+        from sqlalchemy import inspect as sa_inspect
+
+        inspector = sa_inspect(engine)
+        for table, columns in _ADDITIVE_COLUMNS.items():
+            try:
+                existing = {c["name"] for c in inspector.get_columns(table)}
+            except Exception:  # noqa: BLE001 - 表不存在时跳过
+                continue
+            for column, definition in columns.items():
+                if column in existing:
+                    continue
+                conn.execute(text(
+                    f"ALTER TABLE {table} ADD COLUMN {column} {definition}"))
+                logger.info("[platform] 迁移加列: %s.%s", table, column)
         for row in _load_metric_rows():
             conn.execute(text(_METRIC_UPSERT.replace(":", ":")), dict(
                 id=row[0], name=row[1], owner=row[2], desc=row[3],
@@ -125,6 +169,7 @@ def ensure_platform_schema_sqlite(db_url_or_conn) -> None:
     try:
         for ddl in PLATFORM_DDL:
             conn.execute(ddl)
+        _migrate_sqlite(conn)
         for row in _load_metric_rows():
             conn.execute(_METRIC_UPSERT, {
                 "id": row[0], "name": row[1], "owner": row[2], "desc": row[3],

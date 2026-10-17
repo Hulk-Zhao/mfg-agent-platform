@@ -5,6 +5,11 @@
 - 新 kinds（disposition/d8_close/complaint_reply/delivery_commit/
   maintenance_window）复用同一实现：一律创建 ``waiting_hitl`` 工单与 IM 卡片，
   **绝不调用 approve/reject**（关键决策必须人工确认）。
+
+治理层（多人会签）：建单时把 step 的 ``actions`` 全量写入
+``context["actions"]``，并写入 ``context["slot"]``（= kind），
+供 WorkflowEngine 在 ``select_action`` 时按**选中动作**的 propose/cosign
+生成会签要求（不能在建单时把全部动作的 cosign 取并集固定下来）。
 """
 from __future__ import annotations
 
@@ -14,7 +19,7 @@ __all__ = ["make_hitl_handler"]
 
 
 def make_hitl_handler(engine: Any, notifier: Any, kind: str) -> Callable:
-    """构造 HITL handler（kind 决定工单 wf_id = ``hitl_{kind}``）。"""
+    """构造 HITL handler（kind 决定工单 wf_id = ``hitl_{kind}`` 与治理槽位）。"""
 
     def handler(task: Any, ctx: Any, sink: Any) -> dict:
         step = task.params
@@ -33,7 +38,7 @@ def make_hitl_handler(engine: Any, notifier: Any, kind: str) -> Callable:
         wf_task = engine.create_task(
             wf_id=f"hitl_{kind}", title=prompt,
             context={"run_id": ctx.get("run_id"), "step": task.step_id,
-                     "kind": kind, "actions": actions, "card": card,
+                     "kind": kind, "slot": kind, "actions": actions, "card": card,
                      "eta_hours": ctx.get("eta_hours")},
             assignees=approvers, priority="P1", hitl=True, hitl_prompt=prompt)
         notifier.broadcast_hitl({**card, "hitl_prompt": prompt,
@@ -43,7 +48,9 @@ def make_hitl_handler(engine: Any, notifier: Any, kind: str) -> Callable:
             "step": task.step_id, "kind": kind, "prompt": prompt,
             "status": "waiting_hitl", "approver_roles": approvers,
             "actions": actions, "task_uid": wf_task.task_uid,
-            "card": card,
+            "card": card, "slot": kind,
+            "governance": dict(wf_task.governance or {}),
+            "signoff_status": wf_task.signoff_status(),
             "provenance": [{"channel": "hitl", "task_uid": wf_task.task_uid,
                             "approver_roles": approvers}],
         }, "summary": summary}

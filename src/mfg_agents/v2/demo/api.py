@@ -34,7 +34,12 @@ from ..contracts.im_gateway import ReplyCard
 from ..contracts.adapters.wecom import WeComAdapter
 from ..core.events import EventHub, QueueSink, bind_existing, hub, unbind
 from ..core.orchestrator import V2Orchestrator, create_default_orchestrator
-from ..services.workflow import WorkflowEngine, WorkflowTransitionError
+from ..services.workflow import (
+    PermissionDenied,
+    SignoffIncomplete,
+    WorkflowEngine,
+    WorkflowTransitionError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -140,14 +145,27 @@ def api_events_open(req: EventsOpenRequest) -> dict[str, Any]:
             "message": "ok"}
 
 
-# ---------- HITL 审批中心（WorkflowEngine 待办 / 审批回写） ----------
+# ---------- HITL 审批中心（WorkflowEngine 待办 / 审批回写 / 角色校验 / 多人会签） ----------
 
 
 class WorkflowActionRequest(BaseModel):
+    """HITL 审批动作请求。
+
+    - ``approver``：审批人姓名（写入工单留痕）；
+    - ``role``：当前岗位 key（**仅用于展示/兜底**，前端可伪造）；
+    - ``user_ctx``：用户上下文（``{"dept": ..., "roles": [...]}``），
+      其中 ``roles`` 是**权威**角色来源（后端以此为准做权限校验）；
+    - ``action_key``：选定/处置动作 key（select-action 必填）；
+    - ``decision``：所选处置动作中文名（写入审批留痕）。
+    """
+
     approver: str = "演示用户"
     comment: str = ""
     final: bool = False
-    decision: str = ""   # 所选处置动作（如"特采（让步接收）"），写入审批留痕
+    decision: str = ""       # 所选处置动作（如"特采（让步接收）"），写入审批留痕
+    role: str = ""           # 当前岗位 key（仅展示；真实校验以 user_ctx.roles 为准）
+    user_ctx: Optional[dict[str, Any]] = None
+    action_key: str = ""     # 选定处置动作（select-action/cosign 使用）
 
 
 def _workflow_engine() -> WorkflowEngine:
@@ -155,40 +173,145 @@ def _workflow_engine() -> WorkflowEngine:
     return get_orchestrator().runtime.workflow
 
 
+def _raise_workflow_http(exc: Exception) -> None:
+    """治理异常 → HTTP 状态码统一映射（403/404/409/400）。
+
+    - ``PermissionDenied``      → 403（中文明确"需：质量总监/QA经理"）
+    - ``SignoffIncomplete``     → 409（结构化 `{message, missing, progress}`）
+    - ``WorkflowTransitionError`` → 409
+    - ``KeyError``              → 404
+    - ``ValueError``            → 400
+    """
+    if isinstance(exc, KeyError):
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if isinstance(exc, PermissionDenied):
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    if isinstance(exc, SignoffIncomplete):
+        raise HTTPException(status_code=409, detail={
+            "message": str(exc),
+            "missing": exc.missing,
+            "progress": exc.progress,
+        }) from exc
+    if isinstance(exc, WorkflowTransitionError):
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if isinstance(exc, ValueError):
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    raise exc
+
+
 @app.get("/api/v2/workflow/pending")
-def api_workflow_pending() -> dict[str, Any]:
-    """HITL 待办队列（waiting_hitl 工单；审批中心/待办卡片数据源）。"""
-    tasks = _workflow_engine().pending_hitl()
-    return {"code": 0, "data": [t.to_dict() for t in tasks], "message": "ok"}
+def api_workflow_pending(role: Optional[list[str]] = Query(None)) -> dict[str, Any]:
+    """HITL 待办队列（waiting_hitl 工单；审批中心/待办卡片数据源）。
+
+    Query:
+        role: 当前岗位（可重复 ``?role=sqe&role=qa`` 或逗号分隔 ``?role=sqe,qa``）。
+            传了则按"审批即待办"过滤——只返回该角色**当前阶段可动作**的工单；
+            不传返回全量（向后兼容既有调用方）。
+
+    每项含 ``governance``（治理链快照）、``signoff_status``（会签进度）与
+    ``my_action``（``select_action`` / ``cosign`` / ``approve`` / ``null``）。
+    """
+    engine = _workflow_engine()
+    raw_roles: list[str] = []
+    for item in (role or []):
+        raw_roles.extend([seg.strip() for seg in str(item).split(",") if seg.strip()])
+    role_keys = list(engine.permission_registry.normalize_roles(raw_roles))
+    tasks = engine.pending_hitl(raw_roles or None)
+    data: list[dict[str, Any]] = []
+    for task in tasks:
+        item = task.to_dict()
+        item["my_action"] = engine.action_for(task, raw_roles) if raw_roles else None
+        data.append(item)
+    return {"code": 0, "data": data, "message": "ok",
+            "scope": {"roles": role_keys, "filtered": bool(raw_roles),
+                      "unknown": [r for r in raw_roles
+                                  if engine.permission_registry.normalize_role(r) is None]}}
+
+
+@app.get("/api/v2/workflow/{task_id}")
+def api_workflow_task(task_id: str) -> dict[str, Any]:
+    """单工单详情（会签后局部刷新卡片用）。"""
+    try:
+        task = _workflow_engine().get(task_id)
+    except (KeyError, WorkflowTransitionError, ValueError) as exc:
+        _raise_workflow_http(exc)
+        raise  # pragma: no cover - _raise_workflow_http 必定抛出
+    return {"code": 0, "data": task.to_dict(), "message": "ok"}
+
+
+@app.post("/api/v2/workflow/{task_id}/select-action")
+def api_workflow_select_action(task_id: str,
+                               req: WorkflowActionRequest) -> dict[str, Any]:
+    """选定处置动作：按该动作 propose/cosign 生成会签要求（不改变工单状态）。"""
+    try:
+        task = _workflow_engine().select_action(
+            task_id, req.action_key, req.approver,
+            role=req.role, user_ctx=req.user_ctx, comment=req.comment)
+    except (KeyError, PermissionDenied, SignoffIncomplete,
+            WorkflowTransitionError, ValueError) as exc:
+        _raise_workflow_http(exc)
+        raise  # pragma: no cover
+    return {"code": 0, "data": task.to_dict(), "message": "ok"}
+
+
+@app.post("/api/v2/workflow/{task_id}/cosign")
+def api_workflow_cosign(task_id: str,
+                        req: WorkflowActionRequest) -> dict[str, Any]:
+    """多人会签（多角色背书，缺一不可；不改变工单状态）。"""
+    try:
+        task = _workflow_engine().cosign(
+            task_id, req.approver, role=req.role, user_ctx=req.user_ctx,
+            decision=req.decision, comment=req.comment)
+    except (KeyError, PermissionDenied, SignoffIncomplete,
+            WorkflowTransitionError, ValueError) as exc:
+        _raise_workflow_http(exc)
+        raise  # pragma: no cover
+    return {"code": 0, "data": task.to_dict(), "message": "ok"}
 
 
 @app.post("/api/v2/workflow/{task_id}/approve")
 def api_workflow_approve(task_id: str,
                          req: WorkflowActionRequest) -> dict[str, Any]:
-    """HITL 审批通过：waiting_hitl → running（final=True 时 → done）。"""
+    """HITL 审批通过：waiting_hitl → running（final=True 时 → done）。
+
+    受治理工单强制校验岗位权限与会签齐备（403 / 409）。
+    """
     try:
-        task = _workflow_engine().approve(task_id, req.approver,
-                                          req.comment, final=req.final,
-                                          decision=req.decision)
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except WorkflowTransitionError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        task = _workflow_engine().approve(
+            task_id, req.approver, req.comment, final=req.final,
+            decision=req.decision, role=req.role, user_ctx=req.user_ctx)
+    except (KeyError, PermissionDenied, SignoffIncomplete,
+            WorkflowTransitionError, ValueError) as exc:
+        _raise_workflow_http(exc)
+        raise  # pragma: no cover
     return {"code": 0, "data": task.to_dict(), "message": "ok"}
 
 
 @app.post("/api/v2/workflow/{task_id}/reject")
 def api_workflow_reject(task_id: str,
                         req: WorkflowActionRequest) -> dict[str, Any]:
-    """HITL 审批驳回：waiting_hitl → closed（回写审批人与意见）。"""
+    """HITL 审批驳回：waiting_hitl → closed（回写审批人与意见）。
+
+    驳回不要求会签齐备（会签未齐也可驳回止损），但仍校验岗位权限。
+    """
     try:
-        task = _workflow_engine().reject(task_id, req.approver, req.comment,
-                                         decision=req.decision)
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except WorkflowTransitionError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        task = _workflow_engine().reject(
+            task_id, req.approver, req.comment, decision=req.decision,
+            role=req.role, user_ctx=req.user_ctx)
+    except (KeyError, PermissionDenied, SignoffIncomplete,
+            WorkflowTransitionError, ValueError) as exc:
+        _raise_workflow_http(exc)
+        raise  # pragma: no cover
     return {"code": 0, "data": task.to_dict(), "message": "ok"}
+
+
+@app.get("/api/v2/governance/permissions")
+def api_governance_permissions() -> dict[str, Any]:
+    """治理权限目录快照（权限实体 / 角色×权限矩阵 / 7 个 HITL 槽位）。"""
+    from ..contracts.permissions import get_permission_registry
+
+    return {"code": 0, "data": get_permission_registry().describe(),
+            "message": "ok"}
 
 
 # ---------- 企业微信回调 ----------

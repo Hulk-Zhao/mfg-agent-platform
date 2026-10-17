@@ -1,0 +1,810 @@
+"""治理层测试：权限目录 / 角色校验 / 多人会签 / 老库迁移 / API 状态码映射。
+
+覆盖（对应工程约束 §六）：
+1. 无权限 approve → PermissionDenied；有权限 → 通过
+2. 未 select_action 直接 approve → WorkflowTransitionError（API 409）
+3. 会签不齐 approve → SignoffIncomplete（含 missing 列表与 progress）
+4. 逐个会签齐全 → approve 成功，history 含每次 cosign
+5. 重复会签 → WorkflowTransitionError（API 409）
+6. 未授权角色尝试 cosign → PermissionDenied
+7. 未知角色名（如"随便谁"）→ 拒绝（fail-closed）
+8. user_ctx.roles 与 role 不一致 → 以 user_ctx 为准（构造越权）
+9. 老工单无 governance → 行为不变（回归）
+10. 老库迁移：预置无 governance_json 列的库 → 初始化后自动加列且历史数据可读
+
+测试数据直接读真实场景 YAML（incoming_quality_v2 / line_stop_v2），
+避免"测试与生产两套动作定义"漂移。
+"""
+from __future__ import annotations
+
+import sqlite3
+from pathlib import Path
+from typing import Any
+
+import pytest
+import yaml
+from fastapi.testclient import TestClient
+
+import mfg_agents.v2 as v2_pkg
+from mfg_agents.v2.contracts.permissions import (
+    DEFAULT_PERMISSIONS_PATH,
+    PermissionRegistry,
+    get_permission_registry,
+    reset_permission_registry,
+)
+from mfg_agents.v2.services.workflow import (
+    PermissionDenied,
+    SignoffIncomplete,
+    WorkflowEngine,
+    WorkflowTransitionError,
+)
+
+SCENARIO_DIR = Path(v2_pkg.__file__).resolve().parent / "scenarios"
+
+# ---------- 演示身份（user_ctx.roles 为权威角色来源） ----------
+SQE_CTX: dict[str, Any] = {"user_id": "u-sqe", "dept": "quality",
+                           "roles": ["quality"]}          # quality → sqe
+PQE_CTX: dict[str, Any] = {"user_id": "u-pqe", "dept": "quality",
+                           "roles": ["pqe"]}
+BIZ_CTX: dict[str, Any] = {"user_id": "u-biz", "dept": "sales",
+                           "roles": ["business"]}          # business → sales
+QA_CTX: dict[str, Any] = {"user_id": "u-qa", "dept": "quality", "roles": ["qa"]}
+QD_CTX: dict[str, Any] = {"user_id": "u-qd", "dept": "quality",
+                          "roles": ["质量总监"]}            # → quality_director
+WH_CTX: dict[str, Any] = {"user_id": "u-wh", "dept": "warehouse",
+                          "roles": ["warehouse"]}
+UNKNOWN_CTX: dict[str, Any] = {"user_id": "u-x", "dept": "x", "roles": ["随便谁"]}
+
+
+def _hitl_step(scenario: str, step_id: str) -> dict[str, Any]:
+    """读取真实场景 YAML 的 HITL 节点定义（含 actions）。"""
+    data = yaml.safe_load((SCENARIO_DIR / scenario).read_text(encoding="utf-8"))
+    for step in data.get("steps") or []:
+        if step.get("id") == step_id:
+            return step
+    raise AssertionError(f"场景 {scenario} 缺少节点 {step_id}")
+
+
+def _disposition_actions() -> list[dict[str, Any]]:
+    return _hitl_step("incoming_quality_v2.yaml", "hitl_disposition")["actions"]
+
+
+def _eta_actions() -> list[dict[str, Any]]:
+    return _hitl_step("line_stop_v2.yaml", "hitl_eta")["actions"]
+
+
+def _restart_actions() -> list[dict[str, Any]]:
+    return _hitl_step("line_stop_v2.yaml", "hitl_restart")["actions"]
+
+
+@pytest.fixture()
+def engine(tmp_path) -> WorkflowEngine:
+    reset_permission_registry()
+    return WorkflowEngine(f"sqlite:///{tmp_path / 'platform.db'}")
+
+
+def _make_hitl_task(engine: WorkflowEngine, *, wf_id: str = "hitl_disposition",
+                    slot: str = "disposition",
+                    actions: list[dict[str, Any]] | None = None,
+                    title: str = "退换货/特采决策确认") -> str:
+    """建一张真实治理工单（hitl=True + slot + actions → 治理链启用）。"""
+    task = engine.create_task(
+        wf_id=wf_id, title=title,
+        context={"run_id": "run-gov", "slot": slot, "kind": slot,
+                 "actions": actions if actions is not None else _disposition_actions()},
+        assignees=["SQE", "PQE", "生产"], priority="P1", hitl=True,
+        hitl_prompt=title)
+    return task.task_uid
+
+
+def _select_concession(engine: WorkflowEngine, uid: str) -> Any:
+    """SQE 选定"特采（让步接收）"（require_comment=True，必须填依据）。"""
+    return engine.select_action(uid, "concession", "王倩", user_ctx=SQE_CTX,
+                                comment="加严检验 + 客户告知，风险可控")
+
+
+# ============================================================
+# 1. 权限目录（Permission 独立实体 + Role 命名集合 + fail-closed）
+# ============================================================
+
+
+def test_permission_catalog_shape():
+    """目录规模：21 条权限（7 slot × 3 verb）/ 15 角色 / 7 槽位。"""
+    registry = get_permission_registry()
+    describe = registry.describe()
+    assert len(describe["permissions"]) == 21
+    assert len(describe["slots"]) == 7
+    assert len(describe["roles"]) >= 14
+    assert {p["key"] for p in describe["permissions"]} == {
+        f"hitl.{slot}.{verb}"
+        for slot in ("restart", "eta", "disposition", "d8_close",
+                     "complaint_reply", "delivery_commit", "maintenance_window")
+        for verb in ("propose", "cosign", "approve")
+    }
+    assert DEFAULT_PERMISSIONS_PATH.is_file()
+
+
+def test_normalize_role_aliases():
+    """中文/别名/大小写 → 稳定 role key（覆盖 YAML 全部写法）。"""
+    registry = get_permission_registry()
+    expected = {
+        "SQE": "sqe",
+        "sqe": "sqe",
+        "PQE": "pqe",
+        "QA": "qa",
+        "质量总监": "quality_director",
+        "QA经理": "qa_manager",
+        "制造现场负责人": "manufacturing",
+        "生产": "manufacturing",
+        "设备工程": "equipment",
+        "业务经理": "sales",
+        "业务": "sales",
+        "销售总监": "sales",
+        "计划": "planning",
+        "物控": "material_control",
+        "仓库": "warehouse",
+        "物流": "warehouse",
+        "工程": "rd_engineering",
+        "研发": "rd_engineering",
+        "采购": "procurement",
+        "财务": "finance",
+        # 演示前端的平台域角色写法
+        "quality": "sqe",
+        "business": "sales",
+        "supply_chain": "material_control",
+        "coordinator": "gm",
+    }
+    for raw, key in expected.items():
+        assert registry.normalize_role(raw) == key, f"{raw} 应归一为 {key}"
+
+
+def test_unknown_role_is_fail_closed():
+    """未知角色/空/None → 空权限集，绝不默认放行。"""
+    registry = get_permission_registry()
+    assert registry.normalize_role("随便谁") is None
+    assert registry.normalize_role("") is None
+    assert registry.normalize_role(None) is None
+    assert registry.permissions_of(["随便谁"]) == set()
+    assert registry.permissions_of(None) == set()
+    assert registry.has_any(["随便谁"], ["hitl.disposition.approve"]) is False
+    assert registry.has_any([], ["hitl.disposition.approve"]) is False
+    assert registry.has_all(["sqe"], ["hitl.disposition.approve"]) is False
+
+
+def test_roles_with_permission_hint():
+    """roles_with_permission 用于 403 提示"该动作需谁审批"。"""
+    registry = get_permission_registry()
+    approvers = registry.roles_with_permission("hitl.disposition.approve")
+    assert {"quality_director", "qa_manager", "gm"} <= set(approvers)
+    assert "warehouse" not in approvers
+    names = registry.roles_with_permission_names("hitl.disposition.approve")
+    assert "质量总监" in names and "QA经理" in names
+
+
+def test_registry_rejects_bad_configuration(tmp_path):
+    """配置错误必须显式失败（别名冲突 / 引用未定义权限）。"""
+    bad = tmp_path / "bad.yaml"
+    bad.write_text(
+        "permissions:\n  - {key: hitl.x.approve, name: A, scope: hitl}\n"
+        "roles:\n"
+        "  - {key: r1, name: 甲, permissions: [hitl.x.approve]}\n"
+        "  - {key: r2, name: 甲, permissions: [hitl.x.approve]}\n",
+        encoding="utf-8")
+    with pytest.raises(Exception):
+        PermissionRegistry.from_yaml(bad)
+
+
+# ============================================================
+# 2. select_action：按选中动作生成会签要求（不取并集、不改状态）
+# ============================================================
+
+
+def test_select_action_builds_required_signoffs(engine):
+    """"特采"需 PQE + 业务 + QA 三方会签；建单时不固定会签方。"""
+    uid = _make_hitl_task(engine)
+    before = engine.get(uid)
+    assert before.is_governed()
+    assert before.signoff_status()["required"] == []          # 选动作前无会签要求
+    assert before.status == "waiting_hitl"
+
+    task = _select_concession(engine, uid)
+    status = task.signoff_status()
+    assert task.status == "waiting_hitl"                      # 选动作不改状态
+    assert status["selected_action"] == "特采（让步接收）"
+    assert status["action_key"] == "concession"
+    assert status["slot"] == "disposition"
+    assert [r["role"] for r in status["required"]] == ["pqe", "sales", "qa"]
+    assert [r["role_name"] for r in status["required"]] == ["PQE", "业务", "QA"]
+    assert all(r["permission"] == "hitl.disposition.cosign"
+               for r in status["required"])
+    assert status["progress"] == "0/3"
+    assert status["satisfied"] is False
+    assert task.history[-1]["action"] == "select_action"
+
+
+def test_different_actions_have_different_signoffs(engine):
+    """同一节点不同动作的会签方不同（退货只需采购会签）。"""
+    uid = _make_hitl_task(engine)
+    task = engine.select_action(uid, "return_goods", "王倩", user_ctx=SQE_CTX)
+    assert [r["role"] for r in task.signoff_status()["required"]] == ["procurement"]
+
+    uid2 = _make_hitl_task(engine)
+    task2 = engine.select_action(uid2, "sort", "王倩", user_ctx=PQE_CTX)
+    assert [r["role"] for r in task2.signoff_status()["required"]] == [
+        "manufacturing", "procurement"]
+
+
+def test_select_action_requires_comment_when_declared(engine):
+    """require_comment=True 的动作不填依据 → ValueError（API 400）。"""
+    uid = _make_hitl_task(engine)
+    with pytest.raises(ValueError, match="决策依据"):
+        engine.select_action(uid, "concession", "王倩", user_ctx=SQE_CTX,
+                             comment="   ")
+
+
+def test_select_action_unknown_action_key(engine):
+    uid = _make_hitl_task(engine)
+    with pytest.raises(WorkflowTransitionError, match="未知处置动作"):
+        engine.select_action(uid, "no_such_action", "王倩", user_ctx=SQE_CTX,
+                             comment="x")
+
+
+def test_select_action_permission_denied(engine):
+    """仓库岗位不在该动作 propose 列表 → PermissionDenied（fail-closed）。"""
+    uid = _make_hitl_task(engine)
+    with pytest.raises(PermissionDenied) as exc:
+        engine.select_action(uid, "concession", "周凯", user_ctx=WH_CTX,
+                             comment="越权尝试")
+    assert "SQE" in str(exc.value)
+
+
+def test_select_action_unknown_identity_denied(engine):
+    uid = _make_hitl_task(engine)
+    with pytest.raises(PermissionDenied):
+        engine.select_action(uid, "concession", "随便谁", user_ctx=UNKNOWN_CTX,
+                             comment="x")
+
+
+def test_user_ctx_overrides_role_for_select(engine):
+    """前端的 role=sqe 不可信：user_ctx.roles=['business'] 时按业务（sales）判权。"""
+    uid = _make_hitl_task(engine)
+    with pytest.raises(PermissionDenied):
+        # role 声称是 sqe，但 user_ctx.roles 只给 business（销量岗无发起权）
+        engine.select_action(uid, "concession", "陈昊", role="sqe",
+                             user_ctx={"roles": ["business"]}, comment="越权")
+
+
+# ============================================================
+# 3. cosign：会签（多角色背书，缺一不可）
+# ============================================================
+
+
+def test_cosign_requires_selected_action(engine):
+    uid = _make_hitl_task(engine)
+    with pytest.raises(WorkflowTransitionError, match="请先选定处置动作"):
+        engine.cosign(uid, "王倩", user_ctx=PQE_CTX)
+
+
+def test_cosign_unauthorized_role_denied(engine):
+    """不在会签人范围的角色（仓库/总经理）尝试会签 → PermissionDenied。"""
+    uid = _make_hitl_task(engine)
+    _select_concession(engine, uid)
+    with pytest.raises(PermissionDenied, match="会签人范围"):
+        engine.cosign(uid, "周凯", user_ctx=WH_CTX)
+    with pytest.raises(PermissionDenied):
+        engine.cosign(uid, "张启明", user_ctx={"roles": ["gm"]})
+
+
+def test_cosign_progress_increments(engine):
+    """逐个会签 → 进度 1/3 → 2/3 → 3/3，状态保持 waiting_hitl。"""
+    uid = _make_hitl_task(engine)
+    _select_concession(engine, uid)
+
+    task = engine.cosign(uid, "王倩", user_ctx=PQE_CTX, comment="工艺可行")
+    assert task.status == "waiting_hitl"
+    assert task.signoff_status()["progress"] == "1/3"
+    assert [m["role"] for m in task.signoff_status()["missing"]] == ["sales", "qa"]
+
+    task = engine.cosign(uid, "陈昊", user_ctx=BIZ_CTX)
+    assert task.signoff_status()["progress"] == "2/3"
+
+    task = engine.cosign(uid, "李静", user_ctx=QA_CTX)
+    status = task.signoff_status()
+    assert status["progress"] == "3/3"
+    assert status["satisfied"] is True
+    assert status["missing"] == []
+    assert all(s["actor"] and s["ts"] for s in task.governance["signoffs"])
+
+
+def test_duplicate_cosign_conflict(engine):
+    """同一角色重复会签 → WorkflowTransitionError（API 409）。"""
+    uid = _make_hitl_task(engine)
+    _select_concession(engine, uid)
+    engine.cosign(uid, "王倩", user_ctx=PQE_CTX)
+    with pytest.raises(WorkflowTransitionError, match="已会签"):
+        engine.cosign(uid, "王倩", user_ctx=PQE_CTX)
+
+
+# ============================================================
+# 4. approve：会签门控 + 角色权限
+# ============================================================
+
+
+def test_approve_before_select_action_conflict(engine):
+    """未 select_action 直接 approve → 409（WorkflowTransitionError）。"""
+    uid = _make_hitl_task(engine)
+    with pytest.raises(WorkflowTransitionError, match="先选定处置动作"):
+        engine.approve(uid, "李静", user_ctx=QD_CTX)
+
+
+def test_approve_with_incomplete_signoff_raises(engine):
+    """会签不齐 → SignoffIncomplete（含 missing 与 progress）。"""
+    uid = _make_hitl_task(engine)
+    _select_concession(engine, uid)
+    with pytest.raises(SignoffIncomplete) as exc:
+        engine.approve(uid, "李静", user_ctx=QD_CTX)
+    err = exc.value
+    assert err.progress == "0/3"
+    assert [m["role"] for m in err.missing] == ["pqe", "sales", "qa"]
+    assert [m["role_name"] for m in err.missing] == ["PQE", "业务", "QA"]
+    assert "会签未完成" in str(err)
+
+    engine.cosign(uid, "王倩", user_ctx=PQE_CTX)
+    with pytest.raises(SignoffIncomplete) as exc2:
+        engine.approve(uid, "李静", user_ctx=QD_CTX)
+    assert exc2.value.progress == "1/3"
+    assert len(exc2.value.missing) == 2
+
+
+def test_approve_permission_denied(engine):
+    """无 approve 权限的岗位（仓库/业务/SQE）→ PermissionDenied。"""
+    uid = _make_hitl_task(engine)
+    _select_concession(engine, uid)
+    engine.cosign(uid, "王倩", user_ctx=PQE_CTX)
+    engine.cosign(uid, "陈昊", user_ctx=BIZ_CTX)
+    engine.cosign(uid, "李静", user_ctx=QA_CTX)
+    with pytest.raises(PermissionDenied, match="无该动作的审批权限") as exc:
+        engine.approve(uid, "周凯", user_ctx=WH_CTX)
+    assert "质量总监" in str(exc.value)
+    # 工单未被推进（拒绝必须无副作用）
+    assert engine.get(uid).status == "waiting_hitl"
+
+
+def test_anonymous_approve_denied(engine):
+    """新工单禁止匿名终批（无 role/user_ctx → fail-closed）。"""
+    uid = _make_hitl_task(engine)
+    _select_concession(engine, uid)
+    engine.cosign(uid, "王倩", user_ctx=PQE_CTX)
+    engine.cosign(uid, "陈昊", user_ctx=BIZ_CTX)
+    engine.cosign(uid, "李静", user_ctx=QA_CTX)
+    with pytest.raises(PermissionDenied, match="禁止匿名终批"):
+        engine.approve(uid, "匿名用户")
+
+
+def test_full_governance_flow(engine):
+    """完整链路：选动作 → 3 人会签 → 终批；history 逐条留痕。"""
+    uid = _make_hitl_task(engine)
+    _select_concession(engine, uid)
+    engine.cosign(uid, "王倩", user_ctx=PQE_CTX, comment="工艺可行")
+    engine.cosign(uid, "陈昊", user_ctx=BIZ_CTX)
+    engine.cosign(uid, "李静", user_ctx=QA_CTX)
+    task = engine.approve(uid, "李静", user_ctx=QD_CTX, comment="同意特采",
+                          decision="特采（让步接收）")
+
+    assert task.status == "running"
+    actions = [h["action"] for h in task.history]
+    assert actions == ["create", "select_action", "cosign", "cosign", "cosign",
+                       "approve"]
+    assert [h["actor"] for h in task.history[2:5]] == ["王倩", "陈昊", "李静"]
+    assert len(task.governance["signoffs"]) == 3
+    assert len(task.governance["approvals"]) == 1
+    assert task.governance["approvals"][0]["role"] == "quality_director"
+    assert task.signoff_status()["satisfied"] is True
+
+    # 落库可读回（可重放、可审计）
+    reloaded = engine.get(uid)
+    assert reloaded.governance["action_key"] == "concession"
+    assert len(reloaded.governance["signoffs"]) == 3
+
+
+def test_approve_final_reaches_done(engine):
+    uid = _make_hitl_task(engine)
+    _select_concession(engine, uid)
+    engine.cosign(uid, "王倩", user_ctx=PQE_CTX)
+    engine.cosign(uid, "陈昊", user_ctx=BIZ_CTX)
+    engine.cosign(uid, "李静", user_ctx=QA_CTX)
+    assert engine.approve(uid, "李静", user_ctx=QD_CTX, final=True).status == "done"
+
+
+def test_action_without_cosign_can_approve_directly(engine):
+    """无会签要求的动作（ETA 加缓冲承诺）选完即可终批。"""
+    uid = _make_hitl_task(engine, wf_id="hitl_eta", slot="eta",
+                          actions=_eta_actions(), title="对客 ETA 承诺确认")
+    task = engine.select_action(uid, "commit_buffered", "陈昊", user_ctx=BIZ_CTX)
+    assert task.signoff_status()["required"] == []
+    assert task.signoff_status()["satisfied"] is True
+    approved = engine.approve(uid, "陈昊", user_ctx=BIZ_CTX)
+    assert approved.status == "running"
+
+
+def test_reselect_action_resets_signoffs(engine):
+    """改选动作 → 旧会签事实失效（会签要求已变化，必须重新会签）。"""
+    uid = _make_hitl_task(engine)
+    _select_concession(engine, uid)
+    engine.cosign(uid, "王倩", user_ctx=PQE_CTX)
+    assert engine.get(uid).signoff_status()["progress"] == "1/3"
+    task = engine.select_action(uid, "return_goods", "王倩", user_ctx=SQE_CTX)
+    assert task.governance["signoffs"] == []
+    assert [r["role"] for r in task.signoff_status()["required"]] == ["procurement"]
+
+
+# ============================================================
+# 5. reject：可止损（不要求会签齐备），但仍校验权限
+# ============================================================
+
+
+def test_reject_allowed_with_incomplete_signoff(engine):
+    uid = _make_hitl_task(engine)
+    _select_concession(engine, uid)
+    engine.cosign(uid, "王倩", user_ctx=PQE_CTX)
+    task = engine.reject(uid, "李静", user_ctx=QD_CTX, comment="证据不足，退回")
+    assert task.status == "closed"
+    assert task.governance["approvals"][-1]["decision"] == "reject"
+
+
+def test_reject_by_proposer_allowed(engine):
+    """发起人（propose 权限）也可驳回。"""
+    uid = _make_hitl_task(engine)
+    _select_concession(engine, uid)
+    assert engine.reject(uid, "王倩", user_ctx=SQE_CTX).status == "closed"
+
+
+def test_reject_permission_denied(engine):
+    uid = _make_hitl_task(engine)
+    _select_concession(engine, uid)
+    with pytest.raises(PermissionDenied, match="驳回权限"):
+        engine.reject(uid, "周凯", user_ctx=WH_CTX)
+    assert engine.get(uid).status == "waiting_hitl"
+
+
+# ============================================================
+# 6. 向后兼容：老工单宽松 + 老库幂等迁移
+# ============================================================
+
+
+def test_legacy_task_without_governance_stays_lenient(engine):
+    """老工单（governance 为空）行为不变：approve/reject 不校验角色。"""
+    task = engine.create_task("hitl_eta", "对客 ETA 确认", hitl=True)
+    assert task.governance == {}
+    assert task.is_governed() is False
+    approved = engine.approve(task.task_uid, "业务经理", comment="同意")
+    assert approved.status == "running"
+    assert approved.history[-1]["action"] == "approve"
+
+    task2 = engine.create_task("hitl_restart", "复线决策", hitl=True)
+    assert engine.reject(task2.task_uid, "王制造").status == "closed"
+
+
+def test_advance_cannot_bypass_governance(engine):
+    """受治理工单禁止经 advance('approve') 绕过角色校验与会签门控。"""
+    uid = _make_hitl_task(engine)
+    with pytest.raises(WorkflowTransitionError, match="绕过"):
+        engine.advance(uid, "approve", actor="随便谁")
+
+
+_OLD_DDL = """
+CREATE TABLE platform_workflow_task (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_uid TEXT NOT NULL UNIQUE,
+  wf_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  priority TEXT NOT NULL DEFAULT 'P1',
+  assignees TEXT DEFAULT '',
+  context_json TEXT DEFAULT '{}',
+  hitl_prompt TEXT DEFAULT '',
+  history_json TEXT DEFAULT '[]',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  sla_due_at TEXT
+)
+"""
+
+
+def test_old_database_migrates_governance_column(tmp_path):
+    """老库（无 governance_json 列）→ 初始化自动加列，历史数据仍可读可审批。"""
+    db_file = tmp_path / "legacy.db"
+    conn = sqlite3.connect(db_file)
+    conn.execute(_OLD_DDL)
+    conn.execute(
+        "INSERT INTO platform_workflow_task (task_uid, wf_id, title, status, "
+        " priority, assignees, context_json, hitl_prompt, history_json, "
+        " created_at, updated_at, sla_due_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        ("wf-legacy0001", "hitl_eta", "老工单·对客 ETA", "waiting_hitl", "P1",
+         '["业务经理"]', '{"run_id": "run-old"}', "老工单待确认", "[]",
+         "2024-01-01T00:00:00+00:00", "2024-01-01T00:00:00+00:00",
+         "2024-01-01T02:00:00+00:00"))
+    conn.commit()
+    conn.close()
+
+    engine = WorkflowEngine(f"sqlite:///{db_file}")
+    # 列已加上
+    with sqlite3.connect(db_file) as check:
+        columns = {row[1] for row in
+                   check.execute("PRAGMA table_info(platform_workflow_task)")}
+    assert "governance_json" in columns
+
+    # 历史数据可读，且按老工单宽松处理
+    legacy = engine.get("wf-legacy0001")
+    assert legacy.governance == {}
+    assert legacy.context["run_id"] == "run-old"
+    assert engine.approve("wf-legacy0001", "业务经理").status == "running"
+
+    # 新工单在本库同样启用治理链
+    uid = _make_hitl_task(engine)
+    assert engine.get(uid).is_governed() is True
+
+
+def test_migration_is_idempotent(tmp_path):
+    db = f"sqlite:///{tmp_path / 'platform.db'}"
+    WorkflowEngine(db)
+    WorkflowEngine(db)  # 二次初始化不得报错（列已存在）
+    assert True
+
+
+# ============================================================
+# 7. API 层：状态码映射与载荷
+# ============================================================
+
+
+@pytest.fixture()
+def api_client(engine, monkeypatch):
+    """把 API 的引擎替换为隔离测试库（不碰演示库）。"""
+    from mfg_agents.v2.demo import api as api_module
+
+    monkeypatch.setattr(api_module, "_workflow_engine", lambda: engine)
+    return TestClient(api_module.app)
+
+
+def _payload(user_ctx: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+    body = {"approver": user_ctx.get("user_id", "演示用户"), "comment": "",
+            "role": "", "user_ctx": user_ctx, "action_key": ""}
+    body.update(kwargs)
+    return body
+
+
+def test_api_select_action_and_pending_payload(api_client, engine):
+    uid = _make_hitl_task(engine)
+    resp = api_client.post(f"/api/v2/workflow/{uid}/select-action",
+                           json=_payload(SQE_CTX, action_key="concession",
+                                         comment="加严检验"))
+    assert resp.status_code == 200, resp.text
+    data = resp.json()["data"]
+    assert data["governance"]["selected_action"] == "特采（让步接收）"
+    assert data["signoff_status"]["progress"] == "0/3"
+
+    pending = api_client.get("/api/v2/workflow/pending").json()["data"]
+    item = next(t for t in pending if t["task_uid"] == uid)
+    assert item["governance"]["action_key"] == "concession"
+    assert [r["role"] for r in item["signoff_status"]["required"]] == [
+        "pqe", "sales", "qa"]
+
+
+def test_api_status_codes(api_client, engine):
+    uid = _make_hitl_task(engine)
+
+    # 未选动作 approve → 409
+    resp = api_client.post(f"/api/v2/workflow/{uid}/approve", json=_payload(QD_CTX))
+    assert resp.status_code == 409
+    assert "先选定处置动作" in resp.json()["detail"]
+
+    # 未选动作 cosign → 409
+    resp = api_client.post(f"/api/v2/workflow/{uid}/cosign", json=_payload(PQE_CTX))
+    assert resp.status_code == 409
+
+    # 选动作后：越权 select（仓库）→ 403
+    uid2 = _make_hitl_task(engine)
+    resp = api_client.post(f"/api/v2/workflow/{uid2}/select-action",
+                           json=_payload(WH_CTX, action_key="concession",
+                                         comment="越权"))
+    assert resp.status_code == 403
+    assert "SQE" in resp.json()["detail"]
+
+    # require_comment 未填 → 400
+    resp = api_client.post(f"/api/v2/workflow/{uid2}/select-action",
+                           json=_payload(SQE_CTX, action_key="concession",
+                                         comment=""))
+    assert resp.status_code == 400
+    assert "决策依据" in resp.json()["detail"]
+
+    # 正常选动作
+    resp = api_client.post(f"/api/v2/workflow/{uid2}/select-action",
+                           json=_payload(SQE_CTX, action_key="concession",
+                                         comment="加严检验"))
+    assert resp.status_code == 200
+
+    # 会签不齐 approve → 409 结构化 detail
+    resp = api_client.post(f"/api/v2/workflow/{uid2}/approve", json=_payload(QD_CTX))
+    assert resp.status_code == 409
+    detail = resp.json()["detail"]
+    assert detail["progress"] == "0/3"
+    assert [m["role_name"] for m in detail["missing"]] == ["PQE", "业务", "QA"]
+    assert "会签未完成" in detail["message"]
+
+    # 会签（PQE）→ 200，进度 1/3
+    resp = api_client.post(f"/api/v2/workflow/{uid2}/cosign", json=_payload(PQE_CTX))
+    assert resp.status_code == 200
+    assert resp.json()["data"]["signoff_status"]["progress"] == "1/3"
+
+    # 越权会签（仓库）→ 403
+    resp = api_client.post(f"/api/v2/workflow/{uid2}/cosign", json=_payload(WH_CTX))
+    assert resp.status_code == 403
+
+    # 无 approve 权限（仓库）→ 403
+    resp = api_client.post(f"/api/v2/workflow/{uid2}/approve", json=_payload(WH_CTX))
+    assert resp.status_code == 403
+    assert "审批权限" in resp.json()["detail"]
+
+    # 补全会签后终批 → 200
+    api_client.post(f"/api/v2/workflow/{uid2}/cosign", json=_payload(BIZ_CTX))
+    api_client.post(f"/api/v2/workflow/{uid2}/cosign", json=_payload(QA_CTX))
+    resp = api_client.post(f"/api/v2/workflow/{uid2}/approve", json=_payload(QD_CTX))
+    assert resp.status_code == 200
+    assert resp.json()["data"]["status"] == "running"
+
+    # 不存在的工单 → 404
+    resp = api_client.post("/api/v2/workflow/wf-not-exist/approve", json=_payload(QD_CTX))
+    assert resp.status_code == 404
+
+
+def test_api_governance_permissions_endpoint(api_client):
+    resp = api_client.get("/api/v2/governance/permissions")
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert len(data["permissions"]) == 21
+    assert {"restart", "eta", "disposition", "d8_close", "complaint_reply",
+            "delivery_commit", "maintenance_window"} == {
+        s["key"] for s in data["slots"]}
+
+
+# ============================================================
+# 8. 场景 YAML × 权限目录一致性（防止两套定义漂移）
+# ============================================================
+
+
+def test_all_scenario_hitl_actions_are_governable():
+    """全部 7 个 HITL 节点的每个动作：propose/cosign 角色必须可识别且持有对应权限。"""
+    registry = get_permission_registry()
+    slots = {
+        "hitl_restart": "restart",
+        "hitl_eta": "eta",
+        "hitl_disposition": "disposition",
+        "hitl_d8_close": "d8_close",
+        "hitl_complaint_reply": "complaint_reply",
+        "hitl_delivery_commit": "delivery_commit",
+        "hitl_maintenance_window": "maintenance_window",
+    }
+    seen: set[str] = set()
+    for yaml_file in sorted(SCENARIO_DIR.glob("*.yaml")):
+        data = yaml.safe_load(yaml_file.read_text(encoding="utf-8"))
+        for step in data.get("steps") or []:
+            slot = slots.get(str(step.get("id") or ""))
+            if not slot:
+                continue
+            seen.add(slot)
+            propose_perm = registry.slot_permission(slot, "propose")
+            cosign_perm = registry.slot_permission(slot, "cosign")
+            for action in step.get("actions") or []:
+                for name in action.get("propose") or []:
+                    key = registry.normalize_role(name)
+                    assert key, f"{step['id']} 动作 {action['key']} propose 角色未识别: {name}"
+                    assert registry.has_any([key], [propose_perm]), (
+                        f"{step['id']} 动作 {action['key']}: {name} 缺 {propose_perm}")
+                for name in action.get("cosign") or []:
+                    key = registry.normalize_role(name)
+                    assert key, f"{step['id']} 动作 {action['key']} cosign 角色未识别: {name}"
+                    assert registry.has_any([key], [cosign_perm]), (
+                        f"{step['id']} 动作 {action['key']}: {name} 缺 {cosign_perm}")
+    assert seen == set(slots.values()), f"场景 HITL 节点不全: {seen}"
+
+
+def test_restart_scenario_governance_flow(engine):
+    """复线决策：制造发起 → PQE + 设备工程会签 → 制造（现场负责人）终批。"""
+    uid = _make_hitl_task(engine, wf_id="hitl_restart", slot="restart",
+                          actions=_restart_actions(), title="复线决策确认")
+    mfg_ctx = {"roles": ["manufacturing"]}
+    engine.select_action(uid, "confirm_restart", "李卫东", user_ctx=mfg_ctx)
+    task = engine.get(uid)
+    assert [r["role"] for r in task.signoff_status()["required"]] == [
+        "pqe", "equipment"]
+    engine.cosign(uid, "王倩", user_ctx=PQE_CTX)
+    engine.cosign(uid, "赵工", user_ctx={"roles": ["设备工程"]})
+    assert engine.approve(uid, "李卫东", user_ctx=mfg_ctx).status == "running"
+
+
+# ============================================================
+# 9. 审批即待办：pending_hitl 按人过滤 + my_action（Huly ApproveRequest 范式）
+# ============================================================
+
+
+def test_required_signoffs_declare_min_count(engine):
+    """每个会签项输出 min_count=1（未来"任签 N"的演进位）。"""
+    uid = _make_hitl_task(engine)
+    task = _select_concession(engine, uid)
+    required = task.signoff_status()["required"]
+    assert required and all(r["min_count"] == 1 for r in required)
+    assert all(r["kind"] == "cosign" for r in required)
+
+
+def test_pending_hitl_filters_by_role_and_my_action(engine):
+    """待办按角色过滤：只返回该角色当前阶段可动作的工单，并标注 my_action。"""
+    uid = _make_hitl_task(engine)
+
+    # 全量（不传角色）：向后兼容，返回全部 waiting_hitl
+    assert [t.task_uid for t in engine.pending_hitl()] == [uid]
+
+    # 无该节点权限的岗位（仓库）→ 看不到
+    assert engine.pending_hitl(["仓库"]) == []
+
+    # 选动作阶段：SQE 可发起（PQE 因"挑选/全检"动作 propose 也含 PQE，同样可发起）
+    assert engine.action_for(engine.get(uid), ["quality"]) == "select_action"
+    assert [t.task_uid for t in engine.pending_hitl(["quality"])] == [uid]
+    # 纯会签人此时还不能动作（业务不在任何动作的 propose 列表）
+    assert engine.action_for(engine.get(uid), ["业务经理"]) is None
+
+    _select_concession(engine, uid)
+    task = engine.get(uid)
+    # 会签阶段：PQE / 业务 / QA 可会签，SQE 发起人已无可执行动作
+    assert engine.action_for(task, ["PQE"]) == "cosign"
+    assert engine.action_for(task, ["业务经理"]) == "cosign"
+    assert engine.action_for(task, ["qa"]) == "cosign"
+    assert engine.action_for(task, ["quality"]) is None
+    # 终批人（质量总监）在会签未齐时不可动作
+    assert engine.action_for(task, ["质量总监"]) is None
+
+    engine.cosign(uid, "王倩", user_ctx=PQE_CTX)
+    assert engine.action_for(engine.get(uid), ["PQE"]) is None   # 已签，不再待我
+    assert engine.action_for(engine.get(uid), ["业务经理"]) == "cosign"
+
+    engine.cosign(uid, "陈昊", user_ctx=BIZ_CTX)
+    engine.cosign(uid, "李静", user_ctx=QA_CTX)
+    task = engine.get(uid)
+    # 会签齐 → 有 approve 权限的岗位可终批
+    assert engine.action_for(task, ["质量总监"]) == "approve"
+    assert engine.action_for(task, ["QA经理"]) == "approve"
+    assert engine.action_for(task, ["总经理"]) == "approve"
+    assert engine.action_for(task, ["仓库"]) is None
+    assert engine.action_for(task, ["随便谁"]) is None            # fail-closed
+
+
+def test_api_pending_role_query(api_client, engine):
+    """GET /workflow/pending?role=... 支持重复与逗号分隔；带 my_action。"""
+    uid = _make_hitl_task(engine)
+    # 不传 role → 全量 + my_action=None（向后兼容）
+    full = api_client.get("/api/v2/workflow/pending").json()
+    assert [t["task_uid"] for t in full["data"]] == [uid]
+    assert full["data"][0]["my_action"] is None
+    assert full["scope"]["filtered"] is False
+
+    # 重复参数
+    resp = api_client.get("/api/v2/workflow/pending",
+                          params=[("role", "sqe"), ("role", "qa")]).json()
+    assert {t["my_action"] for t in resp["data"]} == {"select_action"}
+    assert resp["scope"]["roles"] == ["sqe", "qa"]
+
+    # 逗号分隔 + 无权限岗位
+    resp = api_client.get("/api/v2/workflow/pending", params={"role": "仓库"}).json()
+    assert resp["data"] == []
+    assert resp["scope"]["filtered"] is True
+
+    # 未知角色 → 空（fail-closed），并在 scope.unknown 里回显
+    resp = api_client.get("/api/v2/workflow/pending", params={"role": "随便谁"}).json()
+    assert resp["data"] == []
+    assert resp["scope"]["unknown"] == ["随便谁"]
+
+    # 选动作后 PQE 的待办变为 cosign
+    api_client.post(f"/api/v2/workflow/{uid}/select-action",
+                    json=_payload(SQE_CTX, action_key="concession", comment="加严检验"))
+    resp = api_client.get("/api/v2/workflow/pending", params={"role": "pqe"}).json()
+    assert resp["data"][0]["my_action"] == "cosign"
