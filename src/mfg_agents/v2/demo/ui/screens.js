@@ -627,9 +627,10 @@
     maintenance_window: ["备件已到位，按计划窗口停机", "先降速运行监控参数", "立即停机排查"],
   };
 
-  function quickCommentChipsHtml(taskUid, slot) {
+  function quickCommentChipsHtml(ctx, taskUid, slot) {
     const list = QUICK_COMMENTS[slot] || [];
     if (!list.length) return "";
+    const UI = ctx.UI;
     return `<div class="quick-comments">
       ${list.map((c) => `<button type="button" class="chip chip-cmt" data-cmt="${UI.esc(c)}"
         data-target="${UI.esc(taskUid)}">${UI.esc(c)}</button>`).join("")}
@@ -1719,7 +1720,7 @@
         <div class="act-chips">${actionChipsHtml(ctx, m.taskUid, m.actions)}</div>
         ${actionDetailHtml(ctx, m.taskUid, m.actions)}` : ""}
       ${signoffPanelHtml(ctx, m.taskUid, m.actions)}
-      ${processed ? "" : `${quickCommentChipsHtml(m.taskUid, m.slot || _hitlSlot[taskUid] || "")}
+      ${processed ? "" : `${quickCommentChipsHtml(ctx, m.taskUid, m.slot || _hitlSlot[m.taskUid] || "")}
       <input class="input act-comment" id="act-comment-${UI.esc(m.taskUid)}" placeholder="决策意见（可选，将写入工单留痕）" />
       <div class="hitl-card-actions">
         <button class="btn btn-primary btn-sm" data-approve="${UI.esc(m.taskUid)}"
@@ -2194,7 +2195,7 @@
           ? `<div class="gate-hint">${UI.icon("info", 13)} 当前岗位对该工单无待办动作（只读视图）：审批/会签由对应岗位执行，安全校验在后端。</div>`
           : `
         <div class="hitl-actions-bar">
-          ${quickCommentChipsHtml(t.task_uid, (t.governance || {}).slot || "")}
+          ${quickCommentChipsHtml(ctx, t.task_uid, (t.governance || {}).slot || "")}
           <input class="input hitl-comment" id="hitl-comment" placeholder="决策意见（可选，将写入工单 history）" />
           <button class="btn btn-success" id="hitl-approve"
             ${gate.ok ? "" : `disabled title="${UI.esc(gate.reason)}"`}>${UI.icon("check", 14)}同意</button>
