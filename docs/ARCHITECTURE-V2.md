@@ -2,14 +2,16 @@
 
 > **文档定位**：本文是 V1 原型（`docs/ARCHITECTURE.md`）的演进目标架构，回答"如何从 5 场景硬编码原型演进到 16 部门多智能体协同平台"，并附带 Phase-1（MVP）可执行的任务分解。
 >
-> **输入基线**（已代码盘点，非道听途说）：
-> - 编排：`src/mfg_agents/graph/builder.py` — LangGraph StateGraph，8 Agent，5 场景硬编码路由字典 + 关键词规则
-> - 状态：`src/mfg_agents/graph/state.py` — 单体 `AgentState` TypedDict，所有域字段平铺
-> - 入口：`src/mfg_agents/api.py` — FastAPI SSE；**注意：api.py 是手工顺序编排，并未使用 `build_graph()` 编译出的图**（图与 API 双轨，V1 技术债）
+> **输入基线**（已代码盘点，非道听途说）。
+>
+> ⚠️ **2026-10-18 现状更新**：V1 原型层（`agents/ graph/ ui/ api.py`）已移除，下面带删除线的三条仅作**演进起点记录**，文件已不存在。同期 `config/events/llm_factory/rag_tools/sql_tools/...` 等基础设施上移至 `src/mfg_agents/common/`。
+> - 编排：~~`src/mfg_agents/graph/builder.py`~~ — LangGraph StateGraph，8 Agent，5 场景硬编码路由字典 + 关键词规则
+> - 状态：~~`src/mfg_agents/graph/state.py`~~ — 单体 `AgentState` TypedDict，所有域字段平铺
+> - 入口：~~`src/mfg_agents/api.py`~~ — FastAPI SSE；**注意：api.py 是手工顺序编排，并未使用 `build_graph()` 编译出的图**（图与 API 双轨，V1 技术债）
 > - 路由：`src/mfg_agents/common/business.py` — `SCENE_RULES` 关键词匹配（README/ARCHITECTURE.md 声称"LLM JSON 抽取"，**文档与实现不一致**，属基线文档债）
 > - 数据：`data/init.sql` 8 张模拟表；`common/sql_tools.py` 正则只读过滤 + 硬编码 SCHEMA_PROMPT（写死 SQLite/演示值）
 > - 知识：`common/rag_tools.py` ChromaDB 单 collection（`failure_cases`），无权限隔离
-> - 事件：`events.py` 全局单 `queue.Queue`（并发下有串话风险）
+> - 事件：`common/events.py`（原顶层 `events.py`）全局单 `queue.Queue`（并发下有串话风险）
 > - 部署：Docker Compose（mysql/chroma/app），Ollama 复用宿主机；UV + 阿里云镜像源
 >
 > **设计原则（贯穿全文，来自业务方约束）**：

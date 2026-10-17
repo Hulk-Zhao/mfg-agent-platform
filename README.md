@@ -67,13 +67,14 @@ LLM 层：DeepSeek（默认）/ Ollama / OpenAI 兼容接口，不可用自动�
 通知层：P0 电话 / P1 IM / P2 邮件，IM 通道可接企业微信
 ```
 
-**代码分三层**，不要按字面理解成「V1 / V2 两套并列实现」：
+**代码分两层**，不要按字面理解成「V1 / V2 两套并列实现」：
 
 - `src/mfg_agents/common/` — **公共基础设施层**。配置、LLM 工厂、RAG、Text2SQL、DB 客户端、演示库初始化、知识库种子、事件队列、场景关键词规则。V2 主链路在运行时直接依赖这里，**不可删除**。
 - `src/mfg_agents/v2/` — **V2/V3 主链路**，详见 [docs/ARCHITECTURE-V2.md](docs/ARCHITECTURE-V2.md)。
-- `src/mfg_agents/{agents,graph,ui,api.py}` — **V1 原型**（Streamlit + 8 Agent），保留作行为回归基线，由 `tests/test_v1_regression.py` 守护。这层对 V2 无运行时依赖，是唯一可安全移除的部分。
 
 > 迁移说明：上述基础设施原先散落在 `mfg_agents/` 顶层及 `tools/`、`db/`、`knowledge/` 包中。由于 V2 运行时依赖它们，早期文档将其笼统称作「V1 原型」容易造成「V1 可以整个删掉」的误解，现已统一收敛到 `common/`。命令行入口同步变更：`python -m mfg_agents.common.init_db`、`python -m mfg_agents.common.seed`。
+>
+> V1 原型层（`agents/ graph/ ui/ api.py`，Streamlit + 8 Agent）已于 2026-10-18 移除。其行为回归基线迁入 `tests/v2/test_common_baseline.py`（场景关键词路由 / SQL 只读守卫 / 事件队列契约），V1 四域 Agent 的结论基线固化为常量后由 `tests/v2/test_e2e_v2.py::test_domain_conclusions_baseline` 守护。
 
 ## 快速开始
 
@@ -179,8 +180,6 @@ mfg-agent-platform/
 │   ├── common/                   # 公共基础设施层（V1/V2 共用，不可删）
 │   │                             #   配置 / LLM 工厂 / RAG / Text2SQL / DB 客户端 /
 │   │                             #   演示库初始化 / 知识库种子 / 事件队列 / 场景关键词
-│   ├── agents/ graph/ ui/ api.py # V1 原型（Streamlit，回归基线，可删）
-│   │                             #   8 个 Agent + LangGraph 编排 + Streamlit UI
 │   └── v2/                       # V2/V3 主链路
 │   ├── contracts/                #   接入契约：IMGateway / DataSource / VectorStore / 权限
 │   ├── core/                     #   编排内核：两级路由 / YAML DAG / 共享上下文 / SPC 统计

@@ -101,31 +101,32 @@ def test_pipeline_runs_multiple_times_stateless(orchestrator):
     assert r1.run_id != r2.run_id
 
 
-# ---------- 2. V1 行为等价 ----------
+# ---------- 2. 域结论基线 ----------
 
-def test_v1_equivalence_domain_conclusions(orchestrator):
-    """同输入同结论结构：V1 域 Agent 直调 vs V2 handler 产出。"""
-    from mfg_agents.agents.equipment import equipment_agent
-    from mfg_agents.agents.manufacturing import ManufacturingAgent
-    from mfg_agents.agents.quality import quality_agent
-    from mfg_agents.agents.supply_chain import supply_chain_agent
+# V1 原型层（agents/{manufacturing,quality,supply_chain,equipment}.py）已移除，
+# 本用例不再动态调用 V1 Agent 做对比，改为固化 V1 历史结论作为期望值。
+# 基线取值：V1 域 Agent 对 state={"product_model": "A型号", "line_code": "SMT-1"} 的实测输出
+# （迁移前实测：confirmed_stop=True / dominant=锡膏偏移 /
+#   supply_summary=今日1个批次到货，无来料异常 / alarms=3）。
+DOMAIN_BASELINE = {
+    "confirmed_stop": True,
+    "dominant_defect": "锡膏偏移",
+    "supply_summary": "今日1个批次到货，无来料异常",
+    "equip_alarm_rows": 3,
+}
 
-    state = {"product_model": "A型号", "line_code": "SMT-1"}
-    v1 = {
-        "confirmed_stop": ManufacturingAgent().run(state)["confirmed_stop"],
-        "dominant": quality_agent(state)["dominant_defect"]["defect_type"],
-        "supply_summary": supply_chain_agent(state)["supply_summary"],
-        "alarms": len(equipment_agent(state)["abnormal_alarms"]),
-    }
+
+def test_domain_conclusions_baseline(orchestrator):
+    """域结论保持与 V1 历史基线一致（V1 原型已删，期望值固化）。"""
     result = orchestrator.handle(STOP_QUERY, USER_CTX)
     brief = result.internal_brief
-    assert brief["停线确认"] == v1["confirmed_stop"]
-    assert v1["dominant"] in brief["品质"]
-    assert v1["supply_summary"] == brief["供应链"]
-    # 设备告警数量：V1=3 → V2 provenance 中 equip_alarms 命中行数
+    assert brief["停线确认"] == DOMAIN_BASELINE["confirmed_stop"]
+    assert DOMAIN_BASELINE["dominant_defect"] in brief["品质"]
+    assert DOMAIN_BASELINE["supply_summary"] == brief["供应链"]
+    # 设备告警数量：基线 3 → V2 provenance 中 equip_alarms 命中行数
     equip = [p for p in result.provenance
              if p.get("query_name") == "equip_alarms"][0]
-    assert equip["row_count"] == v1["alarms"]
+    assert equip["row_count"] == DOMAIN_BASELINE["equip_alarm_rows"]
 
 
 # ---------- 3. 未停线路径 ----------

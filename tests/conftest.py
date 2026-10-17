@@ -1,11 +1,16 @@
 """pytest 全局配置。
 
-V1 基线的 tests/test_*.py 五个文件是**演示脚本**（顶层直接执行、无 pytest
-测试函数，且依赖 Ollama / 运行中的服务），在 pytest 收集期即报错。
-处理方式（V1 文件零改动）：
-- collect_ignore 跳过这些脚本的收集——它们仍可 `uv run python tests/test_e2e.py` 手动运行；
-- 等价覆盖移至 tests/test_v1_regression.py（离线可跑的 pytest 回归：
-  图可编译、路由规则、SQL 只读守卫、域 Agent 结论）。
+历史：V1 原型层（src/mfg_agents/{agents,graph,ui,api.py}）曾有五个 tests/test_*.py
+演示脚本（顶层直接执行、无 pytest 测试函数，且依赖 Ollama / 运行中的服务），
+在 pytest 收集期即报错，故用 collect_ignore 跳过。
+
+V1 原型层移除后，这些脚本中依赖 V1 图的四个（test_e2e / test_events /
+test_stream / test_chunk）已随之删除；仅保留 test_sql.py——它只依赖
+mfg_agents.common.sql_tools，仍是手动运行的 Text2SQL 演示脚本。
+
+V1 的行为回归基线已迁入 tests/v2/test_common_baseline.py（场景关键词路由、
+SQL 只读守卫、事件队列契约），域结论基线固化为常量后由
+tests/v2/test_e2e_v2.py::test_domain_conclusions_baseline 守护。
 
 测试确定性（重要）：
 接入云端 LLM（DeepSeek）后，若单测真实调用外网，会造成**慢、计费、结果波动**。
@@ -19,11 +24,7 @@ from pathlib import Path
 import pytest
 
 collect_ignore = [
-    "test_e2e.py",
     "test_sql.py",
-    "test_events.py",
-    "test_stream.py",
-    "test_chunk.py",
 ]
 
 
