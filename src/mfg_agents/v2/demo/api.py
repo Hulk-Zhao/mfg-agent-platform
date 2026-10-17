@@ -45,6 +45,10 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="mfg-agent-platform v2", version="2.0.0")
 
+# A2A 协议端点（Agent Card + message/send + tasks/get；工具与 MCP 同源）
+from ..a2a import build_a2a_router  # noqa: E402
+app.include_router(build_a2a_router())
+
 # 演示前端（demo/ui）可能以 file:// 直开（Origin: null）或跨端口访问，
 # 需放开 CORS；仅影响本 demo 应用，V1 与 V2 现有路由行为不变。
 app.add_middleware(
