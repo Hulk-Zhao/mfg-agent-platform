@@ -1,7 +1,7 @@
 """LangGraph 图构建：5个业务场景的路由与fan-out/fan-in编排。"""
 from langgraph.graph import StateGraph, START, END
 from .state import AgentState
-from ..agents.business import business_agent
+from ..common.business import business_agent
 from ..agents.manufacturing import ManufacturingAgent
 from ..agents.quality import quality_agent
 from ..agents.supply_chain import supply_chain_agent

@@ -2,7 +2,7 @@
 import sys, time
 sys.path.insert(0, "src")
 
-from mfg_agents.events import init_queue, push, get_queue
+from mfg_agents.common.events import init_queue, push, get_queue
 from mfg_agents.graph.builder import app
 
 init_queue()

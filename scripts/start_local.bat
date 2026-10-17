@@ -10,8 +10,8 @@ uv sync
 if errorlevel 1 exit /b 1
 
 echo === [2/3] Initializing demo database and knowledge base ===
-uv run python -m mfg_agents.db.init_db
-uv run python -m mfg_agents.knowledge.seed
+uv run python -m mfg_agents.common.init_db
+uv run python -m mfg_agents.common.seed
 
 echo === [3/3] Starting FastAPI demo ===
 echo   Local:   http://127.0.0.1:8004/demo-ui/

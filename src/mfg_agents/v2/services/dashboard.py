@@ -257,6 +257,10 @@ def build_manufacturing_dashboard(registry) -> dict:
 _QTY_NOTES = [
     "不良率 = 不良数 ÷ 受检总数。",
     "直通率 FPY = 一次通过良品数 ÷ 投入数（≈ 1 − 不良率）。",
+    "来料批次合格率 = IQC 判定合格（pass）批次数 ÷ 窗口内来料批次总数"
+    "（进料端质量，按供应商分解）。",
+    "客诉闭环率 = 已关闭（closed）客诉单数 ÷ 客诉单总数"
+    "（客户端质量，快照口径不做时间窗口过滤；按 客户 · 型号 分解）。",
     "标准三率 = 标准完整率 × 标准完善率 × 标准遵守率 = 符合率"
     "（完整率：该有的标准是否齐全；完善率：标准与现场是否一致；"
     "遵守率：现场是否按标准作业）。",
@@ -316,6 +320,40 @@ def build_quality_dashboard(registry) -> dict:
                          "conformity_rate": k,
                          "status": _status(k, _STD_CONFORMITY_TARGET, True)})
 
+    # 来料批次合格率（IQC）：窗口内按供应商分解，合格批次 ÷ 来料批次总数
+    ib = _rows(registry,
+               "SELECT supplier, "
+               "SUM(CASE WHEN inspect_status='pass' THEN 1 ELSE 0 END) AS num, "
+               "COUNT(*) AS den FROM incoming_batch "
+               "WHERE date(arrival_time) BETWEEN :start AND :end "
+               "GROUP BY supplier", params, state)
+    ib_t = _rows(registry,
+                 "SELECT date(arrival_time) AS d, "
+                 "SUM(CASE WHEN inspect_status='pass' THEN 1 ELSE 0 END) AS num, "
+                 "COUNT(*) AS den FROM incoming_batch "
+                 "WHERE date(arrival_time) BETWEEN :start AND :end "
+                 "GROUP BY date(arrival_time)", params, state)
+
+    # 客诉闭环率（快照口径，不按窗口过滤）：已关闭客诉单 ÷ 客诉单总数，按 客户 · 型号 分解
+    cc = _rows(registry,
+               "SELECT customer, product_model, "
+               "SUM(CASE WHEN status='closed' THEN 1 ELSE 0 END) AS num, "
+               "COUNT(*) AS den FROM customer_complaint "
+               "GROUP BY customer, product_model", params, state)
+
+    def _sup_name(r: dict) -> str:
+        return r.get("supplier") or "—"
+
+    def _sup_entity(r: dict) -> dict:
+        return {"supplier": r.get("supplier") or ""}
+
+    def _comp_name(r: dict) -> str:
+        return f"{r.get('customer') or '—'} · {r.get('product_model') or '—'}"
+
+    def _comp_entity(r: dict) -> dict:
+        return {"customer": r.get("customer") or "",
+                "model": r.get("product_model") or ""}
+
     kpis = [
         _kpi("defect_rate", "不良率", defect_num, defect_den, 2.0, False,
              "不良数 ÷ 受检总数。",
@@ -323,6 +361,14 @@ def build_quality_dashboard(registry) -> dict:
         _kpi("fpy", "直通率 FPY", fpy_num, defect_den, 98.0, True,
              "一次通过良品数 ÷ 投入数（≈ 1 − 不良率）。",
              "最近7天各产线直通率如何？最低的是哪条线？", fpy_trend),
+        _kpi("incoming_pass_rate", "来料批次合格率", _sum(ib, "num"),
+             _sum(ib, "den"), 90.0, True,
+             "IQC 判定合格（pass）批次数 ÷ 窗口内来料批次总数。",
+             "最近7天各供应商来料批次合格率如何？最低的是哪家？", _trend(ib_t)),
+        _kpi("complaint_close_rate", "客诉闭环率", _sum(cc, "num"),
+             _sum(cc, "den"), 80.0, True,
+             "已关闭（closed）客诉单数 ÷ 客诉单总数（快照口径）。",
+             "各客户型号的客诉闭环率如何？哪些还没闭环？", []),
     ]
 
     rankings = [
@@ -332,6 +378,12 @@ def build_quality_dashboard(registry) -> dict:
         {"key": "fpy", "label": "直通率", "unit": "%", "target": 98.0,
          "higher_is_better": True,
          "items": _fpy_rank_items(qd, 98.0)},
+        {"key": "incoming_pass_rate", "label": "来料批次合格率", "unit": "%",
+         "target": 90.0, "higher_is_better": True,
+         "items": _rank_items(ib, _sup_name, 90.0, True, 5, _sup_entity)},
+        {"key": "complaint_close_rate", "label": "客诉闭环率", "unit": "%",
+         "target": 80.0, "higher_is_better": True,
+         "items": _rank_items(cc, _comp_name, 80.0, True, 5, _comp_entity)},
     ]
 
     # 累计不良柏拉图：窗口内按 defect_type 聚合，降序累积 + 关键少数（累计首达 80%）
@@ -999,6 +1051,17 @@ DRILL_DEFS: dict[str, dict[str, Any]] = {
 }
 
 
+# ---------- defect_type 下钻白名单（唯一事实源，替代散落的 str 判定） ----------
+# 语义：只有登记在此的 ``(screen, kpi)`` 才接受 ``defect_type`` 参数，其它指标带该参数一律 400。
+#   "pareto"：defect_type 触发「L1 累计不良柏拉图 → L2 按产线 · 型号分解」（build_pareto_drill）；
+#   "entity"：defect_type 本身就是该指标声明的实体维度参数，走通用 L3 下钻。
+# 新增指标若把 defect_type 写进 entity_cols，**必须**在此登记，否则模块加载期自检即报错。
+DEFECT_TYPE_DRILLS: dict[tuple[str, str], str] = {
+    ("quality", "defect_rate"): "pareto",
+    ("spc", "spc_pareto"): "entity",
+}
+
+
 def _drill_meta(defn: dict, kpi_key: str) -> dict:
     """L2/L3 共用的指标元信息（口径与 L1 KPI 卡片一致）。"""
     return {"kpi": kpi_key, "label": defn["label"], "unit": defn["unit"],
@@ -1031,6 +1094,36 @@ def _entity_cols(defn: dict) -> list[tuple[str, str]]:
 def entity_param_names(kpi_key: str) -> list[str]:
     """指标 L3 所需的查询参数名（供 ``api.py`` 通用解析下钻实体）。"""
     return [p for _, p in _entity_cols(DRILL_DEFS[kpi_key])]
+
+
+def _assert_defect_type_whitelist() -> None:
+    """加载期自检：``DEFECT_TYPE_DRILLS`` 与 ``DRILL_DEFS`` 必须双向一致（fail-fast）。
+
+    校验两件事，任何一条不满足即抛错（把配置错误挡在启动前，不留到运行时）：
+    1. 白名单里的每一项都指向真实存在的 ``(screen, kpi)``，且 kind 合法，
+       ``kind="entity"`` 的还须确实把 defect_type 声明为实体参数；
+    2. ``DRILL_DEFS`` 中凡将 defect_type 作为实体参数的指标，都必须登记进白名单
+       —— 否则新指标会绕过白名单，脏参被静默吞掉。
+    """
+    valid_kinds = ("pareto", "entity")
+    for (screen, kpi), kind in DEFECT_TYPE_DRILLS.items():
+        defn = DRILL_DEFS.get(kpi)
+        if defn is None or defn.get("screen") != screen:
+            raise ValueError(
+                f"defect_type 白名单项 {(screen, kpi)!r} 未在 DRILL_DEFS 注册或 screen 不符")
+        if kind not in valid_kinds:
+            raise ValueError(f"defect_type 白名单项 {(screen, kpi)!r} 的 kind {kind!r} 非法")
+        if kind == "entity" and "defect_type" not in entity_param_names(kpi):
+            raise ValueError(
+                f"{kpi!r} 登记为 entity 下钻，但 DRILL_DEFS 未把 defect_type 列为实体参数")
+    for kpi, defn in DRILL_DEFS.items():
+        if "defect_type" in entity_param_names(kpi) and \
+                (defn.get("screen"), kpi) not in DEFECT_TYPE_DRILLS:
+            raise ValueError(
+                f"{kpi!r} 把 defect_type 作为实体参数，却未登记进 DEFECT_TYPE_DRILLS")
+
+
+_assert_defect_type_whitelist()
 
 
 def _join_entity(vals: list) -> str:

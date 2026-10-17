@@ -10,5 +10,5 @@ __all__ = ["build_detail_prompt"]
 
 def build_detail_prompt(question: str) -> str:
     """构造明细探查 prompt（与迁移前 f-string 逐字节一致）。"""
-    from ...tools.sql_tools import SCHEMA_PROMPT  # V1 资产复用
+    from ...common.sql_tools import SCHEMA_PROMPT  # V1 资产复用
     return f"{SCHEMA_PROMPT}\n\n问题：{question}"

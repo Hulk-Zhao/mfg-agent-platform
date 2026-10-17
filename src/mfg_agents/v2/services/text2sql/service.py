@@ -167,7 +167,7 @@ class Text2SQLService:
         宁可"查不到 + 人工兜底"，不可"编得出 + 没人发现"（架构纪律 2）。
         """
         t0 = time.perf_counter()
-        from ....tools.llm_factory import get_llm, llm_available
+        from ....common.llm_factory import get_llm, llm_available
         if not llm_available():
             return QueryResult(
                 channel="fallback", sql="", confidence=0.0,
@@ -176,7 +176,7 @@ class Text2SQLService:
                 elapsed_ms=(time.perf_counter() - t0) * 1000,
                 provenance={"channel": "detail", "degraded": True},
             )
-        from ....tools.sql_tools import _extract_sql  # V1 资产复用
+        from ....common.sql_tools import _extract_sql  # V1 资产复用
         try:
             llm = get_llm(temperature=0.0, tier="L1",
                           max_tokens=300, timeout=30, thinking="disabled")

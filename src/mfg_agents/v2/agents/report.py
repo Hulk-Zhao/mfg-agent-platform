@@ -118,7 +118,7 @@ def _collect_gaps(ctx: Any) -> list[str]:
 def _try_llm_report(brief: dict[str, Any]) -> str:
     """在线路径：LLM 生成对客报告；失败返回空串（调用方转模板）。"""
     try:
-        from ...tools.llm_factory import get_llm
+        from ...common.llm_factory import get_llm
         from ..prompts.report import build_report_prompt
         llm = get_llm(temperature=0.3, tier="L2", max_tokens=600, timeout=45,
                       thinking="disabled")

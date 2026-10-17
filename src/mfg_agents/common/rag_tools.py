@@ -20,7 +20,7 @@ chroma 语义 distance 越小越好、下游 score = 1 - distance；故适配器
 import os
 from typing import Any
 
-from ..config import settings
+from .config import settings
 
 # 多 collection 缓存：failure_cases（FA 相似案例）与 enterprise_faq
 # （企业制度问答）并存，各自独立连接/加载，互不影响。

@@ -9,8 +9,8 @@
 import pytest
 
 from mfg_agents.v2.core.orchestrator import V2Orchestrator, V2Runtime
-from mfg_agents.config import settings
-from mfg_agents.tools.llm_factory import reset_probe_cache
+from mfg_agents.common.config import settings
+from mfg_agents.common.llm_factory import reset_probe_cache
 
 STOP_QUERY = "A型号在SMT-1停线，何时复线？"
 NO_STOP_QUERY = "B型号在DIP-2停线了吗，何时复线？"
@@ -23,7 +23,7 @@ USER_CTX = {"user_id": "u-manager", "dept": "manufacturing",
 def orchestrator(monkeypatch, tmp_path) -> V2Orchestrator:
     """离线 orchestrator：LLM 探针强制 False，工作流库指向临时 DB。"""
     reset_probe_cache()
-    monkeypatch.setattr("mfg_agents.tools.llm_factory.llm_available",
+    monkeypatch.setattr("mfg_agents.common.llm_factory.llm_available",
                         lambda: False)
     monkeypatch.setattr("mfg_agents.v2.core.router.llm_available",
                         lambda: False)

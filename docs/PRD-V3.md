@@ -234,7 +234,7 @@ signoff_status() → {
 **依赖的现有资产**
 - 能力域①的会签机制（受控文档的审阅/批准 = 新增 2 个 HITL 槽位 `doc_review` / `doc_approve`）
 - `v2/services/workflow.py`（复评任务复用 WorkflowTask）
-- `v2/contracts/vector_store.py` + `tools/rag_tools.py`（8D 案例语义检索，服务 S9 知识资产）
+- `v2/contracts/vector_store.py` + `common/rag_tools.py`（8D 案例语义检索，服务 S9 知识资产）
 - 现有场景 `customer_complaint_v2.yaml`（8D 生成链路：**保持产出到知识资产，不改为受控文档**）
 - 前端打印样式与 Playwright（裁定 3；Playwright 已在项目依赖内，QA 已在用）
 

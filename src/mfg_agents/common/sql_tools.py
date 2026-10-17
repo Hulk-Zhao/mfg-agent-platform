@@ -1,9 +1,9 @@
 """Text-to-SQL 工具：把自然语言转成只读SQL并执行。"""
 import re
 from typing import Any
-from ..db.mysql_client import run_sql
+from .mysql_client import run_sql
 from .llm_factory import get_llm
-from ..events import push
+from .events import push
 
 SCHEMA_PROMPT = """
 /no_think

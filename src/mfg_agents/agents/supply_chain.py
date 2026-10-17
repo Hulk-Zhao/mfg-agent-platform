@@ -1,6 +1,6 @@
 """供应链Agent：SCM来料批次。"""
 from typing import Any
-from ..db.mysql_client import run_sql
+from ..common.mysql_client import run_sql
 
 
 def supply_chain_agent(state: dict[str, Any]) -> dict[str, Any]:

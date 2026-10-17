@@ -217,7 +217,7 @@ def test_report_draft_masks_forbidden_words(registry):
 
 
 def test_knowledge_search_degrades_when_unavailable(registry, monkeypatch):
-    from mfg_agents.tools import rag_tools
+    from mfg_agents.common import rag_tools
 
     def _boom(query, n_results=3):
         raise RuntimeError("chroma 不可用")

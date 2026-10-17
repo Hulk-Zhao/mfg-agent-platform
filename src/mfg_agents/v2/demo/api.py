@@ -29,8 +29,8 @@ from fastapi.responses import PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from ...config import settings
-from ...tools.rag_tools import kb_count
+from ...common.config import settings
+from ...common.rag_tools import kb_count
 from ..contracts.im_gateway import ReplyCard
 from ..contracts.adapters.wecom import WeComAdapter
 from ..core import cache
@@ -558,7 +558,7 @@ def api_office_chat(req: QueryRequest) -> dict[str, Any]:
     供前台聚焦演示"帮我订个会议室/中午订个餐"；返回值含工具调用留痕（steps）。
     真实接入时把 ``runtime.office`` 换成飞书/钉钉/美餐适配器即可，本端点零改动。
     """
-    from ...tools.llm_factory import llm_available
+    from ...common.llm_factory import llm_available
     from ..agents.office import OfficeAssistantAgent
 
     if not llm_available():
@@ -625,7 +625,7 @@ def api_office_meta() -> dict[str, Any]:
     演示态 ``backend`` 为 demo（内存种子，进程重启复位）；真实接入适配层已就绪
     （会议室→飞书日历，见 ``services/feishu_calendar.py``），切换只改环境变量。
     """
-    from ...tools.llm_factory import llm_available
+    from ...common.llm_factory import llm_available
     from ..services.office import ORDER_APPROVAL_AMOUNT
 
     office = get_orchestrator().runtime.office
@@ -698,8 +698,10 @@ def api_office_snapshot(roles: Optional[str] = Query(None)) -> dict[str, Any]:
          "缺料清单（可用量低于安全库存，含缺口）"),
         ("finished_stock", "finished_stock_all", "finished_inventory",
          "成品库存（型号×仓库；可发量 ATP=在库-预留）"),
-        ("incoming_batch", "incoming_batch_recent", "incoming_batch",
-         "近期来料批次（IQC 结论：合格/不合格/待检/让步接收）"),
+        # 用「全量扫描（上限 60）」而非「近期 10 条」：速查卡的检索是在**返回行**上做的，
+        # 若只给最近 10 条，按批号/料号搜更早的批次会搜不到，演示不了检索完整性。
+        ("incoming_batch", "incoming_batch_scan", "incoming_batch",
+         "来料批次（全量，上限 60；IQC 结论：合格/不合格/待检/让步接收）"),
     ]
     reg = get_orchestrator().runtime.data_registry
     blocks: dict[str, Any] = {}
@@ -812,12 +814,15 @@ def api_dashboard_drill(request: Request, screen: str = Query(...),
       ``supplier`` / ``test_type`` / ``warehouse`` / ``wf`` 等；
     - 层级判定：无 entity→L2、有 entity→L3、``+step``→L4、``+step&station``→L5；
       跳级（有 step 无 entity、有 station 无 step）或指标不支持该层级 → 400；
-    - ``defect_type``：L1 累计不良柏拉图点击 → 该不良类型按产线 · 型号分解；
-      仅质量看板不良率支持，且不与实体/工序/工位组合（组合 → 400）；
+    - ``defect_type``：仅白名单 ``DEFECT_TYPE_DRILLS``（services/dashboard.py）内的指标
+      支持——质量看板不良率走「L1 累计不良柏拉图 → L2 按产线 · 型号分解」，
+      且不与实体/工序/工位组合（组合 → 400）；spc_pareto 作为已声明实体维度下钻；
+      白名单外一律 400；
     - 聚合内部全兜底，数据源故障时返回 ``degraded:true``，**绝不 500**。
     """
     from ..services.dashboard import (
-        DRILL_DEFS, build_drill, build_pareto_drill, entity_param_names,
+        DEFECT_TYPE_DRILLS, DRILL_DEFS, build_drill, build_pareto_drill,
+        entity_param_names,
     )
 
     defn = DRILL_DEFS.get(kpi)
@@ -830,17 +835,23 @@ def api_dashboard_drill(request: Request, screen: str = Query(...),
     entity: Optional[dict[str, str]] = vals if any(vals.values()) else None
 
     defect_type = (defect_type or "").strip()
+    # defect_type 只对白名单 DEFECT_TYPE_DRILLS 内的 (screen, kpi) 生效（唯一事实源）：
+    #   "pareto" → 走 L1 累计不良柏拉图下钻；"entity" → 作为已声明实体维度走下方通用下钻；
+    # 白名单外一律 400（脏参不被静默吞掉），不再用散落的 str 判定。
     if defect_type:
-        if screen != "quality" or kpi != "defect_rate":
-            raise HTTPException(status_code=400, detail="该指标不支持不良类型下钻")
-        if entity or step or station:
-            raise HTTPException(
-                status_code=400,
-                detail="不良类型下钻不支持与实体/工序/工位组合")
-        registry = get_orchestrator().runtime.data_registry
-        return {"code": 0, "data": build_pareto_drill(registry, screen, kpi,
-                                                      defect_type),
-                "message": "ok"}
+        dt_kind = DEFECT_TYPE_DRILLS.get((screen, kpi))
+        if dt_kind == "pareto":
+            if entity or step or station:
+                raise HTTPException(
+                    status_code=400,
+                    detail="不良类型下钻不支持与实体/工序/工位组合")
+            registry = get_orchestrator().runtime.data_registry
+            return {"code": 0, "data": build_pareto_drill(registry, screen, kpi,
+                                                          defect_type),
+                    "message": "ok"}
+        if dt_kind != "entity":
+            raise HTTPException(status_code=400,
+                                detail="该指标不支持不良类型下钻")
 
     if station and not step:
         raise HTTPException(status_code=400, detail="下钻工位需先指定工序")

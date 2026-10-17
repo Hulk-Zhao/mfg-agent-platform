@@ -125,7 +125,7 @@ def test_customer_report_template_stop_uses_eta():
 
 
 def test_build_detail_prompt_reuses_schema_prompt():
-    from mfg_agents.tools.sql_tools import SCHEMA_PROMPT
+    from mfg_agents.common.sql_tools import SCHEMA_PROMPT
     assert build_detail_prompt("库存有多少") == f"{SCHEMA_PROMPT}\n\n问题：库存有多少"
 
 

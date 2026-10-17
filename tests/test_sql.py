@@ -1,4 +1,4 @@
-from mfg_agents.tools.sql_tools import text_to_sql
+from mfg_agents.common.sql_tools import text_to_sql
 
 for q in [
     "查询SMT-1线A型号今天的OEE、计划产出、实际产出",

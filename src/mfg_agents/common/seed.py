@@ -1,6 +1,6 @@
 """初始化向量库知识条目（历史案例 / FA规则 / 设备台账 / 工艺标准 / SOP）。
 
-运行一次：``python -m mfg_agents.knowledge.seed``
+运行一次：``python -m mfg_agents.common.seed``
 
 数据源：``data/knowledge/*.jsonl``（每行一条 ``{id, doc, meta}``），
 五类知识（由 ``meta.type`` 区分）写入同一 ``failure_cases`` collection：
@@ -21,7 +21,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from ..tools.rag_tools import add_case
+from .rag_tools import add_case
 
 #: meta.type → 中文展示名（同时用于计数打印）
 TYPE_LABELS = {

@@ -22,7 +22,7 @@ from typing import Any, Optional
 from ..core.events import QueueSink
 from ..core.orchestrator import create_default_orchestrator
 from ..core.router import RouteResult  # noqa: F401（类型文档参考）
-from ...tools.llm_factory import llm_available
+from ...common.llm_factory import llm_available
 
 # 演示用户上下文（总控跨域取证角色；敏感字段 supplier 将按角色脱敏）
 DEFAULT_USER_CTX = {

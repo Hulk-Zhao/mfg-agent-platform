@@ -16,7 +16,7 @@ import queue
 
 import pytest
 
-from mfg_agents.events import get_queue, init_queue, push
+from mfg_agents.common.events import get_queue, init_queue, push
 from mfg_agents.graph.builder import app
 
 # 本文件含实网 LLM 用例：默认跳过（避免单测命中云端 API / 计费 / 波动）；

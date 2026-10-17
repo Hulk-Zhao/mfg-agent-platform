@@ -127,9 +127,9 @@ class TestBug2AliasMaskingFixed:
             def invoke(self, prompt):
                 return _Resp()
 
-        monkeypatch.setattr("mfg_agents.tools.llm_factory.llm_available",
+        monkeypatch.setattr("mfg_agents.common.llm_factory.llm_available",
                             lambda: True)
-        monkeypatch.setattr("mfg_agents.tools.llm_factory.get_llm",
+        monkeypatch.setattr("mfg_agents.common.llm_factory.get_llm",
                             lambda *a, **k: _LLM())
         queries = QueryLibrary.load("src/mfg_agents/v2/data/queries.yaml")
         registry = DataSourceRegistry()
@@ -188,14 +188,14 @@ class TestBug4MemoryDbFixed:
 class TestBug5ToolEventsFixed:
     @pytest.fixture()
     def orchestrator(self, monkeypatch, tmp_path):
-        from mfg_agents.config import settings
-        from mfg_agents.tools.llm_factory import reset_probe_cache
+        from mfg_agents.common.config import settings
+        from mfg_agents.common.llm_factory import reset_probe_cache
         from mfg_agents.v2.core.orchestrator import (
             V2Orchestrator,
             V2Runtime,
         )
         reset_probe_cache()
-        for mod in ("mfg_agents.tools.llm_factory",
+        for mod in ("mfg_agents.common.llm_factory",
                     "mfg_agents.v2.core.router",
                     "mfg_agents.v2.core.node_registry"):
             monkeypatch.setattr(f"{mod}.llm_available", lambda: False)

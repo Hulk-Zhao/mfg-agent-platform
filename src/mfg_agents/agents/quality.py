@@ -1,6 +1,6 @@
 """品质Agent：QMS不良分布。"""
 from typing import Any
-from ..db.mysql_client import run_sql
+from ..common.mysql_client import run_sql
 
 
 def quality_agent(state: dict[str, Any]) -> dict[str, Any]:

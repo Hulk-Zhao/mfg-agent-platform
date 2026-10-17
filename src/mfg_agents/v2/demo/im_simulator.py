@@ -22,7 +22,7 @@ from ..contracts.adapters.wecom_crypto import (
 from ..contracts.im_gateway import ReplyCard
 from ..core.events import QueueSink
 from ..core.orchestrator import create_default_orchestrator
-from ...tools.llm_factory import llm_available
+from ...common.llm_factory import llm_available
 
 # 企业微信官方文档示例凭据（公开测试向量，仅本地演示用）
 DEMO_TOKEN = "QDG6eK"

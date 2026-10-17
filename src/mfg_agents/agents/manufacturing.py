@@ -1,6 +1,6 @@
 """制造Agent：对接MES，硬编码SQL。"""
 from typing import Any
-from ..db.mysql_client import run_sql
+from ..common.mysql_client import run_sql
 
 
 class ManufacturingAgent:

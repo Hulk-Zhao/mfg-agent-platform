@@ -20,7 +20,12 @@ from mfg_agents.v2.services.dashboard import (
     build_spc_dashboard,
     entity_param_names,
 )
-from mfg_agents.v2.services.dashboard import _entity_cols, _status
+from mfg_agents.v2.services.dashboard import (
+    _entity_cols,
+    _spc_caps_from_rows,
+    _status,
+    _verdict_status,
+)
 
 # 全角色下钻扩展新增的 9 个真实数据指标（阶段二）
 _NEW_KPIS = {
@@ -235,6 +240,234 @@ def test_spc_dashboard_shape(registry):
     assert d["data_gap"] is False
 
 
+def test_spc_kpi_fields_self_consistent(registry):
+    """逐特性能力卡字段自洽：判定映射 / delta / 超差率 / 子组口径 / 问数实体。"""
+    d = build_spc_dashboard(registry)
+    for k in d["kpis"]:
+        # 判定（verdict）与状态色（status）必须同源映射
+        assert k["status"] == _verdict_status(k["verdict"]), k["characteristic"]
+        assert k["delta"] == pytest.approx(round(k["cpk"] - 1.33, 2))
+        assert k["formula"] == f"Cpk={k['cpk']}"
+        assert k["over_num"] <= k["over_den"]
+        assert k["over_rate"] == pytest.approx(
+            100.0 * k["over_num"] / k["over_den"], abs=0.1)
+        # 5 子组 × 5 值 = 25 条测量值
+        assert k["n_total"] == 25 and k["n_subgroups"] == 5
+        assert k["sigma_within"] and k["sigma_overall"]
+        assert k["entity"] == {"characteristic": k["characteristic"]}
+    # 越低越好：Cpk 最差（最小）的特性必然超差率最高且判定不合格
+    worst = min(d["kpis"], key=lambda k: k["cpk"])
+    assert worst["verdict"] == "不合格" and worst["status"] == "danger"
+    assert worst["over_rate"] == max(k["over_rate"] for k in d["kpis"])
+
+
+def test_spc_double_sigma_cp_differs_from_pp(registry):
+    """双西格玛口径：Cp/Cpk 用组内 σ、Pp/Ppk 用整体 σ，两组指数必须严格不等。"""
+    d = build_spc_dashboard(registry)
+    for k in d["kpis"]:
+        name = k["characteristic"]
+        assert k["cp"] > 0 and k["pp"] > 0, name
+        assert k["cp"] != k["pp"], f"{name} 组内/整体 σ 未区分"
+        assert k["cpk"] != k["ppk"], f"{name} 组内/整体 σ 未区分"
+        assert k["sigma_within"] != k["sigma_overall"], name
+
+
+def test_spc_rankings_follow_engine_direction(registry):
+    """TOP5 复用统一排名口径：越低越好 → 取最差（超差率高/不良率高）在前。"""
+    by_key = {r["key"]: r for r in build_spc_dashboard(registry)["rankings"]}
+    assert set(by_key) == {"spc_capability", "spc_pareto"}
+
+    cap = by_key["spc_capability"]
+    assert cap["label"] == "子组超差率" and cap["unit"] == "%"
+    assert cap["higher_is_better"] is False and cap["target"] == 5.0
+    vals = [i["value"] for i in cap["items"]]
+    assert vals == sorted(vals, reverse=True)
+    assert [i["rank"] for i in cap["items"]] == list(range(1, len(vals) + 1))
+    assert cap["items"][0]["entity"] == {"characteristic": "回流焊峰值温度(℃)"}
+
+    pareto = by_key["spc_pareto"]
+    assert pareto["label"] == "缺陷类型不良率" and pareto["unit"] == "%"
+    assert pareto["higher_is_better"] is False and pareto["target"] == 10.0
+    pvals = [i["value"] for i in pareto["items"]]
+    assert pvals == sorted(pvals, reverse=True) and len(pvals) == 5
+
+
+def test_spc_capability_l2_decomposition(registry):
+    """spc_capability L2：按特性全量分解，越低越好 → 最差特性排第一。"""
+    out = build_drill(registry, "spc", "spc_capability")
+    assert out["level"] == 2 and out["kpi"] == "spc_capability"
+    assert out["dimension"] == "特性" and out["degraded"] is False
+    rows = out["rows"]
+    assert len(rows) == 3
+    assert [r["rank"] for r in rows] == [1, 2, 3]
+    vals = [r["value"] for r in rows]
+    assert vals == sorted(vals, reverse=True)
+    for r in rows:
+        assert r["denominator"] == 25
+        assert r["value"] == pytest.approx(
+            100.0 * r["numerator"] / r["denominator"], abs=0.15)
+        assert r["entity"] == {"characteristic": r["name"]}
+        assert len(r["trend"]) == 7
+    assert rows[0]["name"] == "回流焊峰值温度(℃)" and rows[0]["numerator"] == 2
+
+
+def test_spc_capability_l3_locks_characteristic(registry):
+    """spc_capability L3：锁定单特性，返回关联原始记录（8 列）与 7 日渐序列。"""
+    ent = "回流焊峰值温度(℃)"
+    out = build_drill(registry, "spc", "spc_capability",
+                      entity={"characteristic": ent})
+    assert out["level"] == 3 and out["entity"]["characteristic"] == ent
+    assert out["numerator"] == 2 and out["denominator"] == 25
+    assert out["value"] == pytest.approx(8.0) and out["status"] == "danger"
+    assert {c["key"] for c in out["columns"]} == {
+        "measured_at", "characteristic", "subgroup_no", "seq",
+        "value", "usl", "lsl", "source"}
+    assert out["records"] and all(r["characteristic"] == ent
+                                  for r in out["records"])
+    assert len(out["daily"]) == 7
+
+
+def test_spc_pareto_l2_and_l3(registry):
+    """spc_pareto：L2 按不良类型分解、L3 锁定单类型返回原始记录。"""
+    l2 = build_drill(registry, "spc", "spc_pareto")
+    assert l2["level"] == 2 and l2["dimension"] == "不良类型"
+    assert l2["target"] == 10.0 and l2["higher_is_better"] is False
+    assert l2["rows"]
+    for r in l2["rows"]:
+        assert r["entity"] == {"defect_type": r["name"]}
+        assert r["value"] == pytest.approx(
+            100.0 * r["numerator"] / r["denominator"], abs=0.15)
+
+    name = l2["rows"][0]["name"]
+    l3 = build_drill(registry, "spc", "spc_pareto", entity={"defect_type": name})
+    assert l3["level"] == 3 and l3["entity"]["defect_type"] == name
+    assert {c["key"] for c in l3["columns"]} == {
+        "inspect_time", "batch_no", "product_model", "line_code",
+        "defect_type", "defect_qty", "total_qty"}
+    assert l3["records"] and all(r["defect_type"] == name for r in l3["records"])
+
+
+def test_spc_entity_params_declared():
+    assert entity_param_names("spc_capability") == ["characteristic"]
+    assert entity_param_names("spc_pareto") == ["defect_type"]
+
+
+def test_spc_dashboard_data_gap_when_no_measurements():
+    """数据源无测量值：标数据缺口（data_gap）而非编造指数，空结果不算降级。"""
+    class _EmptyRegistry:
+        def execute_readonly_sql(self, sql, params=None):
+            return []
+
+    d = build_spc_dashboard(_EmptyRegistry())
+    assert d["screen"] == "spc"
+    assert d["kpis"] == [] and d["capabilities"] == [] and d["pareto"] == []
+    assert d["data_gap"] is True
+    assert d["degraded"] is False
+
+
+def test_spc_dashboard_degrades_without_raising():
+    """数据源故障：兜底为空 + 标记降级原因，绝不 500（绝不抛出）。"""
+    class _BrokenRegistry:
+        def execute_readonly_sql(self, sql, params=None):
+            raise RuntimeError("boom")
+
+    d = build_spc_dashboard(_BrokenRegistry())
+    assert d["degraded"] is True and d["data_gap"] is True
+    assert d["kpis"] == [] and d["pareto"] == []
+    assert "RuntimeError" in d["degraded_reason"]
+
+
+def test_verdict_status_mapping():
+    assert _verdict_status("合格") == "ok"
+    assert _verdict_status("偏低") == "warn"
+    assert _verdict_status("不合格") == "danger"
+    assert _verdict_status("不可判定") == "empty"
+    assert _verdict_status(None) == "empty"
+    assert _verdict_status("") == "empty"
+
+
+def test_spc_caps_missing_spec_marks_data_gap():
+    """缺 USL/LSL：标 data_gap + 不可判定，指数一律 None（不编造）。"""
+    caps = _spc_caps_from_rows([{"characteristic": "X", "subgroup_no": 1,
+                                 "value": 1.0, "usl": None, "lsl": None}])
+    assert len(caps) == 1
+    c = caps[0]
+    assert c["characteristic"] == "X" and c["data_gap"] is True
+    assert c["verdict"] == "不可判定"
+    assert c["cp"] is None and c["cpk"] is None
+    assert c["pp"] is None and c["ppk"] is None
+    assert c["spec"] == {"usl": None, "lsl": None}
+    assert c["warnings"] and "规格限" in c["warnings"][0]
+
+
+def test_spc_caps_skip_unparsable_measurements():
+    """子组号 / 测量值不可解析的行整行跳过，不得混入 n_total。"""
+    rows = [{"characteristic": "Y", "subgroup_no": sg, "value": v,
+             "usl": 12.0, "lsl": 8.0}
+            for sg, v in ((1, 10.0), (1, 10.5), (2, 10.2),
+                          (2, 10.8), (3, 11.0), (3, 10.9))]
+    rows += [{"characteristic": "Y", "subgroup_no": None, "value": 10.0,
+              "usl": 12.0, "lsl": 8.0},
+             {"characteristic": "Y", "subgroup_no": 1, "value": "bad",
+              "usl": 12.0, "lsl": 8.0},
+             {"characteristic": "", "subgroup_no": 1, "value": 10.0,
+              "usl": 12.0, "lsl": 8.0}]
+    caps = _spc_caps_from_rows(rows)
+    assert [c["characteristic"] for c in caps] == ["Y"]
+    c = caps[0]
+    assert c["data_gap"] is False
+    assert c["n_total"] == 6 and c["n_subgroups"] == 3
+    assert c["cp"] is not None and c["cpk"] is not None
+
+
+def test_spc_dashboard_api(api_client):
+    r = api_client.get("/api/v2/dashboard/spc")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["code"] == 0
+    d = body["data"]
+    assert d["screen"] == "spc" and len(d["kpis"]) == 3 and d["pareto"]
+
+
+def test_spc_drill_api_l2_and_l3(api_client):
+    """HTTP 下钻：无实体 = L2（特性维度），带 characteristic = L3（含原始记录）。"""
+    r2 = api_client.get("/api/v2/dashboard/drill",
+                        params={"screen": "spc", "kpi": "spc_capability"})
+    assert r2.status_code == 200
+    d2 = r2.json()["data"]
+    assert d2["level"] == 2 and d2["dimension"] == "特性"
+
+    ent = d2["rows"][0]["name"]
+    r3 = api_client.get("/api/v2/dashboard/drill",
+                        params={"screen": "spc", "kpi": "spc_capability",
+                                "characteristic": ent})
+    assert r3.status_code == 200
+    d3 = r3.json()["data"]
+    assert d3["level"] == 3 and d3["entity"]["characteristic"] == ent
+    assert d3["columns"] and d3["records"]
+
+
+def test_spc_pareto_drill_api_accepts_defect_type(api_client):
+    """spc_pareto 把 defect_type 声明为实体参数 → 走通用下钻而非保留参数，返回 L3。"""
+    l2 = api_client.get("/api/v2/dashboard/drill",
+                        params={"screen": "spc", "kpi": "spc_pareto"}).json()["data"]
+    name = l2["rows"][0]["name"]
+    r = api_client.get("/api/v2/dashboard/drill",
+                       params={"screen": "spc", "kpi": "spc_pareto",
+                               "defect_type": name})
+    assert r.status_code == 200
+    d = r.json()["data"]
+    assert d["level"] == 3 and d["entity"]["defect_type"] == name
+
+
+def test_spc_drill_api_rejects_screen_mismatch(api_client):
+    """指标与屏不匹配 → 400（白名单校验，防脏参串联）。"""
+    r = api_client.get("/api/v2/dashboard/drill",
+                       params={"screen": "quality", "kpi": "spc_capability"})
+    assert r.status_code == 400
+    assert "未知看板指标" in r.json()["detail"]
+
+
 # ============================================================
 # 5. 品质看板累计不良柏拉图（L1 字段 + 不良类型下钻）
 # ============================================================
@@ -260,6 +493,27 @@ def test_quality_dashboard_exposes_cumulative_pareto(registry):
     vital = data["pareto_vital"]
     assert vital and vital[0] == pareto[0]["name"]
     assert pareto[len(vital) - 1]["cum_share"] >= 80.0
+
+
+def test_quality_dashboard_card_count_matches_manufacturing(registry):
+    """品质看板卡片数与制造看板对齐（4 卡），新增进料端 / 客户端两项行业指标。"""
+    from mfg_agents.v2.services.dashboard import build_manufacturing_dashboard
+
+    q = build_quality_dashboard(registry)
+    m = build_manufacturing_dashboard(registry)
+    assert len(m["kpis"]) == 4 and len(q["kpis"]) == len(m["kpis"]) == 4
+    qkeys = [k["key"] for k in q["kpis"]]
+    assert qkeys == ["defect_rate", "fpy", "incoming_pass_rate",
+                     "complaint_close_rate"]
+    # 每个 KPI 均有配套 TOP5 排行（与制造看板一致）
+    assert [r["key"] for r in q["rankings"]] == qkeys
+    for k in q["kpis"]:
+        assert k["definition"] and k["ask"] and k["target"] is not None
+    # 进料端样本：来料批次合格率；客户端样本：客诉闭环率，均有真实分母
+    incoming = next(k for k in q["kpis"] if k["key"] == "incoming_pass_rate")
+    assert incoming["numerator"] > 0 and incoming["denominator"] > 0
+    complaint = next(k for k in q["kpis"] if k["key"] == "complaint_close_rate")
+    assert complaint["numerator"] >= 0 and complaint["denominator"] > 0
 
 
 def test_build_pareto_drill_decomposes_single_defect_type(registry):
@@ -324,3 +578,15 @@ def test_drill_api_returns_pareto_l2(api_client, registry):
     assert d["level"] == 2 and d["defect_type"] == top
     assert d["kind"] == "pareto" and d["terminal"] is True
     assert d["rows"] and d["dimension"] == "产线 · 型号"
+
+
+@pytest.mark.parametrize("kpi", ["incoming_pass_rate", "complaint_close_rate"])
+def test_drill_api_new_quality_kpi_l2(api_client, kpi):
+    """新增品质指标（来料批次合格率 / 客诉闭环率）走通用 L2 下钻，真实链路不降级。"""
+    r = api_client.get("/api/v2/dashboard/drill",
+                       params={"screen": "quality", "kpi": kpi})
+    assert r.status_code == 200
+    d = r.json()["data"]
+    assert d["level"] == 2 and d["kpi"] == kpi
+    assert d["rows"], f"{kpi} 应有 L2 分解行"
+    assert d["degraded"] is False, d.get("degraded_reason")

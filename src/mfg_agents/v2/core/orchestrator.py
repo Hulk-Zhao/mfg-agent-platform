@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
-from ...config import settings
+from ...common.config import settings
 from ..contracts.data_source import DataSourceRegistry, SQLiteDataSource
 from ..contracts.scenario import ScenarioRegistry
 from .node_registry import build_handlers
@@ -191,6 +191,27 @@ _NODE_CN: dict[str, str] = {
     "fa": "根因分析", "report": "报告",
     "spc_capability": "过程能力", "spc_pareto": "不良柏拉图",
     "report_spc": "过程能力简报", "hitl_spc_action": "过程处置",
+    # ---- 以下为补齐节点：此前缺失，降级原因里会漏出英文 key（如 business_order / warehouse_atp）----
+    # 场景结构化节点
+    "intake": "受理", "fanout": "并行分发", "fanin": "结果汇总",
+    "sqe_assess": "SQE 评估", "equipment_check": "设备检查",
+    "manufacturing": "制造",
+    # 出货风险场景数据节点
+    "business_order": "订单/交期", "warehouse_atp": "仓库 ATP",
+    "manufacturing_output": "制造产出", "logistics": "物流",
+    "atp_analysis": "ATP 分析",
+    # 工单 / 流程节点
+    "impact_wf": "停线影响工单", "scar_wf": "SCAR 工单",
+    "capa_flow": "8D 整改工单", "maintenance_flow": "维保工单",
+    "change_flow": "订单变更工单", "delivery_risk_wf": "出货风险工单",
+    # HITL 节点（与 7 个 HITL 槽位一一对应）
+    "hitl_restart": "复线决策确认", "hitl_eta": "对客 ETA 确认",
+    "hitl_disposition": "来料处置确认", "hitl_d8_close": "8D 关闭确认",
+    "hitl_complaint_reply": "对客回复确认", "hitl_delivery_commit": "交期承诺确认",
+    "hitl_maintenance_window": "停机窗口确认",
+    # 报告节点
+    "report_incoming": "来料异常简报", "report_equipment": "设备预警报告",
+    "report_delivery": "出货风险简报", "report_complaint": "客诉 8D 报告",
 }
 
 
@@ -255,10 +276,16 @@ class V2Orchestrator:
             result.degraded_reasons.append("根因分析服务未就绪：已输出模板化结构结论")
         if ctx.get("report_degraded"):
             result.degraded_reasons.append("报告生成服务未就绪：模板化输出 + 禁词过滤")
-        for node in dag.degraded_nodes:
-            label = _NODE_CN.get(node, node)
+        # 降级原因用业务语言表达，并把多个环节合并成一句——逐节点重复
+        # 「…环节数据不完整」会把一段人话读成复读机（也会漏出 node 英文 key）。
+        degraded_labels = [_NODE_CN.get(node, node) for node in dag.degraded_nodes]
+        if degraded_labels:
+            if len(degraded_labels) == 1:
+                head = f"{degraded_labels[0]}环节"
+            else:
+                head = f"{'、'.join(degraded_labels)}等 {len(degraded_labels)} 个环节"
             result.degraded_reasons.append(
-                f"{label}环节数据不完整（缺少数据源），已标注缺口并输出可复核结论")
+                f"{head}数据不完整（缺少数据源），已标注缺口并输出可复核结论")
         result.degraded = bool(result.degraded_reasons) or bool(dag.degraded_nodes)
         result.elapsed_ms = (time.perf_counter() - t0) * 1000
         logger.info("[orchestrator] %s 场景 %s 完成，耗时 %.1fms，降级=%s",
@@ -341,7 +368,7 @@ class V2Orchestrator:
         Agent 自主决定调哪些办公工具、何时对高影响事项发起 HITL；执行或失败
         均如实回写（含数据缺口）——失败回落人工兜底，降级不崩。
         """
-        from ...tools.llm_factory import llm_available
+        from ...common.llm_factory import llm_available
         from ..agents.office import OfficeAssistantAgent
 
         if not llm_available():

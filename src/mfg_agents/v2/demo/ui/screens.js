@@ -2898,6 +2898,8 @@
   const MFG_KPI_ICON = {
     availability: "gear", scrap_rate: "box", report_rate: "list", test_fpy: "flask",
     defect_rate: "warn", fpy: "check",
+    // 品质看板（行业扩展：进料端 / 客户端）
+    incoming_pass_rate: "box", complaint_close_rate: "chat",
     // 订单履约看板
     otd: "truck", otif: "check", delay_rate: "warn", kit_rate: "box",
     // SPC 过程能力看板

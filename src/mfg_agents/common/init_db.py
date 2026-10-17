@@ -1,9 +1,9 @@
 """本地SQLite数据库初始化：建表 + 插入5个场景的模拟数据。
-用法：uv run python -m mfg_agents.db.init_db
+用法：uv run python -m mfg_agents.common.init_db
 """
 import os
 from sqlalchemy import create_engine, text
-from ..config import settings
+from .config import settings
 
 
 SCHEMA = """

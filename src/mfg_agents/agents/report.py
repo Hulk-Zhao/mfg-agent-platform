@@ -1,6 +1,6 @@
 """报告Agent：基于内部分析结果，生成对客脱敏报告 + 内部简报。"""
 from typing import Any
-from ..tools.llm_factory import get_llm
+from ..common.llm_factory import get_llm
 
 
 def report_agent(state: dict[str, Any]) -> dict[str, Any]:

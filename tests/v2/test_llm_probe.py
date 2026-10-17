@@ -11,8 +11,8 @@ import urllib.error
 
 import pytest
 
-from mfg_agents.config import settings
-from mfg_agents.tools.llm_factory import llm_available, reset_probe_cache
+from mfg_agents.common.config import settings
+from mfg_agents.common.llm_factory import llm_available, reset_probe_cache
 
 # 本文件测试探针实现本身（自行 mock urllib），保持真实 _probe 逻辑
 pytestmark = pytest.mark.llm_probe
@@ -49,7 +49,7 @@ def _ollama_env(monkeypatch):
 def _patch_tags(monkeypatch, names: list[str]) -> None:
     body = json.dumps({"models": [{"name": n} for n in names]}).encode("utf-8")
     monkeypatch.setattr(
-        "mfg_agents.tools.llm_factory.urllib.request.urlopen",
+        "mfg_agents.common.llm_factory.urllib.request.urlopen",
         lambda *a, **k: _FakeResp(200, body))
 
 
@@ -72,13 +72,13 @@ def test_probe_false_when_port_unreachable(monkeypatch):
     def _raise(*a, **k):
         raise urllib.error.URLError("connection refused")
     monkeypatch.setattr(
-        "mfg_agents.tools.llm_factory.urllib.request.urlopen", _raise)
+        "mfg_agents.common.llm_factory.urllib.request.urlopen", _raise)
     assert llm_available() is False
 
 
 def test_probe_false_when_http_not_200(monkeypatch):
     monkeypatch.setattr(
-        "mfg_agents.tools.llm_factory.urllib.request.urlopen",
+        "mfg_agents.common.llm_factory.urllib.request.urlopen",
         lambda *a, **k: _FakeResp(500, b"{}"))
     assert llm_available() is False
 

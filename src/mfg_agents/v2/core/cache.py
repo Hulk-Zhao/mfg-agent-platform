@@ -25,7 +25,7 @@ import logging
 import time
 from typing import Any, Callable
 
-from ...config import settings
+from ...common.config import settings
 
 logger = logging.getLogger(__name__)
 

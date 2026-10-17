@@ -32,10 +32,10 @@ def _ensure_demo_db():
     """确保演示库存在：全新克隆没有 data/mfg_agent.db（运行时产物不入库），
     部分测试直接读取该库。仅在文件缺失时执行 init_db（幂等：DROP+CREATE+种子），
     不覆盖本地已有库。"""
-    from mfg_agents.config import settings
+    from mfg_agents.common.config import settings
     db_file = settings.DB_URL.replace("sqlite:///", "")
     if not Path(db_file).exists():
-        from mfg_agents.db.init_db import init_db
+        from mfg_agents.common.init_db import init_db
         init_db()
     yield
 
@@ -56,7 +56,7 @@ def _offline_llm_by_default(request, monkeypatch):
     if request.node.get_closest_marker("live_llm") or request.node.get_closest_marker("llm_probe"):
         yield
         return
-    from mfg_agents.tools import llm_factory
+    from mfg_agents.common import llm_factory
     llm_factory.reset_probe_cache()
     monkeypatch.setattr(llm_factory, "_probe", lambda timeout: False)
     yield

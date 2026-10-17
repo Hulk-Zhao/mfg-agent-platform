@@ -290,7 +290,7 @@ def _h_knowledge_search(orch: V2Orchestrator) -> Callable[..., dict]:
             raise ValueError("缺少 query（自然语言检索词）")
         top_k = int(args.get("top_k") or 3)
         try:
-            from ...tools.rag_tools import search_cases
+            from ...common.rag_tools import search_cases
             hits = search_cases(query, n_results=top_k)
         except Exception as exc:  # noqa: BLE001 —— 知识库不可用降级
             logger.warning("[mcp_tools] 知识库不可用: %s", exc)
@@ -371,7 +371,7 @@ def _h_report_draft(orch: V2Orchestrator) -> Callable[..., dict]:
         customer_facing = bool(args.get("customer_facing"))
         brief = {str(k): _fmt_draft_value(v) for k, v in raw_fields.items()}
 
-        from ...tools.llm_factory import get_llm, llm_available
+        from ...common.llm_factory import get_llm, llm_available
         degraded = not llm_available()
         draft = ""
         if not degraded:
@@ -777,7 +777,7 @@ def _spc_db_path(orch: V2Orchestrator) -> str:
 
     优先用运行时默认数据源的 db_path（与只读查询同源）；非 SQLite 源回退 settings。
     """
-    from ...config import settings
+    from ...common.config import settings
     source = _runtime(orch).data_registry.get()
     return getattr(source, "db_path", None) or settings.DB_URL.replace("sqlite:///", "")
 
@@ -898,7 +898,7 @@ def _h_spc_report(orch: V2Orchestrator) -> Callable[..., dict]:
 
         brief_text = "；".join(f"{k}：{_fmt_draft_value(v)}" for k, v in brief.items())
         customer_facing = bool(args.get("customer_facing"))
-        from ...tools.llm_factory import get_llm, llm_available
+        from ...common.llm_factory import get_llm, llm_available
         degraded = not llm_available()
         draft = ""
         if not degraded:

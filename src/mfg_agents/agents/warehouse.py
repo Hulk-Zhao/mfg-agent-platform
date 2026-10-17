@@ -1,6 +1,6 @@
 """仓储物流Agent：WMS库存 + TMS发货/在途状态。"""
 from typing import Any
-from ..tools.sql_tools import text_to_sql
+from ..common.sql_tools import text_to_sql
 
 
 def warehouse_agent(state: dict[str, Any]) -> dict[str, Any]:

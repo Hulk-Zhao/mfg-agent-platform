@@ -35,7 +35,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-from ...db.platform_schema import (
+from ...common.platform_schema import (
     ensure_platform_schema,
     ensure_platform_schema_sqlite,
     sqlite_path_from_url,

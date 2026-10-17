@@ -8,14 +8,14 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from .agents.business import business_agent
+from .common.business import business_agent
 from .agents.manufacturing import ManufacturingAgent
 from .agents.quality import quality_agent
 from .agents.supply_chain import supply_chain_agent
 from .agents.equipment import equipment_agent
 from .agents.fa import fa_agent
 from .agents.report import report_agent
-from .tools.llm_factory import get_llm
+from .common.llm_factory import get_llm
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 

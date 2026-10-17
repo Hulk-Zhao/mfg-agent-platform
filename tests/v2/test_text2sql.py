@@ -146,7 +146,7 @@ def test_registered_query_masking_end_to_end(service):
 # ---------- 通道③：明细探查（LLM 不可用 → 人工兜底） ----------
 
 def test_detail_channel_fallback_when_llm_unavailable(service, monkeypatch):
-    monkeypatch.setattr("mfg_agents.tools.llm_factory.llm_available",
+    monkeypatch.setattr("mfg_agents.common.llm_factory.llm_available",
                         lambda: False)
     result = service.query_detail("查一下所有表的行数", MANAGER_CTX)
     assert result.channel == "fallback"
@@ -164,9 +164,9 @@ def test_detail_channel_generates_and_audits(service, monkeypatch):
         def invoke(self, prompt):
             return _Resp()
 
-    monkeypatch.setattr("mfg_agents.tools.llm_factory.llm_available",
+    monkeypatch.setattr("mfg_agents.common.llm_factory.llm_available",
                         lambda: True)
-    monkeypatch.setattr("mfg_agents.tools.llm_factory.get_llm",
+    monkeypatch.setattr("mfg_agents.common.llm_factory.get_llm",
                         lambda *a, **k: _LLM())
     result = service.query_detail("库存一共有多少条记录", MANAGER_CTX)
     assert result.channel == "detail"
@@ -184,9 +184,9 @@ def test_detail_channel_blocks_llm_generated_ddl(service, monkeypatch):
         def invoke(self, prompt):
             return _Resp()
 
-    monkeypatch.setattr("mfg_agents.tools.llm_factory.llm_available",
+    monkeypatch.setattr("mfg_agents.common.llm_factory.llm_available",
                         lambda: True)
-    monkeypatch.setattr("mfg_agents.tools.llm_factory.get_llm",
+    monkeypatch.setattr("mfg_agents.common.llm_factory.get_llm",
                         lambda *a, **k: _LLM())
     result = service.query_detail("把库存表删了", MANAGER_CTX)
     assert result.fallback == "manual_ticket"
@@ -205,9 +205,9 @@ def test_detail_channel_audit_blocks_unauthorized_table(service, monkeypatch):
 
     restricted = {"user_id": "u3", "dept": "manufacturing",
                   "roles": ["manufacturing"]}
-    monkeypatch.setattr("mfg_agents.tools.llm_factory.llm_available",
+    monkeypatch.setattr("mfg_agents.common.llm_factory.llm_available",
                         lambda: True)
-    monkeypatch.setattr("mfg_agents.tools.llm_factory.get_llm",
+    monkeypatch.setattr("mfg_agents.common.llm_factory.get_llm",
                         lambda *a, **k: _LLM())
     result = service.query_detail("查一下客诉单号", restricted)
     assert result.fallback == "manual_ticket"

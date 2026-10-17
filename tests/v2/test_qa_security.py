@@ -384,9 +384,9 @@ class TestSensitiveFieldMasking:
             def invoke(self, prompt):
                 return _Resp()
 
-        monkeypatch.setattr("mfg_agents.tools.llm_factory.llm_available",
+        monkeypatch.setattr("mfg_agents.common.llm_factory.llm_available",
                             lambda: True)
-        monkeypatch.setattr("mfg_agents.tools.llm_factory.get_llm",
+        monkeypatch.setattr("mfg_agents.common.llm_factory.get_llm",
                             lambda *a, **k: _LLM())
         r1 = service.query_detail("各批次供应商是谁", QUALITY_CTX)
         assert r1.channel == "detail"

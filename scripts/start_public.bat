@@ -47,7 +47,7 @@ if errorlevel 1 (
     ) else (
         set PYCMD=uv run python
         echo       initializing demo database ^(best-effort^) ...
-        uv run python -m mfg_agents.db.init_db >nul 2>nul
+        uv run python -m mfg_agents.common.init_db >nul 2>nul
     )
     start "mfg-agent-platform API" /min cmd /c "!PYCMD! -m uvicorn mfg_agents.v2.demo.api:app --host 0.0.0.0 --port %PORT% > logs\api.log 2>&1"
     call :wait_ready

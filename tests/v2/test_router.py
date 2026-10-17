@@ -3,7 +3,7 @@ import pytest
 
 from mfg_agents.v2.contracts.scenario import ScenarioRegistry
 from mfg_agents.v2.core.router import TwoLevelRouter
-from mfg_agents.tools.llm_factory import reset_probe_cache
+from mfg_agents.common.llm_factory import reset_probe_cache
 
 SCENARIOS_DIR = "src/mfg_agents/v2/scenarios"
 

@@ -6,13 +6,13 @@
 3. sql_tools 只读守卫：DDL/DML 注入必须拦截，仅 SELECT 放行；
 4. 四个域 Agent 对本地 SQLite 的查询结论（与 V1 演示输出同构）。
 """
-from mfg_agents.agents.business import SCENE_RULES, business_agent
+from mfg_agents.common.business import SCENE_RULES, business_agent
 from mfg_agents.agents.equipment import equipment_agent
 from mfg_agents.agents.manufacturing import ManufacturingAgent
 from mfg_agents.agents.quality import quality_agent
 from mfg_agents.agents.supply_chain import supply_chain_agent
 from mfg_agents.graph.builder import build_graph
-from mfg_agents.tools.sql_tools import _extract_sql
+from mfg_agents.common.sql_tools import _extract_sql
 
 
 def test_v1_graph_compiles():

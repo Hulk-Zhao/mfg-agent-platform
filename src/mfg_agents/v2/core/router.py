@@ -12,7 +12,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-from ...tools.llm_factory import llm_available
+from ...common.llm_factory import llm_available
 from ..contracts.scenario import ScenarioRegistry
 # 域组定义已迁移至 prompts/routing；此处再导出 DOMAIN_GROUPS，保持 router 对外符号不变。
 from ..prompts.routing import DOMAIN_GROUPS
@@ -155,7 +155,7 @@ class TwoLevelRouter:
                     level="L0",
                     reason=f"场景触发词命中: {scenario_key}",
                 )
-        from ...agents.business import SCENE_RULES  # V1 资产复用，零破坏
+        from ...common.business import SCENE_RULES  # V1 资产复用，零破坏
         for scene, keywords in SCENE_RULES:
             if any(k in query for k in keywords):
                 return RouteResult(
@@ -302,7 +302,7 @@ class TwoLevelRouter:
     @staticmethod
     def _extract_entities(query: str) -> dict[str, Any]:
         """实体抽取：复用 V1 business_agent 的型号/线体/紧急度规则（L0 级，无 LLM）。"""
-        from ...agents.business import business_agent  # V1 资产复用
+        from ...common.business import business_agent  # V1 资产复用
         state = business_agent({"user_query": query})
         return {
             "product_model": state.get("product_model"),

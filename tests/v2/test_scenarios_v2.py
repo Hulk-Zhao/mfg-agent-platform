@@ -11,8 +11,8 @@ import sqlite3
 
 import pytest
 
-from mfg_agents.config import settings
-from mfg_agents.tools.llm_factory import reset_probe_cache
+from mfg_agents.common.config import settings
+from mfg_agents.common.llm_factory import reset_probe_cache
 from mfg_agents.v2.core.orchestrator import V2Orchestrator, V2Runtime
 
 DB_PATH = "data/mfg_agent.db"
@@ -37,7 +37,7 @@ QUICK_ROUTES = [
 def orchestrator(monkeypatch, tmp_path) -> V2Orchestrator:
     """离线 orchestrator：LLM 探针强制 False，工作流库指向临时 DB。"""
     reset_probe_cache()
-    for mod in ("mfg_agents.tools.llm_factory",
+    for mod in ("mfg_agents.common.llm_factory",
                 "mfg_agents.v2.core.router",
                 "mfg_agents.v2.core.node_registry"):
         monkeypatch.setattr(f"{mod}.llm_available", lambda: False)

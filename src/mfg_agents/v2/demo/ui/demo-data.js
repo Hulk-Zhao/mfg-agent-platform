@@ -3427,6 +3427,16 @@
           "definition": "一次通过良品数 ÷ 投入数（≈ 1 − 不良率）。", "formula": "12531 / 12800",
           "ask": "最近7天各产线直通率如何？最低的是哪条线？",
           "trend": [98.1, 96.5, 97.2, 97.1, 97.8, 98.9, 98.7] },
+        { "key": "incoming_pass_rate", "label": "来料批次合格率", "value": 70.0, "unit": "%", "numerator": 35, "denominator": 50,
+          "target": 90.0, "higher_is_better": true, "status": "danger", "delta": -20.0,
+          "definition": "IQC 判定合格（pass）批次数 ÷ 窗口内来料批次总数。", "formula": "35 / 50",
+          "ask": "最近7天各供应商来料批次合格率如何？最低的是哪家？",
+          "trend": [55.6, 50.0, 72.7, 83.3, 83.3, 100.0, 60.0] },
+        { "key": "complaint_close_rate", "label": "客诉闭环率", "value": 40.0, "unit": "%", "numerator": 2, "denominator": 5,
+          "target": 80.0, "higher_is_better": true, "status": "danger", "delta": -40.0,
+          "definition": "已关闭（closed）客诉单数 ÷ 客诉单总数（快照口径）。", "formula": "2 / 5",
+          "ask": "各客户型号的客诉闭环率如何？哪些还没闭环？",
+          "trend": [] },
       ],
       "rankings": [
         { "key": "defect_rate", "label": "不良率", "unit": "%", "target": 2.0, "higher_is_better": false, "items": [
@@ -3442,6 +3452,20 @@
           { "name": "SMT-2 · A型号", "line": "SMT-2", "model": "A型号", "value": 97.7, "status": "warn", "numerator": 1954, "denominator": 2000, "rank": 3 },
           { "name": "SMT-2 · B型号", "line": "SMT-2", "model": "B型号", "value": 97.9, "status": "warn", "numerator": 2938, "denominator": 3000, "rank": 4 },
           { "name": "DIP-1 · C型号", "line": "DIP-1", "model": "C型号", "value": 98.1, "status": "ok", "numerator": 883, "denominator": 900, "rank": 5 }
+        ] },
+        { "key": "incoming_pass_rate", "label": "来料批次合格率", "unit": "%", "target": 90.0, "higher_is_better": true, "items": [
+          { "name": "力特", "entity": { "supplier": "力特" }, "value": 0.0, "status": "danger", "numerator": 0, "denominator": 1, "rank": 1 },
+          { "name": "劲胜智能", "entity": { "supplier": "劲胜智能" }, "value": 0.0, "status": "danger", "numerator": 0, "denominator": 1, "rank": 2 },
+          { "name": "天马微电子", "entity": { "supplier": "天马微电子" }, "value": 0.0, "status": "danger", "numerator": 0, "denominator": 1, "rank": 3 },
+          { "name": "村田", "entity": { "supplier": "村田" }, "value": 0.0, "status": "danger", "numerator": 0, "denominator": 1, "rank": 4 },
+          { "name": "爱普生", "entity": { "supplier": "爱普生" }, "value": 0.0, "status": "danger", "numerator": 0, "denominator": 1, "rank": 5 }
+        ] },
+        { "key": "complaint_close_rate", "label": "客诉闭环率", "unit": "%", "target": 80.0, "higher_is_better": true, "items": [
+          { "name": "OPPO · A型号", "entity": { "customer": "OPPO", "model": "A型号" }, "model": "A型号", "value": 0.0, "status": "danger", "numerator": 0, "denominator": 1, "rank": 1 },
+          { "name": "华为终端 · A型号", "entity": { "customer": "华为终端", "model": "A型号" }, "model": "A型号", "value": 0.0, "status": "danger", "numerator": 0, "denominator": 1, "rank": 2 },
+          { "name": "美的 · B型号", "entity": { "customer": "美的", "model": "B型号" }, "model": "B型号", "value": 0.0, "status": "danger", "numerator": 0, "denominator": 1, "rank": 3 },
+          { "name": "大疆 · C型号", "entity": { "customer": "大疆", "model": "C型号" }, "model": "C型号", "value": 100.0, "status": "ok", "numerator": 1, "denominator": 1, "rank": 4 },
+          { "name": "小米 · B型号", "entity": { "customer": "小米", "model": "B型号" }, "model": "B型号", "value": 100.0, "status": "ok", "numerator": 1, "denominator": 1, "rank": 5 }
         ] },
       ],
       "pareto": [
@@ -3459,6 +3483,8 @@
       "notes": [
         "不良率 = 不良数 ÷ 受检总数。",
         "直通率 FPY = 一次通过良品数 ÷ 投入数（≈ 1 − 不良率）。",
+        "来料批次合格率 = IQC 判定合格（pass）批次数 ÷ 窗口内来料批次总数（进料端质量，按供应商分解）。",
+        "客诉闭环率 = 已关闭（closed）客诉单数 ÷ 客诉单总数（客户端质量，快照口径不做时间窗口过滤；按 客户 · 型号 分解）。",
         "标准三率 = 标准完整率 × 标准完善率 × 标准遵守率 = 符合率（完整率：该有的标准是否齐全；完善率：标准与现场是否一致；遵守率：现场是否按标准作业）。",
         "TOP5 统一为「最需关注的最差 5 名」，方向随指标极性自动翻转：越高越好取最低 5、越低越好取最高 5。",
         "累计不良柏拉图：窗口内按不良类型降序累积，关键少数 = 累计占比首达 80% 的类型（与 SPC 柏拉图 spc.pareto 同源口径）；点击类型可下钻其产线 · 型号分解。"
@@ -3728,10 +3754,16 @@
         definition: "IQC 判定合格（pass）批次数 ÷ 窗口内来料批次总数。",
         ask: "最近7天各供应商来料批次合格率如何？最低的是哪家？",
         rows: [
-          { name: "国巨", entity: { supplier: "国巨" }, value: 0.0, numerator: 0, denominator: 1, status: "danger", trend: [] },
+          { name: "力特", entity: { supplier: "力特" }, value: 0.0, numerator: 0, denominator: 1, status: "danger", trend: [] },
+          { name: "劲胜智能", entity: { supplier: "劲胜智能" }, value: 0.0, numerator: 0, denominator: 1, status: "danger", trend: [] },
           { name: "天马微电子", entity: { supplier: "天马微电子" }, value: 0.0, numerator: 0, denominator: 1, status: "danger", trend: [] },
+          { name: "村田", entity: { supplier: "村田" }, value: 0.0, numerator: 0, denominator: 1, status: "danger", trend: [] },
+          { name: "爱普生", entity: { supplier: "爱普生" }, value: 0.0, numerator: 0, denominator: 1, status: "danger", trend: [] },
+          { name: "茂硕电源", entity: { supplier: "茂硕电源" }, value: 0.0, numerator: 0, denominator: 1, status: "danger", trend: [] },
+          { name: "韦尔半导体", entity: { supplier: "韦尔半导体" }, value: 0.0, numerator: 0, denominator: 1, status: "danger", trend: [] },
+          { name: "鸣志电器", entity: { supplier: "鸣志电器" }, value: 0.0, numerator: 0, denominator: 1, status: "danger", trend: [] },
           { name: "三星电机", entity: { supplier: "三星电机" }, value: 50.0, numerator: 1, denominator: 2, status: "danger", trend: [] },
-          { name: "千住金属", entity: { supplier: "千住金属" }, value: 50.0, numerator: 1, denominator: 2, status: "danger", trend: [] },
+          { name: "兆易创新", entity: { supplier: "兆易创新" }, value: 50.0, numerator: 1, denominator: 2, status: "danger", trend: [] },
         ] },
       test_pass_rate: { label: "测试通过率", target: 95.0, higher_is_better: true, dimension: "测试类型",
         definition: "测试通过数 ÷ 测试总数（按测试类型分解）。",

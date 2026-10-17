@@ -17,7 +17,7 @@ import urllib.request
 
 from langchain_core.language_models.chat_models import BaseChatModel
 
-from ..config import settings
+from .config import settings
 
 logger = logging.getLogger(__name__)
 

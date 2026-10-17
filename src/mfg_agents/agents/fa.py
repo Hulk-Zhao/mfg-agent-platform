@@ -1,7 +1,7 @@
 """FA分析Agent：RAG检索 + LLM推理。"""
 from typing import Any
-from ..tools.rag_tools import search_cases
-from ..tools.llm_factory import get_llm
+from ..common.rag_tools import search_cases
+from ..common.llm_factory import get_llm
 
 
 def fa_agent(state: dict[str, Any]) -> dict[str, Any]:

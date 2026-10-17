@@ -62,9 +62,12 @@ class Settings:
     OLLAMA_MODEL_L1: str = os.getenv("OLLAMA_MODEL_L1", "qwen3.5:4b")
 
     # 场景目录（YAML 声明式场景；新场景零代码新增）
+    # 注意：本文件位于 common/ 下，v2/ 与其同级（mfg_agents/v2/），
+    # 故需再上一级（parent.parent）。历史上本文件在 mfg_agents/ 根下用 parent，
+    # 上移到 common/ 后必须改为 parent.parent，否则解析成 common/v2 而加载不到场景。
     V2_SCENARIOS_DIR: str = os.getenv(
         "V2_SCENARIOS_DIR",
-        str(Path(__file__).resolve().parent / "v2" / "scenarios")
+        str(Path(__file__).resolve().parent.parent / "v2" / "scenarios")
     )
 
     # 工作流库（SQLite：platform_workflow_task 工单/状态机/SLA/HITL 队列）

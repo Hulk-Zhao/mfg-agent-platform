@@ -301,7 +301,7 @@ class AgenticDomainAgent:
 
     def _get_llm(self) -> Any:
         if self._llm is None:
-            from ...tools.llm_factory import get_llm
+            from ...common.llm_factory import get_llm
             self._llm = get_llm(temperature=0.0, tier="L1", max_tokens=900,
                                 timeout=45, thinking="disabled")
             self._llm = self._llm.bind_tools(self._tool_schemas())

@@ -1,6 +1,6 @@
 """导入企业制度知识库（方案 B：原项目知识库 → Milvus 向量化迁移）。
 
-运行一次：``python -m mfg_agents.knowledge.kbqa_seed``
+运行一次：``python -m mfg_agents.common.kbqa_seed``
 
 链路：原项目 ``data/knowledge_base`` 下 8 个部门目录的 ``*.md`` → 按段落切块
 （``max_len=400``，与 ``build_index.py`` 同策略）→ 写入 Milvus ``enterprise_faq``
@@ -16,7 +16,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from ..tools.rag_tools import add_kb_chunks
+from .rag_tools import add_kb_chunks
 
 #: 默认源目录（原项目 knowledge_base；可用 ENTERPRISE_KB_DIR 覆盖）
 DEFAULT_KB_DIR = r"E:\黑马资料\assistant\data\knowledge_base"

@@ -31,7 +31,7 @@ import secrets
 import time
 from typing import Any, Iterable, Optional
 
-from ...config import settings
+from ...common.config import settings
 from ..contracts.permissions import get_permission_registry
 
 logger = logging.getLogger(__name__)

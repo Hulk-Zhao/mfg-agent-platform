@@ -20,8 +20,8 @@ from pathlib import Path
 import pytest
 import yaml
 
-from mfg_agents.config import settings
-from mfg_agents.tools.llm_factory import reset_probe_cache
+from mfg_agents.common.config import settings
+from mfg_agents.common.llm_factory import reset_probe_cache
 from mfg_agents.v2.agents.report import _BRIEF_SPEC
 from mfg_agents.v2.contracts.permissions import get_permission_registry
 from mfg_agents.v2.core.orchestrator import V2Orchestrator, V2Runtime
@@ -88,7 +88,7 @@ def _demo_role_gov_keys() -> list[str]:
 def orchestrator(monkeypatch, tmp_path) -> V2Orchestrator:
     """离线 orchestrator：LLM 探针强制 False，工作流库指向临时 DB。"""
     reset_probe_cache()
-    for mod in ("mfg_agents.tools.llm_factory",
+    for mod in ("mfg_agents.common.llm_factory",
                 "mfg_agents.v2.core.router",
                 "mfg_agents.v2.core.node_registry"):
         monkeypatch.setattr(f"{mod}.llm_available", lambda: False)

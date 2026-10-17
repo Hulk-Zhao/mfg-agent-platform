@@ -3,7 +3,7 @@
 """
 import pandas as pd
 from sqlalchemy import create_engine, text
-from ..config import settings
+from .config import settings
 
 _engine = create_engine(settings.DB_URL, pool_pre_ping=True, future=True)
 

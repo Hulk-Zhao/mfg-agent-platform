@@ -1,6 +1,6 @@
 """设备Agent：EAM设备日志。"""
 from typing import Any
-from ..db.mysql_client import run_sql
+from ..common.mysql_client import run_sql
 
 
 def equipment_agent(state: dict[str, Any]) -> dict[str, Any]:

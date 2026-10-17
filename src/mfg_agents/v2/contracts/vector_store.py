@@ -71,7 +71,7 @@ class ChromaVectorStore(VectorStore):
     def _collection(self) -> Any:
         """惰性获取底层 collection（复用 rag_tools 既有单例逻辑）。"""
         if self._col is None:
-            from ...tools.rag_tools import _get_collection  # V1 资产复用
+            from ...common.rag_tools import _get_collection  # V1 资产复用
             self._col = _get_collection()
         return self._col
 

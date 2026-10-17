@@ -6,9 +6,9 @@
 > - 编排：`src/mfg_agents/graph/builder.py` — LangGraph StateGraph，8 Agent，5 场景硬编码路由字典 + 关键词规则
 > - 状态：`src/mfg_agents/graph/state.py` — 单体 `AgentState` TypedDict，所有域字段平铺
 > - 入口：`src/mfg_agents/api.py` — FastAPI SSE；**注意：api.py 是手工顺序编排，并未使用 `build_graph()` 编译出的图**（图与 API 双轨，V1 技术债）
-> - 路由：`src/mfg_agents/agents/business.py` — `SCENE_RULES` 关键词匹配（README/ARCHITECTURE.md 声称"LLM JSON 抽取"，**文档与实现不一致**，属基线文档债）
-> - 数据：`data/init.sql` 8 张模拟表；`tools/sql_tools.py` 正则只读过滤 + 硬编码 SCHEMA_PROMPT（写死 SQLite/演示值）
-> - 知识：`tools/rag_tools.py` ChromaDB 单 collection（`failure_cases`），无权限隔离
+> - 路由：`src/mfg_agents/common/business.py` — `SCENE_RULES` 关键词匹配（README/ARCHITECTURE.md 声称"LLM JSON 抽取"，**文档与实现不一致**，属基线文档债）
+> - 数据：`data/init.sql` 8 张模拟表；`common/sql_tools.py` 正则只读过滤 + 硬编码 SCHEMA_PROMPT（写死 SQLite/演示值）
+> - 知识：`common/rag_tools.py` ChromaDB 单 collection（`failure_cases`），无权限隔离
 > - 事件：`events.py` 全局单 `queue.Queue`（并发下有串话风险）
 > - 部署：Docker Compose（mysql/chroma/app），Ollama 复用宿主机；UV + 阿里云镜像源
 >
@@ -469,7 +469,7 @@ hitl:
 | L2 | 分析推理、RAG 答案、FA 评级、报告生成 | qwen3.5:9b → 32b；DeepSeek API 兜底 | **本地优先**；网络隔离或本地资源不足时 DeepSeek（仅限脱敏后非敏感场景） | 数据不出厂原则：涉 BOM/价格/客户的推理**必须本地** |
 | L3 | 超范围/低置信 → 人工 | —— | 工单 | 兜底不是失败，是设计的一部分 |
 
-`tools/llm_factory.py` 扩展 `get_llm(tier="L1"|"L2")`，V1 调用点零改动；资源允许时本地升级 vLLM 托管（并发与吞吐），工厂层切换对业务透明。
+`common/llm_factory.py` 扩展 `get_llm(tier="L1"|"L2")`，V1 调用点零改动；资源允许时本地升级 vLLM 托管（并发与吞吐），工厂层切换对业务透明。
 
 ### 6.3 工具集成：MCP 优先，RPA 兜底
 
@@ -938,9 +938,9 @@ sequenceDiagram
 
 | Task ID | 任务名 | Source Files | Dependencies | Priority |
 |---|---|---|---|---|
-| **T01** | 项目基础设施：配置骨架 + 事件总线 + 部署声明 | `pyproject.toml`（加依赖）、`docker-compose.yml`（加 redis）、`.env.example`、`src/mfg_agents/config.py`（DB_PROFILE/EVENT_BACKEND/IM/模型分级）、`src/mfg_agents/events.py`（重写为 EventBus：context 注入 + Redis 后端 + 保留 V1 事件枚举）、`src/mfg_agents/tools/llm_factory.py`（增加 tier 参数） | 无 | P0 |
-| **T02** | 数据层与安全底座：数据源注册 + 平台库 + RBAC/审计 | `src/mfg_agents/data/sources/__init__.py`、`src/mfg_agents/data/sources/registry.py`（数据源注册与路由）、`src/mfg_agents/data/sources/sql_source.py`（SQL 源适配，演进 db/mysql_client.py 只读+超时）、`src/mfg_agents/db/platform_schema.sql`（RBAC/审计/工作流/事件契约表 DDL）、`src/mfg_agents/security/rbac.py`、`src/mfg_agents/security/audit.py`、`src/mfg_agents/security/masking.py` | T01 | P0 |
-| **T03** | 智能总控重构：场景注册表 + 两级路由 + DAG 执行器 | `src/mfg_agents/orchestrator/__init__.py`、`src/mfg_agents/orchestrator/router.py`（L0 规则快路径+L1 小模型闭集分类）、`src/mfg_agents/orchestrator/scenario_registry.py`（加载/匹配/版本/影子比对）、`src/mfg_agents/orchestrator/executor.py`（YAML→LangGraph 子图）、`src/mfg_agents/orchestrator/context.py`（SharedContext+DomainState+STATE_ALIAS 兼容 V1 字段名）、`src/mfg_agents/orchestrator/scenarios/*.yaml`（V1 五场景等价迁移：line_stop_v2/incoming_quality_v2/customer_complaint_v2/delivery_status_v2/equipment_warning_v2）、`src/mfg_agents/agents/business.py`（降级为快路径规则模块，被 router 引用） | T01 | P0 |
+| **T01** | 项目基础设施：配置骨架 + 事件总线 + 部署声明 | `pyproject.toml`（加依赖）、`docker-compose.yml`（加 redis）、`.env.example`、`src/mfg_agents/common/config.py`（DB_PROFILE/EVENT_BACKEND/IM/模型分级）、`src/mfg_agents/common/events.py`（重写为 EventBus：context 注入 + Redis 后端 + 保留 V1 事件枚举）、`src/mfg_agents/common/llm_factory.py`（增加 tier 参数） | 无 | P0 |
+| **T02** | 数据层与安全底座：数据源注册 + 平台库 + RBAC/审计 | `src/mfg_agents/data/sources/__init__.py`、`src/mfg_agents/data/sources/registry.py`（数据源注册与路由）、`src/mfg_agents/data/sources/sql_source.py`（SQL 源适配，演进 db/mysql_client.py 只读+超时）、`src/mfg_agents/common/platform_schema.sql`（RBAC/审计/工作流/事件契约表 DDL）、`src/mfg_agents/security/rbac.py`、`src/mfg_agents/security/audit.py`、`src/mfg_agents/security/masking.py` | T01 | P0 |
+| **T03** | 智能总控重构：场景注册表 + 两级路由 + DAG 执行器 | `src/mfg_agents/orchestrator/__init__.py`、`src/mfg_agents/orchestrator/router.py`（L0 规则快路径+L1 小模型闭集分类）、`src/mfg_agents/orchestrator/scenario_registry.py`（加载/匹配/版本/影子比对）、`src/mfg_agents/orchestrator/executor.py`（YAML→LangGraph 子图）、`src/mfg_agents/orchestrator/context.py`（SharedContext+DomainState+STATE_ALIAS 兼容 V1 字段名）、`src/mfg_agents/orchestrator/scenarios/*.yaml`（V1 五场景等价迁移：line_stop_v2/incoming_quality_v2/customer_complaint_v2/delivery_status_v2/equipment_warning_v2）、`src/mfg_agents/common/business.py`（降级为快路径规则模块，被 router 引用） | T01 | P0 |
 | **T04** | 供应链域组 + Text2SQL 服务化 | `src/mfg_agents/agents/supply_chain/__init__.py`（DomainAgentGroup 实现：业务/计划/物控/采购/仓库/物流 6 Agent，演进 V1 supply_chain/warehouse）、`src/mfg_agents/agents/supply_chain/planning.py`、`src/mfg_agents/agents/supply_chain/procurement.py`、`src/mfg_agents/agents/supply_chain/warehouse_logistics.py`、`src/mfg_agents/services/text2sql/__init__.py`、`src/mfg_agents/services/text2sql/service.py`（指标库优先→注册查询→明细探查管道）、`src/mfg_agents/services/text2sql/auditor.py`（正则+V1 sql_tools 逻辑并入 + sqlglot AST 校验 + 表/行级权限）、`src/mfg_agents/services/text2sql/schema_registry.py`（表结构注册+权限裁剪+Few-shot 检索）、`src/mfg_agents/services/text2sql/validator.py`、`src/mfg_agents/services/text2sql/masker.py`、`src/mfg_agents/data/metrics/metric_registry.py` + `src/mfg_agents/data/metrics/otd.yaml`（指标定义即代码，首个指标 OTD） | T02 | P0 |
 | **T05** | 入口与协同闭环：IM 网关 + 工作流引擎 + 缺料预警 + API/门户集成 | `src/mfg_agents/gateway/__init__.py`、`src/mfg_agents/gateway/im_gateway.py`（统一抽象）、`src/mfg_agents/gateway/wecom_bot.py`（企微回调+消息卡片）、`src/mfg_agents/services/workflow/__init__.py`、`src/mfg_agents/services/workflow/models.py`（WorkflowDefinition/Instance/Node ORM）、`src/mfg_agents/services/workflow/engine.py`（状态机+持久化+重放）、`src/mfg_agents/services/workflow/escalation.py`（SLA 升级）、`src/mfg_agents/services/notify/__init__.py`、`src/mfg_agents/services/notify/notifier.py`（分级通道）、`src/mfg_agents/services/scheduler/__init__.py`、`src/mfg_agents/services/scheduler/jobs.py`（APScheduler+leader 锁，注册 shortage_scan 任务）、`src/mfg_agents/orchestrator/scenarios/material_shortage.yaml`、`src/mfg_agents/api.py`（IM 回调路由 + 统一编排入口 + 保留旧 SSE 端点）、`src/mfg_agents/ui/app.py`（事件兼容，接入新总线） | T02, T03, T04 | P0 |
 

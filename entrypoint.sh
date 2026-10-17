@@ -3,10 +3,10 @@
 set -e
 
 echo "[entrypoint] initializing demo SQLite database..."
-python -m mfg_agents.db.init_db || echo "[entrypoint] init_db skipped (already initialized?)"
+python -m mfg_agents.common.init_db || echo "[entrypoint] init_db skipped (already initialized?)"
 
 echo "[entrypoint] seeding ChromaDB failure cases (best-effort)..."
-python -m mfg_agents.knowledge.seed || echo "[entrypoint] seed skipped"
+python -m mfg_agents.common.seed || echo "[entrypoint] seed skipped"
 
 echo "[entrypoint] starting FastAPI (mfg_agents.v2.demo.api) on :8004..."
 exec python -m uvicorn mfg_agents.v2.demo.api:app \

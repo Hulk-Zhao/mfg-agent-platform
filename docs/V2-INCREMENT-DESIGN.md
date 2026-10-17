@@ -24,7 +24,7 @@
 | `v2/services/text2sql.py` | 八道防线；`Text2SQLService`（指标库→注册查询→明细探查）+ `SQLAuditor/FieldMasker/ResultValidator/MetricLibrary/QueryLibrary/TABLE_ACL/SENSITIVE_COLUMNS` | 新增查询与（如有）表→登记 `TABLE_ACL`；本次拟**包化**为 `services/text2sql/` |
 | `v2/data/queries.yaml` | 7 个注册查询（`mfg_oee/mfg_stop_ongoing/quality_defect_dist/supply_batches_today/equip_alarms/warehouse_available/shipment_status`） | 追加新查询（不改旧条目） |
 | `v2/data/metrics/otd.yaml` | 指标库 v1（仅 `otd_rate`） | 追加指标（不改旧条目） |
-| `data/init.sql` + `src/mfg_agents/db/init_db.py` | 演示库 8 表 + `SQLiteDataSource(只读)`；**唯一**真正建库脚本是 `init_db.py`（SQLite demo），`init.sql` 是 MySQL DDL 镜像 | 两处同步追加模拟数据 |
+| `data/init.sql` + `src/mfg_agents/common/init_db.py` | 演示库 8 表 + `SQLiteDataSource(只读)`；**唯一**真正建库脚本是 `init_db.py`（SQLite demo），`init.sql` 是 MySQL DDL 镜像 | 两处同步追加模拟数据 |
 | `v2/demo/ui/{screens.js,demo-data.js}` | 六屏前端；问数屏 `QUICK_QUESTIONS`/`NODE_LABELS`/`PARALLEL_NODES` 为硬编码 | 追加新场景 chip/节点名/并行集合 |
 
 ### 0.2 回归基线中的"雷区"（**必须遵守**，否则破坏 282 测试）
@@ -125,7 +125,7 @@ src/mfg_agents/v2/
 └── demo/ui/{screens.js,demo-data.js}  # [改] 新场景 chip + 节点名 + 并行集合 + 演示回放
 
 data/init.sql                          # [改] 追加模拟数据（MySQL DDL 镜像）
-src/mfg_agents/db/init_db.py           # [改] 追加 SEED_DATA（SQLite demo，唯一建库脚本）
+src/mfg_agents/common/init_db.py           # [改] 追加 SEED_DATA（SQLite demo，唯一建库脚本）
 
 docs/V2-INCREMENT-DESIGN.md            # [本文]
 docs/V2-接口文档.md                     # [增] 本次交付（§7）
@@ -674,7 +674,7 @@ metrics:
     higher_is_better: false
 ```
 
-### 4.3 新增模拟数据（`src/mfg_agents/db/init_db.py` **与** `data/init.sql` 同步追加）
+### 4.3 新增模拟数据（`src/mfg_agents/common/init_db.py` **与** `data/init.sql` 同步追加）
 
 ```sql
 -- material_batch：来料异常演示批次（**arrival_time 必须避开 2026-10-15**，否则破坏 line_stop 断言）
@@ -694,7 +694,7 @@ INSERT INTO shipment VALUES (3,'SO-20261010-03','A型号',1500,'待发货','2026
 - **`customer_complaint` 无需新增行**：现有 1 条华为客诉（`CS-20261012-01 / 华为终端 / A型号 / BATCH-A-1008 / 缺陷描述 / open`）已具备
   D2（问题）、批号（D4 溯源）、客户（D3/对客）要素；**D1/D5-D8 由 `qa_lead` 规则模板确定性合成**（degraded 也齐全）。
 - **`equipment_log` 无需新增**：现有 SMT-1 三条 abnormal 已满足 S8。
-- **验证点**：执行 `uv run python -m mfg_agents.db.init_db` 重建 `data/mfg_agent.db` 后，
+- **验证点**：执行 `uv run python -m mfg_agents.common.init_db` 重建 `data/mfg_agent.db` 后，
   `tests/v2/test_e2e_v2.py::test_full_pipeline_stop_scenario` 与
   `tests/v2/test_text2sql.py::test_registered_query_masking_end_to_end` 必须仍绿（`supply_batches_today` 仍只返回 10-15 的 1 条 pass 行）。
 
@@ -790,7 +790,7 @@ class ChromaVectorStore(VectorStore):
     # upsert/query/delete/health 内部转发到 rag_tools 的既有函数
 ```
 
-- **本次动作**：定义 ABC + `ChromaVectorStore`（**不改变** `tools/rag_tools.py` 既有函数签名与返回结构；`fa` handler 与 `knowledge/seed.py` 仍可直接用旧函数，或经适配器调用）。
+- **本次动作**：定义 ABC + `ChromaVectorStore`（**不改变** `common/rag_tools.py` 既有函数签名与返回结构；`fa` handler 与 `common/seed.py` 仍可直接用旧函数，或经适配器调用）。
 - **README 注明接入位**：`contracts/adapters/milvus.py::MilvusVectorStore(VectorStore)` —— 未来实现即可，**零框架改动**。
 - **健康探针**：`health()` 返回 `{"backend","ok","collection_count"}`，供 `/api/v2/health` 聚合（本次可选接入）。
 
@@ -858,7 +858,7 @@ class StrategySelector(ABC):
 | Task ID | 任务名 | Source Files | Dependencies | Priority |
 |---|---|---|---|---|
 | **T01** | 脚手架基础设施与抽象层（base + prompts 集中 + text2sql 包化 + VectorStore ABC + intent 骨架） | `src/mfg_agents/v2/base/{__init__,logger}.py`、`src/mfg_agents/v2/prompts/{__init__,routing,fa,report,text2sql}.py`、`src/mfg_agents/v2/services/text2sql/{__init__,service,auditor,masker,libraries}.py`（由 `text2sql.py` 包化，符号重导出）、`src/mfg_agents/v2/contracts/vector_store.py`、`src/mfg_agents/v2/intent/{__init__,classifier,strategy}.py`、`tests/v2/test_prompts_golden.py` | 无 | P0 |
-| **T02** | 数据层：4 场景模拟数据 + 注册查询 + 指标 + 权限登记 | `src/mfg_agents/db/init_db.py`、`data/init.sql`、`src/mfg_agents/v2/data/queries.yaml`、`src/mfg_agents/v2/data/metrics/{iqc,complaint}.yaml` | T01（`TABLE_ACL`/`SENSITIVE_COLUMNS` 位于包化后的 `services/text2sql/libraries.py`、`masker.py`） | P0 |
+| **T02** | 数据层：4 场景模拟数据 + 注册查询 + 指标 + 权限登记 | `src/mfg_agents/common/init_db.py`、`data/init.sql`、`src/mfg_agents/v2/data/queries.yaml`、`src/mfg_agents/v2/data/metrics/{iqc,complaint}.yaml` | T01（`TABLE_ACL`/`SENSITIVE_COLUMNS` 位于包化后的 `services/text2sql/libraries.py`、`masker.py`） | P0 |
 | **T03** | 新场景 handler：工厂 + 各域模块 + node_registry 装配 | `src/mfg_agents/v2/agents/{__init__,quality,supply_chain,manufacturing,engineering,workflow_nodes,hitl,report}.py`、`src/mfg_agents/v2/core/node_registry.py` | T01 | P0 |
 | **T04** | 4 个场景 YAML + 路由映射 | `src/mfg_agents/v2/scenarios/{incoming_quality_v2,customer_complaint_v2,delivery_status_v2,equipment_warning_v2}.yaml`、`src/mfg_agents/v2/core/router.py`（`V1_SCENE_TO_V2` 映射；prompt 改从 `prompts.routing` 取） | T01 | P0 |
 | **T05** | 前端 + 接口文档 + 回归对齐与验收测试 | `src/mfg_agents/v2/demo/ui/demo-data.js`、`src/mfg_agents/v2/demo/ui/screens.js`、`docs/V2-接口文档.md`、`tests/v2/test_scenarios_v2.py`、`tests/v2/test_router.py`（唯一断言同步，§8.3） | T02, T03, T04 | P0/P1 |

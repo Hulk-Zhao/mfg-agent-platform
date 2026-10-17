@@ -5,7 +5,7 @@
 ``get_llm``（deepseek-flash）生成带出处回答。
 
 数据面：
-- 知识块由 ``mfg_agents.knowledge.kbqa_seed`` 导入，metadata = {dept, dept_cn,
+- 知识块由 ``mfg_agents.common.kbqa_seed`` 导入，metadata = {dept, dept_cn,
   source, chunk_index}；
 - 检索复用 ``tools/rag_tools.py``（BGE-M3 混合召回 + Reranker，无需 BERT/
   bge-small）。
@@ -14,9 +14,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from ...knowledge.kbqa_seed import DEPT_CN, DEPT_ORDER
-from ...tools.llm_factory import get_llm, llm_available
-from ...tools.rag_tools import search_kb
+from ...common.kbqa_seed import DEPT_CN, DEPT_ORDER
+from ...common.llm_factory import get_llm, llm_available
+from ...common.rag_tools import search_kb
 
 #: 前端"支持类别"面板数据（保持原项目文案与顺序）
 KBQA_DEPTS: list[dict[str, str]] = [

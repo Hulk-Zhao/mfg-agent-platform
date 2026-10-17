@@ -41,7 +41,7 @@ from datetime import datetime
 from typing import Any, Optional, Protocol
 from zoneinfo import ZoneInfo
 
-from ...config import settings
+from ...common.config import settings
 from .office import DemoOfficeBackend, OfficeBackend, OfficeError
 
 logger = logging.getLogger(__name__)

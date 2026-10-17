@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from ...tools.llm_factory import get_llm, llm_available
+from ...common.llm_factory import get_llm, llm_available
 from .shared_context import SharedContext
 # 提示词集中化（§6.3）：字符串逐字节复制，node_registry 对外符号保持不变
 from ..prompts.fa import build_fa_prompt
@@ -119,7 +119,7 @@ def build_handlers(runtime: Any) -> dict[str, Any]:
     # ---------- 业务意图（复用 V1 business_agent） ----------
 
     def business(task: Any, ctx: SharedContext, sink: Any) -> dict:
-        from ...agents.business import business_agent  # V1 资产复用
+        from ...common.business import business_agent  # V1 资产复用
         state = business_agent({"user_query": task.query})
         summary = (f"识别场景：{state.get('scenario')} | "
                    f"型号：{state.get('product_model')} | "
@@ -229,7 +229,7 @@ def build_handlers(runtime: Any) -> dict[str, Any]:
                  f"设备告警={','.join(a.get('alarm_code', '') for a in alarms[:3])}")
         sink.emit({"type": "tool_start", "tool": "RAG检索", "detail": f"查询: {query}"})
         try:
-            from ...tools.rag_tools import search_cases  # V1 RAG（本地 Chroma）
+            from ...common.rag_tools import search_cases  # V1 RAG（本地 Chroma）
             cases = search_cases(query, n_results=3)
         except Exception as exc:  # noqa: BLE001
             logger.warning("RAG 检索失败，按无案例处理: %s", exc)

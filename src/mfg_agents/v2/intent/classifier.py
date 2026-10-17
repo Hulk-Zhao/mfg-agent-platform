@@ -61,7 +61,7 @@ class LLMClosedSetClassifier(IntentClassifier):
 
     def classify(self, query: str,
                  user_ctx: Optional[dict] = None) -> Optional[IntentResult]:
-        from ...tools.llm_factory import get_llm, llm_available
+        from ...common.llm_factory import get_llm, llm_available
         from ..prompts.routing import DOMAIN_GROUPS, build_l1_prompt
 
         if not llm_available():
@@ -107,7 +107,7 @@ class RuleLLMClassifier(IntentClassifier):
         if self._router is None:
             from ..core.router import TwoLevelRouter
             from ..contracts.scenario import ScenarioRegistry
-            from ...config import settings
+            from ...common.config import settings
             registry = ScenarioRegistry(settings.V2_SCENARIOS_DIR)
             registry.load()
             self._router = TwoLevelRouter(registry)

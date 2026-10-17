@@ -9,8 +9,8 @@ import urllib.error
 
 import pytest
 
-from mfg_agents.config import settings
-from mfg_agents.tools.llm_factory import _provider, get_llm, llm_available, reset_probe_cache
+from mfg_agents.common.config import settings
+from mfg_agents.common.llm_factory import _provider, get_llm, llm_available, reset_probe_cache
 
 # 探针/分级实现本身的用例：自行 mock 网络，需真实 _probe 逻辑
 pytestmark = pytest.mark.llm_probe
@@ -53,7 +53,7 @@ def _patch_models(monkeypatch, ids: list[str], captured: dict | None = None) -> 
             captured["headers"] = {k.lower(): v for k, v in req.header_items()}
         return _FakeResp(200, body)
 
-    monkeypatch.setattr("mfg_agents.tools.llm_factory.urllib.request.urlopen",
+    monkeypatch.setattr("mfg_agents.common.llm_factory.urllib.request.urlopen",
                         _fake_urlopen)
 
 
@@ -128,7 +128,7 @@ def test_probe_false_when_model_missing(monkeypatch):
 
 def test_probe_false_on_401(monkeypatch):
     monkeypatch.setattr(
-        "mfg_agents.tools.llm_factory.urllib.request.urlopen",
+        "mfg_agents.common.llm_factory.urllib.request.urlopen",
         lambda *a, **k: _FakeResp(401, b'{"error":"invalid api key"}'))
     assert llm_available() is False
 
@@ -137,5 +137,5 @@ def test_probe_false_on_network_error(monkeypatch):
     def _raise(*a, **k):
         raise urllib.error.URLError("connection refused")
     monkeypatch.setattr(
-        "mfg_agents.tools.llm_factory.urllib.request.urlopen", _raise)
+        "mfg_agents.common.llm_factory.urllib.request.urlopen", _raise)
     assert llm_available() is False
