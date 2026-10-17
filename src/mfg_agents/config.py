@@ -22,14 +22,24 @@ class Settings:
     CHROMA_HOST: str = os.getenv("CHROMA_HOST", "localhost")
     CHROMA_PORT: int = int(os.getenv("CHROMA_PORT", "8000"))
 
-    # LLM
-    LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "ollama")
+    # LLM 提供方：显式设置优先；留空则自动解析（有 DS_KEY → deepseek，否则 ollama）
+    LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "")
+
+    # Ollama（本地优先；未启动/模型未 pull 时自动降级）
     OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
     OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "qwen3.5:9b")
 
+    # OpenAI 兼容（通用兜底）
     OPENAI_BASE_URL: str = os.getenv("OPENAI_BASE_URL", "https://api.deepseek.com/v1")
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
     OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "deepseek-chat")
+
+    # DeepSeek 云端（直接复用环境变量 ds_url / ds_key；Windows 环境变量大小写不敏感）
+    # 统一使用快模型 deepseek-flash；思考模式由 llm_factory 按节点需要控制
+    DS_URL: str = os.getenv("DS_URL") or os.getenv("ds_url") or "https://api.deepseek.com"
+    DS_KEY: str = os.getenv("DS_KEY") or os.getenv("ds_key") or ""
+    DS_MODEL_L1: str = os.getenv("DS_MODEL_L1", "deepseek-flash")
+    DS_MODEL_L2: str = os.getenv("DS_MODEL_L2", "deepseek-flash")
 
     # ================= V2 可接入框架 =================
     # LLM 分级：L1 小模型（意图分类/SQL 初版，高频低敏）/ L2 大模型（分析/报告）

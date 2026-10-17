@@ -249,7 +249,8 @@ def build_handlers(runtime: Any) -> dict[str, Any]:
             import json
             import re
             try:
-                llm = get_llm(temperature=0.1, tier="L2")
+                llm = get_llm(temperature=0.1, tier="L2", max_tokens=900, timeout=45,
+                              thinking="low")
                 resp = llm.invoke(prompt)
                 content = resp.content if hasattr(resp, "content") else str(resp)
                 match = re.search(r"\{.*\}", content, re.S)
@@ -331,7 +332,8 @@ def build_handlers(runtime: Any) -> dict[str, Any]:
             sink.emit({"type": "llm_start", "detail": "生成对客脱敏报告..."})
             prompt = build_report_prompt(brief)
             try:
-                llm = get_llm(temperature=0.3, tier="L2")
+                llm = get_llm(temperature=0.3, tier="L2", max_tokens=700, timeout=45,
+                              thinking="disabled")
                 resp = llm.invoke(prompt)
                 customer_report = (resp.content if hasattr(resp, "content")
                                    else str(resp)).strip()

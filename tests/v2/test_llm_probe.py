@@ -14,6 +14,9 @@ import pytest
 from mfg_agents.config import settings
 from mfg_agents.tools.llm_factory import llm_available, reset_probe_cache
 
+# 本文件测试探针实现本身（自行 mock urllib），保持真实 _probe 逻辑
+pytestmark = pytest.mark.llm_probe
+
 
 class _FakeResp:
     """最小 urlopen 响应桩（支持 with 上下文 + status + read）。"""

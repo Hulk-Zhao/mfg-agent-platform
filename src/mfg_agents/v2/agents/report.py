@@ -99,7 +99,8 @@ def _try_llm_report(brief: dict[str, Any]) -> str:
     try:
         from ...tools.llm_factory import get_llm
         from ..prompts.report import build_report_prompt
-        llm = get_llm(temperature=0.3, tier="L2")
+        llm = get_llm(temperature=0.3, tier="L2", max_tokens=600, timeout=45,
+                      thinking="disabled")
         resp = llm.invoke(build_report_prompt(brief))
         text = (resp.content if hasattr(resp, "content") else str(resp)).strip()
         return _apply_forbidden_words(text) if text else ""

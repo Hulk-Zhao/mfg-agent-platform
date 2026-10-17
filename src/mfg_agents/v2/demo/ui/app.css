@@ -1283,3 +1283,169 @@ a:hover { text-decoration: underline; }
   .topbar-sub, .user-meta { display: none; }
   .topbar-search { width: 170px; }
 }
+
+/* ============================================================
+   登录页（演示版免密码 · 选择岗位身份）
+   ============================================================ */
+
+.login-root {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: var(--bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 28px;
+  overflow: auto;
+}
+.login-root[hidden] { display: none; }
+
+.login-shell {
+  display: grid;
+  grid-template-columns: minmax(340px, 420px) minmax(0, 1fr);
+  width: 100%;
+  max-width: 1240px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  overflow: hidden;
+  box-shadow: 0 24px 70px rgba(15, 76, 133, .14);
+}
+
+.login-brand {
+  background: var(--primary-deep);
+  color: #fff;
+  padding: 40px 36px 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+.login-brand-top { display: flex; align-items: center; gap: 12px; }
+.login-logo {
+  width: 42px; height: 42px; border-radius: 12px;
+  background: rgba(255, 255, 255, .14);
+  border: 1px solid rgba(255, 255, 255, .22);
+  display: flex; align-items: center; justify-content: center;
+}
+.login-brand-name { font-size: 16px; font-weight: 650; letter-spacing: .4px; }
+.login-brand-sub { font-size: 11px; opacity: .72; letter-spacing: .6px; margin-top: 2px; }
+.login-brand-body h1 { font-size: 25px; line-height: 1.42; font-weight: 650; letter-spacing: .3px; }
+.login-brand-body p { font-size: 12.5px; opacity: .78; margin-top: 12px; line-height: 1.7; }
+.login-points { list-style: none; margin-top: 26px; display: flex; flex-direction: column; gap: 16px; }
+.login-points li { display: flex; gap: 12px; font-size: 12.3px; line-height: 1.65; opacity: .92; }
+.login-points li > span {
+  flex: none; width: 24px; height: 24px; border-radius: 7px;
+  background: rgba(255, 255, 255, .13); border: 1px solid rgba(255, 255, 255, .18);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 10.5px; font-weight: 600; opacity: .95;
+}
+.login-points b { display: block; font-weight: 600; margin-bottom: 2px; }
+.login-brand-foot {
+  margin-top: auto; padding-top: 22px; border-top: 1px solid rgba(255, 255, 255, .16);
+  font-size: 11.5px; opacity: .72;
+}
+
+.login-panel { padding: 34px 36px 26px; display: flex; flex-direction: column; min-width: 0; }
+.login-panel-head h2 { font-size: 20px; font-weight: 650; letter-spacing: .2px; }
+.login-panel-head p { font-size: 12.3px; color: var(--text-2); margin-top: 7px; line-height: 1.7; max-width: 640px; }
+
+.role-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(238px, 1fr));
+  gap: 11px;
+  margin: 20px 0 18px;
+  max-height: 54vh;
+  overflow: auto;
+  padding: 3px;
+}
+.role-card {
+  display: flex; align-items: flex-start; gap: 11px;
+  text-align: left; cursor: pointer;
+  background: var(--card);
+  border: 1.5px solid var(--border);
+  border-radius: 12px;
+  padding: 13px 13px 12px;
+  transition: border-color .16s ease, background .16s ease, box-shadow .16s ease;
+  font: inherit; color: inherit;
+}
+.role-card:hover { border-color: #9CC3E6; background: #FAFCFF; }
+.role-card.selected {
+  border-color: var(--primary);
+  background: var(--primary-light-2);
+  box-shadow: 0 0 0 3px rgba(24, 95, 165, .09);
+}
+.role-avatar {
+  flex: none; width: 38px; height: 38px; border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 15px; font-weight: 600; color: #fff;
+  background: var(--primary);
+}
+.role-avatar.tone-blue { background: #185FA5; }
+.role-avatar.tone-green { background: #1A7F37; }
+.role-avatar.tone-amber { background: #9A6700; }
+.role-avatar.tone-teal { background: #0F6E56; }
+.role-avatar.tone-purple { background: #8250DF; }
+.role-avatar.tone-coral { background: #B3542E; }
+.role-avatar.tone-gray { background: #5F6B7A; }
+.role-avatar.tone-indigo { background: #3D4EA8; }
+.role-main { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
+.role-name { font-size: 13.5px; font-weight: 650; color: var(--text); }
+.role-user { font-size: 11px; color: var(--text-3); }
+.role-scope { font-size: 11.5px; color: var(--text-2); margin-top: 2px; }
+.role-scenarios { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+.role-scenarios em {
+  font-style: normal; font-size: 10.5px; color: var(--primary);
+  background: var(--primary-light); border-radius: 5px; padding: 1px 6px;
+}
+.role-tick {
+  flex: none; width: 20px; height: 20px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--primary); color: #fff; opacity: 0; transform: scale(.85);
+  transition: opacity .16s ease, transform .16s ease; margin-top: 2px;
+}
+.role-card.selected .role-tick { opacity: 1; transform: scale(1); }
+
+.login-panel-foot {
+  margin-top: auto; padding-top: 16px; border-top: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: space-between; gap: 14px;
+}
+.login-selected { font-size: 12.5px; color: var(--text-2); }
+.login-enter {
+  display: inline-flex; align-items: center; gap: 7px;
+  background: var(--primary); color: #fff; border: none;
+  border-radius: 9px; padding: 10px 20px;
+  font-size: 13.5px; font-weight: 600; cursor: pointer;
+  transition: background .16s ease, transform .1s ease;
+}
+.login-enter:hover:not(:disabled) { background: var(--primary-hover); }
+.login-enter:active:not(:disabled) { transform: translateY(1px); }
+.login-enter:disabled { background: var(--border-strong); cursor: not-allowed; color: #fff; opacity: .8; }
+
+/* ---------- 顶栏用户菜单 ---------- */
+
+.user-menu {
+  position: absolute; top: 46px; right: 0; width: 244px;
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: 12px; box-shadow: var(--shadow-pop);
+  overflow: hidden; z-index: 120;
+}
+.user-menu-head { padding: 13px 15px 11px; border-bottom: 1px solid var(--border); }
+.user-menu-name { font-size: 13.5px; font-weight: 650; }
+.user-menu-role { font-size: 11.5px; color: var(--text-3); margin-top: 2px; }
+.user-menu-scope { font-size: 11.5px; color: var(--text-2); margin-top: 6px; }
+.user-menu-item {
+  display: block; width: 100%; text-align: left;
+  background: none; border: none; font: inherit;
+  font-size: 12.8px; color: var(--text); padding: 10px 15px; cursor: pointer;
+}
+.user-menu-item:hover { background: var(--primary-light-2); }
+.user-menu-item.danger { color: var(--danger); border-top: 1px solid var(--border); }
+.user-menu-item.danger:hover { background: var(--danger-bg); }
+
+@media (max-width: 980px) {
+  .login-shell { grid-template-columns: 1fr; }
+  .login-brand { display: none; }
+  .login-panel { padding: 28px 22px 22px; }
+  .role-grid { max-height: 62vh; }
+}

@@ -158,6 +158,9 @@ class V2Orchestrator:
             result.degraded_reasons.append("FA 分析 LLM 不可用：模板化结构化结论")
         if ctx.get("report_degraded"):
             result.degraded_reasons.append("报告生成 LLM 不可用：模板化 + 禁词表兜底")
+        for node in dag.degraded_nodes:
+            result.degraded_reasons.append(
+                f"节点 {node} 降级（数据缺口/超时），已输出可复核结论")
         result.degraded = bool(result.degraded_reasons) or bool(dag.degraded_nodes)
         result.elapsed_ms = (time.perf_counter() - t0) * 1000
         logger.info("[orchestrator] %s 场景 %s 完成，耗时 %.1fms，降级=%s",

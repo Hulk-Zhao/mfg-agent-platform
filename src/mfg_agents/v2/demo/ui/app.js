@@ -80,6 +80,123 @@
     return window.DEMO.ROLES.find((r) => r.id === state.role) || window.DEMO.ROLES[0];
   }
 
+  /* ---------- 登录态（演示版免密码：选择岗位身份即登录） ---------- */
+
+  const USER_KEY = "mfg_gateway_user_v1";
+
+  function loadUser() {
+    try {
+      const raw = localStorage.getItem(USER_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      const role = window.DEMO.ROLES.find((r) => r.id === parsed.roleId);
+      return role ? { roleId: role.id } : null;
+    } catch (err) {
+      return null;
+    }
+  }
+
+  function saveUser(roleId) {
+    try {
+      localStorage.setItem(USER_KEY, JSON.stringify({ roleId, at: Date.now() }));
+    } catch (err) { /* 隐私模式/存储禁用时忽略 */ }
+  }
+
+  function clearUser() {
+    try { localStorage.removeItem(USER_KEY); } catch (err) { /* ignore */ }
+  }
+
+  function roleCardHtml(role, selected) {
+    const cls = `role-card${selected ? " selected" : ""}`;
+    return `<button class="${cls}" type="button" data-role="${esc(role.id)}" aria-pressed="${selected}">
+      <span class="role-avatar tone-${esc(role.tone || "blue")}">${esc(role.name.slice(0, 1))}</span>
+      <span class="role-main">
+        <span class="role-name">${esc(role.name)}</span>
+        <span class="role-user">${esc(role.user)} · ${esc(role.dept)}</span>
+        <span class="role-scope">${esc(role.scope || "")}</span>
+        <span class="role-scenarios">${(role.scenarios || []).map((s) => `<em>${esc(s)}</em>`).join("")}</span>
+      </span>
+      <span class="role-tick">${icon("check", 13)}</span>
+    </button>`;
+  }
+
+  function renderLogin() {
+    const root = document.getElementById("login-root");
+    if (!root) return;
+    const roles = window.DEMO.ROLES;
+    let selected = roles.some((r) => r.id === state.role) ? state.role : "";
+
+    root.innerHTML = `
+      <div class="login-shell">
+        <section class="login-brand">
+          <div class="login-brand-top">
+            <div class="login-logo">${icon("box", 22)}</div>
+            <div>
+              <div class="login-brand-name">智造协同平台</div>
+              <div class="login-brand-sub">Multi-Agent MFG OS</div>
+            </div>
+          </div>
+          <div class="login-brand-body">
+            <h1>16 个部门进度对齐<br/>一个入口完成协同</h1>
+            <p>多智能体并行取证 · 跨域工单闭环 · 数据权限随岗位隔离</p>
+            <ul class="login-points">
+              <li><span>01</span><div><b>5 大协同场景</b>停线应急 / 来料异常 / 客诉 8D / 出货 ATP / 设备维保</div></li>
+              <li><span>02</span><div><b>关键决策人在环</b>复线、对客 ETA、退换货、8D 关闭均需人工确认</div></li>
+              <li><span>03</span><div><b>结论可审计</b>SQL 溯源 + 敏感字段按岗位脱敏 + 降级明示</div></li>
+            </ul>
+          </div>
+          <div class="login-brand-foot">演示环境 · 免密码 · 选择岗位身份进入对应数据视图</div>
+        </section>
+        <section class="login-panel">
+          <div class="login-panel-head">
+            <h2>选择岗位身份</h2>
+            <p>角色定义直接可见：决定数据权限、默认视图与可审批事项。演示版免密码，进入后可随时切换。</p>
+          </div>
+          <div class="role-grid">${roles.map((r) => roleCardHtml(r, r.id === selected)).join("")}</div>
+          <div class="login-panel-foot">
+            <div class="login-selected" id="login-selected">${selected
+              ? `已选择：${esc(currentRole().name)} · ${esc(currentRole().user)}`
+              : "请选择一个岗位身份"}</div>
+            <button class="login-enter" id="login-enter" type="button" ${selected ? "" : "disabled"}>
+              进入系统 ${icon("arrow", 15)}
+            </button>
+          </div>
+        </section>
+      </div>`;
+
+    root.hidden = false;
+    const cards = root.querySelectorAll(".role-card");
+    const btn = root.querySelector("#login-enter");
+    const selLabel = root.querySelector("#login-selected");
+    cards.forEach((card) => {
+      const pick = () => {
+        selected = card.dataset.role;
+        cards.forEach((c) => {
+          const on = c === card;
+          c.classList.toggle("selected", on);
+          c.setAttribute("aria-pressed", String(on));
+        });
+        const role = roles.find((r) => r.id === selected);
+        if (selLabel && role) selLabel.textContent = `已选择：${role.name} · ${role.user}`;
+        if (btn) btn.disabled = false;
+      };
+      card.addEventListener("click", pick);
+      card.addEventListener("dblclick", () => { if (selected) enterApp(selected); });
+    });
+    if (btn) btn.addEventListener("click", () => { if (selected) enterApp(selected); });
+  }
+
+  function enterApp(roleId) {
+    const role = window.DEMO.ROLES.find((r) => r.id === roleId) || window.DEMO.ROLES[0];
+    state.role = role.id;
+    saveUser(role.id);
+    const root = document.getElementById("login-root");
+    if (root) { root.hidden = true; root.innerHTML = ""; }
+    updateChrome();
+    toast(`已进入：${role.name} · ${role.user}`, "ok", 2600);
+    startApp();
+  }
+
   /* ============================================================
    * 三、通用 UI 工具
    * ============================================================ */
@@ -350,6 +467,7 @@
 
   function setRole(roleId) {
     state.role = roleId;
+    saveUser(roleId);
     updateChrome();
     refreshScreen();
   }
@@ -436,13 +554,61 @@
   }
 
   /* ============================================================
-   * 七、启动
+   * 七、用户菜单 / 启动
    * ============================================================ */
 
-  async function boot() {
+  function wireUserMenu() {
+    const chip = document.getElementById("user-chip");
+    if (!chip) return;
+    chip.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const existing = document.getElementById("user-menu");
+      if (existing) { existing.remove(); return; }
+      const role = currentRole();
+      const menu = document.createElement("div");
+      menu.id = "user-menu";
+      menu.className = "user-menu";
+      menu.innerHTML = `
+        <div class="user-menu-head">
+          <div class="user-menu-name">${esc(role.user)}</div>
+          <div class="user-menu-role">${esc(role.name)} · ${esc(role.dept)}</div>
+          <div class="user-menu-scope">${esc(role.scope || "")}</div>
+        </div>
+        <button class="user-menu-item" type="button" id="menu-switch">切换岗位身份</button>
+        <button class="user-menu-item danger" type="button" id="menu-logout">退出登录</button>`;
+      const host = chip.parentElement;
+      if (!host) return;
+      host.style.position = "relative";
+      host.appendChild(menu);
+      menu.querySelector("#menu-switch").addEventListener("click", () => {
+        menu.remove();
+        renderLogin();
+      });
+      menu.querySelector("#menu-logout").addEventListener("click", () => {
+        menu.remove();
+        clearUser();
+        state.role = "";   // 退出后必须重新选择身份，不保留上次选中
+        renderLogin();
+      });
+      const close = (ev) => {
+        if (!menu.contains(ev.target) && ev.target !== chip) {
+          menu.remove();
+          document.removeEventListener("click", close);
+        }
+      };
+      setTimeout(() => document.addEventListener("click", close), 0);
+    });
+  }
+
+  let chromeWired = false;
+
+  function initChrome() {
+    if (chromeWired) return;
+    chromeWired = true;
     renderNav();
     updateChrome();
     wireGlobalSearch();
+    wireUserMenu();
 
     const refreshBtn = document.getElementById("btn-refresh");
     if (refreshBtn) refreshBtn.addEventListener("click", () => {
@@ -454,7 +620,9 @@
       const hash = location.hash.replace(/^#\/?/, "");
       if (hash && hash !== state.screen && NAV_ITEMS.some((n) => n.id === hash)) navigate(hash);
     });
+  }
 
+  async function startApp() {
     await api.probe();
     updateChrome();
 
@@ -466,6 +634,18 @@
     }
   }
 
+  async function boot() {
+    initChrome();
+    const saved = loadUser();
+    if (saved) {
+      state.role = saved.roleId;
+      updateChrome();
+      await startApp();
+    } else {
+      renderLogin();
+    }
+  }
+
   /* ============================================================
    * 八、导出
    * ============================================================ */
@@ -473,6 +653,8 @@
   window.App = {
     state, api, navigate, refreshScreen, setRole,
     currentRole,
+    showLogin: renderLogin,
+    enterApp,
     UI: { icon, esc, badge, toast, spinner, fmtClock, fmtDateTime, fmtRemain, demoFlag, realFlag },
     NAV_ITEMS,
   };

@@ -5,14 +5,21 @@ V2 扩展（ARCHITECTURE-V2.md §6.2）：
   temperature=0.0，与 V1 调用点行为完全一致（V1 代码零改动）；
 - llm_available()：LLM 可用性探针（带 TTL 缓存）。路由降级、
   FA/报告模板化、Text2SQL 人工兜底都依赖此探针实现 offline 可跑。
+
+提供方解析（_provider）：显式 LLM_PROVIDER 优先；未设置时若存在
+DeepSeek 凭据（环境变量 ds_url/ds_key）则走 deepseek，否则回落 ollama。
 """
 import json
+import logging
 import time
 import urllib.error
 import urllib.request
+
 from langchain_core.language_models.chat_models import BaseChatModel
 
 from ..config import settings
+
+logger = logging.getLogger(__name__)
 
 _TIERS = ("L1", "L2")
 
@@ -20,20 +27,57 @@ _TIERS = ("L1", "L2")
 _probe_cache: dict[str, tuple[float, bool]] = {}
 
 
-def get_llm(temperature: float = 0.0, *, tier: str = "L2") -> BaseChatModel:
+def _provider() -> str:
+    """解析当前 LLM 提供方：显式配置优先，其次看 DeepSeek 凭据，最后回落 Ollama。"""
+    explicit = (settings.LLM_PROVIDER or "").strip().lower()
+    if explicit:
+        return explicit
+    if (settings.DS_KEY or "").strip():
+        return "deepseek"
+    return "ollama"
+
+
+def get_llm(temperature: float = 0.0, *, tier: str = "L2",
+            max_tokens: int | None = None,
+            timeout: float | None = None,
+            thinking: str | None = None) -> BaseChatModel:
     """返回 ChatModel。
 
-    tier="L2"（默认）：大模型，分析推理/RAG/报告生成（qwen3.5:9b 本地优先）；
-    tier="L1"：小模型，意图分类/路由/SQL 初版（qwen3.5:4b，高频低敏）。
+    tier="L2"（默认）：分析/报告类模型；tier="L1"：低延迟模型（意图/路由/SQL 初版）。
+    max_tokens / timeout：云端模型建议显式设置，避免长文本生成拖慢演示链路。
+    thinking：思考强度 —— "disabled"（默认，关闭思考）/ "low"（轻量）/ "high"（模型默认）。
+    DeepSeek 网关实测支持 thinking.type=disabled 与 reasoning_effort=low。
     """
     if tier not in _TIERS:
         raise ValueError(f"tier 必须是 {_TIERS}，收到 {tier!r}")
-    if settings.LLM_PROVIDER == "ollama":
+    provider = _provider()
+    if provider == "ollama":
         from langchain_ollama import ChatOllama
+        kwargs: dict = {}
+        if max_tokens is not None:
+            kwargs["num_predict"] = max_tokens
         return ChatOllama(
             model=settings.OLLAMA_MODEL if tier == "L2" else settings.OLLAMA_MODEL_L1,
             base_url=settings.OLLAMA_BASE_URL,
             temperature=temperature,
+            **kwargs,
+        )
+    if provider == "deepseek":
+        from langchain_openai import ChatOpenAI
+        mode = (thinking or "disabled").strip().lower()
+        extra: dict = {}
+        if mode == "disabled":
+            extra["extra_body"] = {"thinking": {"type": "disabled"}}
+        elif mode == "low":
+            extra["reasoning_effort"] = "low"
+        return ChatOpenAI(
+            model=settings.DS_MODEL_L2 if tier == "L2" else settings.DS_MODEL_L1,
+            base_url=settings.DS_URL,
+            api_key=settings.DS_KEY,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            timeout=timeout,
+            **extra,
         )
     from langchain_openai import ChatOpenAI
     return ChatOpenAI(
@@ -41,6 +85,8 @@ def get_llm(temperature: float = 0.0, *, tier: str = "L2") -> BaseChatModel:
         base_url=settings.OPENAI_BASE_URL,
         api_key=settings.OPENAI_API_KEY,
         temperature=temperature,
+        max_tokens=max_tokens,
+        timeout=timeout,
     )
 
 
@@ -70,15 +116,23 @@ def _normalize_model_name(name: str) -> str:
 
 
 def _probe(timeout: float) -> bool:
-    if settings.LLM_PROVIDER == "ollama":
+    provider = _provider()
+    if provider == "ollama":
         return _probe_ollama(timeout)
-    return _probe_openai(timeout)
+    if provider == "deepseek":
+        return _probe_cloud(
+            timeout, settings.DS_URL, settings.DS_KEY,
+            {settings.DS_MODEL_L2, settings.DS_MODEL_L1})
+    return _probe_cloud(
+        timeout, settings.OPENAI_BASE_URL, settings.OPENAI_API_KEY,
+        {settings.OPENAI_MODEL})
 
 
-def _http_get_json(url: str, timeout: float) -> object:
+def _http_get_json(url: str, timeout: float,
+                   headers: dict[str, str] | None = None) -> object:
     """GET url 并解析 JSON；任何网络/解析异常返回 None。"""
     try:
-        req = urllib.request.Request(url, method="GET")
+        req = urllib.request.Request(url, method="GET", headers=headers or {})
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             if getattr(resp, "status", 200) != 200:
                 return None
@@ -112,18 +166,32 @@ def _probe_ollama(timeout: float) -> bool:
     return required <= installed
 
 
-def _probe_openai(timeout: float) -> bool:
-    """OpenAI 兼容探针：服务可达 **且** 配置模型存在（未知配置时仅判可达）。"""
-    url = settings.OPENAI_BASE_URL.rstrip("/") + "/models"
-    payload = _http_get_json(url, timeout)
+def _probe_cloud(timeout: float, base_url: str, api_key: str,
+                 required_models: set[str]) -> bool:
+    """云端 OpenAI 兼容探针（DeepSeek/OpenAI）：需鉴权，且校验配置模型存在。
+
+    关键：/models 通常要求 Authorization 头，缺头会 401——旧实现未带头，
+    导致"有 key 的云端服务被误判为不可用"。
+    """
+    headers = {"Accept": "application/json"}
+    if (api_key or "").strip():
+        headers["Authorization"] = f"Bearer {api_key.strip()}"
+    url = (base_url or "").rstrip("/") + "/models"
+    payload = _http_get_json(url, timeout, headers=headers)
     if not isinstance(payload, dict):
         return False
-    configured = (settings.OPENAI_MODEL or "").strip()
-    if not configured:
+    required = {str(m).strip() for m in required_models if str(m or "").strip()}
+    if not required:
         return True
     ids = {str(m.get("id") or "") for m in (payload.get("data") or [])
            if isinstance(m, dict)}
-    return configured in ids
+    if not required <= ids:
+        # 模型名与账号不匹配：打印可用清单，便于通过 DS_MODEL_L1/L2 纠正配置
+        logger.warning(
+            "配置模型未在 /models 返回: 配置=%s 可用=%s（请设置 DS_MODEL_L1/DS_MODEL_L2）",
+            sorted(required), sorted(ids))
+        return False
+    return True
 
 
 def reset_probe_cache() -> None:

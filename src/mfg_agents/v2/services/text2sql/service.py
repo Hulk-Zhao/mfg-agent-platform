@@ -163,7 +163,8 @@ class Text2SQLService:
             )
         from ....tools.sql_tools import _extract_sql  # V1 资产复用
         try:
-            llm = get_llm(temperature=0.0, tier="L1")
+            llm = get_llm(temperature=0.0, tier="L1",
+                          max_tokens=300, timeout=30, thinking="disabled")
             resp = llm.invoke(build_detail_prompt(question))
             raw = resp.content if hasattr(resp, "content") else str(resp)
             sql = _extract_sql(raw)

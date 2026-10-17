@@ -11,16 +11,21 @@ test_events/test_chunk/test_e2e 三个演示本身就不可跑——这正是
 collect_ignore 处理的正当性证据。本文件用 skipif 守卫：
 LLM 可用时补跑等价覆盖，离线时跳过（与演示脚本同条件）。
 """
+import os
 import queue
 
 import pytest
 
 from mfg_agents.events import get_queue, init_queue, push
 from mfg_agents.graph.builder import app
-from mfg_agents.tools.llm_factory import llm_available
+
+# 本文件含实网 LLM 用例：默认跳过（避免单测命中云端 API / 计费 / 波动）；
+# 需要验证时设置 MFG_LIVE_LLM=1 与真实 LLM 环境。
+pytestmark = pytest.mark.live_llm
 
 requires_llm = pytest.mark.skipif(
-    not llm_available(), reason="V1 图执行需真实 LLM（Ollama），离线跳过")
+    os.getenv("MFG_LIVE_LLM") != "1",
+    reason="实网 LLM 用例：需 MFG_LIVE_LLM=1（默认不命中云端 API）")
 
 
 def _skip_if_llm_not_ready(exc: Exception) -> None:

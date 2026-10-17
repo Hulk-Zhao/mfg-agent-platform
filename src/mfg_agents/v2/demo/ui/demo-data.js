@@ -13,15 +13,29 @@
   /** 角色（演示：切换只影响看板数据范围与待办列表） */
   const ROLES = [
     { id: "gm",  name: "总经理",   user: "张启明", dept: "management",    roles: ["coordinator"],
-      greeting: "全局运营视图", desc: "汇总五大域组运行态势，聚焦订单履约风险与升级事项" },
+      greeting: "全局运营视图", desc: "汇总五大域组运行态势，聚焦订单履约风险与升级事项",
+      scope: "五域全局 · 只读汇总", scenarios: ["经营异常摘要", "跨部门升级", "订单履约风险"], tone: "blue" },
     { id: "mfg", name: "制造经理", user: "李卫东", dept: "manufacturing", roles: ["manufacturing", "coordinator"],
-      greeting: "制造运营视图", desc: "聚焦停线 / OEE / 设备告警 / 复线进度，制造域工单优先" },
-    { id: "pqe", name: "PQE",     user: "王倩",   dept: "quality",       roles: ["quality"],
-      greeting: "品质工程视图", desc: "聚焦 SPC / 不良分布 / 客诉 8D，品质域待办优先（敏感字段按角色脱敏）" },
-    { id: "mc",  name: "物控",     user: "赵敏",   dept: "supply_chain",  roles: ["supply_chain"],
-      greeting: "供应链视图", desc: "聚焦缺料 / 齐套率 / 到货批次，供应链域待办优先" },
-    { id: "biz", name: "业务",     user: "陈昊",   dept: "sales",         roles: ["business"],
-      greeting: "业务交付视图", desc: "聚焦对客 ETA / 订单临期 / 客诉响应，业务域待办优先" },
+      greeting: "制造运营视图", desc: "聚焦停线 / OEE / 设备告警 / 复线进度，制造域工单优先",
+      scope: "制造 · 设备 · 停线", scenarios: ["停线应急", "设备预警", "OEE 达成"], tone: "green" },
+    { id: "pqe", name: "PQE 质量工程", user: "王倩",   dept: "quality",       roles: ["quality"],
+      greeting: "品质工程视图", desc: "聚焦 SPC / 不良分布 / 客诉 8D，品质域待办优先（敏感字段按角色脱敏）",
+      scope: "质量域 · 供应商字段脱敏", scenarios: ["SPC / CPK", "客诉 8D", "不良分析"], tone: "amber" },
+    { id: "mc",  name: "物控专员", user: "赵敏",   dept: "supply_chain",  roles: ["supply_chain"],
+      greeting: "供应链视图", desc: "聚焦缺料 / 齐套率 / 到货批次，供应链域待办优先",
+      scope: "物料 · 库存 · 齐套", scenarios: ["缺料预警", "齐套检查", "到货批次"], tone: "teal" },
+    { id: "biz", name: "业务经理", user: "陈昊",   dept: "sales",         roles: ["business"],
+      greeting: "业务交付视图", desc: "聚焦对客 ETA / 订单临期 / 客诉响应，业务域待办优先",
+      scope: "订单 · 对客 ETA · 出货", scenarios: ["交期承诺", "客诉响应", "出货风险"], tone: "purple" },
+    { id: "proc", name: "采购专员", user: "孙立",   dept: "procurement",   roles: ["procurement", "sqe"],
+      greeting: "采购与供应商视图", desc: "聚焦来料异常 / SCAR 跟催 / 供应商评级，价格字段可见",
+      scope: "供应商 · 价格（可见）", scenarios: ["来料异常", "SCAR 跟催", "供应商评级"], tone: "coral" },
+    { id: "wh",  name: "仓库主管", user: "周凯",   dept: "warehouse",     roles: ["warehouse"],
+      greeting: "仓储与发货视图", desc: "聚焦库存准确 / ATP 可承诺量 / 发货协同",
+      scope: "库存 · 出入库 · 发货", scenarios: ["ATP 可承诺量", "发货协同", "库存准确"], tone: "gray" },
+    { id: "rd",  name: "研发工程师", user: "林哲",   dept: "rd_engineering", roles: ["rd_engineering"],
+      greeting: "研发工程视图", desc: "聚焦 ECN / NPI / 根因分析（BOM 等数据源未接入时诚实标注缺口）",
+      scope: "BOM · ECN · 工艺（部分无数据源）", scenarios: ["ECN 变更", "NPI 导入", "根因分析"], tone: "indigo" },
   ];
 
   /** 工作台 · 今日预警摘要（按角色取不同范围，演示数据） */
@@ -31,6 +45,9 @@
     pqe: { spc: 2, shortage: 0, order: 1, sla: 1 },
     mc:  { spc: 0, shortage: 3, order: 3, sla: 1 },
     biz: { spc: 0, shortage: 1, order: 5, sla: 1 },
+    proc: { spc: 1, shortage: 2, order: 2, sla: 1 },
+    wh:  { spc: 0, shortage: 1, order: 3, sla: 1 },
+    rd:  { spc: 1, shortage: 0, order: 1, sla: 0 },
   };
 
   /** 工作台 · 待办中心（后端不可达时的演示数据；标注"演示数据"） */

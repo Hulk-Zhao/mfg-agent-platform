@@ -130,7 +130,8 @@ class TwoLevelRouter:
     def _route_l1(self, query: str) -> Optional[RouteResult]:
         prompt = build_l1_prompt(query)
         try:
-            llm = get_llm(temperature=0.0, tier="L1")
+            llm = get_llm(temperature=0.0, tier="L1",
+                          max_tokens=80, timeout=20, thinking="disabled")
             resp = llm.invoke(prompt)
             content = resp.content if hasattr(resp, "content") else str(resp)
         except Exception as exc:  # noqa: BLE001
