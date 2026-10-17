@@ -153,7 +153,7 @@ class V2Orchestrator:
         result.hitl = dag.hitl
         result.workflow_tasks = dag.workflow
         result.timings = dag.timings
-        result.provenance = self._collect_provenance(dag)
+        result.provenance = self._collect_provenance(ctx, dag)
         if ctx.get("fa_degraded"):
             result.degraded_reasons.append("FA 分析 LLM 不可用：模板化结构化结论")
         if ctx.get("report_degraded"):
@@ -176,18 +176,25 @@ class V2Orchestrator:
         return reasons
 
     @staticmethod
-    def _collect_provenance(dag: DagRunResult) -> list[dict[str, Any]]:
+    def _collect_provenance(ctx: SharedContext,
+                            dag: DagRunResult) -> list[dict[str, Any]]:
         """汇总 provenance：各域 SQL/查询记录 + 每节点耗时（可审计）。
 
-        handler  payload 中的 provenance 项是 QueryResult.to_dict()，
+        来源改为 **SharedContext 的 ``provenance`` 记录历史**（只增不改）——
+        避免"多分支同域"时 ``dag.domains`` 按域收敛（last-write-wins）导致
+        部分分支的 SQL provenance 丢失（如 S4 六域并行中 5 个都属 supply_chain）。
+        每条 handler payload 的 ``provenance`` 项是 QueryResult.to_dict()，
         其内部还有一层 provenance（通道/表/命中数），这里展平为单层。
         """
         items: list[dict[str, Any]] = []
-        for domain, state in sorted(dag.domains.items()):
-            for record in (state.get("payload") or {}).get("provenance", []):
-                nested = record.get("provenance") or {}
+        for record in ctx.history("provenance"):
+            domain = record.domain
+            for entry_record in (record.value or []):
+                if not isinstance(entry_record, dict):
+                    continue
+                nested = entry_record.get("provenance") or {}
                 entry = {**nested,
-                         **{k: v for k, v in record.items()
+                         **{k: v for k, v in entry_record.items()
                             if k not in ("provenance", "rows")}}
                 entry["domain"] = domain
                 items.append(entry)

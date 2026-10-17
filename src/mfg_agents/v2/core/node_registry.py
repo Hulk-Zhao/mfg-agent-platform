@@ -18,18 +18,95 @@ from typing import Any
 
 from ...tools.llm_factory import get_llm, llm_available
 from .shared_context import SharedContext
+# 提示词集中化（§6.3）：字符串逐字节复制，node_registry 对外符号保持不变
+from ..prompts.fa import build_fa_prompt
+from ..prompts.report import (
+    FORBIDDEN_WORDS,           # 再导出：对外可见符号不变（demo 资产）
+    _apply_forbidden_words,
+    _customer_report_template,
+    _fa_template,
+    build_report_prompt,
+)
+# 新场景业务域模块（§5.1 脚手架对齐：各域独立文件，node_registry 变薄装配层）
+from ..agents import engineering as eng_agents
+from ..agents import manufacturing as mf_agents
+from ..agents import quality as q_agents
+from ..agents import report as rep_agents
+from ..agents import supply_chain as sc_agents
+from ..agents.hitl import make_hitl_handler
+from ..agents.workflow_nodes import make_workflow_handler
 
 logger = logging.getLogger(__name__)
 
-# V1 对客脱敏禁词表（report.py 机制保留为兜底，主通道为字段级脱敏）
-FORBIDDEN_WORDS: dict[str, str] = {
-    "设备故障": "产线例行校准",
-    "供应商来料不良": "批次质量复核",
-    "品质不良超标": "工艺参数优化",
-    "停线": "计划内暂停",
-    "根因": "主因分析",
-    "维修": "维护校准",
-}
+
+def _build_params(entities: Any, param_map: Any) -> dict:
+    """按 ``param_map``（query 参数名 → 实体键）从 entities 构造注册查询参数。"""
+    params: dict = {}
+    for query_key, entity_key in (param_map or {}).items():
+        value = (entities or {}).get(entity_key)
+        if value is not None:
+            params[query_key] = value
+    return params
+
+
+def _make_registered_query_agent(t2s: Any, domain: str, query_id: str, *,
+                                 param_map: Any = None, summary_fn: Any = None,
+                                 payload_keys: Any = None,
+                                 summary_key: Any = None) -> Any:
+    """通用「注册查询型域 Agent」工厂（§3.2）。
+
+    按 ``param_map`` 调 ``t2s.query_registered``；``summary_fn(rows, ctx)``
+    生成摘要；把命中行写入 ``payload_keys``，摘要写入 ``summary_key``，并
+    附带 ``provenance``（QueryResult.to_dict()）。
+    """
+
+    def handler(task: Any, ctx: SharedContext, sink: Any) -> dict:
+        params = _build_params(task.entities, param_map)
+        sink.emit({"type": "tool_start", "tool": "SQL查询",
+                   "detail": f"查询 {query_id}（注册查询）"})
+        qr = t2s.query_registered(query_id, params, task.user_ctx)
+        rows = qr.rows
+        sink.emit({"type": "tool_end", "tool": "SQL查询",
+                   "detail": f"返回{len(rows)}行"
+                             f"（{'脱敏' if qr.masked else '原文'}）"})
+        summary = (summary_fn(rows, ctx) if summary_fn
+                   else f"{query_id}：命中 {len(rows)} 行")
+        payload: dict[str, Any] = {}
+        for key in (payload_keys or []):
+            payload[key] = rows
+        payload[summary_key or f"{domain}_summary"] = summary
+        payload["provenance"] = [qr.to_dict()]
+        return {"domain": domain, "status": "degraded" if qr.fallback else "ok",
+                "payload": payload, "summary": summary}
+    return handler
+
+
+def _make_assessment_agent(t2s: Any, domain: str, query_id: str, *,
+                           template_fn: Any = None, param_map: Any = None,
+                           summary_key: Any = None) -> Any:
+    """通用「判定型域 Agent」工厂（§3.2）。
+
+    查询 + ``template_fn(rows, ctx, task)``（degrade 规则结论）产出结构化判定；
+    LLM 不可用或查询被拦截时标 ``status="degraded"`` 且 payload 带 ``*_degraded``。
+    """
+
+    def handler(task: Any, ctx: SharedContext, sink: Any) -> dict:
+        params = _build_params(task.entities, param_map)
+        sink.emit({"type": "tool_start", "tool": "SQL查询",
+                   "detail": f"查询 {query_id}（判定）"})
+        qr = t2s.query_registered(query_id, params, task.user_ctx)
+        out = dict(template_fn(qr.rows, ctx, task) if template_fn else {})
+        sink.emit({"type": "tool_end", "tool": "SQL查询",
+                   "detail": f"返回{len(qr.rows)}行"})
+        summary = str(out.get("summary") or f"{query_id}：判定完成")
+        payload = dict(out)
+        payload["provenance"] = [qr.to_dict()]
+        payload[summary_key or f"{domain}_summary"] = summary
+        degraded = (not llm_available()) or bool(qr.fallback)
+        payload[f"{domain}_degraded"] = degraded
+        return {"domain": domain, "status": "degraded" if degraded else "ok",
+                "payload": payload, "summary": summary}
+    return handler
 
 
 def build_handlers(runtime: Any) -> dict[str, Any]:
@@ -168,14 +245,7 @@ def build_handlers(runtime: Any) -> dict[str, Any]:
                 f"- {c['document']} 评级={c['metadata'].get('rating', '?')} "
                 f"复线={c['metadata'].get('recovery_hours', '?')}h"
                 for c in cases)
-            prompt = (
-                "你是制造业Failure Analysis专家。基于以下信息判定异常等级并预估复线时间。\n\n"
-                f"【当前异常】\n- 线体：{line}\n"
-                f"- 主导不良：{defect_type or '未知'}\n"
-                f"- 设备异常：{[a.get('param_name', '') + '=' + a.get('param_value', '') for a in alarms]}\n\n"
-                f"【历史相似案例】\n{case_text}\n\n"
-                '请输出（JSON格式）：{"rating":"A/B/C/D","root_cause":"一句话",'
-                '"eta_hours":2,"verification":["..."]}\n只输出JSON。')
+            prompt = build_fa_prompt(line, defect_type, alarms, case_text)
             import json
             import re
             try:
@@ -241,40 +311,8 @@ def build_handlers(runtime: Any) -> dict[str, Any]:
         }, "summary": summary}
 
     # ---------- HITL 节点：复线决策 / 对客 ETA（waiting_hitl，不自动放行） ----------
-
-    def _make_hitl_handler(kind: str) -> Any:
-        def handler(task: Any, ctx: SharedContext, sink: Any) -> dict:
-            step = task.params
-            prompt = str(step.get("prompt", "待确认"))
-            approvers = [str(r) for r in step.get("approver_roles", [])]
-            actions = [dict(a) for a in step.get("actions", [])]
-            eta = ctx.get("eta_hours", "?")
-            body_lines = [
-                f"{prompt}",
-                f"线体: {task.entities.get('line_code')} | 型号: {task.entities.get('product_model')}",
-                f"FA评级: {ctx.get('fa_rating', '?')} | 预估复线: {eta}h",
-                f"审批人: {'、'.join(approvers)}",
-            ]
-            card = {"title": f"[待确认] {prompt}", "body": "\n".join(body_lines),
-                    "actions": actions, "level": "P1"}
-            wf_task = engine.create_task(
-                wf_id=f"hitl_{kind}", title=prompt,
-                context={"run_id": ctx.get("run_id"), "step": task.step_id,
-                         "kind": kind, "actions": actions, "card": card,
-                         "eta_hours": ctx.get("eta_hours")},
-                assignees=approvers, priority="P1", hitl=True, hitl_prompt=prompt)
-            notifier.broadcast_hitl({**card, "hitl_prompt": prompt,
-                                     "approver_roles": approvers}, approvers)
-            summary = f"{prompt} → waiting_hitl（审批人：{'、'.join(approvers)}）"
-            return {"domain": "hitl", "status": "ok", "payload": {
-                "step": task.step_id, "kind": kind, "prompt": prompt,
-                "status": "waiting_hitl", "approver_roles": approvers,
-                "actions": actions, "task_uid": wf_task.task_uid,
-                "card": card,
-                "provenance": [{"channel": "hitl", "task_uid": wf_task.task_uid,
-                                "approver_roles": approvers}],
-            }, "summary": summary}
-        return handler
+    # 说明（§5.1）：HITL 工厂已迁移至 agents/hitl.py（make_hitl_handler），
+    # restart/eta 行为逐字节等价；新 kinds 复用同一工厂（装配见下方注册段）。
 
     # ---------- 报告节点：内部简报 + 对客脱敏报告 ----------
 
@@ -291,13 +329,7 @@ def build_handlers(runtime: Any) -> dict[str, Any]:
         degraded = not llm_available()
         if not degraded:
             sink.emit({"type": "llm_start", "detail": "生成对客脱敏报告..."})
-            prompt = (
-                "你是制造业业务接口人。基于以下内部数据，生成给客户的正式回复（200字以内）。\n\n"
-                f"【内部数据】\n{brief}\n\n"
-                "【规则】\n1. 禁止出现：设备故障、供应商来料不良、品质不良超标、停线、根因、维修\n"
-                "2. 统一替换为：产线例行校准、批次质量复核、工艺参数优化、计划内暂停\n"
-                "3. 必须包含：当前状态、预计恢复时间（基于ETA换算）、补救措施、发货影响\n"
-                "4. 语气专业诚恳，不推诿\n5. 只输出报告正文，不要标题")
+            prompt = build_report_prompt(brief)
             try:
                 llm = get_llm(temperature=0.3, tier="L2")
                 resp = llm.invoke(prompt)
@@ -327,54 +359,116 @@ def build_handlers(runtime: Any) -> dict[str, Any]:
     handlers["equipment"] = equipment
     handlers["fa"] = fa
     handlers["impact_assessment"] = impact_assessment
-    handlers["hitl_restart"] = _make_hitl_handler("restart")
-    handlers["hitl_eta"] = _make_hitl_handler("eta")
     handlers["report"] = report
+
+    # ============================================================
+    # V2 增量（4 场景）：新 handler（§3.3）——现有 10 个 handler 不动
+    # ============================================================
+
+    def llm_ok() -> bool:
+        """可用性探针（闭包捕获模块级 llm_available，测试 monkeypatch 生效）。"""
+        return llm_available()
+
+    # 设备取证复用现有 handler；wrapper 补条件键 has_alarm（不改冻结 handler）
+    def equipment_warn(task: Any, ctx: SharedContext, sink: Any) -> dict:
+        out = equipment(task, ctx, sink)
+        payload = dict(out.get("payload") or {})
+        payload["has_alarm"] = bool(payload.get("abnormal_alarms"))
+        return {**out, "payload": payload}
+
+    handlers["equipment_warn"] = equipment_warn
+
+    # HITL 工厂：restart/eta 等价迁移（line_stop 回归基线）+ 新 kinds
+    handlers["hitl_restart"] = make_hitl_handler(engine, notifier, "restart")
+    handlers["hitl_eta"] = make_hitl_handler(engine, notifier, "eta")
+    handlers["hitl_disposition"] = make_hitl_handler(engine, notifier, "disposition")
+    handlers["hitl_d8_close"] = make_hitl_handler(engine, notifier, "d8_close")
+    handlers["hitl_complaint_reply"] = make_hitl_handler(
+        engine, notifier, "complaint_reply")
+    handlers["hitl_delivery_commit"] = make_hitl_handler(
+        engine, notifier, "delivery_commit")
+    handlers["hitl_maintenance_window"] = make_hitl_handler(
+        engine, notifier, "maintenance_window")
+
+    # 工作流工厂（同一实现按 step.params 装配；key = YAML step 的 workflow id）
+    wf_handler = make_workflow_handler(engine, notifier)
+    for key in ("scar_flow", "complaint_8d_flow", "delivery_risk_flow",
+                "maintenance_flow"):
+        handlers[key] = wf_handler
+
+    # 注册查询型域 Agent
+    handlers["procurement"] = _make_registered_query_agent(
+        t2s, "supply_chain", "supplier_followup",
+        summary_fn=sc_agents.summarize_procurement,
+        payload_keys=["supplier_actions"], summary_key="procurement_summary")
+    handlers["planning"] = _make_registered_query_agent(
+        t2s, "supply_chain", "plan_impact_by_material",
+        param_map={"model": "product_model"},
+        summary_fn=sc_agents.summarize_planning,
+        payload_keys=["affected_plans"], summary_key="planning_summary")
+    handlers["business_order"] = _make_registered_query_agent(
+        t2s, "supply_chain", "orders_by_model",
+        param_map={"model": "product_model"},
+        summary_fn=sc_agents.summarize_business_order,
+        payload_keys=["orders"], summary_key="business_summary")
+    handlers["manufacturing_output"] = _make_registered_query_agent(
+        t2s, "manufacturing", "output_by_model",
+        param_map={"model": "product_model"},
+        summary_fn=sc_agents.summarize_output,
+        payload_keys=["output_data"], summary_key="production_summary")
+    handlers["logistics"] = _make_registered_query_agent(
+        t2s, "supply_chain", "shipment_status",
+        param_map={"model": "product_model"},
+        summary_fn=sc_agents.summarize_logistics,
+        payload_keys=["in_transit"], summary_key="logistics_summary")
+    handlers["business_sales"] = _make_registered_query_agent(
+        t2s, "supply_chain", "shipment_status",
+        param_map={"model": "product_model"},
+        summary_fn=sc_agents.summarize_business_sales,
+        payload_keys=["customer_comm"], summary_key="business_summary")
+
+    # 判定型域 Agent
+    handlers["sqe_assess"] = _make_assessment_agent(
+        t2s, "quality", "iqc_batches_recent",
+        template_fn=q_agents.sqe_assessment_template,
+        summary_key="quality_summary")
+
+    # 专用域节点
+    handlers["qa_lead"] = q_agents.make_qa_lead(t2s)
+    handlers["pqe_process"] = q_agents.make_pqe_process(t2s)
+    handlers["sqe_supplier"] = q_agents.make_sqe_supplier(t2s)
+    handlers["material_control"] = sc_agents.make_material_control(t2s)
+    handlers["warehouse_atp"] = sc_agents.make_warehouse_atp(t2s)
+    handlers["atp_analysis"] = sc_agents.make_atp_analysis()
+    handlers["planning_window"] = sc_agents.make_planning_window(t2s)
+    handlers["maintenance"] = mf_agents.make_maintenance(t2s)
+    handlers["engineering"] = eng_agents.make_template_agent(
+        "rd_engineering", eng_agents.design_root_cause_template,
+        summary_key="engineering_summary")
+    handlers["engineering_param"] = eng_agents.make_template_agent(
+        "rd_engineering", eng_agents.param_advice_template,
+        summary_key="engineering_summary")
+    handlers["spare_parts"] = eng_agents.make_template_agent(
+        "supply_chain", eng_agents.spare_parts_template,
+        summary_key="spare_summary")
+
+    # 报告工厂（按场景聚合简报；S3/S4 另出对客脱敏报告）
+    handlers["report_incoming"] = rep_agents.make_report_handler(
+        "incoming_quality_v2", llm_ok)
+    handlers["report_complaint"] = rep_agents.make_report_handler(
+        "customer_complaint_v2", llm_ok)
+    handlers["report_delivery"] = rep_agents.make_report_handler(
+        "delivery_status_v2", llm_ok)
+    handlers["report_equipment"] = rep_agents.make_report_handler(
+        "equipment_warning_v2", llm_ok)
+
     return handlers
 
 
 # ---------- 模板化降级实现 ----------
-
-
-def _fa_template(defect: dict, alarms: list) -> tuple[str, int, str, list[str]]:
-    """LLM 不可用时的 FA 模板化结论（规则推导，非编造；标记 degraded）。"""
-    qty = float(defect.get("total_qty", 0) or 0)
-    if qty >= 100:
-        rating = "A"
-    elif qty >= 40:
-        rating = "B"
-    elif qty >= 10:
-        rating = "C"
-    else:
-        rating = "D"
-    defect_type = defect.get("defect_type", "未知不良")
-    if alarms:
-        first = alarms[0]
-        root = (f"设备参数异常（{first.get('param_name', '')}="
-                f"{first.get('param_value', '')}）与{defect_type}不良相关，疑似工艺偏差")
-    else:
-        root = f"主导不良为{defect_type}，疑似来料/工艺因素，待 PQE 现场确认"
-    eta = 2
-    verif = ["复测设备参数至基准范围", "加严 IPQC 检验频次", "确认来料批次 COA"]
-    return rating, eta, root, verif
-
-
-def _apply_forbidden_words(text: str) -> str:
-    """V1 Prompt 禁词表兜底（主通道为字段级脱敏，这里是双保险）。"""
-    for word, replacement in FORBIDDEN_WORDS.items():
-        text = text.replace(word, replacement)
-    return text
-
-
-def _customer_report_template(brief: dict, ctx: SharedContext) -> str:
-    """degraded 模式对客报告模板（结构化、无编造数字）。"""
-    if not brief.get("停线确认"):
-        return ("尊敬的客户：经核查，当前产线运行正常，无停线情况，"
-                "订单交付按原计划推进，感谢关注。")
-    eta = ctx.get("eta_hours", 2)
-    return (f"尊敬的客户：目前产线处于计划内暂停（例行校准），我们已启动批次质量复核"
-            f"与工艺参数优化。根据当前评估，预计约 {eta} 小时恢复，"
-            f"届时将第一时间同步发货安排。给贵司带来不便深表歉意，我们将持续跟进并及时通报进展。")
+# 说明（§6.3）：_fa_template / _apply_forbidden_words / _customer_report_template
+# 已迁移至 prompts/report.py（字符串逐字节复制），此处由顶部 import 引入，
+# 保持 node_registry 同名符号可导入（对外可见符号不变）。
 
 
 __all__ = ["build_handlers", "FORBIDDEN_WORDS"]
