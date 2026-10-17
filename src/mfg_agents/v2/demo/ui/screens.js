@@ -218,14 +218,24 @@
           <div class="hero-sub">${UI.esc(today)} · ${UI.esc(role.greeting)}。${UI.esc(role.desc)}。</div>
         </div>
 
-        <div class="section-title">我的看板 <span class="section-extra">统计范围：${UI.esc(role.name)}视角 · 指标按岗位定制</span></div>
+        <div class="briefing" id="briefing-bar">
+          <div class="briefing-head">${UI.icon("sparkle", 14)}今日需要你关注
+            <span class="section-extra">事找人：按岗位聚合（点击直达）</span></div>
+          <div class="briefing-items" id="briefing-items">
+            <span class="empty-inline">${UI.spinner("sm")} 正在聚合…</span>
+          </div>
+        </div>
+
+        <div class="section-title">我的看板 <span class="section-extra">统计范围：${UI.esc(role.name)}视角 · 点卡片直接问数下钻</span></div>
         <div class="grid grid-4">
           ${(DEMO.ROLE_KPIS[role.id] || []).map((k) => `
-          <div class="card stat-card">
+          <button class="card stat-card stat-clickable" data-ask="${UI.esc(k.ask || "")}"
+                  title="点击下钻：${UI.esc(k.ask || "")}">
             <div class="stat-icon ${k.tone}">${UI.icon(k.icon, 19)}</div>
             <div><div class="stat-num">${UI.esc(k.num)}</div><div class="stat-label">${UI.esc(k.label)}</div>
-            <div class="stat-trend ${k.up ? "up" : ""}">${UI.icon(k.up ? "warn" : "clock", 12)} ${UI.esc(k.trend)}</div></div>
-          </div>`).join("")}
+            <div class="stat-trend ${k.up ? "up" : ""}">${UI.icon(k.up ? "warn" : "clock", 12)} ${UI.esc(k.trend)}</div>
+            <div class="stat-ask">${UI.icon("chat", 11)} ${UI.esc(k.ask || "")}</div></div>
+          </button>`).join("")}
           <div class="card stat-card">
             <div class="stat-icon blue">${UI.icon("approve", 19)}</div>
             <div><div class="stat-num" id="dash-hitl-count">—</div><div class="stat-label">待人工确认</div>
@@ -268,7 +278,63 @@
       btn.addEventListener("click", () => ctx.navigate(btn.dataset.goto));
     });
 
+    // KPI 卡下钻问数（"看到异常→问出结论"一步完成）
+    root.querySelectorAll("[data-ask]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const q = btn.dataset.ask;
+        if (!q) return;
+        try { sessionStorage.setItem("chat_prefill", q); } catch (e) { /* 隐私模式忽略 */ }
+        ctx.navigate("chat");
+      });
+    });
+
+    loadDashboardBriefing(ctx);
     loadDashboardTodos(ctx);
+  }
+
+  /** 今日简报（"事找人"）：待我动作 + 预警计数聚合，点击直达对应屏。 */
+  async function loadDashboardBriefing(ctx) {
+    const box = document.getElementById("briefing-items");
+    if (!box) return;
+    const UI = ctx.UI, role = ctx.currentRole();
+    const items = [];
+    try {
+      if (ctx.api.online()) {
+        const resp = await ctx.api.workflowPending(role.roles || []);
+        const all = resp.data || [];
+        const mine = all.filter((t) => t.my_action);
+        // to_dict 不含 sla_status（property），按 sla_due_at 自行计算超时
+        const overdue = all.filter((t) =>
+          t.sla_due_at && new Date(t.sla_due_at) < new Date()
+          && !["done", "closed"].includes(t.status));
+        if (mine.length) {
+          const byAct = {};
+          mine.forEach((t) => { byAct[t.my_action] = (byAct[t.my_action] || 0) + 1; });
+          const label = { select_action: "待我发起", cosign: "待我会签", approve: "待我终批" };
+          items.push(`<button class="briefing-item hot" data-goto="hitl">${UI.icon("approve", 13)}
+            <b>${mine.length} 项待办</b>：${Object.entries(byAct).map(([k, v]) => `${label[k] || k} ${v}`).join(" · ")}</button>`);
+        }
+        if (overdue.length) {
+          items.push(`<button class="briefing-item danger" data-goto="hitl">${UI.icon("warn", 13)}
+            <b>${overdue.length} 张工单超时</b>：SLA 已过，需关注升级</button>`);
+        }
+      }
+    } catch (e) { /* 离线降级：下方演示数据兜底 */ }
+    const sum = ctx.DEMO.ALERT_SUMMARY[role.id] || ctx.DEMO.ALERT_SUMMARY.gm;
+    if (sum.spc) items.push(`<button class="briefing-item" data-goto="alerts">${UI.icon("activity", 13)}
+      <b>SPC 越限 ${sum.spc} 项</b>：锡膏印刷 CPK 0.89 &lt; 1.33</button>`);
+    if (sum.shortage) items.push(`<button class="briefing-item" data-goto="alerts">${UI.icon("box", 13)}
+      <b>缺料预警 ${sum.shortage} 项</b>：锡膏 M7020 到货延迟 36h</button>`);
+    if (sum.order) items.push(`<button class="briefing-item" data-goto="orders">${UI.icon("orders", 13)}
+      <b>订单履约风险 ${sum.order} 单</b>：华为终端 S 级订单临期</button>`);
+    if (!items.length) {
+      box.innerHTML = `<span class="empty-inline">${UI.icon("check", 13)} 当前无待办与预警，一切正常</span>`;
+      return;
+    }
+    box.innerHTML = items.join("");
+    box.querySelectorAll("[data-goto]").forEach((btn) => {
+      btn.addEventListener("click", () => ctx.navigate(btn.dataset.goto));
+    });
   }
 
   async function loadDashboardTodos(ctx) {
@@ -549,6 +615,61 @@
     return st.chat;
   }
 
+  /* ---------- 审批常用语（按槽位预置，一键填入；降本：意见输入时间 -80%） ---------- */
+
+  const QUICK_COMMENTS = {
+    disposition: ["制程参数可补偿，加严检验后放行", "客户已确认规格，同意让步接收", "风险不可接受，按退货处理"],
+    restart: ["首件确认合格，同意按建议复线", "参数已复核，暂缓复线", "分批试产，加严巡检"],
+    eta: ["按评估时间承诺客户", "加缓冲承诺，降低超期风险", "升级销售总监决策"],
+    d8_close: ["纠正措施已验证，同意关闭", "验证不充分，退回补充", "客户未确认，延期关闭"],
+    complaint_reply: ["口径与 8D 一致，同意发送", "加严承诺需内部保障后发送"],
+    delivery_commit: ["可承诺量已核算，同意承诺", "分批出货先保重点客户", "转加急生产"],
+    maintenance_window: ["备件已到位，按计划窗口停机", "先降速运行监控参数", "立即停机排查"],
+  };
+
+  function quickCommentChipsHtml(taskUid, slot) {
+    const list = QUICK_COMMENTS[slot] || [];
+    if (!list.length) return "";
+    return `<div class="quick-comments">
+      ${list.map((c) => `<button type="button" class="chip chip-cmt" data-cmt="${UI.esc(c)}"
+        data-target="${UI.esc(taskUid)}">${UI.esc(c)}</button>`).join("")}
+    </div>`;
+  }
+
+  function bindQuickComments(scopeEl) {
+    scopeEl.querySelectorAll("[data-cmt]").forEach((chip) => {
+      chip.addEventListener("click", () => {
+        const target = document.getElementById(`act-comment-${chip.dataset.target}`)
+          || document.getElementById("hitl-comment");
+        if (target) {
+          target.value = chip.dataset.cmt;
+          target.dispatchEvent(new Event("input", { bubbles: true }));
+        }
+      });
+    });
+  }
+
+
+
+  function chatHistory() {
+    try { return JSON.parse(localStorage.getItem("chat_history") || "[]"); }
+    catch (e) { return []; }
+  }
+
+  function saveChatHistory(question, result) {
+    try {
+      const items = chatHistory().filter((h) => h.q !== question);
+      items.unshift({
+        q: question,
+        scenario: result.scenario_key || "",
+        summary: String(result.report || "").replace(/\s+/g, " ").slice(0, 60),
+        ts: new Date().toISOString(),
+      });
+      localStorage.setItem("chat_history",
+        JSON.stringify(items.slice(0, 20)));
+    } catch (e) { /* 隐私模式：历史不可用不影响主流程 */ }
+  }
+
   function render_chat(root, ctx) {
     const UI = ctx.UI;
     const online = ctx.api.online();
@@ -571,6 +692,10 @@
             <div class="chat-chips" id="chat-chips">
               ${QUICK_QUESTIONS.map((q) => `<button class="chip" data-q="${UI.esc(q)}">${UI.esc(q)}</button>`).join("")}
             </div>
+            <div class="chat-history" id="chat-history">
+              <span class="chat-history-label">${UI.icon("clock", 12)}最近问过（点击重问）</span>
+              <span id="chat-history-items"></span>
+            </div>
             <div class="chat-input-row">
               <textarea class="chat-input" id="chat-input" rows="1" placeholder="请输入制造业协同问题，例如：A型号在SMT-1停线，何时复线？"></textarea>
               <button class="chat-send" id="chat-send" title="发送">${UI.icon("send", 17)}</button>
@@ -585,6 +710,24 @@
     const sendBtn = document.getElementById("chat-send");
 
     renderChatMessages(ctx, scroll);
+
+    // 问数历史（本地保留，可一键重问——客户电话场景的答案可回溯）
+    const histBox = document.getElementById("chat-history-items");
+    const hist = chatHistory();
+    if (histBox) {
+      if (!hist.length) {
+        histBox.innerHTML = `<span style="color:var(--text-3);font-size:11.5px">暂无（问完自动记录）</span>`;
+      } else {
+        histBox.innerHTML = hist.slice(0, 6).map((h) =>
+          `<button class="chip chip-hist" data-hq="${UI.esc(h.q)}" title="${UI.esc(h.summary || "")}">${UI.esc(h.q.length > 18 ? h.q.slice(0, 18) + "…" : h.q)}</button>`).join("");
+        histBox.querySelectorAll("[data-hq]").forEach((btn) => {
+          btn.addEventListener("click", () => {
+            input.value = btn.dataset.hq;
+            doSend();
+          });
+        });
+      }
+    }
 
     document.getElementById("chat-clear").addEventListener("click", () => {
       chatStore(ctx).messages = [];
@@ -603,6 +746,14 @@
     input.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); doSend(); }
     });
+
+    // 其他屏下钻带来的预填问题（KPI 卡/全局搜索）：自动发送一次
+    let prefill = null;
+    try { prefill = sessionStorage.getItem("chat_prefill"); } catch (e) { /* 忽略 */ }
+    if (prefill) {
+      try { sessionStorage.removeItem("chat_prefill"); } catch (e) { /* 忽略 */ }
+      sendChatQueryRouter(ctx, scroll, prefill);
+    }
     input.addEventListener("input", () => {
       input.style.height = "auto";
       input.style.height = Math.min(input.scrollHeight, 120) + "px";
@@ -633,6 +784,7 @@
     }
     scroll.innerHTML = chat.messages.map((m) => renderChatMessage(ctx, m)).join("");
     bindChatActions(ctx, scroll);
+    bindQuickComments(scroll);
     scrollToBottom(scroll);
   }
 
@@ -720,6 +872,7 @@
     setTimeout(() => { if (es) { es.close(); es = null; } }, 600);
 
     finalizeFlow(ctx, flow, result);
+    saveChatHistory(result.query || (chat.messages[0] || {}).text || "", result);
     chat.messages.push(resultCardMessage(ctx, result));
     (result.hitl || []).forEach((h) => {
       chat.messages.push({
@@ -1446,7 +1599,8 @@
         <div class="act-chips">${actionChipsHtml(ctx, m.taskUid, m.actions)}</div>
         ${actionDetailHtml(ctx, m.taskUid, m.actions)}` : ""}
       ${signoffPanelHtml(ctx, m.taskUid, m.actions)}
-      ${processed ? "" : `<input class="input act-comment" id="act-comment-${UI.esc(m.taskUid)}" placeholder="决策意见（可选，将写入工单留痕）" />
+      ${processed ? "" : `${quickCommentChipsHtml(m.taskUid, m.slot || _hitlSlot[taskUid] || "")}
+      <input class="input act-comment" id="act-comment-${UI.esc(m.taskUid)}" placeholder="决策意见（可选，将写入工单留痕）" />
       <div class="hitl-card-actions">
         <button class="btn btn-primary btn-sm" data-approve="${UI.esc(m.taskUid)}"
           ${gate.ok ? "" : `disabled title="${UI.esc(gate.reason)}"`}>${UI.icon("check", 13)}同意</button>
@@ -1541,6 +1695,9 @@
       <div class="content-inner">
         <div class="page-head">
           <div class="page-title">${UI.icon("report", 20)}报告中心</div>
+          <div class="head-extra">
+            <button class="btn btn-outline btn-sm" onclick="window.print()" title="打印 / 导出 PDF（浏览器打印对话框，内部简报与对客报告分别可打印）">${UI.icon("report", 13)}打印 / 导出</button>
+          </div>
           <div class="page-desc">内部简报与对客脱敏报告同屏对比；脱敏词高亮标注（悬停可见禁词原文）。${UI.demoFlag()}内容结构复刻 CLI demo 真实输出</div>
         </div>
 
@@ -1821,6 +1978,7 @@
           ? `<div class="gate-hint">${UI.icon("info", 13)} 当前岗位对该工单无待办动作（只读视图）：审批/会签由对应岗位执行，安全校验在后端。</div>`
           : `
         <div class="hitl-actions-bar">
+          ${quickCommentChipsHtml(t.task_uid, (t.governance || {}).slot || "")}
           <input class="input hitl-comment" id="hitl-comment" placeholder="决策意见（可选，将写入工单 history）" />
           <button class="btn btn-success" id="hitl-approve"
             ${gate.ok ? "" : `disabled title="${UI.esc(gate.reason)}"`}>${UI.icon("check", 14)}同意</button>
@@ -1830,6 +1988,7 @@
       </div>`;
 
     wireActionChips(document, ctx, t.task_uid);
+    bindQuickComments(document);
     wireCosign(document, ctx, t.task_uid, (c.actions || []));
     const approveBtn = document.getElementById("hitl-approve");
     const rejectBtn = document.getElementById("hitl-reject");

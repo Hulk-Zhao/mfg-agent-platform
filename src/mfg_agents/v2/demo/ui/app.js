@@ -563,6 +563,17 @@
           results.push({ screen: "hitl", title: t.title, sub: `${t.task_uid} · ${t.approver_roles.join("、")}`, type: "工单" });
         }
       });
+      // "AI 搜问"范式：任何关键词都可直达协同问数（权限内检索的统一入口）
+      const isTaskId = /^wf-[0-9a-f]{6,}$/i.test(k);
+      const isBatch = /^batch[-_]/i.test(k);
+      results.unshift({
+        screen: "chat", ask: k,
+        title: `去问数：「${k.length > 22 ? k.slice(0, 22) + "…" : k}」`,
+        sub: isTaskId ? "识别为工单号 → 走协同链路查询该工单"
+          : isBatch ? "识别为批次号 → 走协同链路查询该批次"
+          : "以自然语言发起跨部门协同问数",
+        type: isTaskId || isBatch ? "直达" : "问数",
+      });
       return results.slice(0, 8);
     };
 
@@ -592,7 +603,11 @@
           hit.addEventListener("mouseenter", () => { hit.style.background = "#F2F7FC"; });
           hit.addEventListener("mouseleave", () => { hit.style.background = "#fff"; });
           hit.addEventListener("click", () => {
-            navigate(results[Number(hit.dataset.idx)].screen);
+            const hit2 = results[Number(hit.dataset.idx)];
+            if (hit2.ask) {
+              try { sessionStorage.setItem("chat_prefill", hit2.ask); } catch (e) { /* 忽略 */ }
+            }
+            navigate(hit2.screen);
             closePanel();
             input.value = "";
           });
@@ -604,8 +619,14 @@
     input.addEventListener("keydown", (e) => {
       if (e.key === "Enter") {
         const r = search(input.value);
-        if (r.length) { navigate(r[0].screen); closePanel(); }
-        else toast("未命中演示数据，请尝试「SMT-1」「华为」「缺料」等关键词", "info");
+        if (r.length) {
+          if (r[0].ask) {
+            try { sessionStorage.setItem("chat_prefill", r[0].ask); } catch (e) { /* 忽略 */ }
+          }
+          navigate(r[0].screen);
+          closePanel();
+          input.value = "";
+        } else toast("未命中演示数据，请尝试「SMT-1」「华为」「缺料」等关键词", "info");
       }
       if (e.key === "Escape") { closePanel(); input.blur(); }
     });
