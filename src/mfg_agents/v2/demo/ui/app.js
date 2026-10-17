@@ -146,6 +146,12 @@
               <li><span>03</span><div><b>结论可审计</b>SQL 溯源 + 敏感字段按岗位脱敏 + 降级明示</div></li>
             </ul>
           </div>
+          <div class="login-stats">
+            <div class="login-stat"><b>10</b><span>岗位身份</span></div>
+            <div class="login-stat"><b>5</b><span>协同场景</span></div>
+            <div class="login-stat"><b>15</b><span>治理角色</span></div>
+            <div class="login-stat"><b>387</b><span>自动化测试</span></div>
+          </div>
           <div class="login-brand-foot">演示环境 · 免密码 · 选择岗位身份进入对应数据视图</div>
         </section>
         <section class="login-panel">

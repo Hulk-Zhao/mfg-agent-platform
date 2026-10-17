@@ -1292,20 +1292,25 @@ a:hover { text-decoration: underline; }
   position: fixed;
   inset: 0;
   z-index: 200;
-  background: var(--bg);
+  background:
+    radial-gradient(820px 520px at 12% -8%, rgba(24, 95, 165, .10), transparent 60%),
+    radial-gradient(760px 480px at 96% 108%, rgba(15, 111, 86, .09), transparent 60%),
+    radial-gradient(600px 400px at 88% -6%, rgba(130, 80, 223, .06), transparent 60%),
+    linear-gradient(180deg, #F6F9FC 0%, #EDF2F8 100%);
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 28px;
+  padding: 22px;
   overflow: auto;
 }
 .login-root[hidden] { display: none; }
 
 .login-shell {
   display: grid;
-  grid-template-columns: minmax(340px, 420px) minmax(0, 1fr);
+  grid-template-columns: minmax(360px, 440px) minmax(0, 1fr);
   width: 100%;
-  max-width: 1240px;
+  max-width: 1400px;
+  min-height: min(700px, calc(100vh - 44px));
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: 20px;
@@ -1314,12 +1319,15 @@ a:hover { text-decoration: underline; }
 }
 
 .login-brand {
-  background: var(--primary-deep);
+  background:
+    radial-gradient(420px 300px at -10% 0%, rgba(255,255,255,.10), transparent 60%),
+    radial-gradient(380px 300px at 110% 100%, rgba(0,0,0,.18), transparent 55%),
+    var(--primary-deep);
   color: #fff;
-  padding: 40px 36px 32px;
+  padding: 44px 40px 34px;
   display: flex;
   flex-direction: column;
-  gap: 28px;
+  gap: 26px;
 }
 .login-brand-top { display: flex; align-items: center; gap: 12px; }
 .login-logo {
@@ -1352,12 +1360,14 @@ a:hover { text-decoration: underline; }
 
 .role-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(238px, 1fr));
-  gap: 11px;
-  margin: 20px 0 18px;
-  max-height: 54vh;
+  grid-template-columns: repeat(auto-fill, minmax(276px, 1fr));
+  gap: 12px;
+  margin: 18px 0 16px;
+  max-height: calc(100vh - 320px);
+  min-height: 380px;
   overflow: auto;
   padding: 3px;
+  align-content: stretch;
 }
 .role-card {
   display: flex; align-items: flex-start; gap: 11px;
@@ -1573,3 +1583,30 @@ a:hover { text-decoration: underline; }
   }
   body { background: #fff !important; }
 }
+
+
+/* ---------- 登录页 V3.1：品牌区数据统计条 + 补满留白 ---------- */
+
+.login-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  margin-top: auto;
+  padding-top: 4px;
+}
+.login-stat {
+  background: rgba(255, 255, 255, .08);
+  border: 1px solid rgba(255, 255, 255, .16);
+  border-radius: 10px;
+  padding: 10px 8px 9px;
+  text-align: center;
+}
+.login-stat b { display: block; font-size: 17px; font-weight: 700; letter-spacing: .3px; }
+.login-stat span { display: block; font-size: 10.5px; opacity: .75; margin-top: 3px; }
+
+.login-panel { padding: 36px 40px 28px; }
+.login-panel-head h2 { font-size: 21px; }
+.role-card { padding: 14px 14px 13px; }
+.role-name { font-size: 14px; }
+.role-grid::-webkit-scrollbar { width: 6px; }
+.role-grid::-webkit-scrollbar-thumb { background: #C7D6E6; border-radius: 3px; }
