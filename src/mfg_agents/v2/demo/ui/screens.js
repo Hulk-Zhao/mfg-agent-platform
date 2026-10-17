@@ -218,23 +218,14 @@
           <div class="hero-sub">${UI.esc(today)} · ${UI.esc(role.greeting)}。${UI.esc(role.desc)}。</div>
         </div>
 
-        <div class="section-title">今日预警摘要 <span class="section-extra">统计范围：${UI.esc(role.name)}视角</span></div>
+        <div class="section-title">我的看板 <span class="section-extra">统计范围：${UI.esc(role.name)}视角 · 指标按岗位定制</span></div>
         <div class="grid grid-4">
+          ${(DEMO.ROLE_KPIS[role.id] || []).map((k) => `
           <div class="card stat-card">
-            <div class="stat-icon red">${UI.icon("activity", 19)}</div>
-            <div><div class="stat-num">${sum.spc}</div><div class="stat-label">SPC CPK 越限</div>
-            <div class="stat-trend up">${UI.icon("warn", 12)} 锡膏印刷 CPK 0.89 &lt; 1.33</div></div>
-          </div>
-          <div class="card stat-card">
-            <div class="stat-icon amber">${UI.icon("box", 19)}</div>
-            <div><div class="stat-num">${sum.shortage}</div><div class="stat-label">缺料预警</div>
-            <div class="stat-trend">${UI.icon("clock", 12)} 锡膏 M7020 到货延迟 36h</div></div>
-          </div>
-          <div class="card stat-card">
-            <div class="stat-icon red">${UI.icon("warn", 19)}</div>
-            <div><div class="stat-num">${sum.order}</div><div class="stat-label">订单履约风险</div>
-            <div class="stat-trend up">${UI.icon("warn", 12)} 华为终端 S 级订单临期</div></div>
-          </div>
+            <div class="stat-icon ${k.tone}">${UI.icon(k.icon, 19)}</div>
+            <div><div class="stat-num">${UI.esc(k.num)}</div><div class="stat-label">${UI.esc(k.label)}</div>
+            <div class="stat-trend ${k.up ? "up" : ""}">${UI.icon(k.up ? "warn" : "clock", 12)} ${UI.esc(k.trend)}</div></div>
+          </div>`).join("")}
           <div class="card stat-card">
             <div class="stat-icon blue">${UI.icon("approve", 19)}</div>
             <div><div class="stat-num" id="dash-hitl-count">—</div><div class="stat-label">待人工确认</div>

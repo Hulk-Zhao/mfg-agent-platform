@@ -20,7 +20,14 @@ logger = logging.getLogger(__name__)
 
 
 class DataSource(ABC):
-    """数据源抽象：所有查询能力统一经此契约暴露。"""
+    """数据源抽象：所有查询能力统一经此契约暴露。
+
+    数据注入三步（V3.1 起）：
+    1. 实现 :meth:`list_tables` / :meth:`run_query` / :meth:`execute_readonly_sql`；
+    2. 覆写 :meth:`describe` 声明元数据（业务系统名 / 表说明 / 归属域 / 脱敏要求）；
+    3. 注册进 ``DataSourceRegistry`` —— 立即出现在 ``GET /api/v2/datasources``
+       的就绪度总览里（健康 / 表清单 / 注册查询数），无需改任何框架代码。
+    """
 
     name: str = "abstract"
 
@@ -36,6 +43,47 @@ class DataSource(ABC):
     def execute_readonly_sql(self, sql: str, params: Optional[dict] = None,
                              row_cap: int = 200) -> list[dict]:
         """执行明细探查 SQL（只读 + 行数上限）。"""
+
+    # ---------- 数据注入自描述（V3.1：接入即见，便于后续真实数据源接入） ----------
+
+    # 元数据由接入方声明（子类覆写或构造时注入）；缺省为空 → 前端展示"未声明"
+    meta: dict[str, Any] = {}
+
+    def describe(self) -> dict[str, Any]:
+        """数据源自描述：接入就绪度总览的数据来源。
+
+        返回结构（键缺省安全，前端按缺失降级显示"未声明"）：
+        ``{name, kind, system, domain, tables: [{name, fields: [...]}],
+        registered_queries: int, health: {ok, error}, meta}``
+        """
+        tables = []
+        try:
+            tables = [{"name": t} for t in self.list_tables()]
+        except Exception as exc:  # noqa: BLE001 —— 健康探针不抛出，失败进 health
+            return {"name": self.name, "kind": type(self).__name__,
+                    "system": self.meta.get("system", ""),
+                    "domain": self.meta.get("domain", ""),
+                    "tables": [], "registered_queries": 0,
+                    "health": {"ok": False, "error": str(exc)[:200]},
+                    "meta": dict(self.meta)}
+        return {
+            "name": self.name,
+            "kind": type(self).__name__,
+            "system": self.meta.get("system", ""),
+            "domain": self.meta.get("domain", ""),
+            "tables": tables,
+            "registered_queries": len(getattr(self, "queries", {}) or {}),
+            "health": {"ok": True, "error": ""},
+            "meta": dict(self.meta),
+        }
+
+    def health(self) -> dict[str, Any]:
+        """轻量健康探针（不拉全表，只验证可达与可枚举）。"""
+        try:
+            self.list_tables()
+            return {"ok": True, "error": ""}
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": str(exc)[:200]}
 
 
 class SQLiteDataSource(DataSource):
@@ -56,11 +104,14 @@ class SQLiteDataSource(DataSource):
 
     def __init__(self, db_path: str, name: str = "dev",
                  queries: Optional[dict[str, str]] = None,
-                 row_cap: int = 200) -> None:
+                 row_cap: int = 200,
+                 meta: Optional[dict[str, Any]] = None) -> None:
         self.name = name
         self.db_path = str(db_path)
         self.queries: dict[str, str] = dict(queries or {})
         self.row_cap = row_cap
+        # 接入方声明的元数据（system/domain/owner/敏感字段说明等）
+        self.meta: dict[str, Any] = dict(meta or {})
 
     def _connect_ro(self) -> sqlite3.Connection:
         """建立只读连接（URI mode=ro；文件不存在会直接报错，避免误建空库）。
@@ -85,6 +136,28 @@ class SQLiteDataSource(DataSource):
                 "SELECT name FROM sqlite_master WHERE type='table' "
                 "AND name NOT LIKE 'sqlite_%' ORDER BY name").fetchall()
         return [r["name"] for r in rows]
+
+    def describe(self) -> dict[str, Any]:
+        """SQLite 实现的自描述：表清单含字段与类型（PRAGMA table_info）。"""
+        base = super().describe()
+        if not base["health"]["ok"]:
+            return base
+        tables: list[dict[str, Any]] = []
+        try:
+            with self._connect_ro() as conn:
+                for t in base["tables"]:
+                    cols = conn.execute(
+                        f"PRAGMA table_info({t['name']})").fetchall()
+                    tables.append({
+                        "name": t["name"],
+                        "fields": [{"name": c["name"], "type": c["type"]}
+                                   for c in cols],
+                    })
+        except Exception as exc:  # noqa: BLE001 —— 字段信息失败不影响整体就绪度
+            logger.warning("describe 字段信息获取失败（%s）: %s", self.name, exc)
+            tables = base["tables"]
+        base["tables"] = tables
+        return base
 
     def run_query(self, name: str, params: Optional[dict] = None) -> list[dict]:
         sql = self.queries.get(name)
@@ -133,6 +206,22 @@ class DataSourceRegistry:
 
     def list(self) -> list[str]:
         return sorted(self._sources)
+
+    def describe_all(self) -> list[dict[str, Any]]:
+        """全部数据源的自描述（GET /api/v2/datasources 的数据来源）。
+
+        单个源 describe 抛错不影响其他源（隔离故障，总览永远可用）。
+        """
+        out: list[dict[str, Any]] = []
+        for name in self.list():
+            try:
+                out.append(self._sources[name].describe())
+            except Exception as exc:  # noqa: BLE001
+                out.append({"name": name, "kind": "unknown",
+                            "health": {"ok": False, "error": str(exc)[:200]},
+                            "tables": [], "registered_queries": 0,
+                            "system": "", "domain": "", "meta": {}})
+        return out
 
     # ---- 便捷转发（Text2SQLService 直接面向注册表编程）----
 

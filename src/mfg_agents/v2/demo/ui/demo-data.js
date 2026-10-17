@@ -48,6 +48,62 @@
   ];
 
   /** 工作台 · 今日预警摘要（按角色取不同范围，演示数据） */
+  /** 各岗位看板 KPI 卡（数据驱动：站在岗位角度定义"打开页面第一眼看什么"）。
+   *  每岗位 3 张专属卡 + 1 张通用"待人工确认"卡（screens.js 固定渲染）。
+   *  接真实数据后：值改由 GET /api/v2/metrics?role= 下发，配置结构不变。 */
+  const ROLE_KPIS = {
+    gm: [
+      { icon: "orders", tone: "blue", num: "92.4%", label: "订单准交率 OTD", trend: "近 4 周 +1.8pct", up: false },
+      { icon: "activity", tone: "red", num: "386", label: "客诉 PPM（本月）", trend: "华为终端 S 级订单临期", up: true },
+      { icon: "warn", tone: "red", num: "5", label: "跨部门风险工单", trend: "2 张待升级", up: true },
+    ],
+    mfg: [
+      { icon: "activity", tone: "amber", num: "78.6%", label: "设备综合效率 OEE", trend: "SMT-1 停线恢复中", up: false },
+      { icon: "clock", tone: "red", num: "2.4h", label: "今日累计停线", trend: "刮刀压力异常已定位", up: true },
+      { icon: "check", tone: "green", num: "96.2%", label: "直通率 FPY", trend: "环比 +0.4pct", up: false },
+    ],
+    sqe: [
+      { icon: "box", tone: "amber", num: "2", label: "来料不合格批次", trend: "锡膏/IC 批次处置中", up: true },
+      { icon: "warn", tone: "red", num: "3", label: "SCAR 未关闭", trend: "1 张 SLA 剩余 6h", up: true },
+      { icon: "check", tone: "blue", num: "1", label: "本月特采笔数", trend: "全部留痕可追溯", up: false },
+    ],
+    pqe: [
+      { icon: "activity", tone: "red", num: "0.89", label: "锡膏印刷 CPK", trend: "低于 1.33 改善中", up: true },
+      { icon: "warn", tone: "amber", num: "77pcs", label: "主导不良（锡膏偏移）", trend: "贴片偏移 46pcs 已围堵", up: true },
+      { icon: "approve", tone: "blue", num: "2", label: "8D 在办", trend: "1 张待我会签", up: false },
+    ],
+    qa: [
+      { icon: "check", tone: "blue", num: "18", label: "今日放行批次", trend: "全部留痕", up: false },
+      { icon: "warn", tone: "amber", num: "2", label: "待合规审核项", trend: "特采 1 笔需合规确认", up: true },
+      { icon: "clock", tone: "red", num: "1", label: "8D 待关闭", trend: "D8 关闭待质量总监", up: true },
+    ],
+    mc: [
+      { icon: "box", tone: "red", num: "3", label: "缺料项", trend: "锡膏 M7020 延迟 36h", up: true },
+      { icon: "activity", tone: "amber", num: "87%", label: "齐套率", trend: "A 型号欠 3100pcs", up: false },
+      { icon: "clock", tone: "blue", num: "4", label: "在途批次", trend: "预计 48h 内到货", up: false },
+    ],
+    biz: [
+      { icon: "orders", tone: "blue", num: "92.4%", label: "OTD 准交率", trend: "环比 +1.8pct", up: false },
+      { icon: "warn", tone: "red", num: "2", label: "临期订单", trend: "华为 S 级需对客口径", up: true },
+      { icon: "clock", tone: "amber", num: "1.6h", label: "客诉平均响应", trend: "目标 ≤2h", up: false },
+    ],
+    proc: [
+      { icon: "check", tone: "green", num: "94.1%", label: "供应商交期达成", trend: "千住金属延迟 1 批", up: false },
+      { icon: "activity", tone: "amber", num: "1", label: "索赔在途", trend: "来料不合格费用分摊中", up: true },
+      { icon: "box", tone: "blue", num: "0", label: "价格异动", trend: "本季无", up: false },
+    ],
+    wh: [
+      { icon: "check", tone: "green", num: "99.2%", label: "库存准确率", trend: "月盘差异 3 项", up: false },
+      { icon: "box", tone: "blue", num: "142", label: "今日出入库", trend: "出货 6 单待拣", up: false },
+      { icon: "warn", tone: "amber", num: "1", label: "待发货协同", trend: "A 型号 ATP 400pcs", up: true },
+    ],
+    rd: [
+      { icon: "clock", tone: "blue", num: "3", label: "ECN 在办", trend: "2 张待会签", up: false },
+      { icon: "activity", tone: "green", num: "DVT", label: "NPI 当前阶段", trend: "B 型号按计划", up: false },
+      { icon: "warn", tone: "amber", num: "2", label: "根因待补数据", trend: "BOM/工艺参数源未接入", up: true },
+    ],
+  };
+
   const ALERT_SUMMARY = {
     gm:  { spc: 2, shortage: 3, order: 5, sla: 2 },
     mfg: { spc: 2, shortage: 1, order: 2, sla: 2 },
@@ -3075,6 +3131,6 @@
   const CHAT_DEMO = CHAT_DEMOS["A型号在SMT-1停线，何时复线？"];
 
   window.DEMO = {
-    ROLES, ALERT_SUMMARY, DEMO_TODOS, ORDERS, ALERTS, REPORTS, DEMO_人工确认, CHAT_DEMO, CHAT_DEMOS,
+    ROLES, ALERT_SUMMARY, ROLE_KPIS, DEMO_TODOS, ORDERS, ALERTS, REPORTS, DEMO_人工确认, CHAT_DEMO, CHAT_DEMOS,
   };
 })();

@@ -314,6 +314,19 @@ def api_governance_permissions() -> dict[str, Any]:
             "message": "ok"}
 
 
+@app.get("/api/v2/datasources")
+def api_datasources() -> dict[str, Any]:
+    """数据源接入就绪度总览（V3.1 数据注入接口）。
+
+    列出全部已注册数据源的：业务系统名 / 归属域 / 表清单（含字段）/
+    注册查询数 / 健康状态。新数据源按 ``DataSource`` 契约实现并
+    ``register()`` 后自动出现在这里——接入即见，无需改前端。
+    """
+    return {"code": 0,
+            "data": get_orchestrator().runtime.data_registry.describe_all(),
+            "message": "ok"}
+
+
 # ---------- 企业微信回调 ----------
 
 

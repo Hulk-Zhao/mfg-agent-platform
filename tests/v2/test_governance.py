@@ -1160,3 +1160,131 @@ def test_proposer_may_cosign_once_but_not_twice(engine):
     # proposed_by 已记录发起人身份（审计可见"谁发起"）
     pb = engine.get(uid).governance.get("proposed_by") or {}
     assert pb.get("actor_id") == "u-sqe"
+
+
+# ============================================================
+# 11. 数据注入接口（V3.1）：DataSource 自描述 + 注册表总览
+# ============================================================
+
+
+def test_datasource_describe_reports_tables_and_health(tmp_path):
+    """describe()：表清单 + 注册查询数 + 健康状态（接入即见的契约）。"""
+    import sqlite3
+
+    from mfg_agents.v2.contracts.data_source import SQLiteDataSource
+
+    db = tmp_path / "ds.db"
+    with sqlite3.connect(db) as conn:
+        conn.execute("CREATE TABLE inventory (id INTEGER, qty INTEGER)")
+        conn.execute("CREATE TABLE shipment (id INTEGER, eta TEXT)")
+    src = SQLiteDataSource(str(db), name="t1", queries={"q1": "SELECT 1"},
+                           meta={"system": "MES", "domain": "生产"})
+    d = src.describe()
+    assert d["name"] == "t1" and d["health"]["ok"] is True
+    assert d["system"] == "MES" and d["domain"] == "生产"
+    assert [t["name"] for t in d["tables"]] == ["inventory", "shipment"]
+    assert d["tables"][0]["fields"][0]["name"] == "id"  # SQLite 字段级自描述
+    assert d["registered_queries"] == 1
+
+
+def test_datasource_describe_failure_is_reported_not_raised(tmp_path):
+    """不可达数据源：health=False + error 信息，describe 不抛异常（总览永远可用）。"""
+    from mfg_agents.v2.contracts.data_source import SQLiteDataSource
+
+    src = SQLiteDataSource(str(tmp_path / "missing.db"), name="bad")
+    d = src.describe()
+    assert d["health"]["ok"] is False and d["health"]["error"]
+    assert d["tables"] == []
+
+
+def test_registry_describe_all_isolates_faults(tmp_path):
+    """注册表总览：单个源故障不影响其他源（隔离故障）。"""
+    from mfg_agents.v2.contracts.data_source import (
+        SQLiteDataSource,
+        DataSourceRegistry,
+    )
+
+    db = tmp_path / "ok.db"
+    with sqlite3.connect(db) as conn:
+        conn.execute("CREATE TABLE t (a INTEGER)")
+    reg = DataSourceRegistry()
+    reg.register(SQLiteDataSource(str(db), name="good"))
+    reg.register(SQLiteDataSource(str(tmp_path / "nope.db"), name="bad"))
+    out = {d["name"]: d for d in reg.describe_all()}
+    assert out["good"]["health"]["ok"] is True
+    assert out["bad"]["health"]["ok"] is False  # 坏源只报健康，不炸总览
+
+
+def test_api_datasources_endpoint(api_client):
+    """GET /api/v2/datasources：dev 源可见，含元数据与表清单。"""
+    resp = api_client.get("/api/v2/datasources")
+    assert resp.status_code == 200
+    items = resp.json()["data"]
+    assert items and items[0]["name"] == "dev"
+    assert items[0]["health"]["ok"] is True
+    assert items[0]["meta"].get("system")  # orchestrator 已注入元数据
+    assert len(items[0]["tables"]) >= 8    # 演示库 8 张表
+
+
+# ============================================================
+# 11. 数据注入接口（V3.1）：DataSource 自描述 + 注册表总览
+# ============================================================
+
+
+def test_datasource_describe_reports_tables_and_health(tmp_path):
+    """describe()：表清单 + 注册查询数 + 健康状态（接入即见的契约）。"""
+    import sqlite3
+
+    from mfg_agents.v2.contracts.data_source import SQLiteDataSource
+
+    db = tmp_path / "ds.db"
+    with sqlite3.connect(db) as conn:
+        conn.execute("CREATE TABLE inventory (id INTEGER, qty INTEGER)")
+        conn.execute("CREATE TABLE shipment (id INTEGER, eta TEXT)")
+    src = SQLiteDataSource(str(db), name="t1", queries={"q1": "SELECT 1"},
+                           meta={"system": "MES", "domain": "生产"})
+    d = src.describe()
+    assert d["name"] == "t1" and d["health"]["ok"] is True
+    assert d["system"] == "MES" and d["domain"] == "生产"
+    assert [t["name"] for t in d["tables"]] == ["inventory", "shipment"]
+    assert d["tables"][0]["fields"][0]["name"] == "id"  # SQLite 字段级自描述
+    assert d["registered_queries"] == 1
+
+
+def test_datasource_describe_failure_is_reported_not_raised(tmp_path):
+    """不可达数据源：health=False + error 信息，describe 不抛异常（总览永远可用）。"""
+    from mfg_agents.v2.contracts.data_source import SQLiteDataSource
+
+    src = SQLiteDataSource(str(tmp_path / "missing.db"), name="bad")
+    d = src.describe()
+    assert d["health"]["ok"] is False and d["health"]["error"]
+    assert d["tables"] == []
+
+
+def test_registry_describe_all_isolates_faults(tmp_path):
+    """注册表总览：单个源故障不影响其他源（隔离故障）。"""
+    from mfg_agents.v2.contracts.data_source import (
+        SQLiteDataSource,
+        DataSourceRegistry,
+    )
+
+    db = tmp_path / "ok.db"
+    with sqlite3.connect(db) as conn:
+        conn.execute("CREATE TABLE t (a INTEGER)")
+    reg = DataSourceRegistry()
+    reg.register(SQLiteDataSource(str(db), name="good"))
+    reg.register(SQLiteDataSource(str(tmp_path / "nope.db"), name="bad"))
+    out = {d["name"]: d for d in reg.describe_all()}
+    assert out["good"]["health"]["ok"] is True
+    assert out["bad"]["health"]["ok"] is False  # 坏源只报健康，不炸总览
+
+
+def test_api_datasources_endpoint(api_client):
+    """GET /api/v2/datasources：dev 源可见，含元数据与表清单。"""
+    resp = api_client.get("/api/v2/datasources")
+    assert resp.status_code == 200
+    items = resp.json()["data"]
+    assert items and items[0]["name"] == "dev"
+    assert items[0]["health"]["ok"] is True
+    assert items[0]["meta"].get("system")  # orchestrator 已注入元数据
+    assert len(items[0]["tables"]) >= 8    # 演示库 8 张表

@@ -59,7 +59,14 @@ class V2Runtime:
         data_registry.register(
             SQLiteDataSource(db_path, name="dev", queries={
                 name: str(spec["sql"])
-                for name, spec in queries._queries.items()}),
+                for name, spec in queries._queries.items()},
+                meta={
+                    "system": "演示制造数据集（init.sql）",
+                    "domain": "生产/质量/供应链/设备/客诉",
+                    "owner_dept": "平台组",
+                    "note": "替换为真实 ERP/MES 时：实现 DataSource 契约"
+                            "并在 register() 声明 meta，总览页即自动可见",
+                }),
             default=True)
         scenario_registry = ScenarioRegistry(settings.V2_SCENARIOS_DIR)
         scenario_registry.load()
