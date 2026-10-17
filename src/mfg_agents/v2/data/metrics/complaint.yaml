@@ -1,0 +1,11 @@
+# 指标库 · 客户投诉（S3；**新增文件**，不改 otd.yaml）
+metrics:
+  - id: complaint_open_cnt
+    name: 未闭环客诉数
+    owner: 质量域
+    desc: "status=open 的客诉单数量（演示口径）。"
+    tables: [customer_complaint]
+    keywords: [客诉, 投诉, 未闭环]
+    sql: "SELECT COUNT(*) AS open_complaints FROM customer_complaint WHERE status = 'open'"
+    unit: "件"
+    higher_is_better: false

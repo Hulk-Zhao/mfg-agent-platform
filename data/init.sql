@@ -125,13 +125,20 @@ INSERT INTO quality_defect VALUES
  (1,'BATCH-A-1015','A型号','SMT-1','锡膏偏移',32,500,'2026-10-15 14:35:00'),
  (2,'BATCH-A-1015','A型号','SMT-1','锡膏偏移',45,500,'2026-10-15 15:10:00'),
  (3,'BATCH-A-1015','A型号','SMT-1','连锡',8,500,'2026-10-15 15:40:00'),
- (4,'BATCH-B-1014','B型号','DIP-2','虚焊',3,300,'2026-10-15 10:00:00');
+ (4,'BATCH-B-1014','B型号','DIP-2','虚焊',3,300,'2026-10-15 10:00:00'),
+ -- S3 客诉批次 BATCH-A-1008 的过程不良（8D D4）；line_code=SMT-2，
+ -- 不影响 line_stop 的 SMT-1/A型号不良分布聚合（回归红线）
+ (5,'BATCH-A-1008','A型号','SMT-2','贴片偏移',46,2000,'2026-10-12 10:00:00');
 
 -- 供应链：当日锡膏批次COA正常
 INSERT INTO material_batch VALUES
  (1,'MAT-SP-1015','SP-001','无铅锡膏SAC305','千住金属','pass','http://coa.example.com/sp1015.pdf','2026-10-15 08:00:00'),
  (2,'MAT-PCB-1013','PCB-022','A型号PCB','深南电路','pass','http://coa.example.com/pcb1013.pdf','2026-10-13 09:00:00'),
- (3,'MAT-IC-1012','IC-100','主控芯片','STMicroelectronics','pass','http://coa.example.com/ic1012.pdf','2026-10-12 11:00:00');
+ (3,'MAT-IC-1012','IC-100','主控芯片','STMicroelectronics','pass','http://coa.example.com/ic1012.pdf','2026-10-12 11:00:00'),
+ -- 数据红线（§0.2）：新增批次 arrival_time **必须避开 '2026-10-15'**
+ (4,'MAT-SP-1014','SP-001','无铅锡膏SAC305','千住金属','fail','http://coa.example.com/sp1014.pdf','2026-10-14 08:00:00'),
+ (5,'MAT-IC-1011','IC-100','主控芯片','STMicroelectronics','fail','http://coa.example.com/ic1011.pdf','2026-10-11 11:00:00'),
+ (6,'BATCH-A-1008','PCB-022','A型号PCB','深南电路','pass','http://coa.example.com/pcb1008.pdf','2026-10-12 09:00:00');
 
 -- 设备：印刷机参数异常
 INSERT INTO equipment_log VALUES
@@ -147,7 +154,9 @@ INSERT INTO inventory VALUES
 
 INSERT INTO shipment VALUES
  (1,'SO-20261015-01','A型号',2000,'待发货','2026-10-17 10:00:00','2026-10-15 16:00:00'),
- (2,'SO-20261014-02','B型号',1000,'在途','2026-10-16 18:00:00','2026-10-15 12:00:00');
+ (2,'SO-20261014-02','B型号',1000,'在途','2026-10-16 18:00:00','2026-10-15 12:00:00'),
+ -- S4 追加一单逾期风险订单（不改既有 2 单的 id 顺序）
+ (3,'SO-20261010-03','A型号',1500,'待发货','2026-10-14 10:00:00','2026-10-15 16:00:00');
 
 -- 场景3：客户投诉
 INSERT INTO customer_complaint VALUES

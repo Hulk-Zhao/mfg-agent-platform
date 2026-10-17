@@ -43,3 +43,76 @@ queries:
     tables: [shipment]
     keywords: [发货, 在途, 交期]
     sql: "SELECT order_no, product_model, qty, ship_status, eta FROM shipment WHERE product_model = :model"
+
+  # ============================================================
+  # V2 增量（4 场景）：仅追加，不改上方旧 7 条（回归基线）
+  # ============================================================
+
+  # ---- S2 来料异常 ----
+  iqc_batches_recent:
+    desc: "QMS：最近不合格来料批次（含 COA，供 SQE 判定）"
+    tables: [material_batch]
+    keywords: [来料, IQC, 不合格, 批次, COA]
+    sql: "SELECT batch_no, part_no, part_name, supplier, incoming_result, coa_url, arrival_time FROM material_batch WHERE incoming_result = 'fail' ORDER BY arrival_time DESC LIMIT 5"
+
+  batch_supplier_by_no:
+    desc: "QMS：按批号查供应商与检验结论"
+    tables: [material_batch]
+    keywords: [批号, 供应商, 检验]
+    sql: "SELECT batch_no, part_no, part_name, supplier, incoming_result FROM material_batch WHERE batch_no = :batch_no"
+
+  supplier_followup:
+    desc: "SRM：供应商到货/不合格统计（跟催与评级）"
+    tables: [material_batch]
+    keywords: [供应商, 跟催, 评级, 整改]
+    sql: "SELECT supplier, part_no, part_name, COUNT(*) AS batch_cnt, SUM(CASE WHEN incoming_result='fail' THEN 1 ELSE 0 END) AS fail_cnt FROM material_batch GROUP BY supplier, part_no"
+
+  inventory_available_all:
+    desc: "WMS：库存可用量（on_hand - reserved，替代料/冻结评估）"
+    tables: [inventory]
+    keywords: [库存, 可用, 替代料, 冻结]
+    sql: "SELECT product_model, warehouse, on_hand_qty, reserved_qty, (on_hand_qty - reserved_qty) AS available_qty FROM inventory"
+
+  # ---- S3 客户投诉 ----
+  complaint_detail:
+    desc: "CRM/QMS：客诉单明细（8D D2 问题界定）"
+    tables: [customer_complaint]
+    keywords: [客诉, 投诉, 华为, 8D]
+    sql: "SELECT complaint_no, customer, product_model, batch_no, defect_desc, status FROM customer_complaint WHERE status = 'open' ORDER BY complaint_no DESC LIMIT 5"
+
+  quality_defect_by_batch:
+    desc: "QMS：按批号的不良分布（8D D4 过程分析）"
+    tables: [quality_defect]
+    keywords: [不良, 缺陷, 批号, 分布]
+    sql: "SELECT defect_type, SUM(defect_qty) AS total_qty FROM quality_defect WHERE batch_no = :batch_no GROUP BY defect_type"
+
+  # ---- S4 出货风险 ----
+  orders_by_model:
+    desc: "TMS：型号订单/发货单与交期（ATP 前置）"
+    tables: [shipment]
+    keywords: [订单, 交期, 发货, 能发]
+    sql: "SELECT order_no, product_model, qty, ship_status, eta FROM shipment WHERE product_model = :model"
+
+  shortage_by_model:
+    desc: "WMS+TMS：型号库存与订单量（缺料/缺口推算）"
+    tables: [inventory, shipment]
+    keywords: [缺料, 齐套, 缺口, 备料]
+    sql: "SELECT i.product_model, i.on_hand_qty, i.reserved_qty, s.qty AS ordered_qty FROM inventory i JOIN shipment s ON i.product_model = s.product_model"
+
+  plan_by_model:
+    desc: "MES：型号排产与产出（计划影响/窗口评估）"
+    tables: [production_output]
+    keywords: [排产, 计划, 产出]
+    sql: "SELECT record_date, line_code, product_model, planned_qty, actual_qty FROM production_output WHERE product_model = :model"
+
+  output_by_model:
+    desc: "MES：型号产出达成与平均 OEE"
+    tables: [production_output]
+    keywords: [产出, 达成, OEE]
+    sql: "SELECT product_model, SUM(actual_qty) AS actual_qty, AVG(oee) AS oee FROM production_output WHERE product_model = :model GROUP BY product_model"
+
+  plan_impact_by_material:
+    desc: "MES：来料异常影响的排产（按型号）"
+    tables: [production_output]
+    keywords: [排产影响, 计划调整]
+    sql: "SELECT record_date, line_code, product_model, planned_qty, actual_qty FROM production_output WHERE product_model = :model"

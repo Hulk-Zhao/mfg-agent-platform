@@ -110,10 +110,18 @@ SEED_DATA = [
     "INSERT INTO quality_defect VALUES (2,'BATCH-A-1015','A型号','SMT-1','锡膏偏移',45,500,'2026-10-15 15:10:00')",
     "INSERT INTO quality_defect VALUES (3,'BATCH-A-1015','A型号','SMT-1','连锡',8,500,'2026-10-15 15:40:00')",
     "INSERT INTO quality_defect VALUES (4,'BATCH-B-1014','B型号','DIP-2','虚焊',3,300,'2026-10-15 10:00:00')",
+    # S3 客诉批次 BATCH-A-1008 的过程不良（8D D4）；line_code=SMT-2，
+    # 不影响 line_stop 的 SMT-1/A型号不良分布聚合（回归红线）
+    "INSERT INTO quality_defect VALUES (5,'BATCH-A-1008','A型号','SMT-2','贴片偏移',46,2000,'2026-10-12 10:00:00')",
     # material_batch
     "INSERT INTO material_batch VALUES (1,'MAT-SP-1015','SP-001','无铅锡膏SAC305','千住金属','pass','http://coa.example.com/sp1015.pdf','2026-10-15 08:00:00')",
     "INSERT INTO material_batch VALUES (2,'MAT-PCB-1013','PCB-022','A型号PCB','深南电路','pass','http://coa.example.com/pcb1013.pdf','2026-10-13 09:00:00')",
     "INSERT INTO material_batch VALUES (3,'MAT-IC-1012','IC-100','主控芯片','STMicroelectronics','pass','http://coa.example.com/ic1012.pdf','2026-10-12 11:00:00')",
+    # 数据红线（§0.2）：新增批次 arrival_time **必须避开 '2026-10-15'**，
+    # 否则 supply_batches_today（line_stop"无来料异常"断言）会被破坏。
+    "INSERT INTO material_batch VALUES (4,'MAT-SP-1014','SP-001','无铅锡膏SAC305','千住金属','fail','http://coa.example.com/sp1014.pdf','2026-10-14 08:00:00')",
+    "INSERT INTO material_batch VALUES (5,'MAT-IC-1011','IC-100','主控芯片','STMicroelectronics','fail','http://coa.example.com/ic1011.pdf','2026-10-11 11:00:00')",
+    "INSERT INTO material_batch VALUES (6,'BATCH-A-1008','PCB-022','A型号PCB','深南电路','pass','http://coa.example.com/pcb1008.pdf','2026-10-12 09:00:00')",
     # equipment_log
     "INSERT INTO equipment_log VALUES (1,'PRT-01','SMT-1','2026-10-15 14:28:00','E-201','刮刀压力','0.8MPa（基准0.5）',1)",
     "INSERT INTO equipment_log VALUES (2,'PRT-01','SMT-1','2026-10-15 14:29:00','E-205','钢网清洁周期','15min（基准4h）',1)",
@@ -125,6 +133,8 @@ SEED_DATA = [
     # shipment
     "INSERT INTO shipment VALUES (1,'SO-20261015-01','A型号',2000,'待发货','2026-10-17 10:00:00')",
     "INSERT INTO shipment VALUES (2,'SO-20261014-02','B型号',1000,'在途','2026-10-16 18:00:00')",
+    # S4 追加一单逾期风险订单（不改既有 2 单的 id 顺序）
+    "INSERT INTO shipment VALUES (3,'SO-20261010-03','A型号',1500,'待发货','2026-10-14 10:00:00')",
     # customer_complaint
     "INSERT INTO customer_complaint VALUES (1,'CS-20261012-01','华为终端','A型号','BATCH-A-1008','贴片元件偏移导致功能失效，不良率约2.3%','open')",
 ]

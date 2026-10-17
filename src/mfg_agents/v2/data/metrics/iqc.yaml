@@ -1,0 +1,11 @@
+# 指标库 · 来料质量（S2；**新增文件**，不改 otd.yaml）
+metrics:
+  - id: iqc_pass_rate
+    name: 来料检验合格率
+    owner: 质量域
+    desc: "IQC 合格批次数占比（演示口径：material_batch.incoming_result）。"
+    tables: [material_batch]
+    keywords: [来料合格率, IQC 合格率, 来料不良率]
+    sql: "SELECT ROUND(100.0 * SUM(CASE WHEN incoming_result='pass' THEN 1 ELSE 0 END) / COUNT(*), 1) AS iqc_pass_rate_pct, COUNT(*) AS total_batches FROM material_batch"
+    unit: "%"
+    higher_is_better: true
