@@ -14,37 +14,58 @@
    *  uid：稳定用户标识——一人一签（G6）按 uid 判定，不按姓名。
    *  每个岗位对应**一个**治理角色：同一身份持多个会签角色 = 会签造假入口。
    *  演示三方会签的正确方式是换身份登录。 */
+  /** 登录岗位按域分 4 组（renderLogin 渲染组标题 · sticky）。
+   *  仅影响登录页排版；ROLES 仍是单一事实源数组。 */
+  const ROLE_GROUPS = [
+    { id: "mgmt",   name: "经营层",       roles: ["gm"] },
+    { id: "quality", name: "质量域",      roles: ["sqe", "pqe", "qa"] },
+    { id: "make",   name: "制造与工程",    roles: ["mfg", "eq", "rd", "pe"] },
+    { id: "func",   name: "供应链与职能",  roles: ["pln", "mc", "proc", "wh", "biz", "fin"] },
+  ];
+
   const ROLES = [
-    { id: "gm",  name: "总经理",   uid: "u-gm",  user: "张明", dept: "management",    roles: ["gm"],
+    { id: "gm",  name: "总经理",   abbr: "GM",    uid: "u-gm",  user: "张明", dept: "management",    roles: ["gm"],
       greeting: "全局运营视图", desc: "汇总五大域组运行态势，聚焦订单履约风险与升级事项",
       scope: "五域全局 · 只读汇总", scenarios: ["经营异常摘要", "跨部门升级", "订单履约风险"], tone: "blue" },
-    { id: "mfg", name: "制造经理", uid: "u-mfg", user: "李伟", dept: "manufacturing", roles: ["manufacturing"],
+    { id: "mfg", name: "制造经理", abbr: "MFG",   uid: "u-mfg", user: "李伟", dept: "manufacturing", roles: ["manufacturing"],
       greeting: "制造运营视图", desc: "聚焦停线 / OEE / 设备告警 / 复线进度，制造域工单优先",
       scope: "制造 · 设备 · 停线", scenarios: ["停线应急", "设备预警", "OEE 达成"], tone: "green" },
-    { id: "sqe", name: "SQE 供应商质量", uid: "u-sqe", user: "刘强", dept: "quality", roles: ["sqe"],
+    { id: "eq",  name: "EQ 设备工程", abbr: "EQ",  uid: "u-eq",  user: "郑昊", dept: "equipment",     roles: ["equipment"],
+      greeting: "设备保障视图", desc: "聚焦设备告警 / 停机窗口 / 备件与 OEE 损耗，与制造经理共同决定设备能不能开、停多久",
+      scope: "设备 · 停机窗口 · OEE 损耗", scenarios: ["停机窗口确认", "设备预警", "OEE 损耗分析"], tone: "teal" },
+    { id: "sqe", name: "SQE 供应商质量", abbr: "SQE", uid: "u-sqe", user: "刘强", dept: "quality", roles: ["sqe"],
       greeting: "供应商质量视图", desc: "聚焦来料异常 / SCAR / 供应商处置发起（退货、换货、特采）",
       scope: "来料 · 供应商 · SCAR", scenarios: ["来料异常处置", "SCAR 跟催", "特采发起"], tone: "amber" },
-    { id: "pqe", name: "PQE 制程质量", uid: "u-pqe", user: "王倩", dept: "quality", roles: ["pqe"],
+    { id: "pqe", name: "PQE 制程质量", abbr: "PQE", uid: "u-pqe", user: "王倩", dept: "quality", roles: ["pqe"],
       greeting: "品质工程视图", desc: "聚焦 SPC / 不良分布 / 客诉 8D 会签，敏感字段按角色脱敏",
       scope: "质量域 · 供应商字段脱敏", scenarios: ["SPC / CPK", "客诉 8D", "不良分析"], tone: "amber" },
-    { id: "qa",  name: "QA 质量保证", uid: "u-qa",  user: "李静", dept: "quality", roles: ["qa"],
+    { id: "qa",  name: "QA 质量保证", abbr: "QA",  uid: "u-qa",  user: "李静", dept: "quality", roles: ["qa"],
       greeting: "质量保证视图", desc: "聚焦合规把关 / 放行审核 / 8D 关闭会签",
       scope: "合规 · 放行 · 审计", scenarios: ["放行审核", "8D 关闭", "质量体系"], tone: "olive" },
-    { id: "mc",  name: "物控专员", uid: "u-mc",  user: "赵敏", dept: "supply_chain",  roles: ["material_control"],
-      greeting: "供应链视图", desc: "聚焦缺料 / 齐套率 / 到货批次，供应链域待办优先",
-      scope: "物料 · 库存 · 齐套", scenarios: ["缺料预警", "齐套检查", "到货批次"], tone: "teal" },
-    { id: "biz", name: "业务经理", uid: "u-biz", user: "陈皓", dept: "sales",         roles: ["sales"],
-      greeting: "业务交付视图", desc: "聚焦对客 ETA / 订单临期 / 客诉响应，业务域待办优先",
-      scope: "订单 · 对客 ETA · 出货", scenarios: ["交期承诺", "客诉响应", "出货风险"], tone: "purple" },
-    { id: "proc", name: "采购专员", uid: "u-proc", user: "孙立", dept: "procurement",   roles: ["procurement"],
-      greeting: "采购与供应商视图", desc: "聚焦来料异常会签 / SCAR 跟催 / 供应商索赔，价格字段可见",
-      scope: "供应商 · 价格（可见）", scenarios: ["来料会签", "SCAR 跟催", "供应商索赔"], tone: "coral" },
-    { id: "wh",  name: "仓库主管", uid: "u-wh", user: "周凯", dept: "warehouse",     roles: ["warehouse"],
-      greeting: "仓储与发货视图", desc: "聚焦库存准确 / ATP 可承诺量 / 发货协同",
-      scope: "库存 · 出入库 · 发货", scenarios: ["ATP 可承诺量", "发货协同", "库存准确"], tone: "gray" },
-    { id: "rd",  name: "研发工程师", uid: "u-rd", user: "林哲", dept: "rd_engineering", roles: ["rd_engineering"],
+    { id: "rd",  name: "研发工程师", abbr: "RD", uid: "u-rd",  user: "林哲", dept: "rd_engineering", roles: ["rd_engineering"],
       greeting: "研发工程视图", desc: "聚焦 ECN / NPI / 根因分析（BOM 等数据源未接入时诚实标注缺口）",
       scope: "BOM · ECN · 工艺（部分无数据源）", scenarios: ["ECN 变更", "NPI 导入", "根因分析"], tone: "indigo" },
+    { id: "pe",  name: "PE 产品/工艺工程", abbr: "PE", uid: "u-pe", user: "袁磊", dept: "rd_engineering", roles: ["product_engineering"],
+      greeting: "制程与量产视图", desc: "聚焦可制造性 / 制程窗口 / 试产技术结论 / PFMEA，把 RD 设计变成能量产的产品",
+      scope: "制程 · 可制造性 · 量产承接", scenarios: ["DFM 评审", "制程参数与 CPK", "试产技术结论"], tone: "purple" },
+    { id: "pln", name: "PLN 计划", abbr: "PLN", uid: "u-pln", user: "吴桐", dept: "supply_chain",  roles: ["planning"],
+      greeting: "产销协同视图", desc: "聚焦 MPS 排产 / 产能负荷 / 齐套 / 插单，S&OP 出交付承诺的技术背书",
+      scope: "排产 · 产能 · S&OP", scenarios: ["MPS 排产", "产能负荷", "插单与改期"], tone: "blue" },
+    { id: "mc",  name: "物控专员", abbr: "MC",  uid: "u-mc",  user: "赵敏", dept: "supply_chain",  roles: ["material_control"],
+      greeting: "供应链视图", desc: "聚焦缺料 / 齐套率 / 到货批次，供应链域待办优先",
+      scope: "物料 · 库存 · 齐套", scenarios: ["缺料预警", "齐套检查", "到货批次"], tone: "teal" },
+    { id: "proc", name: "采购专员", abbr: "PROC", uid: "u-proc", user: "孙立", dept: "procurement",   roles: ["procurement"],
+      greeting: "采购与供应商视图", desc: "聚焦来料异常会签 / SCAR 跟催 / 供应商索赔，价格字段可见",
+      scope: "供应商 · 价格（可见）", scenarios: ["来料会签", "SCAR 跟催", "供应商索赔"], tone: "coral" },
+    { id: "wh",  name: "仓库主管", abbr: "WH",  uid: "u-wh",  user: "周凯", dept: "warehouse",     roles: ["warehouse"],
+      greeting: "仓储与发货视图", desc: "聚焦库存准确 / ATP 可承诺量 / 发货协同",
+      scope: "库存 · 出入库 · 发货", scenarios: ["ATP 可承诺量", "发货协同", "库存准确"], tone: "gray" },
+    { id: "biz", name: "业务经理", abbr: "SALES", uid: "u-biz", user: "陈皓", dept: "sales",         roles: ["sales"],
+      greeting: "业务交付视图", desc: "聚焦对客 ETA / 订单临期 / 客诉响应，业务域待办优先",
+      scope: "订单 · 对客 ETA · 出货", scenarios: ["交期承诺", "客诉响应", "出货风险"], tone: "purple" },
+    { id: "fin", name: "FIN 财务成本", abbr: "FIN", uid: "u-fin", user: "何静", dept: "finance",       roles: ["finance"],
+      greeting: "成本与索赔视图", desc: "聚焦 BOM 成本 / 制造费用 / COPQ，来料处置的金额口径由财务会签",
+      scope: "成本 · 价格（最敏感）· COPQ", scenarios: ["BOM 成本核算", "供应商索赔金额", "质量成本分析"], tone: "gray" },
   ];
 
   /** 工作台 · 今日预警摘要（按角色取不同范围，演示数据） */
@@ -102,6 +123,26 @@
       { icon: "activity", tone: "green", num: "DVT", label: "NPI 当前阶段", trend: "B 型号按计划", up: false , ask: "B型号NPI进展如何？"},
       { icon: "warn", tone: "amber", num: "2", label: "根因待补数据", trend: "BOM/工艺参数源未接入", up: true , ask: "BOM/ECN数据为什么缺失？"},
     ],
+    eq: [
+      { icon: "warn", tone: "red", num: "2", label: "设备预警", trend: "SMT-1 刮刀压力异常", up: true , ask: "SMT-1现在设备参数异常吗？"},
+      { icon: "clock", tone: "amber", num: "1", label: "停机窗口待确认", trend: "PRT-01 点检后开窗", up: true , ask: "A型号在SMT-1停线，何时复线？"},
+      { icon: "activity", tone: "green", num: "76.4%", label: "设备综合效率 OEE", trend: "低于目标 2.2pct", up: false , ask: "设备综合效率OEE是多少？"},
+    ],
+    pe: [
+      { icon: "approve", tone: "blue", num: "1", label: "8D 待我会签", trend: "制程根因结论", up: false , ask: "锡膏印刷CPK最近趋势如何？"},
+      { icon: "activity", tone: "amber", num: "0.89", label: "锡膏印刷 CPK", trend: "工艺窗口待收敛", up: true , ask: "今天锡膏批次有问题"},
+      { icon: "warn", tone: "red", num: "1", label: "DFM 待评审", trend: "B 型号结构改版", up: true , ask: "B型号DFM评审进展如何？"},
+    ],
+    pln: [
+      { icon: "orders", tone: "blue", num: "92.4%", label: "订单准交率 OTD", trend: "本周排产已锁定", up: false , ask: "最近一周有哪些订单存在延期风险？"},
+      { icon: "activity", tone: "amber", num: "3", label: "产能瓶颈工序", trend: "组装段负荷 112%", up: true , ask: "当前产能负荷如何？"},
+      { icon: "warn", tone: "red", num: "1", label: "紧急插单待评估", trend: "S 级客户加急 500pcs", up: true , ask: "有哪些订单需要插单或改期？"},
+    ],
+    fin: [
+      { icon: "box", tone: "blue", num: "¥ 86.4", label: "A 型号 BOM 成本", trend: "环比 -1.2%", up: false , ask: "BOM成本是多少？"},
+      { icon: "warn", tone: "amber", num: "2", label: "待核算索赔", trend: "供应商 SCAR 赔付中", up: true , ask: "供应商索赔金额是多少？"},
+      { icon: "activity", tone: "red", num: "¥ 31.2万", label: "本月质量成本 COPQ", trend: "返工+报废占比 62%", up: true , ask: "质量成本COPQ分析"},
+    ],
   };
 
   const ALERT_SUMMARY = {
@@ -113,6 +154,10 @@
     proc: { spc: 1, shortage: 2, order: 2, sla: 1 },
     wh:  { spc: 0, shortage: 1, order: 3, sla: 1 },
     rd:  { spc: 1, shortage: 0, order: 1, sla: 0 },
+    eq:  { spc: 1, shortage: 0, order: 2, sla: 1 },
+    pe:  { spc: 2, shortage: 0, order: 1, sla: 1 },
+    pln: { spc: 0, shortage: 2, order: 4, sla: 1 },
+    fin: { spc: 1, shortage: 1, order: 2, sla: 1 },
   };
 
   /** 工作台 · 待办中心（后端不可达时的演示数据；标注"演示数据"） */
@@ -3131,6 +3176,6 @@
   const CHAT_DEMO = CHAT_DEMOS["A型号在SMT-1停线，何时复线？"];
 
   window.DEMO = {
-    ROLES, ALERT_SUMMARY, ROLE_KPIS, DEMO_TODOS, ORDERS, ALERTS, REPORTS, DEMO_人工确认, CHAT_DEMO, CHAT_DEMOS,
+    ROLES, ROLE_GROUPS, ALERT_SUMMARY, ROLE_KPIS, DEMO_TODOS, ORDERS, ALERTS, REPORTS, DEMO_人工确认, CHAT_DEMO, CHAT_DEMOS,
   };
 })();

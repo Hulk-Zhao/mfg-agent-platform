@@ -29,6 +29,20 @@
   // 后端候选基址：同源优先（http(s) 托管时），随后是本机 8004 端口
   const API_PORT_CANDIDATES = ["http://127.0.0.1:8004", "http://localhost:8004"];
 
+  // GET 请求超时（毫秒）。本地毫秒级，公网隧道单次往返约 1-2s；
+  // 给 12s 余量，但必须有上限——否则网络抖动会让"正在加载…"永远转圈。
+  const DEFAULT_TIMEOUT_MS = 12000;
+
+  // 后端健康探测超时（毫秒）。
+  // 必须是 GET 超时的 2 倍以上：公网隧道（Cloudflare / cpolar）下单次
+  // 往返实测 1.2-2s，探测并发 2 个候选基址时更慢；早期版本用 1800ms，
+  // 公网下必定 abort → 误判"后端离线"→ 全站退回演示数据。实测证据：
+  // 同一 URL curl 200，页面却显示"后端离线 · 演示数据"。
+  const PROBE_TIMEOUT_MS = 9000;
+
+  // probe() 的 in-flight Promise（并发守卫，见下方 probe 注释）
+  let probeInFlight = null;
+
   const ICONS = {
     grid: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
     orders: '<rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4a2 2 0 0 1 6 0"/><path d="M9 11h6M9 15h4"/>',
@@ -108,10 +122,17 @@
     try { localStorage.removeItem(USER_KEY); } catch (err) { /* ignore */ }
   }
 
+  /** 头像字母：优先岗位显式 abbr（GM/MFG/SQE…），缺失时回退中文名首字。 */
+  function roleAbbr(role) {
+    return role.abbr || role.name.slice(0, 1);
+  }
+
   function roleCardHtml(role, selected) {
     const cls = `role-card${selected ? " selected" : ""}`;
+    const abbr = roleAbbr(role);
+    const wideCls = abbr.length >= 4 ? " wide" : "";
     return `<button class="${cls}" type="button" data-role="${esc(role.id)}" aria-pressed="${selected}">
-      <span class="role-avatar tone-${esc(role.tone || "blue")}">${esc(role.name.slice(0, 1))}</span>
+      <span class="role-avatar tone-${esc(role.tone || "blue")}${wideCls}">${esc(abbr)}</span>
       <span class="role-main">
         <span class="role-name">${esc(role.name)}</span>
         <span class="role-user">${esc(role.user)} · ${esc(role.dept)}</span>
@@ -120,6 +141,37 @@
       </span>
       <span class="role-tick">${icon("check", 13)}</span>
     </button>`;
+  }
+
+  /** 按域分组渲染登录卡片：组标题 sticky（滚动时当前域标题始终可见）。
+   *  分组缺失（ROLE_GROUPS 未定义）时回退为单组平铺，保证旧数据可用。 */
+  function roleGroupsHtml(roles, selected) {
+    const groups = (window.DEMO.ROLE_GROUPS || []).filter((g) => (g.roles || []).length);
+    if (!groups.length) {
+      return roles.map((r) => roleCardHtml(r, r.id === selected)).join("");
+    }
+    const byId = {};
+    roles.forEach((r) => { byId[r.id] = r; });
+    const seen = {};
+    let html = "";
+    groups.forEach((g) => {
+      const cards = (g.roles || [])
+        .map((id) => byId[id])
+        .filter(Boolean)
+        .map((r) => { seen[r.id] = 1; return roleCardHtml(r, r.id === selected); })
+        .join("");
+      if (!cards) return;
+      html += `<div class="role-group-title section-title">${esc(g.name)}`
+        + `<span class="section-extra">× ${(g.roles || []).length}</span></div>`
+        + `<div class="role-group-grid">${cards}</div>`;
+    });
+    const rest = roles.filter((r) => !seen[r.id]);
+    if (rest.length) {
+      html += `<div class="role-group-title section-title">其他`
+        + `<span class="section-extra">× ${rest.length}</span></div>`
+        + `<div class="role-group-grid">${rest.map((r) => roleCardHtml(r, r.id === selected)).join("")}</div>`;
+    }
+    return html;
   }
 
   function renderLogin() {
@@ -160,7 +212,7 @@
             <h2>选择岗位身份</h2>
             <p>角色定义直接可见：决定数据权限、默认视图与可审批事项。演示版免密码，进入后可随时切换。</p>
           </div>
-          <div class="role-grid">${roles.map((r) => roleCardHtml(r, r.id === selected)).join("")}</div>
+          <div class="role-grid">${roleGroupsHtml(roles, selected)}</div>
           <div class="login-panel-foot">
             <div class="login-selected" id="login-selected">${selected
               ? `已选择：${esc(currentRole().name)} · ${esc(currentRole().user)}`
@@ -318,32 +370,41 @@
     online() { return state.backend.online; },
 
     /** 探测后端：同源优先，随后本机 8004；全部失败 → 演示模式。
-     *  候选基址并行探测（任一成功即用），总耗时 ≤ 单次超时，避免串行等待。 */
-    async probe() {
-      const candidates = [];
-      if (/^https?:$/.test(location.protocol)) candidates.push(location.origin);
-      API_PORT_CANDIDATES.forEach((c) => { if (!candidates.includes(c)) candidates.push(c); });
-      const probeOne = async (base) => {
-        try {
-          const ctrl = new AbortController();
-          const timer = setTimeout(() => ctrl.abort(), 1800);
-          const resp = await fetch(`${base}/api/v2/health`, { signal: ctrl.signal });
-          clearTimeout(timer);
-          if (resp.ok) {
-            const data = await resp.json();
-            if (data && data.status === "ok") return base;
-          }
-        } catch (err) { /* 候选失败 */ }
-        return null;
-      };
-      const results = await Promise.all(candidates.map(probeOne));
-      const base = results.find((r) => r !== null) || null;
-      if (base) {
-        state.backend = { online: true, base, checking: false };
-        return true;
-      }
-      state.backend = { online: false, base: "", checking: false };
-      return false;
+     *  候选基址并行探测（任一成功即用），总耗时 ≤ 单次超时，避免串行等待。
+     *
+     *  并发守卫：boot()（已登录用户）与 enterApp()（登录页点岗位）都可能触发
+     *  startApp() → probe()。公网隧道下探测耗时 1-2s，两次并发时后返回的
+     *  候选会互相覆盖 state.backend，导致前端停在"检测中"且误判离线。
+     *  复用同一个 in-flight Promise 即可。 */
+    probe() {
+      if (probeInFlight) return probeInFlight;
+      probeInFlight = (async () => {
+        const candidates = [];
+        if (/^https?:$/.test(location.protocol)) candidates.push(location.origin);
+        API_PORT_CANDIDATES.forEach((c) => { if (!candidates.includes(c)) candidates.push(c); });
+        const probeOne = async (base) => {
+          try {
+            const ctrl = new AbortController();
+            const timer = setTimeout(() => ctrl.abort(), PROBE_TIMEOUT_MS);
+            const resp = await fetch(`${base}/api/v2/health`, { signal: ctrl.signal });
+            clearTimeout(timer);
+            if (resp.ok) {
+              const data = await resp.json();
+              if (data && data.status === "ok") return base;
+            }
+          } catch (err) { /* 候选失败 */ }
+          return null;
+        };
+        const results = await Promise.all(candidates.map(probeOne));
+        const base = results.find((r) => r !== null) || null;
+        if (base) {
+          state.backend = { online: true, base, checking: false };
+          return true;
+        }
+        state.backend = { online: false, base: "", checking: false };
+        return false;
+      })().finally(() => { probeInFlight = null; });
+      return probeInFlight;
     },
 
     async _post(path, body) {
@@ -359,8 +420,17 @@
       return data.data;
     },
 
-    async _get(path) {
-      const resp = await fetch(`${this.base()}${path}`);
+    /** 公网隧道下单次往返约 1-2s；给足余量但必须有上限，
+     *  否则网络抖动时前端会无限转圈（"正在加载待办队列…"永不消失）。 */
+    async _get(path, timeoutMs) {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), timeoutMs || DEFAULT_TIMEOUT_MS);
+      let resp;
+      try {
+        resp = await fetch(`${this.base()}${path}`, { signal: ctrl.signal });
+      } finally {
+        clearTimeout(timer);
+      }
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok || data.code !== 0) {
         throw apiError(resp.status, data);
@@ -478,7 +548,11 @@
     const avatar = document.getElementById("user-avatar");
     const name = document.getElementById("user-name");
     const roleEl = document.getElementById("user-role");
-    if (avatar) avatar.textContent = role.name.slice(0, 1);
+    if (avatar) {
+      const abbr = roleAbbr(role);
+      avatar.textContent = abbr;
+      avatar.classList.toggle("wide", abbr.length >= 4);
+    }
     if (name) name.textContent = role.user;
     if (roleEl) roleEl.textContent = role.name;
 

@@ -6,19 +6,19 @@
   "use strict";
 
   const FALLBACK_AGENTS = [
-    { key: "quality", name: "质量域智能体", role: "来料质量、制程不良、客诉与 8D、SPC/CPK、良率", boundary: "只答质量域；产出/停线背景可查；敏感字段按岗位脱敏", hitl_rule: "处置决策/对客口径/8D 关闭 → 必须人工确认" },
-    { key: "manufacturing", name: "制造运营智能体", role: "停线、复线进度、OEE、产出达成、设备告警", boundary: "只答制造运营域；成本/对客承诺不在职责内", hitl_rule: "复线决策/停机窗口 → 人工确认" },
-    { key: "supply_chain", name: "供应链智能体", role: "订单交付、齐套、缺料、ATP、库存与发货", boundary: "只答供应链域；质量判定/设备维修不在职责内", hitl_rule: "对客交期承诺/分批出货/加急 → 人工确认" },
-    { key: "rd_engineering", name: "研发工程智能体", role: "ECN、BOM、图纸、工艺参数、根因分析", boundary: "只答研发域；BOM/图纸数据源未接入时诚实说明", hitl_rule: "ECN 会签/图纸发放 → 人工确认" },
-    { key: "test_engineer", name: "工程测试智能体（TE）", role: "测试执行、测试报告、失效分析、可靠性（跌落/高低温）", boundary: "只答测试执行与可靠性域；软件 Bug 走研发测试", hitl_rule: "测试放行判定/可靠性不通过处置 → 人工确认" },
-    { key: "rd_test", name: "研发测试智能体", role: "软件测试、固件验证、Bug 管理、版本回归", boundary: "只答软件/固件测试域；硬件可靠性走工程测试", hitl_rule: "版本放行/Bug 遗留判定 → 人工确认" },
-    { key: "me_engineer", name: "结构工程智能体（ME）", role: "结构设计、模具、公差配合、装配问题、变形/断裂", boundary: "只答结构工程域；3D/CAD 数据源未接入时诚实说明", hitl_rule: "结构变更/模具修改 → 人工确认" },
-    { key: "ie_engineer", name: "工业工程智能体（IE）", role: "标准工时、产能测算、线平衡、效率改善、人力配置", boundary: "只答工业工程域；MES 工时明细未接入时注明口径", hitl_rule: "产线重排/工时标准变更 → 人工确认" },
-    { key: "npi_engineer", name: "NPI 导入智能体", role: "EVT/DVT/PVT/MP 阶段、试产安排、DFM、导入进度", boundary: "只答 NPI 导入域；里程碑表已接入", hitl_rule: "阶段转段判定/试产放行 → 人工确认" },
-    { key: "project_manager", name: "项目经理智能体（PM）", role: "项目里程碑、跨部门协调、风险跟踪、项目健康度", boundary: "只答项目管理域；单域技术深挖引导到对应域智能体", hitl_rule: "里程碑变更/资源跨部门调配 → 人工确认" },
-    { key: "finance", name: "财务智能体", role: "成本构成、费用报销、开票与应收、费用归集", boundary: "只答财务域；制度库已接入；ERP 数据源未接入时诚实说明", hitl_rule: "费用审批/开票确认/成本核销 → 人工确认" },
-    { key: "admin", name: "行政人事智能体", role: "行政流程、培训资质、考勤假期、平台使用帮助", boundary: "只答职能支撑与平台使用；行政制度库已接入", hitl_rule: "用章审批/培训资质确认 → 人工确认" },
-    { key: "gm", name: "经营总览智能体", role: "跨域汇总：交付/质量/风险工单的整体态势", boundary: "只做跨域汇总与升级判断，不做单域深挖", hitl_rule: "重大客户升级/高层决策 → 人工确认" },
+    { key: "quality", abbr: "QA", name: "质量域智能体", role: "来料质量、制程不良、客诉与 8D、SPC/CPK、良率", boundary: "只答质量域；产出/停线背景可查；敏感字段按岗位脱敏", hitl_rule: "处置决策/对客口径/8D 关闭 → 必须人工确认" },
+    { key: "manufacturing", abbr: "MFG", name: "制造运营智能体", role: "停线、复线进度、OEE、产出达成、设备告警", boundary: "只答制造运营域；成本/对客承诺不在职责内", hitl_rule: "复线决策/停机窗口 → 人工确认" },
+    { key: "supply_chain", abbr: "SC", name: "供应链智能体", role: "订单交付、齐套、缺料、ATP、库存与发货", boundary: "只答供应链域；质量判定/设备维修不在职责内", hitl_rule: "对客交期承诺/分批出货/加急 → 人工确认" },
+    { key: "rd_engineering", abbr: "RD", name: "研发工程智能体", role: "ECN、BOM、图纸、工艺参数、根因分析", boundary: "只答研发域；BOM/图纸数据源未接入时诚实说明", hitl_rule: "ECN 会签/图纸发放 → 人工确认" },
+    { key: "test_engineer", abbr: "TE", name: "工程测试智能体（TE）", role: "测试执行、测试报告、失效分析、可靠性（跌落/高低温）", boundary: "只答测试执行与可靠性域；软件 Bug 走研发测试", hitl_rule: "测试放行判定/可靠性不通过处置 → 人工确认" },
+    { key: "rd_test", abbr: "RD-T", name: "研发测试智能体", role: "软件测试、固件验证、Bug 管理、版本回归", boundary: "只答软件/固件测试域；硬件可靠性走工程测试", hitl_rule: "版本放行/Bug 遗留判定 → 人工确认" },
+    { key: "me_engineer", abbr: "ME", name: "结构工程智能体（ME）", role: "结构设计、模具、公差配合、装配问题、变形/断裂", boundary: "只答结构工程域；3D/CAD 数据源未接入时诚实说明", hitl_rule: "结构变更/模具修改 → 人工确认" },
+    { key: "ie_engineer", abbr: "IE", name: "工业工程智能体（IE）", role: "标准工时、产能测算、线平衡、效率改善、人力配置", boundary: "只答工业工程域；MES 工时明细未接入时注明口径", hitl_rule: "产线重排/工时标准变更 → 人工确认" },
+    { key: "npi_engineer", abbr: "NPI", name: "NPI 导入智能体", role: "EVT/DVT/PVT/MP 阶段、试产安排、DFM、导入进度", boundary: "只答 NPI 导入域；里程碑表已接入", hitl_rule: "阶段转段判定/试产放行 → 人工确认" },
+    { key: "project_manager", abbr: "PM", name: "项目经理智能体（PM）", role: "项目里程碑、跨部门协调、风险跟踪、项目健康度", boundary: "只答项目管理域；单域技术深挖引导到对应域智能体", hitl_rule: "里程碑变更/资源跨部门调配 → 人工确认" },
+    { key: "finance", abbr: "FIN", name: "财务智能体", role: "成本构成、费用报销、开票与应收、费用归集", boundary: "只答财务域；制度库已接入；ERP 数据源未接入时诚实说明", hitl_rule: "费用审批/开票确认/成本核销 → 人工确认" },
+    { key: "admin", abbr: "ADM", name: "行政人事智能体", role: "行政流程、培训资质、考勤假期、平台使用帮助", boundary: "只答职能支撑与平台使用；行政制度库已接入", hitl_rule: "用章审批/培训资质确认 → 人工确认" },
+    { key: "gm", abbr: "GM", name: "经营总览智能体", role: "跨域汇总：交付/质量/风险工单的整体态势", boundary: "只做跨域汇总与升级判断，不做单域深挖", hitl_rule: "重大客户升级/高层决策 → 人工确认" },
   ];
   const FALLBACK_TOOLS = [
     { name: "query_metric", desc: "查平台统一口径指标（当前：otd_rate 准交率）", kind: "只读" },
@@ -30,6 +30,15 @@
   ];
 
   function esc(s) { return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+
+  /** 首屏只展示意图首句（"你是…，服务…" 属身份描述，重复无信息量），超长截断。 */
+  function trimIntent(role) {
+    const t = String(role).replace(/\s+/g, " ").trim();
+    const m = t.match(/意图[：:]\s*([^]*)$/);
+    const intent = (m ? m[1] : t).trim();
+    const first = intent.split(/(?<=。)/)[0] || intent;
+    return first.length > 78 ? first.slice(0, 78) + "…" : first;
+  }
 
   function architectureSvg() {
     // 配色分层：深蓝底框用白色系文字，浅底框用深色系；层间距加大防遮挡
@@ -96,17 +105,25 @@
         }
       }
     } catch (e) { /* 离线兜底 */ }
-    grid.innerHTML = agents.map((a) => `
+    grid.innerHTML = agents.map((a) => {
+      const abbr = a.abbr || (a.name || a.key).slice(0, 1);
+      return `
       <div class="card agent-card">
         <div class="agent-card-head">
-          <span class="agent-badge">${esc((a.name || a.key).slice(0, 1))}</span>
+          <span class="agent-badge">${esc(abbr)}</span>
           <div><div class="agent-name">${esc(a.name || a.key)}</div>
-          <div style="font-size:10.8px;color:var(--text-3)">key: ${esc(a.key)}</div></div>
+          <div class="agent-key">${esc(abbr)} Agent · key: ${esc(a.key)}</div></div>
         </div>
-        <div class="agent-sec"><b>意图</b>${esc(a.role || "")}</div>
-        <div class="agent-sec"><b>边界</b>${esc(a.boundary || "")}</div>
-        <div class="agent-sec hitl"><b>HITL</b>${esc(a.hitl_rule || "")}</div>
-      </div>`).join("");
+        <div class="agent-sec"><b>意图</b>${esc(trimIntent(a.role || ""))}</div>
+        <details class="agent-more">
+          <summary>边界与 HITL 准则</summary>
+          <div class="agent-more-body">
+            <div class="agent-sec"><b>边界</b>${esc(a.boundary || "")}</div>
+            <div class="agent-sec hitl"><b>HITL</b>${esc(a.hitl_rule || "")}</div>
+          </div>
+        </details>
+      </div>`;
+    }).join("");
     if (toolsBox) {
       toolsBox.innerHTML = tools.map((t) => `<div class="brief-item"><span class="k">${esc(t.name)}</span><span class="v">${esc(t.desc)}（${esc(t.kind)}）</span></div>`).join("");
     }
@@ -117,7 +134,7 @@
   function render(root, ctx) {
     const online = ctx.api.online();
     root.innerHTML = `
-      <div class="content-inner">
+      <div class="content-inner content-wide">
         <div class="page-title">帮助中心</div>
         <div class="page-desc">平台由 13 个专业角色智能体协同工作（7 大域 + 6 个工程专业角色）：智能总控先判断你的问题类型，再分派给最合适的执行路径。各智能体的能力边界由提示词约束，全部工具调用可审计。</div>
 
@@ -133,7 +150,7 @@
         </div>
 
         <div class="section-title">域组智能体 <span class="section-extra" id="help-agents-source">加载中…</span></div>
-        <div class="grid grid-2" id="help-agents-grid"><div class="empty">正在加载智能体配置…</div></div>
+        <div class="grid agent-grid" id="help-agents-grid"><div class="empty">正在加载智能体配置…</div></div>
 
         <div class="section-title">智能体可用工具 <span class="section-extra">与 MCP / A2A 同源 · 能力边界 = 工具边界</span></div>
         <div class="card" style="padding:6px 14px 10px"><div id="help-tools-body"></div></div>

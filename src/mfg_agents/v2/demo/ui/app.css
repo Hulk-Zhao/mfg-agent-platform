@@ -1532,15 +1532,25 @@ a:hover { text-decoration: underline; }
 .login-panel-head p { font-size: 12.3px; color: var(--text-2); margin-top: 7px; line-height: 1.7; max-width: 640px; }
 
 .role-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(276px, 1fr));
-  gap: 12px;
   margin: 18px 0 16px;
-  max-height: calc(100vh - 320px);
+  max-height: calc(100vh - 300px);
   min-height: 380px;
   overflow: auto;
   padding: 3px;
-  align-content: stretch;
+}
+/* 组标题 sticky：滚动时当前域标题始终可见（分组方案的核心价值）。
+   top 偏移 3px = .role-grid 的 padding，避免标题被容器上沿切掉。 */
+.role-group-title {
+  position: sticky; top: 3px; z-index: 2;
+  margin: 14px 0 9px;
+  background: var(--card);          /* 与 .login-shell 同色，滚动时不透出下层卡片 */
+  padding: 4px 0 5px;
+}
+.role-grid > .role-group-title:first-child { margin-top: 0; }
+.role-group-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(276px, 1fr));
+  gap: 12px;
 }
 .role-card {
   display: flex; align-items: flex-start; gap: 11px;
@@ -1572,6 +1582,10 @@ a:hover { text-decoration: underline; }
 .role-avatar.tone-coral { background: #B3542E; }
 .role-avatar.tone-gray { background: #5F6B7A; }
 .role-avatar.tone-indigo { background: #3D4EA8; }
+.role-avatar.tone-olive { background: #5D7012; }
+/* 4+ 字符缩写（SALES / PROC）在 38px 方块内需缩字号，避免换行或溢出 */
+.role-avatar.wide { font-size: 10.5px; letter-spacing: -.2px; font-weight: 700; }
+.avatar.wide { font-size: 9px; letter-spacing: -.3px; font-weight: 700; }
 .role-main { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
 .role-name { font-size: 13.5px; font-weight: 650; color: var(--text); }
 .role-user { font-size: 11px; color: var(--text-3); }
@@ -1843,41 +1857,44 @@ a:hover { text-decoration: underline; }
 .flow-empty { padding: 12px 14px; font-size: 12.3px; color: var(--text-3); line-height: 1.7; }
 .chitchat-card { border-color: #C9DFF2; }
 
-/* ---------- 帮助中心 ---------- */
-.agent-card { padding: 14px 15px 12px; }
-.agent-card-head { display: flex; align-items: center; gap: 10px; margin-bottom: 9px; }
+/* ---------- 帮助中心（容器放宽 + 卡片放大；原两份重复定义已合并去重） ---------- */
+/* 仅帮助屏放宽：其余 5 屏仍走 .content-inner 的 1240px */
+.content-inner.content-wide { max-width: 1680px; }
+/* 自响应列数：宽屏 3-4 列，笔记本 2 列，窄屏 1 列（无需逐断点写死） */
+.agent-grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(400px, 1fr)); }
+.agent-card { padding: 20px 22px 18px; min-height: 188px; display: flex; flex-direction: column; }
+.agent-card-head { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
 .agent-badge {
-  flex: none; width: 36px; height: 36px; border-radius: 10px;
+  flex: none; width: 52px; height: 52px; border-radius: 13px;
   background: var(--primary); color: #fff;
   display: flex; align-items: center; justify-content: center;
-  font-size: 15px; font-weight: 650;
+  font-size: 16px; font-weight: 700; letter-spacing: -.3px;
 }
-.agent-name { font-size: 13.5px; font-weight: 650; }
-.agent-sec { font-size: 11.8px; line-height: 1.7; color: var(--text-2); margin-top: 6px; }
+.agent-name { font-size: 16px; font-weight: 650; }
+.agent-key { font-size: 11px; color: var(--text-3); margin-top: 2px; }
+.agent-sec { font-size: 13px; line-height: 1.75; color: var(--text-2); margin-top: 8px; }
 .agent-sec b {
   display: inline-block; min-width: 38px; color: var(--primary);
   font-weight: 650; margin-right: 6px;
 }
 .agent-sec.hitl { color: #7A5B00; background: #FDF6E7; border-radius: 7px; padding: 6px 9px; }
 .agent-sec.hitl b { color: #7A5B00; }
+/* 首屏只留意图摘要；边界 / HITL 全文 / key 折叠，避免放大后信息过载 */
+.agent-more { margin-top: auto; padding-top: 12px; }
+.agent-more > summary {
+  cursor: pointer; list-style: none; font-size: 12px; color: var(--primary);
+  display: inline-flex; align-items: center; gap: 5px; user-select: none;
+}
+.agent-more > summary::-webkit-details-marker { display: none; }
+.agent-more > summary::before { content: "▸"; font-size: 10px; transition: transform .16s ease; }
+.agent-more[open] > summary::before { transform: rotate(90deg); }
+.agent-more-body { padding-top: 10px; border-top: 1px dashed var(--border); margin-top: 10px; }
 
-/* ---------- 帮助中心 ---------- */
-.agent-card { padding: 14px 15px 12px; }
-.agent-card-head { display: flex; align-items: center; gap: 10px; margin-bottom: 9px; }
-.agent-badge {
-  flex: none; width: 36px; height: 36px; border-radius: 10px;
-  background: var(--primary); color: #fff;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 15px; font-weight: 650;
+@media (max-width: 720px) {
+  .agent-grid { grid-template-columns: 1fr; }
+  .agent-badge { width: 44px; height: 44px; font-size: 14px; }
+  .agent-card { min-height: 0; }
 }
-.agent-name { font-size: 13.5px; font-weight: 650; }
-.agent-sec { font-size: 11.8px; line-height: 1.7; color: var(--text-2); margin-top: 6px; }
-.agent-sec b {
-  display: inline-block; min-width: 38px; color: var(--primary);
-  font-weight: 650; margin-right: 6px;
-}
-.agent-sec.hitl { color: #7A5B00; background: #FDF6E7; border-radius: 7px; padding: 6px 9px; }
-.agent-sec.hitl b { color: #7A5B00; }
 
 /* ---------- 预警细则 + 审批决策指引 ---------- */
 .alert-clickable { cursor: pointer; transition: background .14s ease; }

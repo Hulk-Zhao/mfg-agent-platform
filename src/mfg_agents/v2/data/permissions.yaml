@@ -169,7 +169,7 @@ roles:
     name: 计划
     dept: supply_chain
     actor_kind: human
-    aliases: [计划, 计划员, 计划经理, planning, PMC]
+    aliases: [计划, 计划员, 计划经理, planning, PMC, PLN]
     permissions:
       - hitl.eta.cosign
       - hitl.delivery_commit.cosign
@@ -200,7 +200,7 @@ roles:
     name: 设备工程
     dept: equipment
     actor_kind: human
-    aliases: [设备工程, 设备工程师, 设备, equipment, 维保]
+    aliases: [设备工程, 设备工程师, 设备, equipment, 维保, EQ]
     permissions:
       - hitl.restart.cosign
       - hitl.maintenance_window.cosign
@@ -236,10 +236,19 @@ roles:
       - hitl.d8_close.cosign
       - hitl.maintenance_window.cosign
 
+  - key: product_engineering
+    name: 产品/工艺工程
+    dept: rd_engineering
+    actor_kind: human
+    aliases: [产品工程, 工艺工程, 制程工程, PE, product_engineering, process_engineer]
+    permissions:
+      - hitl.d8_close.cosign
+      - hitl.restart.cosign
+
   - key: finance
     name: 财务
     dept: finance
     actor_kind: human
-    aliases: [财务, 财务经理, 成本会计, finance, cost]
+    aliases: [财务, 财务经理, 成本会计, finance, cost, FIN]
     permissions:
       - hitl.disposition.cosign
