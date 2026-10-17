@@ -1251,21 +1251,23 @@
         </div>
       </div>
       <div class="result-body">
-        ${degraded ? (() => {
+        ${(degraded || gapNotes.length) ? (() => {
           const reasons = result.degraded_reasons || [];
           const svcDown = reasons.some((r) => /服务|模型|分析/.test(r));
-          const dataGap = reasons.some((r) => /数据缺口|数据不完整|缺少数据源/.test(r));
+          const dataGap = reasons.some((r) => /数据缺口|数据不完整|缺少数据源/.test(r)) || gapNotes.length > 0;
           const mode = svcDown ? "分析服务未就绪，部分结论采用模板化输出"
-            : dataGap ? "部分环节缺少数据源，相关结论已标注缺口"
+            : dataGap ? "部分协同环节缺少数据源，相关结论已标注缺口"
               : "部分环节采用受限输出";
-          return `<div class="degrade-banner" style="margin-bottom:12px">${UI.icon("warn", 14)}<span><b>受限模式：${UI.esc(mode)}</b>${reasons.length ? "（" + UI.esc(reasons.join("；")) + "）" : ""}。全部结论仍可追溯数据来源，可人工复核后放行。</span></div>`;
+          const detail = [
+            reasons.length ? `受限原因：${UI.esc(reasons.join("；"))}` : "",
+            gapNotes.length ? `数据缺口（data_gap）：${UI.esc(gapNotes.join("；"))}` : "",
+          ].filter(Boolean).join("　·　");
+          return `<div class="offline-banner" style="margin-bottom:12px">${UI.icon("warn", 14)}<span>`
+            + `<b>${degraded ? "受限模式" : "数据说明"}：${UI.esc(mode)}</b>`
+            + `${detail ? "　" + detail : ""}`
+            + `。平台不编造数据，相关缺口已转人工/现场确认，全部结论可追溯来源、可人工复核后放行。</span></div>`;
         })() : ""}
-        ${gapNotes.length ? `<div class="offline-banner" style="margin-bottom:12px">${UI.icon("info", 14)}<span><b>数据缺口（data_gap）：该数据当前无来源</b>，平台不编造数据，相关项已转人工/现场确认 —— ${UI.esc(gapNotes.join("；"))}</span></div>` : ""}
         <div class="brief-grid">${briefItems}${tickets}</div>
-        ${result.report ? `<div class="report-block">
-          <div class="report-block-title">${UI.icon("report", 13)}报告正文</div>
-          <div class="report-block-body">${UI.esc(result.report)}</div>
-        </div>` : ""}
         ${result.report ? `<div class="report-block">
           <div class="report-block-title">${UI.icon("report", 13)}报告正文</div>
           <div class="report-block-body">${UI.esc(result.report)}</div>
@@ -1360,22 +1362,12 @@
   /* ---------- 人工确认 待确认卡片（对话流内） ---------- */
 
   // 演示岗位（前端登录身份）→ 治理角色 key（与 data/permissions.yaml 的 roles 对齐）。
-  // 后端以 user_ctx.roles 为权威，前端此映射只用于"预先灰显/提示"，不承担安全职责。
-  const ROLE_GOV = {
-    gm: ["gm"],
-    mfg: ["manufacturing"],
-    sqe: ["sqe"],
-    pqe: ["pqe"],
-    qa: ["qa"],
-    mc: ["material_control"],
-    biz: ["sales"],
-    proc: ["procurement"],
-    wh: ["warehouse"],
-    rd: ["rd_engineering"],
-    // G6 会签独立性铁律：一个岗位只允许对应**一个**治理角色。
-    // 同一身份持多个会签角色 = 一个人可签多票 = 会签造假入口。
-    // 演示三方会签的正确方式：换身份登录（sqe/pqe/qa 已拆分为独立岗位）。
-  };
+  // 后端以 user_ctx.roles 为权威，前端此处只用于"预先灰显/提示"，不承担安全职责。
+  // G6 会签独立性铁律：一个岗位只允许对应**一个**治理角色。
+  // 同一身份持多个会签角色 = 一个人可签多票 = 会签造假入口。
+  // 演示三方会签的正确方式：换身份登录（sqe/pqe/qa 已拆分为独立岗位）。
+  // 治理角色 key 为**单一数据源**：直接取登录岗位自身的 roles 声明
+  //（demo-data.js ROLES[].roles），不再手工维护第二份岗位→角色映射，避免漂移。
 
   // 场景 YAML / 演示数据里的中文写法 → 治理角色 key（与 permissions.yaml aliases 同步）
   const ROLE_KEY_BY_NAME = {
@@ -1396,6 +1388,15 @@
     procurement: "procurement", warehouse: "warehouse",
     rd_engineering: "rd_engineering", planning: "planning",
     material_control: "material_control", finance: "finance",
+    // 部门负责人（与 permissions.yaml 新治理角色的 aliases 同步）
+    "设备经理": "equipment_manager", "设备总监": "equipment_manager", "设备主管": "equipment_manager",
+    "研发经理": "rd_manager", "研发总监": "rd_manager", "工程经理": "rd_manager",
+    "供应链经理": "supply_chain_manager", "供应链总监": "supply_chain_manager",
+    "计划总监": "supply_chain_manager", scm: "supply_chain_manager",
+    "采购总监": "procurement_manager", "采购主管": "procurement_manager", "采购管理": "procurement_manager",
+    "仓储经理": "warehouse_manager", "仓库经理": "warehouse_manager",
+    "物流经理": "warehouse_manager", "仓储总监": "warehouse_manager",
+    "财务总监": "finance_manager", "财务主管": "finance_manager", "成本经理": "finance_manager",
   };
 
   const ROLE_LABEL = {
@@ -1403,6 +1404,10 @@
     qa: "QA", sqe: "SQE", pqe: "PQE", procurement: "采购", planning: "计划",
     material_control: "物控", manufacturing: "制造", equipment: "设备工程",
     sales: "业务", warehouse: "仓库", rd_engineering: "工程", finance: "财务",
+    equipment_manager: "设备经理", rd_manager: "研发经理",
+    supply_chain_manager: "供应链经理", procurement_manager: "采购经理",
+    warehouse_manager: "仓储经理", finance_manager: "财务经理",
+    product_engineering: "产品工程",
   };
 
   /** 中文写法/别名 → 治理角色 key（未识别返回 null，与后端一样 fail-closed） */
@@ -1415,10 +1420,10 @@
     return (names || []).map(roleKey).filter(Boolean);
   }
 
-  /** 当前登录身份对应的治理角色 key 列表 */
+  /** 当前登录身份对应的治理角色 key 列表（单一数据源：登录岗位自身的 roles 声明） */
   function govRoles(ctx) {
     const r = ctx.currentRole();
-    return ROLE_GOV[r.id] || [];
+    return (r && Array.isArray(r.roles)) ? r.roles.slice() : [];
   }
 
   /** 当前身份会传给后端的 user_ctx（roles 为权威来源；uid 是一人一签的判定依据） */
@@ -1986,8 +1991,12 @@
         if (!tasks.length) {
           // 兜底：当前岗位无待办时，只读展示队列中「待其他岗位处理」的工单，
           // 避免审批中心出现"看起来没活"的误导（可动作工单仍只有我的待办）。
-          const all = await ctx.api.workflowPending();
-          const others = mergeProcessedTasks(ctx, all)
+          //
+          // 性能：这里曾串行发第二次 workflowPending()。公网隧道下单次往返
+          // 1-2s，串行两次会让审批中心白等 2-4s。改为并行预取全量队列
+          // （后端无过滤参数成本很低），只在真的需要兜底时才消费结果。
+          const allP = ctx.api.workflowPending();
+          const others = mergeProcessedTasks(ctx, await allP)
             .filter((t) => t.task_uid && !processedMap(ctx)[t.task_uid]);
           if (others.length) {
             tasks = others.map((t) => ({ ...t, _readonly: true }));
@@ -2306,6 +2315,235 @@
   }
 
   /* ============================================================
+   * 屏幕六：制造综合看板（制造 + 品质 · 双子 Tab）
+   * ============================================================ */
+
+  // 指标 status（ok/warn/danger）→ 视觉 tone（green/amber/red）
+  const MFG_TONE = { ok: "green", warn: "amber", danger: "red" };
+  const MFG_KPI_ICON = {
+    availability: "gear", scrap_rate: "box", report_rate: "list", test_fpy: "flask",
+    defect_rate: "warn", fpy: "check",
+  };
+
+  /** 迷你趋势线：把后端 kpi.trend（7 点数值数组）画成内联 SVG 折线 + 淡色面积。 */
+  function mfgSpark(values, tone) {
+    const vals = (values || []).filter((v) => typeof v === "number" && !Number.isNaN(v));
+    if (vals.length < 2) return "";
+    const w = 132, h = 26, pad = 2;
+    const mn = Math.min.apply(null, vals), mx = Math.max.apply(null, vals);
+    const rng = (mx - mn) || 1;
+    const step = (w - pad * 2) / (vals.length - 1);
+    const pts = vals.map((v, i) => [pad + i * step, h - pad - ((v - mn) / rng) * (h - pad * 2)]);
+    const line = pts.map((p, i) => `${i ? "L" : "M"}${p[0].toFixed(1)} ${p[1].toFixed(1)}`).join(" ");
+    const area = `${line} L${pts[pts.length - 1][0].toFixed(1)} ${h} L${pts[0][0].toFixed(1)} ${h} Z`;
+    const color = { green: "#2DA44E", amber: "#D4A017", red: "#CF222E" }[tone] || "#185FA5";
+    return `<svg class="spark" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" `
+      + `preserveAspectRatio="none" aria-hidden="true">`
+      + `<path d="${area}" fill="${color}" fill-opacity="0.10"/>`
+      + `<path d="${line}" fill="none" stroke="${color}" stroke-width="1.6" `
+      + `stroke-linejoin="round" stroke-linecap="round"/></svg>`;
+  }
+
+  /** KPI 卡：复用工作台 .stat-card 范式（图标/数值/目标/趋势）+ 迷你趋势线。 */
+  function mfgKpiCard(UI, kpi) {
+    const tone = MFG_TONE[kpi.status] || "blue";
+    const ok = kpi.status === "ok";
+    const delta = (kpi.delta > 0 ? "+" : "") + kpi.delta;
+    const dir = kpi.higher_is_better ? (ok ? "已达标" : "低于目标") : (ok ? "已达标" : "高于目标");
+    const ico = MFG_KPI_ICON[kpi.key] || "activity";
+    return `<button class="card stat-card stat-clickable" data-ask="${UI.esc(kpi.ask || "")}"
+            title="点击下钻：${UI.esc(kpi.ask || "")}">
+      <div class="stat-icon ${tone}">${UI.icon(ico, 19)}</div>
+      <div class="stat-body">
+        <div class="stat-num">${UI.esc(kpi.value)}<span class="stat-unit">${UI.esc(kpi.unit)}</span></div>
+        <div class="stat-label">${UI.esc(kpi.label)} · 目标 ${UI.esc(kpi.target)}${UI.esc(kpi.unit)}</div>
+        <div class="stat-trend ${ok ? "down" : "up"}">${UI.icon(ok ? "check" : "warn", 12)} ${UI.esc(delta)}pt · ${UI.esc(dir)}</div>
+        <div class="spark-wrap">${mfgSpark(kpi.trend, tone)}</div>
+        <div class="stat-ask">${UI.icon("chat", 11)} ${UI.esc(kpi.ask || "")}</div>
+      </div>
+    </button>`;
+  }
+
+  /** TOP5 排行卡：统一「最需关注的最差 5 名」，方向随指标极性由后端给定。 */
+  function mfgRankCard(UI, ranking) {
+    const hb = ranking.higher_is_better;
+    const dir = hb ? "越高越好 · 取最低 5" : "越低越好 · 取最高 5";
+    const ask = `最近7天${ranking.label}${hb ? "最低" : "最高"}的 5 项分别是哪些？`;
+    const rows = (ranking.items || []).map((it) => {
+      const worst = it.status === "danger";
+      return `<button class="rank-row${worst ? " worst" : ""}" data-ask="${UI.esc(ask)}"
+              title="点击下钻：${UI.esc(ask)}">
+        <span class="rank-no">${UI.esc(it.rank)}</span>
+        <span class="rank-name">${worst ? UI.icon("warn", 12) : ""}${UI.esc(it.name)}</span>
+        <span class="rank-val ${UI.esc(it.status)}">${UI.esc(it.value)}${UI.esc(ranking.unit)}</span>
+      </button>`;
+    }).join("");
+    return `<div class="card">
+      <div class="card-head">
+        <div class="card-title">${UI.icon("list", 16)}${UI.esc(ranking.label)} · TOP5</div>
+        <div class="card-extra">目标 ${UI.esc(ranking.target)}${UI.esc(ranking.unit)} · ${UI.esc(dir)}</div>
+      </div>
+      ${rows ? `<div class="rank-list">${rows}</div>` : `<div class="empty">暂无数据</div>`}
+    </div>`;
+  }
+
+  /** 标准三率专区：符合率 = 完整率 × 完善率 × 遵守率（大字 + 分型号明细）。 */
+  function mfgStdThreeRates(UI, s) {
+    if (!s || !s.overall) return "";
+    const o = s.overall;
+    const modelRows = (s.by_model || []).map((m) => `<tr>
+      <td>${UI.esc(m.model)}</td>
+      <td>${UI.esc(m.completeness_rate)}%</td>
+      <td>${UI.esc(m.perfection_rate)}%</td>
+      <td>${UI.esc(m.compliance_rate)}%</td>
+      <td class="std-conform ${UI.esc(m.status)}">${UI.esc(m.conformity_rate)}%</td>
+    </tr>`).join("");
+    return `<div class="card std-card">
+      <div class="card-head">
+        <div class="card-title">${UI.icon("shield", 16)}标准三率 · 符合率</div>
+        <div class="card-extra">符合率 = 完整率 × 完善率 × 遵守率</div>
+      </div>
+      <div class="std-formula">
+        <span class="std-term"><b>${UI.esc(o.completeness_rate)}%</b><i>完整率</i></span>
+        <em>×</em>
+        <span class="std-term"><b>${UI.esc(o.perfection_rate)}%</b><i>完善率</i></span>
+        <em>×</em>
+        <span class="std-term"><b>${UI.esc(o.compliance_rate)}%</b><i>遵守率</i></span>
+        <em>=</em>
+        <span class="std-conform ${UI.esc(o.status)}">${UI.esc(o.conformity_rate)}%</span>
+      </div>
+      ${modelRows ? `<table class="std-table">
+        <thead><tr><th>型号</th><th>完整率</th><th>完善率</th><th>遵守率</th><th>符合率</th></tr></thead>
+        <tbody>${modelRows}</tbody>
+      </table>` : ""}
+    </div>`;
+  }
+
+  /** 口径说明（后端 notes）：指标定义即口径，保证与真实链路一致。 */
+  function mfgNotes(UI, notes) {
+    if (!(notes || []).length) return "";
+    return `<div class="section-title">口径说明 <span class="section-extra">指标定义即口径 · 真实链路同源</span></div>
+      <div class="card"><div class="kpi-def">
+        ${notes.map((n) => `<div class="kpi-def-row">${UI.icon("info", 12)}<span>${UI.esc(n)}</span></div>`).join("")}
+      </div></div>`;
+  }
+
+  function mfgManufacturingBody(UI, d) {
+    const grid = (d.kpis || []).length >= 4 ? "grid grid-4" : "grid grid-2";
+    return `<div class="section-title">核心指标 <span class="section-extra">点卡片下钻问数</span></div>
+      <div class="${grid}">${(d.kpis || []).map((k) => mfgKpiCard(UI, k)).join("")}</div>
+      <div class="section-title">重点关注 TOP5 <span class="section-extra">最需关注的最差 5 名 · 点行下钻</span></div>
+      <div class="grid grid-2">${(d.rankings || []).map((r) => mfgRankCard(UI, r)).join("")}</div>
+      ${mfgNotes(UI, d.notes)}`;
+  }
+
+  function mfgQualityBody(UI, d) {
+    const grid = (d.kpis || []).length >= 4 ? "grid grid-4" : "grid grid-2";
+    return `<div class="section-title">核心指标 <span class="section-extra">点卡片下钻问数</span></div>
+      <div class="${grid}">${(d.kpis || []).map((k) => mfgKpiCard(UI, k)).join("")}</div>
+      ${mfgStdThreeRates(UI, d.standard_three_rates)}
+      <div class="section-title">重点关注 TOP5 <span class="section-extra">最需关注的最差 5 名 · 点行下钻</span></div>
+      <div class="grid grid-2">${(d.rankings || []).map((r) => mfgRankCard(UI, r)).join("")}</div>
+      ${mfgNotes(UI, d.notes)}`;
+  }
+
+  function render_mfgboard(root, ctx) {
+    const UI = ctx.UI;
+    const st = ctx.state.screenState;
+    const tab = st.mfgTab === "quality" ? "quality" : "manufacturing";
+    const isQ = tab === "quality";
+
+    root.innerHTML = `
+      <div class="content-inner">
+        <div class="page-head">
+          <div class="page-title">${UI.icon("activity", 20)}制造综合看板
+            ${isQ ? UI.badge("品质看板", "badge-purple") : UI.badge("制造看板", "badge-blue")}</div>
+          <div class="page-desc">制造 + 品质双看板 · TOP5 突出重点（最需关注的最差 5 名）。
+            <span id="mfg-window">统计窗口加载中…</span>
+            <span id="mfg-flag"></span><span id="mfg-gen" class="mfg-gen"></span></div>
+        </div>
+        <div class="chip-row mfg-tabs" id="mfg-tabs" style="margin-bottom:14px">
+          <button class="chip${isQ ? "" : " active"}" data-tab="manufacturing">${UI.icon("cpu", 14)}制造看板</button>
+          <button class="chip${isQ ? " active" : ""}" data-tab="quality">${UI.icon("shield", 14)}品质看板</button>
+        </div>
+        <div id="mfg-body">
+          <div class="empty">${UI.spinner("lg")}<div style="margin-top:10px">正在加载看板数据…</div></div>
+        </div>
+      </div>`;
+
+    root.querySelectorAll("#mfg-tabs [data-tab]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        if (st.mfgTab === btn.dataset.tab) return;
+        st.mfgTab = btn.dataset.tab;
+        ctx.refreshScreen();
+      });
+    });
+
+    loadMfgDashboard(ctx, tab);
+  }
+
+  /**
+   * 看板数据加载（真实优先 + 三路降级，全程不抛）：
+   * 1) 后端在线且返回未降级数据 → 用真实数据（realFlag）；
+   * 2) 后端离线 / 返回 degraded / kpis 为空 / 请求异常 → 用演示数据（demoFlag + 原因）。
+   * 演示数据与接口逐字段同构，由同一聚合口径（seed_v3 明细）预先算出。
+   */
+  async function loadMfgDashboard(ctx, tab) {
+    const UI = ctx.UI;
+    const box = document.getElementById("mfg-body");
+    if (!box) return;
+    const isQ = tab === "quality";
+    let payload = null, source = "real", reason = "";
+
+    if (ctx.api.online()) {
+      try {
+        const resp = isQ ? await ctx.api.qualityDashboard() : await ctx.api.manufacturingDashboard();
+        const d = resp && resp.data;
+        if (d && !d.degraded && (d.kpis || []).length) {
+          payload = d;
+        } else {
+          reason = (d && d.degraded_reason) || "后端数据降级";
+        }
+      } catch (err) {
+        reason = "后端请求失败：" + (err && err.message ? err.message : "未知错误");
+        UI.toast("看板数据请求失败，已切换演示数据", "warn", 3600);
+      }
+    } else {
+      reason = "后端离线 · 演示数据（口径与真实链路一致）";
+    }
+
+    if (!payload) {
+      source = "demo";
+      payload = (ctx.DEMO.DASHBOARD || {})[tab];
+    }
+    if (!payload) {
+      box.innerHTML = `<div class="empty">${UI.icon("warn", 28)}<div style="margin-top:8px">暂无看板数据</div></div>`;
+      return;
+    }
+
+    // 头部元信息（统计窗口 / 数据来源标记 / 生成时间）
+    const winEl = document.getElementById("mfg-window");
+    if (winEl && payload.window) {
+      winEl.textContent = `${payload.window.label}（${payload.window.start} ~ ${payload.window.end}）`;
+    }
+    const flagEl = document.getElementById("mfg-flag");
+    if (flagEl) flagEl.innerHTML = source === "demo" ? UI.demoFlag(reason || "演示数据") : UI.realFlag("真实链路");
+    const genEl = document.getElementById("mfg-gen");
+    if (genEl && payload.generated_at) genEl.textContent = " · 生成于 " + payload.generated_at;
+
+    box.innerHTML = isQ ? mfgQualityBody(UI, payload) : mfgManufacturingBody(UI, payload);
+
+    box.querySelectorAll("[data-ask]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const q = btn.dataset.ask;
+        if (!q) return;
+        try { sessionStorage.setItem("chat_prefill", q); } catch (e) { /* 隐私模式忽略 */ }
+        ctx.navigate("chat");
+      });
+    });
+  }
+
+  /* ============================================================
    * 导出
    * ============================================================ */
 
@@ -2316,5 +2554,6 @@
     render_alerts,
     render_reports,
     render_hitl,
+    render_mfgboard,
   };
 })();

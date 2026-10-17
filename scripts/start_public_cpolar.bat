@@ -1,11 +1,13 @@
 @echo off
 rem ============================================================
 rem  mfg-agent-platform - Public Access via cpolar
-rem  China-friendly tunnel with a stable-ish random domain.
+rem  China-native tunnel; recommended for public access from
+rem  mainland networks. Uses bin\cpolar.exe (already vendored).
 rem
-rem  Prerequisites:
-rem    1. Install cpolar from https://www.cpolar.com
-rem    2. Configure your token once:  cpolar authtoken <your-token>
+rem  One-time setup (needs a FREE cpolar account):
+rem    1^) Register at https://www.cpolar.com
+rem    2^) Copy the authtoken from the dashboard
+rem    3^) Run once:  bin\cpolar.exe authtoken <your-token>
 rem
 rem  Usage : double-click this file, copy the https "Forwarding" URL.
 rem  Stop  : scripts\stop_public.bat
@@ -15,25 +17,25 @@ setlocal enabledelayedexpansion
 
 set PORT=8004
 
-where cpolar >nul 2>nul
-if errorlevel 1 (
-    echo [ERROR] cpolar not found in PATH.
-    echo.
-    echo   Setup steps:
-    echo     1^) Install cpolar from https://www.cpolar.com
-    echo     2^) Configure token: cpolar authtoken ^<your-token^>
-    echo     3^) Re-run this script
-    echo.
-    echo   No-install alternative: scripts\start_public.bat ^(Cloudflare^)
+rem ---------- [1/3] locate cpolar ----------
+set CPEXE=
+if exist "bin\cpolar.exe" set CPEXE=bin\cpolar.exe
+if not defined CPEXE (
+    for /f "delims=" %%i in ('where cpolar 2^>nul') do set CPEXE=%%i
+)
+if not defined CPEXE (
+    echo [ERROR] cpolar not found ^(neither bin\cpolar.exe nor PATH^).
+    echo         Download from https://www.cpolar.com/download
+    echo         and unzip cpolar.exe into this project's bin\ folder.
     echo.
     pause
     exit /b 1
 )
 
-rem ---------- [1/3] make sure local service is up ----------
+rem ---------- [2/3] make sure local service is up ----------
 call :check_health
 if errorlevel 1 (
-    echo [1/3] Local service not running - starting FastAPI ...
+    echo [2/3] Local service not running - starting FastAPI ...
     where uv >nul 2>nul
     if errorlevel 1 (
         set PYCMD=.venv\Scripts\python.exe
@@ -44,21 +46,32 @@ if errorlevel 1 (
     start "mfg-agent-platform API" /min cmd /c "!PYCMD! -m uvicorn mfg_agents.v2.demo.api:app --host 0.0.0.0 --port %PORT% > logs\api.log 2>&1"
     call :wait_ready
 ) else (
-    echo [1/3] Local service already running on port %PORT%
+    echo [2/3] Local service already running on port %PORT%
 )
 
-rem ---------- [2/3] start cpolar ----------
-echo [2/3] Starting cpolar tunnel on port %PORT% ...
+rem ---------- [3/3] start cpolar ----------
 echo.
+echo ============================================================
 echo   Copy the https "Forwarding" URL printed below, e.g.
 echo     https://xxxxxxxx.cpolar.top
-echo   Share it with anyone to open the demo UI.
-echo.
-echo ============================================================
-cpolar http %PORT%
+echo   Share  <that-url>/demo-ui/  with external users.
+echo   Stop with scripts\stop_public.bat
 echo ============================================================
 echo.
-echo Tunnel finished. To restart: run this script again.
+"%CPEXE%" http %PORT%
+
+echo.
+if errorlevel 1 (
+    echo [ERROR] cpolar exited with an error.
+    echo         If it printed "not found authtoken", do this ONCE:
+    echo           cd /d "%CD%"
+    echo           bin\cpolar.exe authtoken ^<your-token^>
+    echo         Free token: https://www.cpolar.com/dashboard
+    echo.
+    pause
+    exit /b 1
+)
+echo Tunnel closed.
 pause
 exit /b 0
 

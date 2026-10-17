@@ -91,6 +91,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# 公网访问（Cloudflare / cpolar 隧道）下首个请求要跨公网往返多次，
+# 未压缩的 demo-ui 静态资源合计约 284 KB，实测串行加载 ~12s。
+# GZip 中间件把文本资源压到 ~1/5，并加 ETag 让重复访问走 304。
+# min_size=800：小于此值压缩收益不抵 CPU 开销。
+try:
+    from fastapi.middleware.gzip import GZipMiddleware
+
+    app.add_middleware(GZipMiddleware, minimum_size=800)
+except Exception:  # pragma: no cover - 旧版 Starlette 无 GZip 时降级
+    logger.warning("[perf] GZipMiddleware 不可用，静态资源未压缩")
+
 _orchestrator: Optional[V2Orchestrator] = None
 
 
@@ -373,6 +384,30 @@ def api_datasources() -> dict[str, Any]:
     """
     return {"code": 0,
             "data": get_orchestrator().runtime.data_registry.describe_all(),
+            "message": "ok"}
+
+
+@app.get("/api/v2/dashboard/manufacturing")
+def api_dashboard_manufacturing() -> dict[str, Any]:
+    """制造看板：稼动率 / 报废率 / 报工完成率 / 测试直通率（全员可见）。
+
+    真实链路聚合本地只读数据源；聚合内部全兜底，数据源故障时返回
+    ``degraded:true`` 的骨架，**绝不 500**（前端据此降级演示数据）。
+    """
+    from ..services.dashboard import build_manufacturing_dashboard
+
+    registry = get_orchestrator().runtime.data_registry
+    return {"code": 0, "data": build_manufacturing_dashboard(registry),
+            "message": "ok"}
+
+
+@app.get("/api/v2/dashboard/quality")
+def api_dashboard_quality() -> dict[str, Any]:
+    """品质看板：不良率 / 直通率 FPY / 标准三率（全员可见）。"""
+    from ..services.dashboard import build_quality_dashboard
+
+    registry = get_orchestrator().runtime.data_registry
+    return {"code": 0, "data": build_quality_dashboard(registry),
             "message": "ok"}
 
 

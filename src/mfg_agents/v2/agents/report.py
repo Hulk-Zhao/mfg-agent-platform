@@ -46,6 +46,11 @@ _BRIEF_SPEC: dict[str, list[tuple[str, str]]] = {
         ("参数建议", "engineering_summary"),
         ("备件需求", "spare_summary"),
     ],
+    "order_change_impact_v2": [
+        ("排产影响", "planning_summary"),
+        ("物料齐套", "material_summary"),
+        ("制造产能", "production_summary"),
+    ],
 }
 
 # 场景 → 对客报告模板（字段级脱敏之外的禁词兜底）

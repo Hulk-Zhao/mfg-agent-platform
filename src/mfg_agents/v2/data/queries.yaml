@@ -136,3 +136,49 @@ queries:
     tables: [test_records]
     keywords: [测试, 跌落, 高低温, 可靠性, 回归, 失效]
     sql: "SELECT product_model, batch_no, test_type, test_item, result, defect_desc, tester, test_date FROM test_records ORDER BY test_date DESC LIMIT 6"
+
+  # ============================================================
+  # V3.5 增量（P0 工具层）：设备状态 / 质量追溯 / 库存 ATP 三查
+  # （工具 asset.status / quality.trace / inventory.atp 的底座，仅追加不改上行）
+  # ============================================================
+
+  # ---- P0 设备域 ----
+  asset_status_by_equipment:
+    desc: "EAM：按设备号查最近状态与关键参数趋势（最新 20 条告警/参数记录，供设备健康初判）"
+    tables: [equipment_log]
+    keywords: [设备状态, 设备号, 参数趋势, 健康度, 告警]
+    sql: "SELECT equipment_id, line_code, log_time, alarm_code, param_name, param_value, is_abnormal FROM equipment_log WHERE equipment_id = :equipment_id ORDER BY log_time DESC LIMIT 20"
+
+  # ---- P0 质量域 ----
+  quality_trace_by_batch:
+    desc: "QMS：按批次号做正/反向追溯（来料批次 LEFT JOIN 不良记录，给出来料结论与不良分布）"
+    tables: [material_batch, quality_defect]
+    keywords: [批次追溯, 批号, 追溯, 正反向, 来料, 不良]
+    sql: "SELECT m.batch_no, m.part_no, m.part_name, m.supplier, m.incoming_result, m.arrival_time, q.defect_type, q.defect_qty FROM material_batch m LEFT JOIN quality_defect q ON m.batch_no = q.batch_no WHERE m.batch_no = :batch_no"
+
+  # ---- P0 库存域（ATP）----
+  atp_by_model:
+    desc: "WMS：按产品型号查库存可用量 ATP（available = on_hand - reserved）"
+    tables: [inventory]
+    keywords: [ATP, 可用量, 库存, 能发, 齐套]
+    sql: "SELECT product_model, warehouse, on_hand_qty, reserved_qty, (on_hand_qty - reserved_qty) AS available_qty FROM inventory WHERE product_model = :model"
+
+  # ============================================================
+  # V3.6 增量（P1 工具层）：供应风险 / 日产出口径两查
+  # （工具 supply.risk / schedule.what_if 的底座，仅追加不改上行）
+  # ============================================================
+
+  # ---- P1 供应域 ----
+  supply_risk_by_part:
+    desc: "SCM：按料号查来料批次到货与检验结论（供应风险判定取证，按到货时间倒序）"
+    tables: [material_batch]
+    keywords: [供应风险, 料号, 来料风险, 到料, 供应商]
+    sql: "SELECT part_no, part_name, supplier, batch_no, incoming_result, arrival_time FROM material_batch WHERE part_no = :part_no ORDER BY arrival_time DESC LIMIT 20"
+
+  # ---- P1 排产域（日均产出推演）----
+  daily_output_by_model:
+    desc: "MES：按产品型号查近 14 天每日产出（排产/交付影响确定性推演）"
+    tables: [production_output]
+    keywords: [日均产出, 日产出, 产能, 插单, 排产推演, 交付影响]
+    sql: "SELECT product_model, record_date, actual_qty AS output_qty FROM production_output WHERE product_model = :model ORDER BY record_date DESC LIMIT 14"
+

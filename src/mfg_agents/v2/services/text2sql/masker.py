@@ -13,8 +13,12 @@ __all__ = ["SENSITIVE_COLUMNS", "FieldMasker"]
 
 # ---------- 敏感字段脱敏（列级；角色不在白名单即脱敏） ----------
 SENSITIVE_COLUMNS: dict[str, dict] = {
-    "supplier": {"mask": "供应商***", "allow_roles": {"procurement", "sqe"}},
-    "unit_price": {"mask": "***", "allow_roles": {"procurement", "planning", "finance"}},
+    # 部门负责人沿用一线角色口径：采购经理可见供应商与单价，财务经理可见单价
+    "supplier": {"mask": "供应商***",
+                 "allow_roles": {"procurement", "sqe", "procurement_manager"}},
+    "unit_price": {"mask": "***",
+                   "allow_roles": {"procurement", "planning", "finance",
+                                   "procurement_manager", "finance_manager"}},
 }
 
 

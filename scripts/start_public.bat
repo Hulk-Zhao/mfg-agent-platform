@@ -67,12 +67,8 @@ echo       Waiting for public URL and edge registration ^(up to 60s^) ...
 set PUBURL=
 set REGOK=
 for /l %%i in (1,1,24) do (
-    if "!PUBURL!"=="" (
-        for /f "delims=" %%u in ('powershell -NoProfile -Command "$m = Select-String -Path '%CFLOG%' -Pattern 'https://[a-z0-9-]+\.trycloudflare\.com' -ErrorAction SilentlyContinue ^| ForEach-Object { $_.Matches[0].Value } ^| Select-Object -Last 1; if ($m) { $m }" 2^>nul') do set PUBURL=%%u
-    )
-    if "!REGOK!"=="" (
-        for /f "delims=" %%r in ('powershell -NoProfile -Command "if (Select-String -Path '%CFLOG%' -Pattern 'Registered tunnel connection' -Quiet -ErrorAction SilentlyContinue) { '1' }" 2^>nul') do set REGOK=%%r
-    )
+    if "!PUBURL!"=="" call :grab_url
+    if "!REGOK!"=="" call :check_reg
     if "!PUBURL!"=="" if "!REGOK!"=="" "%SystemRoot%\System32\ping.exe" -n 3 127.0.0.1 >nul 2>nul
 )
 if not defined PUBURL (
@@ -105,8 +101,7 @@ if not defined REGOK (
 )
 echo %PUBURL%>"%URLLOG%"
 
-rem ---------- [4/4] verify the public URL really serves the app ----------
-echo [4/4] Verifying public URL ...
+rem ---------- [4/4] verify the public URL really serves the app ----------echo [4/4] Verifying public URL ...
 set VOK=
 for /l %%i in (1,1,12) do (
     if not defined VOK (
@@ -118,7 +113,9 @@ for /l %%i in (1,1,12) do (
 
 rem ---------- [4/4] summary ----------
 set LANIP=
-for /f "tokens=2 delims=:" %%a in ('ipconfig ^| findstr /C:"IPv4" ^| findstr /V "169.254" ^| findstr /V "192.168.88" ^| findstr /V "172.28"') do set LANIP=%%a
+rem filter out virtual adapters: 169.254 (APIPA), 192.168.88 (VMware),
+rem 172.28 (WSL), 198.18 (TUN-mode VPN fake-ip interface)
+for /f "tokens=2 delims=:" %%a in ('ipconfig ^| findstr /C:"IPv4" ^| findstr /V "169.254" ^| findstr /V "192.168.88" ^| findstr /V "172.28" ^| findstr /V "198.18."') do set LANIP=%%a
 set LANIP=%LANIP: =%
 
 echo.
@@ -144,6 +141,25 @@ pause
 exit /b 0
 
 rem ---------- subroutines ----------
+rem cloudflared writes the quick tunnel URL inside a JSON line:
+rem   "|  https://xxx-yyy.trycloudflare.com            |"
+rem Grab it with findstr + token split. Do NOT use PowerShell here:
+rem its $var does not survive `for /f` inside a cmd subroutine.
+rem (Verified 2026-10-17: Select-String version returned empty.)
+
+:grab_url
+if not exist "%CFLOG%" exit /b 0
+set "RAWHTTP="
+for /f "tokens=2" %%u in ('findstr /C:"trycloudflare.com" "%CFLOG%" ^| findstr /C:"https://"') do set "RAWHTTP=%%u"
+if not defined RAWHTTP exit /b 0
+for /f "tokens=1 delims=,;|} " %%p in ('echo !RAWHTTP!') do set "PUBURL=%%~p"
+exit /b 0
+
+:check_reg
+if not exist "%CFLOG%" exit /b 0
+findstr /C:"Registered tunnel connection" "%CFLOG%" >nul 2>nul && set REGOK=1
+exit /b 0
+
 :check_health
 powershell -NoProfile -Command "try{$r=Invoke-WebRequest -Uri 'http://127.0.0.1:%PORT%/api/v2/health' -UseBasicParsing -TimeoutSec 3; if($r.StatusCode -eq 200){exit 0}}catch{exit 1}"
 exit /b %errorlevel%

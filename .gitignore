@@ -31,14 +31,24 @@ logs/*.txt
 .tmp-qa/
 .tmp-test/
 
-# ---- Tunnel binary + runtime logs (bin\cloudflared.exe auto-downloads on demand) ----
+# ---- Tunnel binaries + runtime logs (bin\*.exe are vendored binaries) ----
 bin/cloudflared.exe
+bin/cpolar.exe
 logs/cloudflared.log
+logs/pinggy_tunnel.log
 logs/api.log
 logs/public_url.txt
+logs/ssh_run_output.txt
+logs/*_test.log
+logs/pinggy_test.log
 
 # ---- OS / IDE ----
 .DS_Store
 Thumbs.db
 .idea/
 .vscode/
+
+# ---- Local tool/editor state (never publish) ----
+.playwright-cli/
+.trae/
+docs/screenshots/

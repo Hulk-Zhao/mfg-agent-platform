@@ -20,15 +20,18 @@ __all__ = ["TABLE_ACL", "MetricLibrary", "QueryLibrary"]
 #   为本岗位核心场景表。
 TABLE_ACL: dict[str, set[str]] = {
     # V3.1：quality 加入产出/停线表——质量分析（FPY/良率）本职需要产出与停线数据
-    "production_output": {"manufacturing", "planning", "coordinator", "quality", "gm"},
+    "production_output": {"manufacturing", "planning", "coordinator", "quality", "gm",
+                          "supply_chain_manager"},
     "line_stop_event": {"manufacturing", "coordinator", "quality", "gm"},
     "quality_defect": {"quality", "manufacturing", "coordinator", "gm"},
     # V3.3：material_control 加入——齐套检查/到货批次是物控核心场景
-    "material_batch": {"procurement", "quality", "coordinator", "material_control", "gm"},
-    "equipment_log": {"manufacturing", "coordinator", "gm"},
+    "material_batch": {"procurement", "quality", "coordinator", "material_control", "gm",
+                       "supply_chain_manager"},
+    "equipment_log": {"manufacturing", "coordinator", "gm", "equipment_manager"},
     "inventory": {"warehouse", "supply_chain", "coordinator", "gm"},
     # sales=业务经理：对客 ETA / 出货风险 / 客诉响应核心场景
-    "shipment": {"business", "warehouse", "coordinator", "sales", "gm"},
+    "shipment": {"business", "warehouse", "coordinator", "sales", "gm",
+                 "supply_chain_manager"},
     "customer_complaint": {"quality", "business", "coordinator", "sales", "gm"},
     # V3.2 职能域：财务制度**高管限定**（PM 鉴权裁定——财务数据仅总经理/财务可咨询）
     "finance_policy": {"finance", "gm", "coordinator"},
@@ -36,13 +39,17 @@ TABLE_ACL: dict[str, set[str]] = {
     "admin_policy": {"manufacturing", "planning", "quality", "procurement",
                      "material_control", "sales", "warehouse",
                      "rd_engineering", "finance", "gm", "quality_director",
-                     "qa_manager", "qa", "sqe", "pqe", "equipment", "coordinator"},
+                     "qa_manager", "qa", "sqe", "pqe", "equipment", "coordinator",
+                     "equipment_manager", "rd_manager", "supply_chain_manager",
+                     "procurement_manager", "warehouse_manager", "finance_manager"},
     # V3.3 项目/测试（NPI/PM/测试智能体数据底座）：项目信息透明全员可读；
     # 测试记录限测试/质量/研发/PM/制造相关角色
     "project_milestone": {"manufacturing", "planning", "quality", "procurement",
                           "material_control", "sales", "warehouse",
                           "rd_engineering", "finance", "gm", "quality_director",
-                          "qa_manager", "qa", "sqe", "pqe", "equipment", "coordinator"},
+                          "qa_manager", "qa", "sqe", "pqe", "equipment", "coordinator",
+                          "equipment_manager", "rd_manager", "supply_chain_manager",
+                          "procurement_manager", "warehouse_manager", "finance_manager"},
     "test_records": {"quality", "rd_engineering", "manufacturing", "gm",
                      "quality_director", "qa_manager", "coordinator"},
 }
@@ -71,6 +78,13 @@ class MetricLibrary:
         if metric_id not in self._metrics:
             raise KeyError(f"指标未定义: {metric_id!r}")
         return self._metrics[metric_id]
+
+    def all(self) -> list[dict]:
+        """全部指标定义（只读枚举，按 id 排序；仅供指标字典展示）。
+
+        返回**浅拷贝**：调用方无法借返回值改动库内定义（口径单一事实源）。
+        """
+        return [dict(self._metrics[k]) for k in sorted(self._metrics)]
 
     def match(self, question: str) -> Optional[dict]:
         """按关键词匹配指标（命中返回定义，否则 None）。"""

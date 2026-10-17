@@ -161,7 +161,7 @@ roles:
     name: 采购
     dept: procurement
     actor_kind: human
-    aliases: [采购, 采购经理, 采购专员, procurement, purchasing]
+    aliases: [采购, 采购专员, procurement, purchasing]
     permissions:
       - hitl.disposition.cosign
 
@@ -249,6 +249,67 @@ roles:
     name: 财务
     dept: finance
     actor_kind: human
-    aliases: [财务, 财务经理, 成本会计, finance, cost, FIN]
+    aliases: [财务, 成本会计, finance, cost, FIN]
+    permissions:
+      - hitl.disposition.cosign
+
+  # ---------- 部门负责人（每个职能部门一个经理/总监岗位，对接演示门户登录） ----------
+  # 说明：制造→manufacturing（制造经理）、业务→sales（业务经理）、质量→quality_director
+  #      （质量总监）已在一线角色中覆盖，此处补齐其余职能部门负责人。
+  # 权限只引用既有 21 条，不新增 permission；actor_kind 一律 human。
+  - key: equipment_manager
+    name: 设备经理
+    dept: equipment
+    actor_kind: human
+    aliases: [设备经理, 设备总监, 设备主管, equipment_manager]
+    permissions:
+      - hitl.restart.cosign
+      - hitl.maintenance_window.cosign
+      - hitl.maintenance_window.approve
+
+  - key: rd_manager
+    name: 研发经理
+    dept: rd_engineering
+    actor_kind: human
+    aliases: [研发经理, 研发总监, 工程经理, rd_manager]
+    permissions:
+      - hitl.d8_close.cosign
+      - hitl.restart.cosign
+      - hitl.maintenance_window.cosign
+
+  - key: supply_chain_manager
+    name: 供应链经理
+    dept: supply_chain
+    actor_kind: human
+    aliases: [供应链经理, 供应链总监, 计划总监, SCM, supply_chain_manager]
+    permissions:
+      - hitl.eta.cosign
+      - hitl.delivery_commit.cosign
+      - hitl.delivery_commit.approve
+      - hitl.maintenance_window.cosign
+
+  - key: procurement_manager
+    name: 采购经理
+    dept: procurement
+    actor_kind: human
+    aliases: [采购总监, 采购主管, 采购管理, procurement_manager]
+    permissions:
+      - hitl.disposition.propose
+      - hitl.disposition.cosign
+
+  - key: warehouse_manager
+    name: 仓储经理
+    dept: warehouse
+    actor_kind: human
+    aliases: [仓储经理, 仓库经理, 物流经理, 仓储总监, warehouse_manager]
+    permissions:
+      - hitl.delivery_commit.cosign
+      - hitl.delivery_commit.approve
+
+  - key: finance_manager
+    name: 财务经理
+    dept: finance
+    actor_kind: human
+    aliases: [财务总监, 财务主管, 成本经理, finance_manager]
     permissions:
       - hitl.disposition.cosign

@@ -33,8 +33,13 @@ class Tool:
         description: 供 LLM/外部智能体理解能力的中文描述。
         input_schema: JSON Schema（MCP ``inputSchema`` 原样透出）。
         handler: ``({args: dict, user_ctx: dict}) -> dict`` 纯确定性执行体。
-        domain: 归属域（data / scenario / workflow / platform）。
+        domain: 归属域（data / asset / quality / workflow / knowledge / platform）。
         readonly: 只读工具标记（只读工具可被更宽松的客户端策略放行）。
+        tier: 治理分级（0/1/2）——随工具元数据显式分级，与 HITL 槽位对齐：
+            ``0`` 只读自动放行（无副作用，可被宽松客户端直接调用）；
+            ``1`` 预执行同意（写类只发起：先产出待人工确认工单，会签通过后方可落地）；
+            ``2`` 事后审计（可执行但有副作用，事后留痕复核）。
+            默认 ``0`` 保证既有只读工具构造不受影响。
     """
 
     name: str
@@ -43,11 +48,16 @@ class Tool:
     handler: Callable[..., dict[str, Any]]
     domain: str = "platform"
     readonly: bool = True
+    tier: int = 0
 
     def to_mcp_dict(self) -> dict[str, Any]:
-        """MCP ``tools/list`` 条目（协议要求的 name/description/inputSchema）。"""
+        """MCP ``tools/list`` 条目（协议要求的 name/description/inputSchema）。
+
+        ``tier`` 以非标准扩展字段一并透出（MCP 客户端可忽略；用于治理分级
+        展示与"预执行同意"门控：``tier=1`` 的工具在落地前必须经会签确认）。
+        """
         return {"name": self.name, "description": self.description,
-                "inputSchema": self.input_schema}
+                "inputSchema": self.input_schema, "tier": self.tier}
 
 
 @dataclass
@@ -70,6 +80,22 @@ class ToolRegistry:
 
     def list(self) -> list[Tool]:
         return sorted(self._tools.values(), key=lambda t: t.name)
+
+    def domains(self) -> list[str]:
+        """返回去重且排序的工具归属域列表（用于按域拆分 server）。"""
+        return sorted({t.domain for t in self._tools.values()})
+
+    def subset(self, domain: str) -> "ToolRegistry":
+        """返回**仅含指定域工具**的新 registry（原 registry 不被修改）。"""
+        return self.toolset([t for t in self.list() if t.domain == domain])
+
+    @classmethod
+    def toolset(cls, tools: list[Tool]) -> "ToolRegistry":
+        """用给定工具列表构造新 registry（多 server 分治的装配入口）。"""
+        registry = cls()
+        for tool in tools:
+            registry.register(tool)
+        return registry
 
     def list_mcp(self) -> list[dict[str, Any]]:
         """MCP ``tools/list`` 响应体。"""

@@ -13,39 +13,71 @@ SDK（``ToolRegistry`` 是单一事实源，未来接官方 SDK 只换传输层�
   （MCP 语义：工具执行失败是**结果**而非协议错误）
 - ``ping`` → {}
 
+按域启动（多 server 分治，单 server ≤ 15 工具）：命令行 ``--domain <name>``
+或环境变量 ``MFG_MCP_DOMAIN`` 指定 ``data`` / ``asset`` / ``quality`` /
+``workflow`` / ``knowledge``，则 ``tools/list`` 与 ``tools/call`` 只暴露/接受
+该域工具；**不指定时行为与单 server 全量暴露完全一致**。
+
 启动方式（任意 MCP 客户端可挂）::
 
     uv run python -m mfg_agents.v2.mcp_tools.server
+    uv run python -m mfg_agents.v2.mcp_tools.server --domain asset
 """
 from __future__ import annotations
 
+import argparse
 import json
 import logging
+import os
 import sys
 from typing import Any, Optional
 
 from ..core.orchestrator import V2Orchestrator, create_default_orchestrator
 from ..services.workflow import PermissionDenied
 from .registry import ToolError, ToolRegistry
-from .tools import register_platform_tools
+from .tools import register_domain_toolsets, register_platform_tools
 
 logger = logging.getLogger(__name__)
 
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_INFO = {"name": "mfg-agent-platform", "version": "3.1.0"}
 
-__all__ = ["McpStdioServer", "main"]
+
+def _server_info(domain: str) -> dict[str, Any]:
+    """serverInfo：指定域时名称体现域，缺省与既有行为完全一致。"""
+    if domain:
+        return {"name": f"mfg-agent-platform-mcp:{domain}",
+                "version": SERVER_INFO["version"]}
+    return dict(SERVER_INFO)
+
+
+__all__ = ["McpStdioServer", "main", "PROTOCOL_VERSION", "SERVER_INFO"]
 
 
 class McpStdioServer:
-    """stdio MCP server：工具能力从 ToolRegistry 读取（单一事实源）。"""
+    """stdio MCP server：工具能力从 ToolRegistry 读取（单一事实源）。
+
+    ``domain`` 非空时只装载该域工具（多 server 分治）；为空时装载全部工具。
+    """
 
     def __init__(self, registry: Optional[ToolRegistry] = None,
                  orchestrator: Optional[V2Orchestrator] = None,
-                 stdin: Optional[Any] = None, stdout: Optional[Any] = None) -> None:
+                 stdin: Optional[Any] = None, stdout: Optional[Any] = None,
+                 domain: str = "") -> None:
         self.orchestrator = orchestrator or create_default_orchestrator()
-        self.registry = registry or register_platform_tools(
-            ToolRegistry(), self.orchestrator)
+        self.domain = (domain or "").strip()
+        if registry is None:
+            if self.domain:
+                toolsets = register_domain_toolsets(self.orchestrator)
+                if self.domain not in toolsets:
+                    raise KeyError(
+                        f"未知域 {self.domain!r}（可选: {sorted(toolsets)}）")
+                registry = toolsets[self.domain]
+            else:
+                registry = register_platform_tools(ToolRegistry(),
+                                                   self.orchestrator)
+        self.registry = registry
+        self.server_info = _server_info(self.domain)
         self._stdin = stdin if stdin is not None else sys.stdin
         self._stdout = stdout if stdout is not None else sys.stdout
 
@@ -80,7 +112,7 @@ class McpStdioServer:
             return {
                 "protocolVersion": PROTOCOL_VERSION,
                 "capabilities": {"tools": {"listChanged": False}},
-                "serverInfo": SERVER_INFO,
+                "serverInfo": self.server_info,
             }
         if method == "ping":
             return {}
@@ -152,9 +184,19 @@ class McpStdioServer:
 
 
 def main() -> None:
-    """stdio 入口：日志必须走 stderr（stdout 是协议通道）。"""
+    """stdio 入口：日志必须走 stderr（stdout 是协议通道）。
+
+    ``--domain`` 或环境变量 ``MFG_MCP_DOMAIN`` 指定域（data/asset/quality/
+    workflow/knowledge）时只暴露该域工具；都不给则全量暴露（既有行为不变）。
+    """
+    parser = argparse.ArgumentParser(description="mfg-agent-platform MCP server")
+    parser.add_argument("--domain", default=None,
+                        help="按域启动（data/asset/quality/workflow/knowledge）")
+    args = parser.parse_args()
+    domain = (args.domain or os.getenv("MFG_MCP_DOMAIN") or "").strip()
+
     logging.basicConfig(stream=sys.stderr, level=logging.INFO)
-    McpStdioServer().serve()
+    McpStdioServer(domain=domain).serve()
 
 
 if __name__ == "__main__":

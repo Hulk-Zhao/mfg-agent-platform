@@ -1988,3 +1988,72 @@ a:hover { text-decoration: underline; }
 .d8-item.hot .d8-k { color: #7A5B00; }
 .d8-item.close { background: #EAF6EF; border-color: #A8D5BC; }
 .d8-item.close .d8-k { color: #155E35; }
+
+/* ---------- 制造综合看板（V3.4 · 制造 + 品质 双子 Tab） ---------- */
+.mfg-tabs .chip { user-select: none; }
+.mfg-gen { color: var(--text-3); font-size: 11.5px; }
+
+/* KPI 卡：数值单位 + 迷你趋势线 */
+.stat-body { flex: 1; min-width: 0; }
+.stat-unit { font-size: 14px; font-weight: 600; color: var(--text-3); margin-left: 1px; }
+.spark-wrap { margin-top: 6px; }
+.spark { display: block; width: 132px; height: 26px; }
+
+/* TOP5 排行 */
+.rank-list { display: flex; flex-direction: column; padding: 4px 2px 2px; }
+.rank-row {
+  display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+  background: none; border: none; font: inherit; color: inherit;
+  padding: 8px 9px; border-radius: 8px; cursor: pointer;
+  transition: background .13s ease;
+}
+.rank-row:hover { background: #FAFCFF; }
+.rank-row + .rank-row { border-top: 1px solid var(--border); border-radius: 0; }
+.rank-no {
+  flex: none; width: 20px; height: 20px; border-radius: 6px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11.5px; font-weight: 700; color: var(--text-3); background: #F0F3F8;
+}
+.rank-row.worst .rank-no { background: var(--danger-bg); color: var(--danger); }
+.rank-name {
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 5px;
+  font-size: 12.8px; font-weight: 550; color: var(--text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.rank-row.worst .rank-name { color: var(--danger); }
+.rank-val { flex: none; font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--text-2); }
+.rank-val.ok { color: var(--ok); }
+.rank-val.warn { color: #D4A017; }
+.rank-val.danger { color: var(--danger); }
+
+/* 标准三率 */
+.std-card { margin-bottom: 14px; }
+.std-formula {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 10px;
+  padding: 14px 4px 12px; font-variant-numeric: tabular-nums;
+}
+.std-term { display: inline-flex; flex-direction: column; align-items: center; gap: 2px; }
+.std-term b { font-size: 22px; font-weight: 700; color: var(--text); }
+.std-term i { font-style: normal; font-size: 11px; color: var(--text-3); }
+.std-formula em { font-style: normal; font-size: 17px; color: var(--text-3); }
+.std-conform { font-size: 30px; font-weight: 800; letter-spacing: -.5px; }
+.std-conform.ok { color: var(--ok); }
+.std-conform.warn { color: #D4A017; }
+.std-conform.danger { color: var(--danger); }
+.std-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.std-table th {
+  text-align: right; font-weight: 550; color: var(--text-3); font-size: 11.5px;
+  padding: 6px 10px; border-bottom: 1px solid var(--border);
+}
+.std-table th:first-child, .std-table td:first-child { text-align: left; }
+.std-table td {
+  padding: 8px 10px; border-bottom: 1px solid var(--border);
+  text-align: right; font-variant-numeric: tabular-nums; color: var(--text-2);
+}
+.std-table tbody tr:last-child td { border-bottom: none; }
+.std-table td.std-conform { font-size: 13px; font-weight: 700; }
+
+/* 口径说明 */
+.kpi-def { display: flex; flex-direction: column; gap: 7px; padding: 4px 2px; }
+.kpi-def-row { display: flex; gap: 7px; align-items: flex-start; font-size: 12.2px; line-height: 1.7; color: var(--text-2); }
+.kpi-def-row svg { flex: none; margin-top: 3px; color: var(--text-3); }

@@ -395,7 +395,7 @@ def build_handlers(runtime: Any) -> dict[str, Any]:
     # 工作流工厂（同一实现按 step.params 装配；key = YAML step 的 workflow id）
     wf_handler = make_workflow_handler(engine, notifier)
     for key in ("scar_flow", "complaint_8d_flow", "delivery_risk_flow",
-                "maintenance_flow"):
+                "maintenance_flow", "order_change_flow"):
         handlers[key] = wf_handler
 
     # 注册查询型域 Agent
@@ -463,6 +463,8 @@ def build_handlers(runtime: Any) -> dict[str, Any]:
         "delivery_status_v2", llm_ok)
     handlers["report_equipment"] = rep_agents.make_report_handler(
         "equipment_warning_v2", llm_ok)
+    handlers["report_order_change"] = rep_agents.make_report_handler(
+        "order_change_impact_v2", llm_ok)
 
     return handlers
 

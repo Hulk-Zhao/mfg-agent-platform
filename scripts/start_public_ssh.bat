@@ -7,7 +7,11 @@ rem  start_public.bat, but the carrier is SSH over TCP 443 instead
 rem  of Cloudflare's edge port 7844. Needed on networks where 7844
 rem  is blocked (China + TUN-mode VPN is the common case).
 rem
-rem  No install, no account: uses the system OpenSSH client.
+rem  No install: uses the system OpenSSH client.
+rem  Anonymous tunnels are quota-limited by the provider (they stop
+rem  being handed out after a few tries, then the server asks for
+rem  auth). For reliable use, get a free pinggy.io token and set:
+rem      set PINGGY_TOKEN=your-token
 rem  Free anonymous tunnel expires after 60 minutes.
 rem
 rem  Usage : double-click this file, then share the printed URL.
@@ -19,6 +23,9 @@ setlocal enabledelayedexpansion
 set PORT=8004
 set TLOG=logs\pinggy_tunnel.log
 set URLLOG=logs\public_url.txt
+
+set PINGGYHOST=a.pinggy.io
+if defined PINGGY_TOKEN set PINGGYHOST=%PINGGY_TOKEN%@a.pinggy.io
 
 if not exist logs mkdir logs
 
@@ -57,7 +64,7 @@ if errorlevel 1 (
 rem ---------- [3/4] start SSH reverse tunnel ----------
 echo [3/4] Starting SSH tunnel ^(pinggy, port 443^) ...
 del /q "%TLOG%" >nul 2>nul
-start "mfg-tunnel-ssh" /min cmd /c "%SSHEXE% -p 443 -o StrictHostKeyChecking=no -o ConnectTimeout=15 -o ServerAliveInterval=20 -o ServerAliveCountMax=3 -n -R0:localhost:%PORT% a.pinggy.io > %TLOG% 2>&1"
+start "mfg-tunnel-ssh" /min cmd /c "%SSHEXE% -p 443 -o StrictHostKeyChecking=no -o ConnectTimeout=15 -o ServerAliveInterval=20 -o ServerAliveCountMax=3 -n -R0:localhost:%PORT% %PINGGYHOST% > %TLOG% 2>&1"
 
 echo       Waiting for public URL ^(up to 45s^) ...
 set PUBURL=
@@ -96,7 +103,9 @@ if not defined VOK (
 )
 rem ---------- summary ----------
 set LANIP=
-for /f "tokens=2 delims=:" %%a in ('ipconfig ^| findstr /C:"IPv4" ^| findstr /V "169.254" ^| findstr /V "192.168.88" ^| findstr /V "172.28"') do set LANIP=%%a
+rem filter out virtual adapters: 169.254 (APIPA), 192.168.88 (VMware),
+rem 172.28 (WSL), 198.18 (TUN-mode VPN fake-ip interface)
+for /f "tokens=2 delims=:" %%a in ('ipconfig ^| findstr /C:"IPv4" ^| findstr /V "169.254" ^| findstr /V "192.168.88" ^| findstr /V "172.28" ^| findstr /V "198.18."') do set LANIP=%%a
 set LANIP=%LANIP: =%
 
 echo.

@@ -10,6 +10,13 @@ from .registry import Tool, ToolError, ToolRegistry
 from .server import McpStdioServer
 
 __all__ = ["Tool", "ToolError", "ToolRegistry", "McpStdioServer",
-           "register_platform_tools"]
+           "build_platform_tools", "register_platform_tools",
+           "build_domain_toolsets", "register_domain_toolsets", "DOMAIN_TOOLSETS"]
 
-from .tools import register_platform_tools  # noqa: E402  (末尾重导出)
+from .tools import (  # noqa: E402  (末尾重导出)
+    DOMAIN_TOOLSETS,
+    build_domain_toolsets,
+    build_platform_tools,
+    register_domain_toolsets,
+    register_platform_tools,
+)

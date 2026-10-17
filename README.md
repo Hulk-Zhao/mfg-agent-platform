@@ -107,13 +107,17 @@ docker compose up -d --build
 | 方式 | 适用场景 | 操作 | 链接特点 |
 |---|---|---|---|
 | 内网 | 同一局域网（同一办公室 / 同一 WiFi） | `scripts\start_local.bat` 已绑定 `0.0.0.0`，外部用户浏览器打开 `http://<你的内网IP>:8004/demo-ui/` | 内网 IP，重启不变 |
-| 公网 · SSH(443) | **国内网络首选，已在本机验证可用** | 双击 `scripts\start_public_ssh.bat`，把打印的 `https://xxx.run.pinggy-free.link/demo-ui/` 发给对方 | 免安装、免注册；匿名隧道 60 分钟过期，重启即变 |
-| 公网 · Cloudflare | 网络不受限的机器（海外服务器 / 无 TUN 代理） | 双击 `scripts\start_public.bat`（`bin\cloudflared.exe` 快速隧道，assistant 项目同款方案） | 随机域名，每次重启变化；免费、无需账号 |
+| 公网 · SSH(443) | 7844 被封但 443 通的网络 | 双击 `scripts\start_public_ssh.bat`，把打印的 `https://xxx.run.pinggy-free.link/demo-ui/` 发给对方 | 免安装；匿名隧道有服务端配额限制，长期用需免费 token |
+| 公网 · Cloudflare | **本机已验证可用**（需关闭 VPN 的 TUN 虚拟网卡） | 双击 `scripts\start_public.bat`，把打印的 `https://xxx.trycloudflare.com/demo-ui/` 发给对方 | 随机域名，每次重启变化；免费、无需账号 |
 | 公网 · cpolar | 需要 cpolar 固定域名/长期链接 | 安装 cpolar 并执行一次 `cpolar authtoken <your-token>`，双击 `scripts\start_public_cpolar.bat` | 免费版随机域名 |
 
 三个公网脚本统一行为：**自动检查并拉起 8004 服务 → 建隧道 → 提取公网 URL → 实测 `/api/v2/health` 通过后才打印 READY**（Cloudflare 方案额外校验 `Registered tunnel connection`，隧道没真正注册会直接报错并给出排查指引，不会给你一个打不开的死链）。
 
-用完一律双击 `scripts\stop_public.bat` 停止隧道与服务——只按命令行精确匹配杀本项目的进程，**不会影响机器上其他 Python / ssh 会话**。分步图文说明（含 Cloudflare 隧道在国内失效的根因与修复）见 [docs/PUBLIC-ACCESS.md](docs/PUBLIC-ACCESS.md)。
+> ⚠️ **跑 Cloudflare 隧道前，务必先关闭 VPN 客户端的 TUN 虚拟网卡**。本机代理（`iKuuuVPNCore.exe`）的 fake-ip 会把 DNS 劫持成 `198.18.x.x`，导致 cloudflared 连不上边缘端口 7844（Cloudflare 返回 1033）。关闭后 DNS 回到 `198.41.x.x`，隧道 3 秒注册成功——本机已实测。验证：`nslookup region1.v2.argotunnel.com`，结果应为 `198.41.x.x` 而非 `198.18.x.x`。
+
+用完一律双击 `scripts\stop_public.bat` 停止隧道与服务——只按命令行精确匹配杀本项目的进程，**不会影响机器上其他 Python / ssh 会话**。分步图文说明（含 Cloudflare 隧道在国内失效的根因与修复、公网性能优化实测数据）见 [docs/PUBLIC-ACCESS.md](docs/PUBLIC-ACCESS.md)。
+
+> ⚠️ **公网自检**：打开页面后右上角必须显示"**后端在线 · 真实链路**"（绿点）。若显示"后端离线 · 演示模式"（红点），说明看到的是演示假数据，刷新页面重试。
 
 > ⚠️ **安全提醒**：演示门户是 10 岗位免密登录，公网链接等同于"谁拿到链接谁就能进"。请只用于演示、用完即停；对客正式提供前必须接入认证体系（见文末生产化清单）。
 

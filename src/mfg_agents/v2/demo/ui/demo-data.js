@@ -18,9 +18,9 @@
    *  仅影响登录页排版；ROLES 仍是单一事实源数组。 */
   const ROLE_GROUPS = [
     { id: "mgmt",   name: "经营层",       roles: ["gm"] },
-    { id: "quality", name: "质量域",      roles: ["sqe", "pqe", "qa"] },
-    { id: "make",   name: "制造与工程",    roles: ["mfg", "eq", "rd", "pe"] },
-    { id: "func",   name: "供应链与职能",  roles: ["pln", "mc", "proc", "wh", "biz", "fin"] },
+    { id: "quality", name: "质量域",      roles: ["qd", "sqe", "pqe", "qa"] },
+    { id: "make",   name: "制造与工程",    roles: ["mfg", "eqm", "eq", "rdm", "rd", "pe"] },
+    { id: "func",   name: "供应链与职能",  roles: ["scm", "pln", "mc", "procm", "proc", "whm", "wh", "biz", "finm", "fin"] },
   ];
 
   const ROLES = [
@@ -66,6 +66,29 @@
     { id: "fin", name: "FIN 财务成本", abbr: "FIN", uid: "u-fin", user: "何静", dept: "finance",       roles: ["finance"],
       greeting: "成本与索赔视图", desc: "聚焦 BOM 成本 / 制造费用 / COPQ，来料处置的金额口径由财务会签",
       scope: "成本 · 价格（最敏感）· COPQ", scenarios: ["BOM 成本核算", "供应商索赔金额", "质量成本分析"], tone: "gray" },
+
+    // ---------- 部门负责人（每个职能部门一个经理/总监岗位；一线角色的对口审批/终批视角） ----------
+    { id: "qd",  name: "质量总监",   abbr: "QD",    uid: "u-qd",  user: "沈玉", dept: "quality",       roles: ["quality_director"],
+      greeting: "质量决策视图", desc: "聚焦质量成本 / 客诉升级 / 8D 终批与不合格品处置终裁，质量域最高决策口径",
+      scope: "质量全域 · 终批裁量", scenarios: ["8D 终批", "不合格品处置终裁", "客诉升级裁决"], tone: "amber" },
+    { id: "eqm", name: "设备经理",   abbr: "EQM",   uid: "u-eqm", user: "冯磊", dept: "equipment",     roles: ["equipment_manager"],
+      greeting: "设备管理视图", desc: "聚焦设备可用率 / 停机窗口审批 / 备件与维保预算，停机开窗的最终审批人",
+      scope: "设备 · 停机窗口（可审批）", scenarios: ["停机窗口审批", "设备可用率", "维保计划"], tone: "teal" },
+    { id: "rdm", name: "研发经理",   abbr: "RDM",   uid: "u-rdm", user: "徐峰", dept: "rd_engineering", roles: ["rd_manager"],
+      greeting: "研发管理视图", desc: "聚焦 NPI 里程碑 / ECN 变更裁决 / 研发质量闭环与资源",
+      scope: "研发 · NPI · ECN（可裁决）", scenarios: ["NPI 里程碑", "ECN 变更裁决", "研发质量闭环"], tone: "indigo" },
+    { id: "scm", name: "供应链经理", abbr: "SCM",   uid: "u-scm", user: "罗敏", dept: "supply_chain",  roles: ["supply_chain_manager"],
+      greeting: "供应链交付视图", desc: "聚焦 S&OP / 交付承诺终批 / 缺料与齐套风险，供应链域交付口径",
+      scope: "计划 · 物控 · 交付承诺（可终批）", scenarios: ["交付承诺终批", "S&OP 评审", "齐套风险升级"], tone: "blue" },
+    { id: "procm", name: "采购经理", abbr: "PROC-M", uid: "u-procm", user: "韩雪", dept: "procurement",  roles: ["procurement_manager"],
+      greeting: "采购管理视图", desc: "聚焦供应商绩效 / 采购策略 / 来料处置会签，价格与供应商字段可见",
+      scope: "供应商 · 价格（可见）· 采购策略", scenarios: ["来料处置会签", "供应商绩效", "采购策略"], tone: "coral" },
+    { id: "whm", name: "仓储经理",   abbr: "WH-M",  uid: "u-whm", user: "蒋斌", dept: "warehouse",     roles: ["warehouse_manager"],
+      greeting: "仓储管理视图", desc: "聚焦库存周转 / 出入库准确 / 发货协同终批，仓储域运营口径",
+      scope: "库存 · 出入库 · 发货（可终批）", scenarios: ["发货协同终批", "库存周转", "盘点差异"], tone: "gray" },
+    { id: "finm", name: "财务经理",  abbr: "FIN-M", uid: "u-finm", user: "秦岚", dept: "finance",      roles: ["finance_manager"],
+      greeting: "财务管理视图", desc: "聚焦成本核算 / COPQ / 索赔金额口径终批，价格字段可见",
+      scope: "成本 · 价格（可见）· COPQ", scenarios: ["成本核算", "索赔金额终批", "质量成本分析"], tone: "gray" },
   ];
 
   /** 工作台 · 今日预警摘要（按角色取不同范围，演示数据） */
@@ -143,6 +166,42 @@
       { icon: "warn", tone: "amber", num: "2", label: "待核算索赔", trend: "供应商 SCAR 赔付中", up: true , ask: "供应商索赔金额是多少？"},
       { icon: "activity", tone: "red", num: "¥ 31.2万", label: "本月质量成本 COPQ", trend: "返工+报废占比 62%", up: true , ask: "质量成本COPQ分析"},
     ],
+    // ---------- 部门负责人看板（决策/审批视角） ----------
+    qd: [
+      { icon: "approve", tone: "amber", num: "2", label: "8D 待终批", trend: "1 张 SLA 剩余 6h", up: true , ask: "8D报告哪些待关闭？"},
+      { icon: "warn", tone: "red", num: "386", label: "客诉 PPM（本月）", trend: "华为终端 S 级升级", up: true , ask: "本月客诉集中在哪些问题？"},
+      { icon: "activity", tone: "amber", num: "1", label: "不合格品处置待终裁", trend: "锡膏批次退货 1 批", up: true , ask: "来料不合格批次有哪些需要处置？"},
+    ],
+    eqm: [
+      { icon: "warn", tone: "red", num: "2", label: "设备预警", trend: "SMT-1 刮刀压力异常", up: true , ask: "SMT-1现在设备参数异常吗？"},
+      { icon: "approve", tone: "amber", num: "1", label: "停机窗口待审批", trend: "PRT-01 点检后开窗", up: true , ask: "A型号在SMT-1停线，何时复线？"},
+      { icon: "activity", tone: "green", num: "76.4%", label: "设备可用率 OEE", trend: "低于目标 2.2pct", up: false , ask: "设备综合效率OEE是多少？"},
+    ],
+    rdm: [
+      { icon: "clock", tone: "blue", num: "3", label: "ECN 在办", trend: "2 张待我会签", up: false , ask: "SMT-1设备参数异常吗？"},
+      { icon: "activity", tone: "green", num: "DVT", label: "NPI 里程碑", trend: "B 型号按计划", up: false , ask: "B型号NPI进展如何？"},
+      { icon: "approve", tone: "blue", num: "2", label: "研发会签待办", trend: "8D 根因结论待确认", up: false , ask: "锡膏印刷CPK最近趋势如何？"},
+    ],
+    scm: [
+      { icon: "orders", tone: "blue", num: "92.4%", label: "订单准交率 OTD", trend: "本周排产已锁定", up: false , ask: "最近一周有哪些订单存在延期风险？"},
+      { icon: "approve", tone: "blue", num: "1", label: "交付承诺待终批", trend: "华为 S 级对客 ETA", up: true , ask: "A型号能发多少货"},
+      { icon: "box", tone: "red", num: "3", label: "缺料项", trend: "锡膏 M7020 延迟 36h", up: true , ask: "A型号缺料影响哪些订单？"},
+    ],
+    procm: [
+      { icon: "check", tone: "green", num: "94.1%", label: "供应商交期达成", trend: "千住金属延迟 1 批", up: false , ask: "千住金属最近的交期达成情况？"},
+      { icon: "approve", tone: "amber", num: "1", label: "来料处置待会签", trend: "退货 / 特采二选一", up: true , ask: "来料不合格批次有哪些需要处置？"},
+      { icon: "activity", tone: "amber", num: "1", label: "索赔在途", trend: "来料不合格费用分摊中", up: true , ask: "来料不合格如何索赔？"},
+    ],
+    whm: [
+      { icon: "check", tone: "green", num: "99.2%", label: "库存准确率", trend: "月盘差异 3 项", up: false , ask: "A型号能发多少货"},
+      { icon: "approve", tone: "amber", num: "1", label: "发货协同待终批", trend: "A 型号 ATP 400pcs", up: true , ask: "今天有哪些发货单待拣？"},
+      { icon: "box", tone: "blue", num: "142", label: "今日出入库", trend: "出货 6 单待拣", up: false , ask: "A型号ATP可承诺量是多少？"},
+    ],
+    finm: [
+      { icon: "box", tone: "blue", num: "¥ 86.4", label: "A 型号 BOM 成本", trend: "环比 -1.2%", up: false , ask: "BOM成本是多少？"},
+      { icon: "approve", tone: "amber", num: "2", label: "索赔金额待终批", trend: "SCAR 赔付口径确认", up: true , ask: "供应商索赔金额是多少？"},
+      { icon: "activity", tone: "red", num: "¥ 31.2万", label: "本月质量成本 COPQ", trend: "返工+报废占比 62%", up: true , ask: "质量成本COPQ分析"},
+    ],
   };
 
   const ALERT_SUMMARY = {
@@ -158,6 +217,13 @@
     pe:  { spc: 2, shortage: 0, order: 1, sla: 1 },
     pln: { spc: 0, shortage: 2, order: 4, sla: 1 },
     fin: { spc: 1, shortage: 1, order: 2, sla: 1 },
+    qd:  { spc: 2, shortage: 1, order: 3, sla: 2 },
+    eqm: { spc: 1, shortage: 0, order: 1, sla: 1 },
+    rdm: { spc: 1, shortage: 0, order: 1, sla: 1 },
+    scm: { spc: 0, shortage: 3, order: 4, sla: 1 },
+    procm: { spc: 1, shortage: 2, order: 2, sla: 1 },
+    whm: { spc: 0, shortage: 1, order: 3, sla: 1 },
+    finm: { spc: 1, shortage: 1, order: 2, sla: 1 },
   };
 
   /** 工作台 · 待办中心（后端不可达时的演示数据；标注"演示数据"） */
@@ -3175,7 +3241,131 @@
   /** 向后兼容：默认回放 = line_stop 场景 */
   const CHAT_DEMO = CHAT_DEMOS["A型号在SMT-1停线，何时复线？"];
 
+  /* 制造综合看板演示数据（与后端 /api/v2/dashboard/{manufacturing,quality}
+     响应逐字段同构；后端离线 / graded 时前端降级渲染同一结构）。
+     数值由后端聚合函数对 seed_v3 明细真实计算得出，口径与真实链路一致。 */
+  const DASHBOARD = {
+    "manufacturing": {
+      "screen": "manufacturing",
+      "generated_at": "2026-10-17 20:41:15",
+      "source": "demo",
+      "degraded": true,
+      "degraded_reason": "后端离线 · 演示数据（口径与真实链路一致）",
+      "window": { "start": "2026-10-08", "end": "2026-10-14", "days": 7, "label": "最近 7 天（演示窗口）" },
+      "kpis": [
+        { "key": "availability", "label": "稼动率", "value": 82.7, "unit": "%", "numerator": 3060, "denominator": 3700,
+          "target": 90.0, "higher_is_better": true, "status": "warn", "delta": -7.3,
+          "definition": "实际运行分钟 ÷ 计划运行分钟（分母已排除计划停机）。", "formula": "3060 / 3700",
+          "ask": "最近7天各产线稼动率如何？最低的是哪条线？",
+          "trend": [91.7, 74.7, 91.7, 55.0, 91.2, 74.7, 97.9] },
+        { "key": "scrap_rate", "label": "报废率", "value": 1.0, "unit": "%", "numerator": 108, "denominator": 10800,
+          "target": 2.0, "higher_is_better": false, "status": "ok", "delta": -1.0,
+          "definition": "报废数 ÷ 总产出数（不可返修的判废比例）。", "formula": "108 / 10800",
+          "ask": "最近7天各产线报废率如何？最高的是哪条线？",
+          "trend": [4.5, 3.0, 1.0, 0.7, 0.7, 0.5, 0.2] },
+        { "key": "report_rate", "label": "报工完成率", "value": 81.8, "unit": "%", "numerator": 18, "denominator": 22,
+          "target": 95.0, "higher_is_better": true, "status": "danger", "delta": -13.2,
+          "definition": "已报工工序数 ÷ 应报工工序数。", "formula": "18 / 22",
+          "ask": "最近7天哪些工单报工完成率偏低？",
+          "trend": [100.0, 100.0, 100.0, 50.0, 66.7, 50.0, 50.0] },
+        { "key": "test_fpy", "label": "测试直通率", "value": 90.9, "unit": "%", "numerator": 20, "denominator": 22,
+          "target": 98.0, "higher_is_better": true, "status": "warn", "delta": -7.1,
+          "definition": "首次测试通过数 ÷ 测试总数（重测才过不计入）。", "formula": "20 / 22",
+          "ask": "最近7天各型号测试直通率如何？",
+          "trend": [100.0, 100.0, 100.0, 100.0, 50.0, 75.0, 100.0] },
+      ],
+      "rankings": [
+        { "key": "availability", "label": "稼动率", "unit": "%", "target": 90.0, "higher_is_better": true, "items": [
+          { "name": "DIP-2 · B型号", "line": "DIP-2", "model": "B型号", "value": 55.0, "status": "danger", "numerator": 385, "denominator": 700, "rank": 1 },
+          { "name": "SMT-2 · B型号", "line": "SMT-2", "model": "B型号", "value": 74.7, "status": "danger", "numerator": 448, "denominator": 600, "rank": 2 },
+          { "name": "SMT-1 · A型号", "line": "SMT-1", "model": "A型号", "value": 91.5, "status": "ok", "numerator": 1317, "denominator": 1440, "rank": 3 },
+          { "name": "DIP-1 · A型号", "line": "DIP-1", "model": "A型号", "value": 91.7, "status": "ok", "numerator": 440, "denominator": 480, "rank": 4 },
+          { "name": "DIP-1 · C型号", "line": "DIP-1", "model": "C型号", "value": 97.9, "status": "ok", "numerator": 470, "denominator": 480, "rank": 5 }
+        ] },
+        { "key": "scrap_rate", "label": "报废率", "unit": "%", "target": 2.0, "higher_is_better": false, "items": [
+          { "name": "DIP-2 · B型号", "line": "DIP-2", "model": "B型号", "value": 4.5, "status": "danger", "numerator": 45, "denominator": 1000, "rank": 1 },
+          { "name": "SMT-2 · C型号", "line": "SMT-2", "model": "C型号", "value": 3.0, "status": "warn", "numerator": 15, "denominator": 500, "rank": 2 },
+          { "name": "SMT-1 · A型号", "line": "SMT-1", "model": "A型号", "value": 1.0, "status": "ok", "numerator": 20, "denominator": 2000, "rank": 3 },
+          { "name": "DIP-1 · C型号", "line": "DIP-1", "model": "C型号", "value": 0.7, "status": "ok", "numerator": 10, "denominator": 1500, "rank": 4 },
+          { "name": "SMT-2 · B型号", "line": "SMT-2", "model": "B型号", "value": 0.5, "status": "ok", "numerator": 10, "denominator": 2000, "rank": 5 }
+        ] },
+        { "key": "report_rate", "label": "报工完成率", "unit": "%", "target": 95.0, "higher_is_better": true, "items": [
+          { "name": "WO-B-1014", "line": "DIP-2", "model": "B型号", "value": 60.0, "status": "danger", "numerator": 3, "denominator": 5, "rank": 1 },
+          { "name": "WO-C-1011", "line": "SMT-2", "model": "C型号", "value": 66.7, "status": "danger", "numerator": 2, "denominator": 3, "rank": 2 },
+          { "name": "WO-B-1013", "line": "DIP-2", "model": "B型号", "value": 80.0, "status": "danger", "numerator": 4, "denominator": 5, "rank": 3 },
+          { "name": "WO-A-1014", "line": "SMT-1", "model": "A型号", "value": 100.0, "status": "ok", "numerator": 4, "denominator": 4, "rank": 4 },
+          { "name": "WO-C-1013", "line": "DIP-1", "model": "C型号", "value": 100.0, "status": "ok", "numerator": 5, "denominator": 5, "rank": 5 }
+        ] },
+        { "key": "test_fpy", "label": "测试直通率", "unit": "%", "target": 98.0, "higher_is_better": true, "items": [
+          { "name": "C型号", "line": "", "model": "C型号", "value": 83.3, "status": "danger", "numerator": 5, "denominator": 6, "rank": 1 },
+          { "name": "B型号", "line": "", "model": "B型号", "value": 92.3, "status": "warn", "numerator": 12, "denominator": 13, "rank": 2 },
+          { "name": "A型号", "line": "", "model": "A型号", "value": 100.0, "status": "ok", "numerator": 3, "denominator": 3, "rank": 3 }
+        ] },
+      ],
+      "notes": [
+        "稼动率 = 实际运行分钟 ÷ 计划运行分钟（分母已排除计划停机）。",
+        "报废率 = 报废数 ÷ 总产出数；返工品既不计入良品也不计入报废。",
+        "报工完成率 = 已报工工序数 ÷ 应报工工序数。",
+        "测试直通率 = 首次测试通过数 ÷ 测试总数（重测才过不计入）。",
+        "TOP5 统一为「最需关注的最差 5 名」，方向随指标极性自动翻转：越高越好取最低 5、越低越好取最高 5。"
+      ]
+    },
+    "quality": {
+      "screen": "quality",
+      "generated_at": "2026-10-17 20:41:15",
+      "source": "demo",
+      "degraded": true,
+      "degraded_reason": "后端离线 · 演示数据（口径与真实链路一致）",
+      "window": { "start": "2026-10-08", "end": "2026-10-14", "days": 7, "label": "最近 7 天（演示窗口）" },
+      "kpis": [
+        { "key": "defect_rate", "label": "不良率", "value": 2.1, "unit": "%", "numerator": 269, "denominator": 12800,
+          "target": 2.0, "higher_is_better": false, "status": "warn", "delta": 0.1,
+          "definition": "不良数 ÷ 受检总数。", "formula": "269 / 12800",
+          "ask": "最近7天各产线不良率如何？最高的是哪条线？",
+          "trend": [1.9, 3.5, 2.8, 2.9, 2.2, 1.1, 1.3] },
+        { "key": "fpy", "label": "直通率 FPY", "value": 97.9, "unit": "%", "numerator": 12531, "denominator": 12800,
+          "target": 98.0, "higher_is_better": true, "status": "warn", "delta": -0.1,
+          "definition": "一次通过良品数 ÷ 投入数（≈ 1 − 不良率）。", "formula": "12531 / 12800",
+          "ask": "最近7天各产线直通率如何？最低的是哪条线？",
+          "trend": [98.1, 96.5, 97.2, 97.1, 97.8, 98.9, 98.7] },
+      ],
+      "rankings": [
+        { "key": "defect_rate", "label": "不良率", "unit": "%", "target": 2.0, "higher_is_better": false, "items": [
+          { "name": "DIP-2 · B型号", "line": "DIP-2", "model": "B型号", "value": 3.5, "status": "danger", "numerator": 42, "denominator": 1200, "rank": 1 },
+          { "name": "SMT-2 · C型号", "line": "SMT-2", "model": "C型号", "value": 2.9, "status": "warn", "numerator": 26, "denominator": 900, "rank": 2 },
+          { "name": "SMT-2 · A型号", "line": "SMT-2", "model": "A型号", "value": 2.3, "status": "warn", "numerator": 46, "denominator": 2000, "rank": 3 },
+          { "name": "SMT-2 · B型号", "line": "SMT-2", "model": "B型号", "value": 2.1, "status": "warn", "numerator": 62, "denominator": 3000, "rank": 4 },
+          { "name": "DIP-1 · C型号", "line": "DIP-1", "model": "C型号", "value": 1.9, "status": "ok", "numerator": 17, "denominator": 900, "rank": 5 }
+        ] },
+        { "key": "fpy", "label": "直通率", "unit": "%", "target": 98.0, "higher_is_better": true, "items": [
+          { "name": "DIP-2 · B型号", "line": "DIP-2", "model": "B型号", "value": 96.5, "status": "warn", "numerator": 1158, "denominator": 1200, "rank": 1 },
+          { "name": "SMT-2 · C型号", "line": "SMT-2", "model": "C型号", "value": 97.1, "status": "warn", "numerator": 874, "denominator": 900, "rank": 2 },
+          { "name": "SMT-2 · A型号", "line": "SMT-2", "model": "A型号", "value": 97.7, "status": "warn", "numerator": 1954, "denominator": 2000, "rank": 3 },
+          { "name": "SMT-2 · B型号", "line": "SMT-2", "model": "B型号", "value": 97.9, "status": "warn", "numerator": 2938, "denominator": 3000, "rank": 4 },
+          { "name": "DIP-1 · C型号", "line": "DIP-1", "model": "C型号", "value": 98.1, "status": "ok", "numerator": 883, "denominator": 900, "rank": 5 }
+        ] },
+      ],
+      "notes": [
+        "不良率 = 不良数 ÷ 受检总数。",
+        "直通率 FPY = 一次通过良品数 ÷ 投入数（≈ 1 − 不良率）。",
+        "标准三率 = 标准完整率 × 标准完善率 × 标准遵守率 = 符合率（完整率：该有的标准是否齐全；完善率：标准与现场是否一致；遵守率：现场是否按标准作业）。",
+        "TOP5 统一为「最需关注的最差 5 名」，方向随指标极性自动翻转：越高越好取最低 5、越低越好取最高 5。"
+      ],
+      "standard_three_rates": {
+        "definition": "标准三率 = 标准完整率 × 标准完善率 × 标准遵守率 = 符合率",
+        "targets": { "completeness_rate": 100.0, "perfection_rate": 98.0, "compliance_rate": 90.0 },
+        "overall": { "completeness_rate": 80.0, "perfection_rate": 75.0, "compliance_rate": 81.0,
+          "conformity_rate": 48.6, "status": "danger", "formula": "80.0% × 75.0% × 81.0% = 48.6%" },
+        "by_model": [
+          { "model": "A型号", "completeness_rate": 100.0, "perfection_rate": 66.7, "compliance_rate": 90.0, "conformity_rate": 60.0, "status": "danger" },
+          { "model": "B型号", "completeness_rate": 66.7, "perfection_rate": 50.0, "compliance_rate": 73.3, "conformity_rate": 24.4, "status": "danger" },
+          { "model": "C型号", "completeness_rate": 75.0, "perfection_rate": 100.0, "compliance_rate": 80.0, "conformity_rate": 60.0, "status": "danger" }
+        ]
+      }
+    }
+  };
+
   window.DEMO = {
-    ROLES, ROLE_GROUPS, ALERT_SUMMARY, ROLE_KPIS, DEMO_TODOS, ORDERS, ALERTS, REPORTS, DEMO_人工确认, CHAT_DEMO, CHAT_DEMOS,
+    ROLES, ROLE_GROUPS, ALERT_SUMMARY, ROLE_KPIS, DEMO_TODOS, ORDERS, ALERTS, REPORTS, DEMO_人工确认, CHAT_DEMO, CHAT_DEMOS, DASHBOARD,
   };
 })();

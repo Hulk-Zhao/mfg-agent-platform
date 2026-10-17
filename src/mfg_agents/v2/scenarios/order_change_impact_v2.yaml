@@ -26,38 +26,34 @@ steps:
     on_error: degrade
 
   # 2) 三域并行评估（计划排产 / 物控齐套 / 制造产能）
+  #    分支与其余 5 场景同构：inline 声明 id + agent（DAG 执行器按 branch["id"] 注册节点）
   - id: fanout
     type: fan_out
+    join: all
     timeout_s: 30
     on_error: degrade
     branches:
-      - {step: planning}
-      - {step: material_control}
-      - {step: manufacturing}
-
-  - id: planning
-    type: agent
-    agent: planning
-    label: 计划Agent · 排产影响
-    icon: "🗓️"
-    timeout_s: 15
-    on_error: degrade
-
-  - id: material_control
-    type: agent
-    agent: material_control
-    label: 物控Agent · 齐套评估
-    icon: "📦"
-    timeout_s: 15
-    on_error: degrade
-
-  - id: manufacturing
-    type: agent
-    agent: manufacturing
-    label: 制造Agent · 产能评估
-    icon: "🏭"
-    timeout_s: 15
-    on_error: degrade
+      - id: planning
+        type: agent
+        agent: planning
+        label: 计划Agent · 排产影响
+        icon: "🗓️"
+        timeout_s: 15
+        on_error: degrade
+      - id: material_control
+        type: agent
+        agent: material_control
+        label: 物控Agent · 齐套评估
+        icon: "📦"
+        timeout_s: 15
+        on_error: degrade
+      - id: manufacturing
+        type: agent
+        agent: manufacturing
+        label: 制造Agent · 产能评估
+        icon: "🏭"
+        timeout_s: 15
+        on_error: degrade
 
   # 3) 影响汇聚
   - id: fanin
@@ -65,14 +61,14 @@ steps:
     timeout_s: 5
     on_error: degrade
 
-  # 4) 变更影响工单（通知计划/物控/业务联动）
+  # 4) 变更影响工单（通知计划/物控/业务联动；workflow: 已注册的工作流工厂 key）
   - id: change_flow
     type: workflow
-    workflow_id: order_change_flow
-    level: P2
-    sla_hours: 4
+    workflow: order_change_flow
+    title: 订单变更影响评估工单
     assignees: [计划, 物控, 业务经理]
-    title: "订单变更影响评估（{model}，{urgency}）"
+    notify_level: P2
+    sla_hours: 4
     timeout_s: 10
     on_error: degrade
 
@@ -80,6 +76,7 @@ steps:
   #    槽位复用 delivery_commit（交期承诺语义一致：业务经理发起 + 计划会签）
   - id: hitl_delivery_commit
     type: hitl
+    agent: hitl_delivery_commit
     approver_roles: [业务经理]
     prompt: "订单变更影响已评估，请确认是否接受该插单/变更（含交期与产能影响）"
     actions:
@@ -90,11 +87,11 @@ steps:
     timeout_s: 5
     on_error: degrade
 
-  # 6) 简报（报告必要性智能判断：多域+HITL → 生成完整报告）
+  # 6) 简报（change 场景专属报告 handler：排产/齐套/产能三项，不套用停线口径）
   - id: report
     type: agent
-    agent: report
-    label: 报告Agent · 生成简报与对客报告
+    agent: report_order_change
+    label: 报告Agent · 变更影响简报
     icon: "📄"
     timeout_s: 60
     on_error: degrade
