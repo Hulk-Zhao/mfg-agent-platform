@@ -1956,6 +1956,10 @@
               <div class="card-title">${UI.icon("list", 16)}待审批列表</div>
               <div class="card-extra" id="hitl-source">加载中…</div>
             </div>
+            <div class="hitl-search">
+              <input id="hitl-search-input" type="text" placeholder="搜索：工单号 / 标题 / 审批岗位 / 优先级…" autocomplete="off" />
+              <button class="hitl-search-clear" id="hitl-search-clear" title="清空" style="display:none">✕</button>
+            </div>
             <div id="hitl-list"><div class="empty">${UI.spinner("lg")}<div style="margin-top:10px">正在加载待办队列…</div></div></div>
           </div>
           <div id="hitl-detail"></div>
@@ -2020,6 +2024,14 @@
           : UI.realFlag("我的待办（" + roleLabels(govRoles(ctx)).join("/") + "）");
     }
 
+    // 排序：需要「我」动作的待办永远置顶（醒目样式），其后按 SLA 剩余时间紧迫度；
+    // 已处理沉底，只读（他人待办）排在可交互项之后。
+    const st = ctx.state.screenState;
+    const processedMapCache = processedMap(ctx);
+    tasks.sort((a, b) => hitlRank(a, processedMapCache) - hitlRank(b, processedMapCache)
+      || Date.parse(slaDueIso(a) || 0) - Date.parse(slaDueIso(b) || 0)
+      || String(a.task_uid).localeCompare(String(b.task_uid)));
+
     if (!tasks.length) {
       listEl.innerHTML = `<div class="empty">${UI.icon("check", 30)}<div style="margin-top:8px">当前无待审批工单</div>
         <div style="font-size:11.5px;margin-top:6px">可在「协同问数」发起停线问数，人工确认 节点将生成真实待办</div></div>`;
@@ -2027,22 +2039,76 @@
       return;
     }
 
-    const st = ctx.state.screenState;
-    if (!st.hitlSelected || !tasks.some((t) => t.task_uid === st.hitlSelected)) {
-      st.hitlSelected = tasks[0].task_uid;
-    }
-    listEl.innerHTML = tasks.map((t) => hitlListItemHtml(ctx, t)).join("");
-    listEl.querySelectorAll("[data-select]").forEach((el) => {
-      el.addEventListener("click", () => {
-        ctx.state.screenState.hitlSelected = el.dataset.select;
-        listEl.querySelectorAll(".hitl-list-item").forEach((x) => x.classList.remove("selected"));
-        el.classList.add("selected");
-        const task = tasks.find((x) => x.task_uid === el.dataset.select);
-        renderHitlDetail(ctx, task);
+    // 列表渲染（供首次绘制与搜索过滤复用）；查询词记忆在 screenState，切屏回来不丢。
+    const drawList = (query) => {
+      const q = (query || "").trim().toLowerCase();
+      const visible = q
+        ? tasks.filter((t) => hitlSearchableText(t).includes(q))
+        : tasks;
+      if (!visible.length) {
+        listEl.innerHTML = `<div class="empty"><div style="margin-top:8px">没有匹配「${UI.esc(query)}」的待办</div>
+          <div style="font-size:11.5px;margin-top:6px">试试工单号、标题关键词、审批岗位或优先级（如 P1）</div></div>`;
+        return;
+      }
+      if (!st.hitlSelected || !visible.some((t) => t.task_uid === st.hitlSelected)) {
+        st.hitlSelected = visible[0].task_uid;
+      }
+      listEl.innerHTML = visible.map((t) => hitlListItemHtml(ctx, t)).join("");
+      listEl.querySelectorAll("[data-select]").forEach((el) => {
+        el.addEventListener("click", () => {
+          ctx.state.screenState.hitlSelected = el.dataset.select;
+          listEl.querySelectorAll(".hitl-list-item").forEach((x) => x.classList.remove("selected"));
+          el.classList.add("selected");
+          const task = visible.find((x) => x.task_uid === el.dataset.select);
+          renderHitlDetail(ctx, task);
+        });
       });
-    });
-    const current = tasks.find((t) => t.task_uid === st.hitlSelected) || tasks[0];
-    renderHitlDetail(ctx, current);
+      const current = visible.find((t) => t.task_uid === st.hitlSelected) || visible[0];
+      renderHitlDetail(ctx, current);
+    };
+
+    drawList(st.hitlQuery || "");
+
+    // 搜索框：实时过滤（只重绘左列，不打断右侧详情交互）
+    const searchInput = document.getElementById("hitl-search-input");
+    const searchClear = document.getElementById("hitl-search-clear");
+    if (searchInput) {
+      if (st.hitlQuery) searchInput.value = st.hitlQuery;
+      searchInput.addEventListener("input", () => {
+        st.hitlQuery = searchInput.value;
+        if (searchClear) searchClear.style.display = searchInput.value ? "" : "none";
+        drawList(searchInput.value);
+      });
+      if (searchClear) {
+        searchClear.style.display = st.hitlQuery ? "" : "none";
+        searchClear.addEventListener("click", () => {
+          searchInput.value = "";
+          st.hitlQuery = "";
+          searchClear.style.display = "none";
+          drawList("");
+          searchInput.focus();
+        });
+      }
+    }
+  }
+
+  /** 待办排序权重：我的待办(0) → 同队列可交互(1) → 他人只读(2)；已处理一律 +10 沉底。 */
+  function hitlRank(t, processedMapCache) {
+    let rank = t.my_action ? 0 : (t._readonly ? 2 : 1);
+    if (processedMapCache && processedMapCache[t.task_uid]) rank += 10;
+    return rank;
+  }
+
+  /** 搜索索引：标题/提示词 + 工单号 + 审批岗位 + 优先级 + 我的待办类型。 */
+  function hitlSearchableText(t) {
+    return [
+      t.hitl_prompt || t.title || "",
+      t.task_uid || "",
+      (t.assignees || []).join("、"),
+      t.priority || "",
+      MY_ACTION_LABEL[t.my_action] || "",
+      t._readonly ? "只读" : "",
+    ].join(" ").toLowerCase();
   }
 
   // 「审批即待办」动作徽标：待我发起 / 待我会签 / 待我终批
@@ -2065,13 +2131,15 @@
     const UI = ctx.UI;
     const st = ctx.state.screenState;
     const processed = processedMap(ctx)[t.task_uid];
+    const mine = !!t.my_action; // 需要当前登录岗位动作的待办 → 置顶 + 醒目标识
     const due = slaDueIso(t);
     const total = slaTotalMs(t);
     const selected = st.hitlSelected === t.task_uid;
     const signoff = signoffOf(t.task_uid, (t.context && t.context.actions) || []);
     const progress = signoff.total
       ? `<span>会签 ${UI.esc(signoff.progress)}${signoff.satisfied ? " ✓" : ""}</span>` : "";
-    return `<div class="hitl-list-item${selected ? " selected" : ""}${processed ? " processed" : ""}" data-select="${UI.esc(t.task_uid)}">
+    return `<div class="hitl-list-item${mine ? " mine" : ""}${selected ? " selected" : ""}${processed ? " processed" : ""}" data-select="${UI.esc(t.task_uid)}">
+      ${mine && !processed ? `<div class="hli-mine-flag">${UI.icon("zap", 12)}我的待办 · ${UI.esc(MY_ACTION_LABEL[t.my_action] || "需我处理")}</div>` : ""}
       <div class="hli-title">${UI.esc(t.hitl_prompt || t.title)}
         ${processed ? UI.badge("已处理", "badge-green") : UI.badge("待审批", "badge-red", true)}
         ${myActionBadge(ctx, t)}

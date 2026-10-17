@@ -1272,6 +1272,75 @@ a:hover { text-decoration: underline; }
 .hitl-list-item.selected { background: var(--primary-light-2); border-left-color: var(--primary); }
 .hitl-list-item.processed { opacity: .72; }
 
+/* 我的待办：置顶醒目（左侧警示色边 + 浅色底，顶部“我的待办”旗标） */
+.hitl-list-item.mine { border-left-color: var(--danger); background: #FFF8F7; }
+.hitl-list-item.mine:hover { background: #FFF3F1; }
+.hitl-list-item.mine.selected { background: var(--primary-light-2); border-left-color: var(--primary); }
+.hli-mine-flag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: #fff;
+  background: var(--danger);
+  border-radius: 3px;
+  padding: 2px 7px;
+  margin-bottom: 6px;
+  letter-spacing: .3px;
+}
+
+/* 待办搜索框 */
+.hitl-search {
+  position: relative;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.hitl-search input {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 7px 30px 7px 30px;
+  font-size: 12.3px;
+  background: #F7F9FB;
+  color: var(--text);
+  outline: none;
+  transition: border-color .12s ease, box-shadow .12s ease;
+}
+.hitl-search input:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-light-2);
+  background: #fff;
+}
+.hitl-search::before {
+  content: "";
+  position: absolute;
+  left: 25px;
+  top: 50%;
+  transform: translateY(calc(-50% - 5px));
+  width: 13px;
+  height: 13px;
+  pointer-events: none;
+  opacity: .45;
+  background: no-repeat center/contain url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="%234B5563" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/></svg>');
+}
+.hitl-search-clear {
+  position: absolute;
+  right: 21px;
+  top: 50%;
+  transform: translateY(-50%);
+  border: none;
+  background: transparent;
+  color: var(--text-3);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 3px 5px;
+  line-height: 1;
+  border-radius: 4px;
+}
+.hitl-search-clear:hover { color: var(--text); background: rgba(0,0,0,.05); }
+
 .hli-title { font-size: 13px; font-weight: 600; line-height: 1.55; display: flex; gap: 7px; align-items: center; flex-wrap: wrap; }
 .hli-meta { font-size: 11.5px; color: var(--text-3); margin-top: 5px; display: flex; gap: 10px; flex-wrap: wrap; font-variant-numeric: tabular-nums; }
 .hli-sla { margin-top: 8px; }
