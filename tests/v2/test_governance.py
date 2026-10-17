@@ -913,7 +913,7 @@ def test_all_scenarios_hitl_slots_are_whitelisted():
     nodes: list[dict[str, str]] = []
     for meta in loaded.values():
         nodes.extend(scenario_registry.hitl_nodes(meta))
-    assert len(nodes) == 7, f"HITL 节点数应为 7，实际 {len(nodes)}: {nodes}"
+    assert len(nodes) == 8, f"HITL 节点数应为 8，实际 {len(nodes)}: {nodes}"
     for node in nodes:
         assert node["slot"] in registry.slot_keys(), node
     assert {n["slot"] for n in nodes} == set(LEGAL_SLOTS)

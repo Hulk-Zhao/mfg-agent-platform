@@ -123,16 +123,45 @@ def make_report_handler(scenario_key: str,
         if gaps:
             brief["数据缺口"] = "；".join(gaps)
 
+        # 报告必要性智能判断（V3.4）：不是所有问题都值得一份完整报告——
+        # 判定为"轻量问题"（单域取证且无 HITL 且无数据缺口）时仅输出简报，
+        # 不生成对客报告（省时省成本，也避免用户被冗余报告打扰）。
+        # 判据均为确定量（域数/HITL/缺口），可审计；LLM 判断版留作演进位。
+        # 多域取证判定：统计 SharedContext 中来自不同域的 provenance 记录
+        domains_seen = len({rec.get("source") for key in ctx.keys()
+                            for rec in ctx.provenance(key)
+                            if rec.get("source") and rec.get("source") != "router"})
+        hitl_count = len(getattr(task, "hitl", None) or []) or len(
+            ctx.get("hitl_pending") or [])
+        needs_full = bool(domains_seen >= 2 or hitl_count or gaps)
+        if not needs_full:
+            logger.info("[report] %s 轻量问题（单域 %d 取证 / 无 HITL / 无缺口）："
+                        "仅输出简报，不生成完整报告", scenario_key, domains_seen)
+
         degraded = not llm_ok()
+        # 无对客模板的场景（如来料异常/设备预警）不产出对客报告，
+        # 但必须先初始化，避免下方 summary 行未绑定即引用（UnboundLocalError）。
         customer_report = ""
-        if scenario_key in _CUST_TEMPLATE:
-            if not degraded:
-                sink.emit({"type": "llm_start", "detail": "生成对客脱敏报告..."})
-                customer_report = _try_llm_report(brief)
-            if not customer_report:
-                degraded = True
-                customer_report = _apply_forbidden_words(
-                    _CUST_TEMPLATE[scenario_key](ctx))
+        try:
+            if scenario_key in _CUST_TEMPLATE and needs_full:
+                customer_report = ""
+                if not degraded:
+                    sink.emit({"type": "llm_start", "detail": "生成对客脱敏报告..."})
+                    customer_report = _try_llm_report(brief)
+                if not customer_report:
+                    degraded = True
+                    customer_report = _apply_forbidden_words(
+                        _CUST_TEMPLATE[scenario_key](ctx))
+            elif scenario_key in _CUST_TEMPLATE:
+                # 轻量问题：不生成完整对客报告，仅给简报式结论（report 非空但轻量）
+                kv = "；".join(f"{k}：{v}" for k, v in list(brief.items())[:3] if v)
+                customer_report = f"轻量结论（未达完整报告标准）：{kv or '已查询'}"
+            else:
+                customer_report = ""
+        except Exception as exc:  # noqa: BLE001 —— 报告生成异常不得清空简报（加固）
+            logger.warning("[report] %s 报告生成异常，简报保留: %s", scenario_key, exc)
+            customer_report = "报告生成异常，简报与数据溯源不受影响，可人工复核。"
+            degraded = True
 
         summary = f"内部简报已生成（{len(spec)} 项）"
         if gaps:
