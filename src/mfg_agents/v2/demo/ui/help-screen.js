@@ -32,35 +32,50 @@
   function esc(s) { return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
 
   function architectureSvg() {
-    const box = (x, y, w, h, fill, stroke, label, sub, lc) =>
-      `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="9" fill="${fill}" stroke="${stroke}"/>`
-      + `<text x="${x + w / 2}" y="${y + (sub ? 22 : 26)}" text-anchor="middle" font-size="13" font-weight="650" fill="${lc || "#1F3B57"}">${esc(label)}</text>`
-      + (sub ? `<text x="${x + w / 2}" y="${y + 40}" text-anchor="middle" font-size="10.5" fill="#5F6B7A">${esc(sub)}</text>` : "");
+    // 配色分层：深蓝底框用白色系文字，浅底框用深色系；层间距加大防遮挡
+    const box = (x, y, w, h, fill, stroke, label, sub, lc) => {
+      const dark = lc === "#fff";
+      const labelColor = lc || "#1F3B57";
+      const subColor = dark ? "rgba(255,255,255,.82)" : "#4A5A6B";
+      return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="10" fill="${fill}" stroke="${stroke}" stroke-width="1.4"/>`
+        + `<text x="${x + w / 2}" y="${y + (sub ? 26 : 30)}" text-anchor="middle" font-size="14" font-weight="700" fill="${labelColor}">${esc(label)}</text>`
+        + (sub ? `<text x="${x + w / 2}" y="${y + 48}" text-anchor="middle" font-size="11" fill="${subColor}">${esc(sub)}</text>` : "");
+    };
     const arrow = (x1, y1, x2, y2, label) =>
-      `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="#9DB8CE" stroke-width="1.6" marker-end="url(#arrowHelp)"/>`
-      + (label ? `<text x="${(x1 + x2) / 2}" y="${(y1 + y2) / 2 - 6}" text-anchor="middle" font-size="9.5" fill="#7A8CA0">${esc(label)}</text>` : "");
-    return `<svg viewBox="0 0 760 470" style="width:100%;max-width:860px;display:block;margin:0 auto" xmlns="http://www.w3.org/2000/svg">
-      <defs><marker id="arrowHelp" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7 Z" fill="#9DB8CE"/></marker></defs>
-      ${box(280, 8, 200, 48, "#185FA5", "#124A85", "员工 / 外部智能体", "门户 · 协同问数 · A2A / MCP", "#fff")}
-      ${arrow(380, 56, 380, 86, "提问")}
-      ${box(230, 88, 300, 52, "#E8F1FA", "#7FA8CE", "智能总控 · 两级路由", "L0 规则快路径 / L1 语义分类 + few-shot")}
-      <text x="380" y="162" text-anchor="middle" font-size="10.5" fill="#5F6B7A">四策略分派（多意图路由）</text>
-      ${arrow(300, 140, 130, 190)}
-      ${arrow(360, 140, 360, 190)}
-      ${arrow(430, 140, 590, 190)}
-      ${box(28, 192, 200, 64, "#FDF6E7", "#D9C58A", "协同场景 DAG", "停线 / 来料 / 客诉8D / 出货 / 设备", "#7A5B00")}
-      ${box(262, 192, 200, 64, "#EAF6EF", "#8CC5A5", "数据直答", "指标库 → 注册查询 → 明细探查", "#1A6B3C")}
-      ${box(500, 192, 232, 64, "#F0EBFA", "#B39DDB", "Agentic 域智能体", "13 个专业角色 · 自主工具循环 · HITL 自判", "#4B3A78")}
-      <text x="380" y="282" text-anchor="middle" font-size="10.5" fill="#5F6B7A">统一工具层（与 MCP / A2A 同源 · 全部走 ACL 与脱敏）</text>
-      ${arrow(128, 256, 128, 300)}
-      ${arrow(362, 256, 362, 300)}
-      ${arrow(616, 256, 616, 300)}
-      ${box(60, 302, 200, 46, "#fff", "#C9D6E2", "Text2SQL 八道防线", "指标库 / 注册查询 / 明细探查")}
-      ${box(280, 302, 200, 46, "#fff", "#C9D6E2", "工作流引擎", "状态机 / SLA / 会签 / 审计")}
-      ${box(500, 302, 232, 46, "#fff", "#C9D6E2", "知识检索 · 通知 · 场景注册表", "ChromaDB / IM / YAML 场景")}
-      ${arrow(380, 348, 380, 378, "只读访问 · 权限与脱敏同源")}
-      ${box(120, 380, 520, 46, "#F4F8FC", "#B8CCDE", "数据层：演示制造数据集 →（DataSource 契约）→ 真实 ERP / MES / QMS", "", "")}
-      <text x="380" y="452" text-anchor="middle" font-size="10.5" fill="#5F6B7A">治理铁律：关键决策人工在环（HITL 白名单）· Agent 只发起不放行 · 全程 provenance 可审计 · 数据不出厂</text>
+      `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="#5B7E9E" stroke-width="2" marker-end="url(#arrowHelp)"/>`
+      + (label ? `<rect x="${(x1 + x2) / 2 - 52}" y="${(y1 + y2) / 2 - 17}" width="104" height="20" rx="5" fill="#EFF5FB"/>`
+        + `<text x="${(x1 + x2) / 2}" y="${(y1 + y2) / 2 - 3}" text-anchor="middle" font-size="10.5" font-weight="600" fill="#3D5A75">${esc(label)}</text>` : "");
+    const layerLabel = (y, text) =>
+      `<text x="380" y="${y}" text-anchor="middle" font-size="11.5" font-weight="700" fill="#2E4E6B">${esc(text)}</text>`;
+    return `<svg viewBox="0 0 780 560" style="width:100%;max-width:880px;display:block;margin:0 auto" xmlns="http://www.w3.org/2000/svg">
+      <defs><marker id="arrowHelp" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#5B7E9E"/></marker></defs>
+
+      ${box(285, 10, 210, 62, "#185FA5", "#124A85", "员工 / 外部智能体", "门户 · 协同问数 · A2A / MCP", "#fff")}
+      ${arrow(390, 72, 390, 118, "提问")}
+
+      ${box(240, 120, 300, 60, "#E8F1FA", "#6E9CC7", "智能总控 · 两级路由", "L0 规则快路径 / L1 语义分类 + few-shot")}
+      ${layerLabel(212, "↓")}
+      ${layerLabel(206, "")}
+      ${arrow(390, 180, 390, 216, "四策略分派（多意图路由）")}
+
+      ${box(28, 218, 210, 72, "#FDF6E7", "#C9A94E", "协同场景 DAG", "停线 / 来料 / 客诉8D", "#6B5000")}
+      ${box(272, 218, 210, 72, "#EAF6EF", "#6FAE88", "数据直答", "指标库 → 注册查询 → 明细探查", "#155E35")}
+      ${box(518, 218, 234, 72, "#F0EBFA", "#9D82C9", "Agentic 域智能体", "13 个专业角色 · 自主工具循环", "#43326E")}
+      <text x="132" y="308" text-anchor="middle" font-size="10.5" fill="#7A5B00">HITL 工单 / 报告</text>
+      <text x="377" y="308" text-anchor="middle" font-size="10.5" fill="#155E35">无工单 · 秒级</text>
+      <text x="635" y="308" text-anchor="middle" font-size="10.5" fill="#43326E">8 步上限 · HITL 自判</text>
+      ${arrow(132, 316, 132, 352)}
+      ${arrow(377, 316, 377, 352)}
+      ${arrow(635, 316, 635, 352)}
+      ${layerLabel(344, "统一工具层（与 MCP / A2A 同源 · 全部走 ACL 与脱敏）")}
+
+      ${box(60, 356, 204, 56, "#fff", "#A9BFD3", "Text2SQL 八道防线", "指标库 / 注册查询 / 明细探查")}
+      ${box(286, 356, 204, 56, "#fff", "#A9BFD3", "工作流引擎", "状态机 / SLA / 会签 / 审计")}
+      ${box(512, 356, 240, 56, "#fff", "#A9BFD3", "知识检索 · 通知 · 场景注册表", "ChromaDB / IM / YAML 场景")}
+      ${arrow(390, 412, 390, 448, "只读访问 · 权限同源")}
+
+      ${box(120, 450, 520, 52, "#F4F8FC", "#9FB8CE", "数据层", "演示制造数据集 →（DataSource 契约）→ 真实 ERP / MES / QMS")}
+      <text x="390" y="530" text-anchor="middle" font-size="11" font-weight="650" fill="#2E4E6B">治理铁律：关键决策人工在环（HITL 白名单）· Agent 只发起不放行 · 全程 provenance 可审计 · 数据不出厂</text>
     </svg>`;
   }
 
