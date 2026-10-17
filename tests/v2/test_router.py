@@ -34,10 +34,15 @@ def test_l0_hit_by_scenario_trigger_words(router):
 
 
 def test_l0_hit_by_v1_scene_rules(router):
-    """L0：V1 SCENE_RULES 关键词命中（未迁移场景 → domain 有、scenario None）。"""
+    """L0：V1 SCENE_RULES 关键词命中（S3 已迁移 → scenario=customer_complaint_v2）。
+
+    说明（§8.3 唯一预期内断言翻转）：原断言 ``scenario_key is None`` 编码的是
+    "场景**尚未迁移**"的过渡态；本次迁移客户投诉场景后，该问题（含"投诉/华为/
+    不良率"触发词）应按设计命中 ``customer_complaint_v2``。level/domain 保持不变。
+    """
     result = router.route("华为投诉BATCH-A-1008，不良率超标")
     assert result.level == "L0"
-    assert result.scenario_key is None
+    assert result.scenario_key == "customer_complaint_v2"
     assert result.domain == "quality"
 
 

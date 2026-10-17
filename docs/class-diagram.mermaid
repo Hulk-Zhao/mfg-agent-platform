@@ -1,0 +1,233 @@
+%% mfg-agent-platform V2 增量设计 · 类图（既有核心契约 + 本次新增抽象）
+%% 对应 docs/V2-INCREMENT-DESIGN.md §3
+classDiagram
+    %% ---------- 既有：接入与编排契约 ----------
+    class ScenarioMeta {
+        +str key
+        +str name
+        +int version
+        +list~str~ domains
+        +list~dict~ steps
+        +list~dict~ hitl
+        +list~str~ triggers
+        +trigger_words() list
+        +step_ids() list
+    }
+    class ScenarioRegistry {
+        +load() dict
+        +get(key) ScenarioMeta
+        +list() list
+        +match_trigger_words(query) str
+    }
+    class YamlDagExecutor {
+        +build()
+        +run(query, user_ctx, entities) DagRunResult
+    }
+    class DagRunResult {
+        +str scenario_key
+        +dict domains
+        +list hitl
+        +list workflow
+        +dict timings
+        +dict node_status
+    }
+    class SharedContext {
+        +merge(domain, payload, source)
+        +get(key)
+        +snapshot() dict
+    }
+    class NodeTask {
+        +str step_id
+        +str agent
+        +dict params
+        +dict entities
+        +str query
+        +dict user_ctx
+    }
+
+    %% ---------- 既有：能力服务 ----------
+    class Text2SQLService {
+        +query_metric(id, params, user_ctx) QueryResult
+        +query_registered(name, params, user_ctx) QueryResult
+        +query_detail(question, user_ctx) QueryResult
+        +query(question, user_ctx) QueryResult
+    }
+    class QueryResult {
+        +str channel
+        +str sql
+        +list rows
+        +dict provenance
+        +bool masked
+        +float confidence
+        +str fallback
+        +to_dict() dict
+    }
+    class SQLAuditor {
+        +audit(sql, user_ctx) list
+        +regex_guard(sql)
+        +structure_check(sql)
+        +check_table_permission(sql, user_ctx)
+    }
+    class FieldMasker {
+        +mask(rows, user_ctx, sql) tuple
+    }
+    class QueryLibrary {
+        +load(path) QueryLibrary
+        +get(name) dict
+        +match(question) str
+    }
+    class MetricLibrary {
+        +load(dir) MetricLibrary
+        +get(id) dict
+        +match(question) dict
+    }
+    class WorkflowEngine {
+        +create_task(wf_id, title, context, assignees, priority, sla_hours, hitl, hitl_prompt) WorkflowTask
+        +advance(task_uid, action, actor, comment) WorkflowTask
+        +approve(task_uid, approver, comment, final) WorkflowTask
+        +reject(task_uid, approver, comment) WorkflowTask
+        +pending_hitl() list
+    }
+    class WorkflowTask {
+        +str task_uid
+        +str wf_id
+        +str status
+        +list assignees
+        +dict context
+        +str hitl_prompt
+        +str sla_due_at
+        +to_dict() dict
+    }
+    class NotificationService {
+        +send(level, targets, title, body)
+        +broadcast_hitl(task, targets)
+    }
+    class DataSourceRegistry {
+        +register(source, default)
+        +run_query(name, params) list
+        +execute_readonly_sql(sql, params, row_cap) list
+    }
+
+    %% ---------- 本次新增：handler 工厂 ----------
+    class HandlerFactories {
+        <<module core.node_registry>>
+        +_make_registered_query_agent(domain, query_id, param_map, summary_fn, payload_keys) NodeHandler
+        +_make_assessment_agent(domain, query_id, output_keys, template_fn) NodeHandler
+        +_make_workflow_handler() NodeHandler
+        +_make_hitl_handler(kind) NodeHandler
+        +_make_report_handler(scenario_key) NodeHandler
+    }
+    class NodeHandler {
+        <<callable (task, ctx, sink) to dict>>
+    }
+    class DomainHandlers {
+        <<module v2.agents.*>>
+        % S2
+        +sqe_assess(domain=quality)
+        +procurement(domain=supply_chain)
+        +planning(domain=supply_chain)
+        +material_control(domain=supply_chain)
+        % S3
+        +qa_lead(domain=quality)
+        +pqe_process(domain=quality)
+        +sqe_supplier(domain=quality)
+        +engineering(domain=rd_engineering)
+        +business_sales(domain=supply_chain)
+        % S4
+        +business_order(domain=supply_chain)
+        +warehouse_atp(domain=supply_chain)
+        +manufacturing_output(domain=manufacturing)
+        +logistics(domain=supply_chain)
+        +atp_analysis(domain=supply_chain)
+        % S8
+        +maintenance(domain=manufacturing)
+        +planning_window(domain=supply_chain)
+        +engineering_param(domain=rd_engineering)
+        +spare_parts(domain=supply_chain)
+    }
+
+    %% ---------- 本次新增：脚手架抽象 ----------
+    class VectorStore {
+        <<abstract>>
+        +str name
+        +upsert(collection, ids, documents, metadatas, embeddings) int
+        +query(collection, query_text, k, where) list~VectorHit~
+        +delete(collection, ids) int
+        +health() dict
+    }
+    class VectorHit {
+        +str id
+        +str text
+        +dict metadata
+        +float score
+    }
+    class ChromaVectorStore {
+        +str name
+        +upsert(...)
+        +query(...)
+        +delete(...)
+        +health() dict
+    }
+    class MilvusVectorStore {
+        <<预留位/本次不实现>>
+    }
+
+    class IntentClassifier {
+        <<abstract>>
+        +classify(query, user_ctx) IntentResult
+    }
+    class RuleLLMClassifier {
+        +classify(query, user_ctx) IntentResult
+    }
+    class StrategySelector {
+        <<abstract>>
+        +select(intent, user_ctx) Strategy
+    }
+    class DefaultStrategySelector {
+        +select(intent, user_ctx) Strategy
+    }
+    class IntentResult {
+        +str domain
+        +str scenario_key
+        +float confidence
+        +str level
+        +dict entities
+        +bool low_confidence
+        +str reason
+        +to_dict() dict
+    }
+    class Strategy {
+        +str scenario_key
+        +str reason
+    }
+
+    %% ---------- 关系 ----------
+    ScenarioRegistry o-- ScenarioMeta
+    YamlDagExecutor --> ScenarioRegistry
+    YamlDagExecutor --> SharedContext
+    YamlDagExecutor ..> DagRunResult : produces
+    NodeHandler ..> NodeTask : receives
+    NodeHandler --> SharedContext
+    NodeHandler --> Text2SQLService
+    NodeHandler --> WorkflowEngine
+    NodeHandler --> NotificationService
+    HandlerFactories ..> NodeHandler : creates
+    DomainHandlers ..> HandlerFactories : built by
+    Text2SQLService --> QueryResult
+    Text2SQLService --> SQLAuditor
+    Text2SQLService --> FieldMasker
+    Text2SQLService --> QueryLibrary
+    Text2SQLService --> MetricLibrary
+    Text2SQLService --> DataSourceRegistry
+    WorkflowEngine --> WorkflowTask
+    ChromaVectorStore --|> VectorStore
+    MilvusVectorStore --|> VectorStore
+    VectorStore ..> VectorHit : returns
+    RuleLLMClassifier --|> IntentClassifier
+    DefaultStrategySelector --|> StrategySelector
+    IntentClassifier ..> IntentResult : returns
+    StrategySelector ..> Strategy : returns
+    DefaultStrategySelector --> ScenarioRegistry
+    Note for MilvusVectorStore "本次仅 README 留接入位\n零依赖，不实现"
+    Note for IntentClassifier "本次仅骨架；Router 仍走 TwoLevelRouter\n未来分类/策略解耦后再委托"
+    Note for ChromaVectorStore "包装现有 tools/rag_tools.py\n单 collection failure_cases，行为不变"

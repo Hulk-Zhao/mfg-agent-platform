@@ -5,27 +5,49 @@ V2 把 V1 原型中"硬编码的场景知识"抽取为声明式配置，并提�
 
 ```
 v2/
+├── base/                 # 基础设施层（对齐 Itcast base/）
+│   └── logger.py         #   get_logger / configure（薄封装，不替换现有 logging）
 ├── contracts/            # 接入契约层
 │   ├── im_gateway.py     #   IMGateway ABC + InboundMessage / ReplyCard
 │   ├── adapters/wecom.py #   企业微信适配器（验签/AES 解密/回复 XML）
 │   ├── data_source.py    #   DataSource ABC + SQLiteDataSource + Registry
-│   └── scenario.py       #   ScenarioMeta + ScenarioRegistry（YAML 场景注册）
+│   ├── scenario.py       #   ScenarioMeta + ScenarioRegistry（YAML 场景注册）
+│   └── vector_store.py   #   [新] VectorStore ABC + VectorHit + ChromaVectorStore（零依赖）
+├── prompts/              # [新] 提示词集中管理（对齐 Itcast prompts.py）
+│   ├── routing.py        #   L1 路由分类 prompt（DOMAIN_GROUPS + 模板）
+│   ├── fa.py / report.py #   FA 提示词 / 报告提示词 + FORBIDDEN_WORDS + 3 个模板函数
+│   └── text2sql.py       #   明细探查 prompt（复用 V1 SCHEMA_PROMPT）
+├── intent/               # [新] 意图/策略分离骨架（对齐 query_classifier + strategy_selector）
+│   ├── classifier.py     #   IntentClassifier ABC + RuleLLMClassifier（包装现 Router）
+│   └── strategy.py       #   StrategySelector ABC + DefaultStrategySelector
 ├── core/                 # 编排内核
 │   ├── router.py         #   TwoLevelRouter：L0 规则快路径 / L1 LLM 闭集分类 / 降级
 │   ├── yaml_dag.py       #   YamlDagExecutor：YAML → LangGraph 子图
 │   ├── shared_context.py #   SharedContext：只增不改 + source 溯源
 │   ├── domain_state.py   #   DomainState + reducer（按域合并，域间不覆盖）
-│   ├── node_registry.py  #   域 Agent handler 注册表（复用 V1 资产）
+│   ├── node_registry.py  #   域 Agent handler 注册表（薄装配层：5 个工厂）
 │   ├── orchestrator.py   #   V2Orchestrator：统一入口
 │   └── events.py         #   请求级 context-var 事件队列（修 D6 并发串话）
+├── agents/               # [新] 业务域模块化（各域独立文件）
+│   ├── quality.py        #   SQE 判定 / QA 8D 牵头 / PQE 过程 / SQE 供应商
+│   ├── supply_chain.py   #   采购/计划/物控/仓库ATP/物流/业务/窗口
+│   ├── manufacturing.py  #   维保建议
+│   ├── engineering.py    #   工程（设计根因/参数/备件）——degrade 模板 + data_gap
+│   ├── workflow_nodes.py #   通用工作流节点工厂
+│   ├── hitl.py           #   HITL kinds 工厂（restart/eta/disposition/d8_close/...）
+│   └── report.py         #   通用报告 handler 工厂（按场景选模板）
 ├── services/             # 能力服务（无状态，被所有域组复用）
-│   ├── text2sql.py       #   Text2SQLService：指标库→注册查询→明细探查 八道防线
+│   ├── text2sql/         #   Text2SQLService（包化分层：service/auditor/masker/libraries）
 │   ├── notification.py   #   NotificationService：P0/P1/P2 分级通知
 │   └── workflow.py       #   WorkflowEngine：状态机 + SLA + HITL 待办队列
-├── scenarios/            # 声明式场景（line_stop_v2.yaml = V1 line_stop 等价迁移）
+├── scenarios/            # 声明式场景（line_stop_v2 + 4 新场景）
 ├── data/                 # queries.yaml（注册查询）+ metrics/（指标定义即代码）
-└── demo/                 # cli.py / api.py / im_simulator.py（offline 可跑）
+└── demo/                 # cli.py / api.py / im_simulator.py / ui（offline 可跑）
 ```
+
+> **场景**：`line_stop_v2`（停线应急）、`incoming_quality_v2`（来料异常 S2）、
+> `customer_complaint_v2`（客诉 8D S3）、`delivery_status_v2`（出货风险 S4）、
+> `equipment_warning_v2`（设备预警 S8）。
 
 ## 快速开始（offline 可跑，无需 Ollama）
 
@@ -217,6 +239,30 @@ def material_control(task, ctx, sink) -> dict:
 - **user_ctx 入口校验**：roles 为 None/不可迭代、dept 非字符串 →
   直接拒绝查询（fail-closed，不逃逸 TypeError）。
 
+## 扩展位（本次仅留位，不接线，零新依赖）
+
+- **意图识别演进位** `intent/`：`IntentClassifier` / `StrategySelector` ABC +
+  `RuleLLMClassifier`（内部直接调用现 `TwoLevelRouter`，行为等价）。迁移路径：
+  `Router` 改为 `classifier.classify → selector.select`，`RouteResult` 收敛为
+  `IntentResult` 别名；再下一步分类器可替换为独立小模型/分类服务。本次**不改**
+  Router 运行路径（保证回归基线）。
+- **RAG 向量库演进位** `contracts/vector_store.py`：`VectorStore` ABC +
+  `ChromaVectorStore` 适配器（包装 `tools/rag_tools.py`，同 collection、同语义，
+  行为不变）。接 Milvus 只需实现
+  `contracts/adapters/milvus.py::MilvusVectorStore(VectorStore)`，**零框架改动**。
+  混合检索（向量 + BM25 + RRF 融合）落点 `services/rag/hybrid.py`（本次仅设计，不引
+  `pymilvus`/`rank_bm25`）。
+- **提示词集中** `prompts/`：全部 prompt/禁词表/模板集中管理，字符串逐字节复制；
+  `tests/v2/test_prompts_golden.py` 金标准护不变量。
+
+## 演示简化（明确标注）
+
+- **8D 不建表**：客诉 8D 的 D1-D8 由 `agents/quality.py::make_qa_lead` **规则模板
+  确定性合成**，由 `capa_flow` 工单 context 承载（不新增 DDL）。生产需持久化
+  D1-D8 步骤（见"已知限制"）。
+- **工程域数据缺口**：设计根因 / 参数基线 / 备件库存当前无数据源 → `degrade` 模板 +
+  `data_gap` 标记，前端显式渲染"该数据当前无来源"（**不编造**）。
+
 ## 已知限制（记录在案，生产前需处理）
 
 1. **企微回调无重放防护**：同一合法签名重复提交会被再次接受（企微官方
@@ -228,3 +274,9 @@ def material_control(task, ctx, sink) -> dict:
 3. **OTD 演示口径**：`data/metrics/otd.yaml` 以 `shipment.eta` 为客户
    要求日（演示库无真实要求日/发货日字段），对外上线前必须替换为真实
    字段并在指标库升版。
+4. **8D 进度未持久化**：D1-D8 目前由模板合成，仅存于 `capa_flow` 工单 context；
+   生产需建 `capa_8d_step` 表持久化每步状态/责任人/证据（U1）。
+5. **工程/备件/在途数据源缺失**：设计根因、工艺参数基线、备件库存无数据源，
+   降级为模板 + `data_gap`；生产接入 PLM/EAM/ERP 后替换（U2）。
+6. **意图/向量库未接线**：`intent/` 与 `VectorStore` 本次仅骨架，
+   Router 与 `fa` 仍走原路径；切换列为后续独立需求（U3/U4）。

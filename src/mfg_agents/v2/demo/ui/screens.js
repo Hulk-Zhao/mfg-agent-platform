@@ -454,7 +454,18 @@
    * 屏幕三：智能问数（核心屏 · 真实后端）
    * ============================================================ */
 
-  const PARALLEL_NODES = new Set(["quality", "supply_chain", "equipment"]);
+  const PARALLEL_NODES = new Set([
+    // line_stop
+    "quality", "supply_chain", "equipment",
+    // S2 来料异常
+    "procurement", "planning", "material_control",
+    // S3 客诉 8D
+    "pqe_process", "sqe_supplier", "engineering", "business_sales",
+    // S4 出货风险
+    "business_order", "warehouse_atp", "manufacturing_output", "logistics",
+    // S8 设备预警
+    "maintenance", "planning_window", "engineering_param", "spare_parts",
+  ]);
   const QUICK_QUESTIONS = [
     "A型号在SMT-1停线，何时复线？",
     "今天锡膏批次有问题",
@@ -462,7 +473,7 @@
     "A型号能发多少货",
     "SMT-1设备参数异常吗",
   ];
-  // 节点展示名（YAML 中 impact_wf / hitl_* 未定义 label，事件回传原始 step id，这里美化）
+  // 节点展示名（YAML label 未定义时的兜底；事件通常已带 label）
   const NODE_LABELS = {
     business: "业务Agent · 意图识别",
     confirm_stop: "制造Agent · 确认停线",
@@ -475,6 +486,42 @@
     hitl_restart: "HITL · 复线决策确认",
     hitl_eta: "HITL · 对客ETA承诺确认",
     report: "报告Agent · 生成简报与对客报告",
+    // S2
+    sqe_assess: "SQE · 来料不合格判定",
+    procurement: "采购 · 供应商跟催",
+    planning: "计划 · 排产影响",
+    material_control: "物控 · 库存/替代",
+    scar_wf: "工作流 · SCAR 处置工单",
+    hitl_disposition: "HITL · 退换货/特采决策",
+    report_incoming: "报告Agent · 来料异常简报",
+    // S3
+    qa_lead: "QA · 8D 牵头",
+    pqe_process: "PQE · 过程分析",
+    sqe_supplier: "SQE · 供应商侧",
+    engineering: "工程 · 设计根因",
+    business_sales: "业务 · 对客口径",
+    capa_flow: "工作流 · 8D 整改工单",
+    hitl_d8_close: "HITL · 8D 报告关闭",
+    hitl_complaint_reply: "HITL · 对客回复确认",
+    report_complaint: "报告Agent · 8D/对客报告",
+    // S4
+    business_order: "业务 · 订单/交期",
+    warehouse_atp: "仓库 · ATP",
+    manufacturing_output: "制造 · 产出",
+    logistics: "物流 · 在途",
+    atp_analysis: "ATP 分析 · 可承诺量",
+    delivery_risk_wf: "工作流 · 出货风险工单",
+    hitl_delivery_commit: "HITL · 对客交期承诺",
+    report_delivery: "报告Agent · 出货风险简报",
+    // S8
+    equipment_check: "设备Agent · 查EAM",
+    maintenance: "制造 · 维保建议",
+    planning_window: "计划 · 换产窗口",
+    engineering_param: "工程 · 参数建议",
+    spare_parts: "采购 · 备件需求",
+    maintenance_flow: "工作流 · 维保工单",
+    hitl_maintenance_window: "HITL · 停机窗口确认",
+    report_equipment: "报告Agent · 设备简报",
   };
 
   function chatStore(ctx) {
@@ -678,7 +725,19 @@
     if (sendBtn) sendBtn.disabled = true;
     if (input) input.disabled = true;
 
-    const demo = window.DEMO.CHAT_DEMO;
+    const demos = window.DEMO.CHAT_DEMOS || {};
+    const demo = demos[text] || window.DEMO.CHAT_DEMO;
+    if (!demo) {
+      chat.messages.push({
+        kind: "error", id: "m" + ++chat.seq,
+        text: "后端离线：该问题未收录离线回放（离线回放覆盖 5 个快捷问题）。请启用在线模式（起后端服务）运行真实链路，或点击上方 5 个快捷问题之一。",
+      });
+      flow.status = "error";
+      renderChatMessages(ctx, scroll);
+      if (sendBtn) sendBtn.disabled = false;
+      if (input) { input.disabled = false; input.focus(); }
+      return;
+    }
     for (const ev of demo.events) {
       await new Promise((r) => setTimeout(r, 160 + Math.random() * 240));
       if (ctx.state.screen !== "chat") break;
@@ -842,6 +901,10 @@
     const faText = brief["FA评级"] || "";
     const ratingMatch = /评级\s*([A-D])/.exec(faText);
     const etaMatch = /预计\s*(\d+(?:\.\d+)?)\s*h/i.exec(faText);
+    // data_gap：无数据源的项（不编造）——前端必须显式渲染（架构纪律）
+    const gapNotes = Array.from(new Set(
+      (result.provenance || []).filter((p) => p.channel === "data_gap")
+        .map((p) => p.note).filter(Boolean)));
 
     const briefItems = Object.keys(brief).map((k) => {
       let v = UI.esc(brief[k] === true ? "True" : brief[k] === false ? "False" : brief[k] || "—");
@@ -874,6 +937,7 @@
       </div>
       <div class="result-body">
         ${degraded ? `<div class="degrade-banner" style="margin-bottom:12px">${UI.icon("warn", 14)}<span><b>degraded 模式：LLM 不可用</b>，结论为规则/模板化输出（${UI.esc((result.degraded_reasons || []).join("；"))}）。全部结论仍带 provenance 可溯源，可人工复核后放行。</span></div>` : ""}
+        ${gapNotes.length ? `<div class="offline-banner" style="margin-bottom:12px">${UI.icon("info", 14)}<span><b>数据缺口（data_gap）：该数据当前无来源</b>，平台不编造数据，相关项已转人工/现场确认 —— ${UI.esc(gapNotes.join("；"))}</span></div>` : ""}
         <div class="brief-grid">${briefItems}${tickets}</div>
         ${etaMatch ? `<div style="margin-top:10px;font-size:12.5px;color:var(--text-2)">${UI.icon("clock", 13)} 预计复线时间：<b style="color:var(--text)">${UI.esc(etaMatch[1])} 小时</b> · 总耗时 ${UI.esc(String(result.elapsed_ms || "-"))}ms</div>` : ""}
         ${provenanceHtml(ctx, result)}
@@ -938,6 +1002,9 @@
         : p.channel === "workflow" ? `工作流工单：<b>${UI.esc(p.task_uid || "")}</b>（${UI.esc((p.assignees || []).join("、"))}）`
         : p.channel === "hitl" ? `HITL 待确认：<b>${UI.esc(p.task_uid || "")}</b>（${UI.esc((p.approver_roles || []).join("、"))}）`
         : p.channel === "report" ? `报告生成：degraded=${p.degraded ? "是" : "否"}，禁词表兜底 ${UI.esc(String((p.masked_words || []).length))} 词`
+        : p.channel === "data_gap" ? `数据缺口（无来源，不编造）：${UI.esc(p.note || "")}`
+        : p.channel === "compute" ? `代码计算：${UI.esc(p.formula || "")}（来源：${UI.esc(p.source || "")}）`
+        : p.channel === "template" ? `规则模板：${UI.esc(p.note || "模板化结论（degraded）")}`
         : UI.esc(JSON.stringify(p));
       return `<div class="prov-item"><div class="prov-item-head">${UI.badge(p.domain || p.channel || "-", "badge-purple")}<span style="font-size:12.3px;color:var(--text-2)">${label}</span></div></div>`;
     }).join("");

@@ -216,116 +216,2839 @@
              fa_rating: "B", eta_hours: 2, kind: "impact" } },
   ];
 
-  /** 智能问数 · 后端离线时的演示回放（事件序列与结果均为真实链路的同构复刻） */
-  const CHAT_DEMO = {
-    query: "A型号在SMT-1停线，何时复线？",
-    events: [
-      { type: "agent_start", node: "business", label: "业务Agent · 意图识别" },
-      { type: "tool_start", tool: "意图识别", detail: "两级路由（L0 规则快路径 / L1 闭集分类 / 降级模糊匹配）" },
-      { type: "tool_end", tool: "意图识别", detail: "识别场景：line_stop | 型号：A型号 | 线体：SMT-1" },
-      { type: "agent_end", node: "business", label: "业务Agent · 意图识别", summary: "识别场景：line_stop | 型号：A型号 | 线体：SMT-1", status: "ok", elapsed_ms: 0.6 },
-      { type: "agent_start", node: "confirm_stop", label: "制造Agent · 确认停线" },
-      { type: "tool_start", tool: "SQL查询", detail: "查询SMT-1线A型号今日OEE与产出 + 进行中停线事件" },
-      { type: "tool_end", tool: "SQL查询", detail: "返回2条产出，1条停线事件（原文）" },
-      { type: "agent_end", node: "confirm_stop", label: "制造Agent · 确认停线", summary: "SMT-1线A型号今日OEE=32.1%", status: "ok", elapsed_ms: 2.5 },
-      { type: "agent_start", node: "equipment", label: "设备Agent · 查EAM" },
-      { type: "agent_start", node: "quality", label: "品质Agent · 查QMS" },
-      { type: "agent_start", node: "supply_chain", label: "供应链Agent · 查SCM" },
-      { type: "tool_start", tool: "SQL查询", detail: "查询SMT-1线A型号不良分布" },
-      { type: "tool_start", tool: "SQL查询", detail: "查询SMT-1线设备异常" },
-      { type: "tool_start", tool: "SQL查询", detail: "查询今日到货批次" },
-      { type: "tool_end", tool: "SQL查询", detail: "返回2种不良" },
-      { type: "tool_end", tool: "SQL查询", detail: "返回3条异常" },
-      { type: "tool_end", tool: "SQL查询", detail: "返回1条批次（敏感字段已按角色脱敏: True）" },
-      { type: "agent_end", node: "quality", label: "品质Agent · 查QMS", summary: "主导不良：锡膏偏移，共77pcs", status: "ok", elapsed_ms: 2.2 },
-      { type: "agent_end", node: "equipment", label: "设备Agent · 查EAM", summary: "近2小时3条设备异常：PRT-01 刮刀压力=0.8MPa（基准0.5）；PRT-01 钢网清洁周期=15min（基准4h）；OVN-02 回流温区3=245℃（基准235±5）", status: "ok", elapsed_ms: 4.1 },
-      { type: "agent_end", node: "supply_chain", label: "供应链Agent · 查SCM", summary: "今日1个批次到货，无来料异常", status: "ok", elapsed_ms: 3.6 },
-      { type: "fan_in", node: "fanin", domains: ["equipment", "manufacturing", "orchestration", "quality", "supply_chain"], degraded: [], summary: "汇聚 5 域结果" },
-      { type: "agent_start", node: "fa", label: "FA分析Agent · RAG推理" },
-      { type: "tool_start", tool: "RAG检索", detail: "查询: SMT-1线 锡膏偏移 设备告警=E-201,E-205,E-301" },
-      { type: "tool_end", tool: "RAG检索", detail: "匹配3条历史案例" },
-      { type: "agent_end", node: "fa", label: "FA分析Agent · RAG推理", summary: "评级B，根因：设备参数异常（刮刀压力=0.8MPa（基准0.5））与锡膏偏移不良相关，疑似工艺偏差，预计2h复线（degraded：LLM 不可用，模板化结论）", status: "ok", elapsed_ms: 536.2 },
-      { type: "agent_start", node: "impact_wf", label: "工作流 · 停线影响评估工单" },
-      { type: "agent_end", node: "impact_wf", label: "工作流 · 停线影响评估工单", summary: "工单 wf-07853f21e584 已创建（P1 通知 计划,物控,业务，SLA 2h）", status: "ok", elapsed_ms: 68.3 },
-      { type: "agent_start", node: "hitl_restart", label: "HITL · 复线决策确认" },
-      { type: "agent_end", node: "hitl_restart", label: "HITL · 复线决策确认", summary: "复线决策确认：是否按 FA 建议 ETA 复线？ → waiting_hitl（审批人：制造现场负责人）", status: "ok", elapsed_ms: 59.6 },
-      { type: "agent_start", node: "hitl_eta", label: "HITL · 对客ETA承诺确认" },
-      { type: "agent_end", node: "hitl_eta", label: "HITL · 对客ETA承诺确认", summary: "对客 ETA 承诺确认：确认回复客户的预计恢复时间？ → waiting_hitl（审批人：业务经理）", status: "ok", elapsed_ms: 32.6 },
-      { type: "agent_start", node: "report", label: "报告Agent · 生成简报与对客报告" },
-      { type: "agent_end", node: "report", label: "报告Agent · 生成简报与对客报告", summary: "对客报告已生成（degraded 模板化 + 禁词表兜底）", status: "ok", elapsed_ms: 0.4 },
-    ],
-    result: {
-      query: "A型号在SMT-1停线，何时复线？",
-      run_id: "run-a697e4d69c6f",
-      route: { domain: "manufacturing", scenario_key: "line_stop_v2", confidence: 1.0,
-               level: "L0", low_confidence: false,
-               entities: { product_model: "A型号", line_code: "SMT-1", urgency: "normal", v1_scenario: "line_stop" },
-               reason: "场景触发词命中: line_stop_v2" },
-      scenario_key: "line_stop_v2",
-      report: "尊敬的客户：目前产线处于计划内暂停（例行校准），我们已启动批次质量复核与工艺参数优化。根据当前评估，预计约 2 小时恢复，届时将第一时间同步发货安排。给贵司带来不便深表歉意，我们将持续跟进并及时通报进展。",
-      internal_brief: {
-        "停线确认": true, "生产": "SMT-1线A型号今日OEE=32.1%",
-        "品质": "主导不良：锡膏偏移，共77pcs",
-        "供应链": "今日1个批次到货，无来料异常",
-        "设备": "近2小时3条设备异常：PRT-01 刮刀压力=0.8MPa（基准0.5）；PRT-01 钢网清洁周期=15min（基准4h）；OVN-02 回流温区3=245℃（基准235±5）",
-        "FA评级": "评级B，根因：设备参数异常（刮刀压力=0.8MPa（基准0.5））与锡膏偏移不良相关，疑似工艺偏差，预计2h复线（degraded：LLM 不可用，模板化结论）",
-        "仓储": "",
-      },
-      hitl: [
-        { kind: "restart", prompt: "复线决策确认：是否按 FA 建议 ETA 复线？", status: "waiting_hitl",
-          approver_roles: ["制造现场负责人"], step: "hitl_restart", task_uid: "wf-1a06a9fa7625",
-          actions: [{ key: "confirm_restart", label: "确认复线方案" }, { key: "hold", label: "暂缓复线" }] },
-        { kind: "eta", prompt: "对客 ETA 承诺确认：确认回复客户的预计恢复时间？", status: "waiting_hitl",
-          approver_roles: ["业务经理"], step: "hitl_eta", task_uid: "wf-25b850f751a4",
-          actions: [{ key: "confirm_eta", label: "确认对客ETA" }, { key: "revise_eta", label: "修改ETA" }] },
+  /** 智能问数 · 后端离线时的演示回放（**从真实运行输出采集生成**，非手写） */
+  const CHAT_DEMOS = {
+    "A型号在SMT-1停线，何时复线？": {
+      "events": [
+        {
+          "type": "agent_start",
+          "node": "business",
+          "label": "业务Agent · 意图识别"
+        },
+        {
+          "type": "tool_start",
+          "tool": "意图识别",
+          "detail": "两级路由（L0 规则快路径 / L1 闭集分类 / 降级模糊匹配）"
+        },
+        {
+          "type": "tool_end",
+          "tool": "意图识别",
+          "detail": "识别场景：line_stop | 型号：A型号 | 线体：SMT-1"
+        },
+        {
+          "type": "agent_end",
+          "node": "business",
+          "label": "业务Agent · 意图识别",
+          "summary": "识别场景：line_stop | 型号：A型号 | 线体：SMT-1",
+          "status": "ok",
+          "elapsed_ms": 0.6
+        },
+        {
+          "type": "agent_start",
+          "node": "confirm_stop",
+          "label": "制造Agent · 确认停线"
+        },
+        {
+          "type": "tool_start",
+          "tool": "SQL查询",
+          "detail": "查询SMT-1线A型号今日OEE与产出 + 进行中停线事件"
+        },
+        {
+          "type": "tool_end",
+          "tool": "SQL查询",
+          "detail": "返回2条产出，1条停线事件（原文）"
+        },
+        {
+          "type": "agent_end",
+          "node": "confirm_stop",
+          "label": "制造Agent · 确认停线",
+          "summary": "SMT-1线A型号今日OEE=32.1%",
+          "status": "ok",
+          "elapsed_ms": 475.9
+        },
+        {
+          "type": "agent_start",
+          "node": "equipment",
+          "label": "设备Agent · 查EAM"
+        },
+        {
+          "type": "agent_start",
+          "node": "quality",
+          "label": "品质Agent · 查QMS"
+        },
+        {
+          "type": "agent_start",
+          "node": "supply_chain",
+          "label": "供应链Agent · 查SCM"
+        },
+        {
+          "type": "tool_start",
+          "tool": "SQL查询",
+          "detail": "查询SMT-1线A型号不良分布"
+        },
+        {
+          "type": "tool_start",
+          "tool": "SQL查询",
+          "detail": "查询SMT-1线设备异常"
+        },
+        {
+          "type": "tool_start",
+          "tool": "SQL查询",
+          "detail": "查询今日到货批次"
+        },
+        {
+          "type": "tool_end",
+          "tool": "SQL查询",
+          "detail": "返回1条批次（敏感字段已按角色脱敏: True）"
+        },
+        {
+          "type": "tool_end",
+          "tool": "SQL查询",
+          "detail": "返回3条异常"
+        },
+        {
+          "type": "agent_end",
+          "node": "supply_chain",
+          "label": "供应链Agent · 查SCM",
+          "summary": "今日1个批次到货，无来料异常",
+          "status": "ok",
+          "elapsed_ms": 2.8
+        },
+        {
+          "type": "agent_end",
+          "node": "equipment",
+          "label": "设备Agent · 查EAM",
+          "summary": "近2小时3条设备异常：PRT-01 刮刀压力=0.8MPa（基准0.5）；PRT-01 钢网清洁周期=15min（基准4h）；OVN-02 回流温区3=245℃（基准235±5）",
+          "status": "ok",
+          "elapsed_ms": 3.6
+        },
+        {
+          "type": "tool_end",
+          "tool": "SQL查询",
+          "detail": "返回2种不良"
+        },
+        {
+          "type": "agent_end",
+          "node": "quality",
+          "label": "品质Agent · 查QMS",
+          "summary": "主导不良：锡膏偏移，共77pcs",
+          "status": "ok",
+          "elapsed_ms": 3.7
+        },
+        {
+          "type": "fan_in",
+          "node": "fanin",
+          "summary": "汇聚 5 域结果",
+          "domains": [
+            "equipment",
+            "manufacturing",
+            "orchestration",
+            "quality",
+            "supply_chain"
+          ],
+          "degraded": []
+        },
+        {
+          "type": "agent_start",
+          "node": "fa",
+          "label": "FA分析Agent · RAG推理"
+        },
+        {
+          "type": "tool_start",
+          "tool": "RAG检索",
+          "detail": "查询: SMT-1线 锡膏偏移 设备告警=E-201,E-205,E-301"
+        },
+        {
+          "type": "tool_end",
+          "tool": "RAG检索",
+          "detail": "匹配3条历史案例"
+        },
+        {
+          "type": "agent_end",
+          "node": "fa",
+          "label": "FA分析Agent · RAG推理",
+          "summary": "评级B，根因：设备参数异常（刮刀压力=0.8MPa（基准0.5））与锡膏偏移不良相关，疑似工艺偏差，预计2h复线（degraded：LLM 不可用，模板化结论）",
+          "status": "ok",
+          "elapsed_ms": 1978.1
+        },
+        {
+          "type": "agent_start",
+          "node": "impact_wf",
+          "label": "impact_assessment"
+        },
+        {
+          "type": "agent_end",
+          "node": "impact_wf",
+          "label": "impact_assessment",
+          "summary": "工单 wf-7a97b342ab44 已创建（P1 通知 计划,物控,业务，SLA 2h）",
+          "status": "ok",
+          "elapsed_ms": 181.8
+        },
+        {
+          "type": "agent_start",
+          "node": "hitl_restart",
+          "label": "hitl_restart"
+        },
+        {
+          "type": "agent_end",
+          "node": "hitl_restart",
+          "label": "hitl_restart",
+          "summary": "复线决策确认：是否按 FA 建议 ETA 复线？ → waiting_hitl（审批人：制造现场负责人）",
+          "status": "ok",
+          "elapsed_ms": 52.0
+        },
+        {
+          "type": "agent_start",
+          "node": "hitl_eta",
+          "label": "hitl_eta"
+        },
+        {
+          "type": "agent_end",
+          "node": "hitl_eta",
+          "label": "hitl_eta",
+          "summary": "对客 ETA 承诺确认：确认回复客户的预计恢复时间？ → waiting_hitl（审批人：业务经理）",
+          "status": "ok",
+          "elapsed_ms": 31.9
+        },
+        {
+          "type": "agent_start",
+          "node": "report",
+          "label": "报告Agent · 生成简报与对客报告"
+        },
+        {
+          "type": "agent_end",
+          "node": "report",
+          "label": "报告Agent · 生成简报与对客报告",
+          "summary": "对客报告已生成（degraded 模板化 + 禁词表兜底）",
+          "status": "ok",
+          "elapsed_ms": 0.5
+        }
       ],
-      workflow_tasks: [
-        { ticket: { task_uid: "wf-07853f21e584", wf_id: "impact_assessment", status: "running",
-                    title: "停线影响评估工单", assignees: ["计划", "物控", "业务"], priority: "P1",
-                    sla_due_at: "" },
-          notified: ["计划", "物控", "业务"], notice: { level: "P1", targets: ["计划", "物控", "业务"] } },
-      ],
-      degraded: true,
-      degraded_reasons: ["FA 分析 LLM 不可用：模板化结构化结论", "报告生成 LLM 不可用：模板化 + 禁词表兜底"],
-      timings: { business: 0.6, confirm_stop: 2.5, quality: 2.2, supply_chain: 2.3, equipment: 4.1,
-                 fa: 536.2, impact_wf: 68.3, hitl_restart: 59.6, hitl_eta: 32.6, report: 0.4 },
-      provenance: [
-        { channel: "registered", query_name: "equip_alarms", domain: "equipment", tables: ["equipment_log"],
-          row_count: 3, masked: false,
-          sql: "SELECT equipment_id, alarm_code, param_name, param_value FROM equipment_log WHERE line_code = :line AND is_abnormal = 1" },
-        { channel: "registered", query_name: "mfg_oee", domain: "manufacturing", tables: ["production_output"],
-          row_count: 2, masked: false,
-          sql: "SELECT record_date, line_code, product_model, planned_qty, actual_qty, oee, stop_duration_min FROM production_output WHERE line_code = :line AND product_model = :model" },
-        { channel: "registered", query_name: "mfg_stop_ongoing", domain: "manufacturing", tables: ["line_stop_event"],
-          row_count: 1, masked: false,
-          sql: "SELECT * FROM line_stop_event WHERE line_code = :line AND product_model = :model AND status = 'ongoing'" },
-        { channel: "registered", query_name: "quality_defect_dist", domain: "quality", tables: ["quality_defect"],
-          row_count: 2, masked: false,
-          sql: "SELECT defect_type, SUM(defect_qty) AS total_qty FROM quality_defect WHERE line_code = :line AND product_model = :model GROUP BY defect_type" },
-        { channel: "registered", query_name: "supply_batches_today", domain: "supply_chain", tables: ["material_batch"],
-          row_count: 1, masked: true,
-          sql: "SELECT batch_no, part_no, part_name, supplier, incoming_result FROM material_batch WHERE date(arrival_time) = '2026-10-15'" },
-        { channel: "rag", domain: "fa", query: "SMT-1线 锡膏偏移 设备告警=E-201,E-205,E-301", case_count: 3 },
-        { channel: "workflow", domain: "workflow", task_uid: "wf-07853f21e584", wf_id: "impact_assessment",
-          assignees: ["计划", "物控", "业务"] },
-        { channel: "hitl", domain: "hitl", task_uid: "wf-1a06a9fa7625", approver_roles: ["制造现场负责人"] },
-        { channel: "report", domain: "report", degraded: true, masked_words: ["设备故障", "供应商来料不良", "品质不良超标", "停线", "根因", "维修"] },
-        { channel: "node_timing", node: "business", elapsed_ms: 0.6, status: "ok" },
-        { channel: "node_timing", node: "confirm_stop", elapsed_ms: 2.5, status: "ok" },
-        { channel: "node_timing", node: "equipment", elapsed_ms: 4.1, status: "ok" },
-        { channel: "node_timing", node: "quality", elapsed_ms: 2.2, status: "ok" },
-        { channel: "node_timing", node: "supply_chain", elapsed_ms: 3.6, status: "ok" },
-        { channel: "node_timing", node: "fa", elapsed_ms: 536.2, status: "ok" },
-        { channel: "node_timing", node: "impact_wf", elapsed_ms: 68.3, status: "ok" },
-        { channel: "node_timing", node: "hitl_restart", elapsed_ms: 59.6, status: "ok" },
-        { channel: "node_timing", node: "hitl_eta", elapsed_ms: 32.6, status: "ok" },
-        { channel: "node_timing", node: "report", elapsed_ms: 0.4, status: "ok" },
-      ],
-      elapsed_ms: 755, error: null, fallback: null,
+      "result": {
+        "query": "A型号在SMT-1停线，何时复线？",
+        "run_id": "run-9f3580dcf56b",
+        "route": {
+          "domain": "manufacturing",
+          "scenario_key": "line_stop_v2",
+          "confidence": 1.0,
+          "level": "L0",
+          "entities": {
+            "product_model": "A型号",
+            "line_code": "SMT-1",
+            "urgency": "normal",
+            "v1_scenario": "line_stop"
+          },
+          "low_confidence": false,
+          "reason": "场景触发词命中: line_stop_v2"
+        },
+        "scenario_key": "line_stop_v2",
+        "report": "尊敬的客户：目前产线处于计划内暂停（例行校准），我们已启动批次质量复核与工艺参数优化。根据当前评估，预计约 2 小时恢复，届时将第一时间同步发货安排。给贵司带来不便深表歉意，我们将持续跟进并及时通报进展。",
+        "internal_brief": {
+          "停线确认": true,
+          "生产": "SMT-1线A型号今日OEE=32.1%",
+          "品质": "主导不良：锡膏偏移，共77pcs",
+          "供应链": "今日1个批次到货，无来料异常",
+          "设备": "近2小时3条设备异常：PRT-01 刮刀压力=0.8MPa（基准0.5）；PRT-01 钢网清洁周期=15min（基准4h）；OVN-02 回流温区3=245℃（基准235±5）",
+          "FA评级": "评级B，根因：设备参数异常（刮刀压力=0.8MPa（基准0.5））与锡膏偏移不良相关，疑似工艺偏差，预计2h复线（degraded：LLM 不可用，模板化结论）",
+          "仓储": ""
+        },
+        "provenance": [
+          {
+            "channel": "registered",
+            "query_name": "equip_alarms",
+            "desc": "EAM：线体设备异常告警（等价 V1 EquipmentAgent）",
+            "params": {
+              "line": "SMT-1"
+            },
+            "tables": [
+              "equipment_log"
+            ],
+            "row_count": 3,
+            "elapsed_ms": 1.9,
+            "sql": "SELECT equipment_id, alarm_code, param_name, param_value FROM equipment_log WHERE line_code = :line AND is_abnormal = 1",
+            "masked": false,
+            "confidence": 0.85,
+            "fallback": null,
+            "warnings": [],
+            "error": null,
+            "domain": "equipment"
+          },
+          {
+            "channel": "rag",
+            "query": "SMT-1线 锡膏偏移 设备告警=E-201,E-205,E-301",
+            "case_count": 3,
+            "domain": "fa"
+          },
+          {
+            "channel": "hitl",
+            "task_uid": "wf-a9f25e7a7692",
+            "approver_roles": [
+              "业务经理"
+            ],
+            "domain": "hitl"
+          },
+          {
+            "channel": "registered",
+            "query_name": "mfg_oee",
+            "desc": "MES：指定线体/型号当日 OEE 与产出（等价 V1 ManufacturingAgent）",
+            "params": {
+              "line": "SMT-1",
+              "model": "A型号"
+            },
+            "tables": [
+              "production_output"
+            ],
+            "row_count": 2,
+            "elapsed_ms": 474.4,
+            "sql": "SELECT record_date, line_code, product_model, planned_qty, actual_qty, oee, stop_duration_min FROM production_output WHERE line_code = :line AND product_model = :model AND record_date = '2026-10-15'",
+            "masked": false,
+            "confidence": 0.85,
+            "fallback": null,
+            "warnings": [],
+            "error": null,
+            "domain": "manufacturing"
+          },
+          {
+            "channel": "registered",
+            "query_name": "mfg_stop_ongoing",
+            "desc": "MES：进行中的停线事件（等价 V1 ManufacturingAgent）",
+            "params": {
+              "line": "SMT-1",
+              "model": "A型号"
+            },
+            "tables": [
+              "line_stop_event"
+            ],
+            "row_count": 1,
+            "elapsed_ms": 1.2,
+            "sql": "SELECT * FROM line_stop_event WHERE line_code = :line AND product_model = :model AND status = 'ongoing'",
+            "masked": false,
+            "confidence": 0.85,
+            "fallback": null,
+            "warnings": [],
+            "error": null,
+            "domain": "manufacturing"
+          },
+          {
+            "channel": "registered",
+            "query_name": "quality_defect_dist",
+            "desc": "QMS：不良分布聚合（等价 V1 QualityAgent）",
+            "params": {
+              "line": "SMT-1",
+              "model": "A型号"
+            },
+            "tables": [
+              "quality_defect"
+            ],
+            "row_count": 2,
+            "elapsed_ms": 3.3,
+            "sql": "SELECT defect_type, SUM(defect_qty) AS total_qty FROM quality_defect WHERE line_code = :line AND product_model = :model GROUP BY defect_type",
+            "masked": false,
+            "confidence": 0.85,
+            "fallback": null,
+            "warnings": [],
+            "error": null,
+            "domain": "quality"
+          },
+          {
+            "channel": "report",
+            "degraded": true,
+            "masked_words": [
+              "设备故障",
+              "供应商来料不良",
+              "品质不良超标",
+              "停线",
+              "根因",
+              "维修"
+            ],
+            "domain": "report"
+          },
+          {
+            "channel": "registered",
+            "query_name": "supply_batches_today",
+            "desc": "SCM：今日到货来料批次（等价 V1 SupplyChainAgent）",
+            "params": {},
+            "tables": [
+              "material_batch"
+            ],
+            "row_count": 1,
+            "elapsed_ms": 1.2,
+            "sql": "SELECT batch_no, part_no, part_name, supplier, incoming_result FROM material_batch WHERE date(arrival_time) = '2026-10-15'",
+            "masked": true,
+            "confidence": 0.85,
+            "fallback": null,
+            "warnings": [],
+            "error": null,
+            "domain": "supply_chain"
+          },
+          {
+            "channel": "workflow",
+            "task_uid": "wf-7a97b342ab44",
+            "wf_id": "impact_assessment",
+            "assignees": [
+              "计划",
+              "物控",
+              "业务"
+            ],
+            "domain": "workflow"
+          },
+          {
+            "channel": "node_timing",
+            "node": "business",
+            "elapsed_ms": 0.6,
+            "status": "ok"
+          },
+          {
+            "channel": "node_timing",
+            "node": "confirm_stop",
+            "elapsed_ms": 475.9,
+            "status": "ok"
+          },
+          {
+            "channel": "node_timing",
+            "node": "equipment",
+            "elapsed_ms": 3.6,
+            "status": "ok"
+          },
+          {
+            "channel": "node_timing",
+            "node": "fa",
+            "elapsed_ms": 1978.1,
+            "status": "ok"
+          },
+          {
+            "channel": "node_timing",
+            "node": "hitl_eta",
+            "elapsed_ms": 31.9,
+            "status": "ok"
+          },
+          {
+            "channel": "node_timing",
+            "node": "hitl_restart",
+            "elapsed_ms": 52.0,
+            "status": "ok"
+          },
+          {
+            "channel": "node_timing",
+            "node": "impact_wf",
+            "elapsed_ms": 181.8,
+            "status": "ok"
+          },
+          {
+            "channel": "node_timing",
+            "node": "quality",
+            "elapsed_ms": 3.7,
+            "status": "ok"
+          },
+          {
+            "channel": "node_timing",
+            "node": "report",
+            "elapsed_ms": 0.5,
+            "status": "ok"
+          },
+          {
+            "channel": "node_timing",
+            "node": "supply_chain",
+            "elapsed_ms": 2.8,
+            "status": "ok"
+          }
+        ],
+        "hitl": [
+          {
+            "step": "hitl_restart",
+            "kind": "restart",
+            "prompt": "复线决策确认：是否按 FA 建议 ETA 复线？",
+            "status": "waiting_hitl",
+            "approver_roles": [
+              "制造现场负责人"
+            ],
+            "actions": [
+              {
+                "key": "confirm_restart",
+                "label": "确认复线方案"
+              },
+              {
+                "key": "hold",
+                "label": "暂缓复线"
+              }
+            ],
+            "task_uid": "wf-a5251c74daf4",
+            "card": {
+              "title": "[待确认] 复线决策确认：是否按 FA 建议 ETA 复线？",
+              "body": "复线决策确认：是否按 FA 建议 ETA 复线？\n线体: SMT-1 | 型号: A型号\nFA评级: B | 预估复线: 2h\n审批人: 制造现场负责人",
+              "actions": [
+                {
+                  "key": "confirm_restart",
+                  "label": "确认复线方案"
+                },
+                {
+                  "key": "hold",
+                  "label": "暂缓复线"
+                }
+              ],
+              "level": "P1"
+            },
+            "provenance": [
+              {
+                "channel": "hitl",
+                "task_uid": "wf-a5251c74daf4",
+                "approver_roles": [
+                  "制造现场负责人"
+                ]
+              }
+            ]
+          },
+          {
+            "step": "hitl_eta",
+            "kind": "eta",
+            "prompt": "对客 ETA 承诺确认：确认回复客户的预计恢复时间？",
+            "status": "waiting_hitl",
+            "approver_roles": [
+              "业务经理"
+            ],
+            "actions": [
+              {
+                "key": "confirm_eta",
+                "label": "确认对客ETA"
+              },
+              {
+                "key": "revise_eta",
+                "label": "修改ETA"
+              }
+            ],
+            "task_uid": "wf-a9f25e7a7692",
+            "card": {
+              "title": "[待确认] 对客 ETA 承诺确认：确认回复客户的预计恢复时间？",
+              "body": "对客 ETA 承诺确认：确认回复客户的预计恢复时间？\n线体: SMT-1 | 型号: A型号\nFA评级: B | 预估复线: 2h\n审批人: 业务经理",
+              "actions": [
+                {
+                  "key": "confirm_eta",
+                  "label": "确认对客ETA"
+                },
+                {
+                  "key": "revise_eta",
+                  "label": "修改ETA"
+                }
+              ],
+              "level": "P1"
+            },
+            "provenance": [
+              {
+                "channel": "hitl",
+                "task_uid": "wf-a9f25e7a7692",
+                "approver_roles": [
+                  "业务经理"
+                ]
+              }
+            ]
+          }
+        ],
+        "workflow_tasks": [
+          {
+            "ticket": {
+              "task_uid": "wf-7a97b342ab44",
+              "wf_id": "impact_assessment",
+              "title": "停线影响评估工单",
+              "status": "running",
+              "priority": "P1",
+              "assignees": [
+                "计划",
+                "物控",
+                "业务"
+              ],
+              "context": {
+                "run_id": "run-9f3580dcf56b",
+                "line_code": "SMT-1",
+                "product_model": "A型号",
+                "confirmed_stop": true,
+                "fa_rating": "B",
+                "eta_hours": 2,
+                "root_cause": "设备参数异常（刮刀压力=0.8MPa（基准0.5））与锡膏偏移不良相关，疑似工艺偏差"
+              },
+              "hitl_prompt": "",
+              "history": [
+                {
+                  "ts": "2026-10-17T01:23:42.333633+00:00",
+                  "action": "create",
+                  "actor": "system",
+                  "comment": "",
+                  "from": "pending",
+                  "to": "pending",
+                  "reason": "创建工单"
+                },
+                {
+                  "ts": "2026-10-17T01:23:42.480352+00:00",
+                  "action": "start",
+                  "actor": "orchestrator",
+                  "comment": "影响评估启动",
+                  "from": "pending",
+                  "to": "running",
+                  "reason": "影响评估启动"
+                }
+              ],
+              "created_at": "2026-10-17T01:23:42.333580+00:00",
+              "updated_at": "2026-10-17T01:23:42.480337+00:00",
+              "sla_due_at": "2026-10-17T03:23:42.333580+00:00"
+            },
+            "notified": [
+              "计划",
+              "物控",
+              "业务"
+            ],
+            "notice": {
+              "level": "P1",
+              "targets": [
+                "计划",
+                "物控",
+                "业务"
+              ],
+              "title": "停线影响评估（SMT-1）",
+              "body": "停线影响评估工单\n线体: SMT-1 | 型号: A型号\nFA评级: B | 预估复线: 2h\n请评估排产/物料/对客影响（SLA 2h，超时自动升级）"
+            },
+            "provenance": [
+              {
+                "channel": "workflow",
+                "task_uid": "wf-7a97b342ab44",
+                "wf_id": "impact_assessment",
+                "assignees": [
+                  "计划",
+                  "物控",
+                  "业务"
+                ]
+              }
+            ]
+          }
+        ],
+        "timings": {
+          "business": 0.6,
+          "confirm_stop": 475.9,
+          "supply_chain": 2.8,
+          "equipment": 3.6,
+          "quality": 3.7,
+          "fa": 1978.1,
+          "impact_wf": 181.8,
+          "hitl_restart": 52.0,
+          "hitl_eta": 31.9,
+          "report": 0.5
+        },
+        "degraded": true,
+        "degraded_reasons": [
+          "FA 分析 LLM 不可用：模板化结构化结论",
+          "报告生成 LLM 不可用：模板化 + 禁词表兜底"
+        ],
+        "fallback": null,
+        "elapsed_ms": 2768.6,
+        "error": null
+      }
     },
+    "今天锡膏批次有问题": {
+      "events": [
+        {
+          "type": "agent_start",
+          "node": "intake",
+          "label": "业务Agent · 意图识别"
+        },
+        {
+          "type": "tool_start",
+          "tool": "意图识别",
+          "detail": "两级路由（L0 规则快路径 / L1 闭集分类 / 降级模糊匹配）"
+        },
+        {
+          "type": "tool_end",
+          "tool": "意图识别",
+          "detail": "识别场景：incoming_quality | 型号：A型号 | 线体：SMT-1"
+        },
+        {
+          "type": "agent_end",
+          "node": "intake",
+          "label": "业务Agent · 意图识别",
+          "summary": "识别场景：incoming_quality | 型号：A型号 | 线体：SMT-1",
+          "status": "ok",
+          "elapsed_ms": 0.4
+        },
+        {
+          "type": "agent_start",
+          "node": "sqe_assess",
+          "label": "SQE · 来料不合格判定"
+        },
+        {
+          "type": "tool_start",
+          "tool": "SQL查询",
+          "detail": "查询 iqc_batches_recent（判定）"
+        },
+        {
+          "type": "tool_end",
+          "tool": "SQL查询",
+          "detail": "返回2行"
+        },
+        {
+          "type": "agent_end",
+          "node": "sqe_assess",
+          "label": "SQE · 来料不合格判定",
+          "summary": "2 个不合格批次：MAT-SP-1014（无铅锡膏SAC305，供应商 供应商***，COA http://coa.example.com/sp1014.pdf）；处置建议：退货、换货、挑选",
+          "status": "degraded",
+          "elapsed_ms": 2.4
+        },
+        {
+          "type": "agent_start",
+          "node": "material_control",
+          "label": "物控 · 库存/替代"
+        },
+        {
+          "type": "agent_start",
+          "node": "planning",
+          "label": "计划 · 排产影响"
+        },
+        {
+          "type": "agent_start",
+          "node": "procurement",
+          "label": "采购 · 供应商跟催"
+        },
+        {
+          "type": "tool_start",
+          "tool": "SQL查询",
+          "detail": "查询 plan_impact_by_material（注册查询）"
+        },
+        {
+          "type": "tool_start",
+          "tool": "SQL查询",
+          "detail": "查询库存可用量（on_hand - reserved）"
+        },
+        {
+          "type": "tool_start",
+          "tool": "SQL查询",
+          "detail": "查询 supplier_followup（注册查询）"
+        },
+        {
+          "type": "tool_end",
+          "tool": "SQL查询",
+          "detail": "返回2行（原文）"
+        },
+        {
+          "type": "agent_end",
+          "node": "planning",
+          "label": "计划 · 排产影响",
+          "summary": "受影响排产 2 条：计划10000/实际6800",
+          "status": "ok",
+          "elapsed_ms": 4.3
+        },
+        {
+          "type": "tool_start",
+          "tool": "SQL查询",
+          "detail": "查询型号库存与订单量（缺口推演）"
+        },
+        {
+          "type": "tool_end",
+          "tool": "SQL查询",
+          "detail": "返回2行库存，3行缺口推演"
+        },
+        {
+          "type": "agent_end",
+          "node": "material_control",
+          "label": "物控 · 库存/替代",
+          "summary": "可用库存 2 个型号仓；其中 0 个仓可用量为 0",
+          "status": "ok",
+          "elapsed_ms": 7.0
+        },
+        {
+          "type": "tool_end",
+          "tool": "SQL查询",
+          "detail": "返回3行（脱敏）"
+        },
+        {
+          "type": "agent_end",
+          "node": "procurement",
+          "label": "采购 · 供应商跟催",
+          "summary": "供应商跟催与评级：供应商***(IC-100) 2批/不合格1；供应商***(SP-001) 2批/不合格1",
+          "status": "ok",
+          "elapsed_ms": 7.5
+        },
+        {
+          "type": "fan_in",
+          "node": "fanin",
+          "summary": "汇聚 3 域结果（降级: quality）",
+          "domains": [
+            "orchestration",
+            "quality",
+            "supply_chain"
+          ],
+          "degraded": [
+            "quality"
+          ]
+        },
+        {
+          "type": "agent_start",
+          "node": "scar_wf",
+          "label": "scar_flow"
+        },
+        {
+          "type": "tool_start",
+          "tool": "工作流",
+          "detail": "创建工单：来料异常处置/SCAR 工单（P1，SLA 4h）"
+        },
+        {
+          "type": "tool_end",
+          "tool": "工作流",
+          "detail": "工单 wf-633adb734008 已创建（P1 通知 采购,计划,物控，SLA 4h）"
+        },
+        {
+          "type": "agent_end",
+          "node": "scar_wf",
+          "label": "scar_flow",
+          "summary": "工单 wf-633adb734008 已创建（P1 通知 采购,计划,物控，SLA 4h）",
+          "status": "ok",
+          "elapsed_ms": 85.1
+        },
+        {
+          "type": "agent_start",
+          "node": "hitl_disposition",
+          "label": "hitl_disposition"
+        },
+        {
+          "type": "agent_end",
+          "node": "hitl_disposition",
+          "label": "hitl_disposition",
+          "summary": "退换货/特采决策确认 → waiting_hitl（审批人：SQE、PQE、生产）",
+          "status": "ok",
+          "elapsed_ms": 42.8
+        },
+        {
+          "type": "agent_start",
+          "node": "report_incoming",
+          "label": "报告Agent · 来料异常简报"
+        },
+        {
+          "type": "agent_end",
+          "node": "report_incoming",
+          "label": "报告Agent · 来料异常简报",
+          "summary": "内部简报已生成（6 项）",
+          "status": "ok",
+          "elapsed_ms": 0.5
+        }
+      ],
+      "result": {
+        "query": "今天锡膏批次有问题",
+        "run_id": "run-c9321360892b",
+        "route": {
+          "domain": "quality",
+          "scenario_key": "incoming_quality_v2",
+          "confidence": 1.0,
+          "level": "L0",
+          "entities": {
+            "product_model": "A型号",
+            "line_code": "SMT-1",
+            "urgency": "normal",
+            "v1_scenario": "incoming_quality"
+          },
+          "low_confidence": false,
+          "reason": "场景触发词命中: incoming_quality_v2"
+        },
+        "scenario_key": "incoming_quality_v2",
+        "report": "",
+        "internal_brief": {
+          "来料不合格判定": "2 个不合格批次：MAT-SP-1014（无铅锡膏SAC305，供应商 供应商***，COA http://coa.example.com/sp1014.pdf）；处置建议：退货、换货、挑选",
+          "缺陷等级": "A",
+          "处置建议": "退货；换货；挑选",
+          "采购跟催": "供应商跟催与评级：供应商***(IC-100) 2批/不合格1；供应商***(SP-001) 2批/不合格1",
+          "排产影响": "受影响排产 2 条：计划10000/实际6800",
+          "物料评估": "可用库存 2 个型号仓；其中 0 个仓可用量为 0"
+        },
+        "provenance": [
+          {
+            "channel": "hitl",
+            "task_uid": "wf-8405f96d4725",
+            "approver_roles": [
+              "SQE",
+              "PQE",
+              "生产"
+            ],
+            "domain": "hitl"
+          },
+          {
+            "channel": "registered",
+            "query_name": "iqc_batches_recent",
+            "desc": "QMS：最近不合格来料批次（含 COA，供 SQE 判定）",
+            "params": {},
+            "tables": [
+              "material_batch"
+            ],
+            "row_count": 2,
+            "elapsed_ms": 1.9,
+            "sql": "SELECT batch_no, part_no, part_name, supplier, incoming_result, coa_url, arrival_time FROM material_batch WHERE incoming_result = 'fail' ORDER BY arrival_time DESC LIMIT 5",
+            "masked": true,
+            "confidence": 0.85,
+            "fallback": null,
+            "warnings": [],
+            "error": null,
+            "domain": "quality"
+          },
+          {
+            "channel": "report",
+            "scenario": "incoming_quality_v2",
+            "degraded": true,
+            "masked_words": [
+              "设备故障",
+              "供应商来料不良",
+              "品质不良超标",
+              "停线",
+              "根因",
+              "维修"
+            ],
+            "domain": "report"
+          },
+          {
+            "channel": "registered",
+            "query_name": "supplier_followup",
+            "desc": "SRM：供应商到货/不合格统计（跟催与评级）",
+            "params": {},
+            "tables": [
+              "material_batch"
+            ],
+            "row_count": 3,
+            "elapsed_ms": 5.6,
+            "sql": "SELECT supplier, part_no, part_name, COUNT(*) AS batch_cnt, SUM(CASE WHEN incoming_result='fail' THEN 1 ELSE 0 END) AS fail_cnt FROM material_batch GROUP BY supplier, part_no",
+            "masked": true,
+            "confidence": 0.85,
+            "fallback": null,
+            "warnings": [],
+            "error": null,
+            "domain": "supply_chain"
+          },
+          {
+            "channel": "workflow",
+            "task_uid": "wf-633adb734008",
+            "wf_id": "scar_flow",
+            "assignees": [
+              "采购",
+              "计划",
+              "物控"
+            ],
+            "domain": "workflow"
+          },
+          {
+            "channel": "node_timing",
+            "node": "hitl_disposition",
+            "elapsed_ms": 42.8,
+            "status": "ok"
+          },
+          {
+            "channel": "node_timing",
+            "node": "intake",
+            "elapsed_ms": 0.4,
+            "status": "ok"
+          },
+          {
+            "channel": "node_timing",
+            "node": "material_control",
+            "elapsed_ms": 7.0,
+            "status": "ok"
+          },
+          {
+            "channel": "node_timing",
+            "node": "planning",
+            "elapsed_ms": 4.3,
+            "status": "ok"
+          },
+          {
+            "channel": "node_timing",
+            "node": "procurement",
+            "elapsed_ms": 7.5,
+            "status": "ok"
+          },
+          {
+            "channel": "node_timing",
+            "node": "report_incoming",
+            "elapsed_ms": 0.5,
+            "status": "ok"
+          },
+          {
+            "channel": "node_timing",
+            "node": "scar_wf",
+            "elapsed_ms": 85.1,
+            "status": "ok"
+          },
+          {
+            "channel": "node_timing",
+            "node": "sqe_assess",
+            "elapsed_ms": 2.4,
+            "status": "degraded"
+          }
+        ],
+        "hitl": [
+          {
+            "step": "hitl_disposition",
+            "kind": "disposition",
+            "prompt": "退换货/特采决策确认",
+            "status": "waiting_hitl",
+            "approver_roles": [
+              "SQE",
+              "PQE",
+              "生产"
+            ],
+            "actions": [
+              {
+                "key": "return_goods",
+                "label": "退货"
+              },
+              {
+                "key": "replace",
+                "label": "换货"
+              },
+              {
+                "key": "concession",
+                "label": "特采（三方会签）"
+              },
+              {
+                "key": "sort",
+                "label": "挑选"
+              }
+            ],
+            "task_uid": "wf-8405f96d4725",
+            "card": {
+              "title": "[待确认] 退换货/特采决策确认",
+              "body": "退换货/特采决策确认\n线体: SMT-1 | 型号: A型号\nFA评级: ? | 预估复线: ?h\n审批人: SQE、PQE、生产",
+              "actions": [
+                {
+                  "key": "return_goods",
+                  "label": "退货"
+                },
+                {
+                  "key": "replace",
+                  "label": "换货"
+                },
+                {
+                  "key": "concession",
+                  "label": "特采（三方会签）"
+                },
+                {
+                  "key": "sort",
+                  "label": "挑选"
+                }
+              ],
+              "level": "P1"
+            },
+            "provenance": [
+              {
+                "channel": "hitl",
+                "task_uid": "wf-8405f96d4725",
+                "approver_roles": [
+                  "SQE",
+                  "PQE",
+                  "生产"
+                ]
+              }
+            ]
+          }
+        ],
+        "workflow_tasks": [
+          {
+            "ticket": {
+              "task_uid": "wf-633adb734008",
+              "wf_id": "scar_flow",
+              "title": "来料异常处置/SCAR 工单",
+              "status": "running",
+              "priority": "P1",
+              "assignees": [
+                "采购",
+                "计划",
+                "物控"
+              ],
+              "context": {
+                "run_id": "run-c9321360892b",
+                "line_code": "SMT-1",
+                "product_model": "A型号",
+                "step": "scar_wf",
+                "iqc_rejected": true,
+                "defect_grade": "A"
+              },
+              "hitl_prompt": "",
+              "history": [
+                {
+                  "ts": "2026-10-17T01:23:42.633533+00:00",
+                  "action": "create",
+                  "actor": "system",
+                  "comment": "",
+                  "from": "pending",
+                  "to": "pending",
+                  "reason": "创建工单"
+                },
+                {
+                  "ts": "2026-10-17T01:23:42.686128+00:00",
+                  "action": "start",
+                  "actor": "orchestrator",
+                  "comment": "来料异常处置/SCAR 工单启动",
+                  "from": "pending",
+                  "to": "running",
+                  "reason": "来料异常处置/SCAR 工单启动"
+                }
+              ],
+              "created_at": "2026-10-17T01:23:42.633505+00:00",
+              "updated_at": "2026-10-17T01:23:42.686112+00:00",
+              "sla_due_at": "2026-10-17T05:23:42.633505+00:00"
+            },
+            "notified": [
+              "采购",
+              "计划",
+              "物控"
+            ],
+            "notice": {
+              "level": "P1",
+              "targets": [
+                "采购",
+                "计划",
+                "物控"
+              ],
+              "title": "来料异常处置/SCAR 工单",
+              "body": "来料异常处置/SCAR 工单\n请相关角色处理（SLA 4h，超时自动升级）"
+            },
+            "provenance": [
+              {
+                "channel": "workflow",
+                "task_uid": "wf-633adb734008",
+                "wf_id": "scar_flow",
+                "assignees": [
+                  "采购",
+                  "计划",
+                  "物控"
+                ]
+              }
+            ]
+          }
+        ],
+        "timings": {
+          "intake": 0.4,
+          "sqe_assess": 2.4,
+          "planning": 4.3,
+          "material_control": 7.0,
+          "procurement": 7.5,
+          "scar_wf": 85.1,
+          "hitl_disposition": 42.8,
+          "report_incoming": 0.5
+        },
+        "degraded": true,
+        "degraded_reasons": [
+          "报告生成 LLM 不可用：模板化 + 禁词表兜底"
+        ],
+        "fallback": null,
+        "elapsed_ms": 160.9,
+        "error": null
+      }
+    },
+    "华为投诉BATCH-A-1008": {
+      "events": [
+        {
+          "type": "agent_start",
+          "node": "intake",
+          "label": "业务Agent · 意图识别"
+        },
+        {
+          "type": "tool_start",
+          "tool": "意图识别",
+          "detail": "两级路由（L0 规则快路径 / L1 闭集分类 / 降级模糊匹配）"
+        },
+        {
+          "type": "tool_end",
+          "tool": "意图识别",
+          "detail": "识别场景：customer_complaint | 型号：A型号 | 线体：SMT-1"
+        },
+        {
+          "type": "agent_end",
+          "node": "intake",
+          "label": "业务Agent · 意图识别",
+          "summary": "识别场景：customer_complaint | 型号：A型号 | 线体：SMT-1",
+          "status": "ok",
+          "elapsed_ms": 0.3
+        },
+        {
+          "type": "agent_start",
+          "node": "qa_lead",
+          "label": "QA · 8D 牵头"
+        },
+        {
+          "type": "tool_start",
+          "tool": "SQL查询",
+          "detail": "查询未闭环客诉单（8D D2 问题界定）"
+        },
+        {
+          "type": "tool_end",
+          "tool": "SQL查询",
+          "detail": "返回1条未闭环客诉"
+        },
+        {
+          "type": "tool_start",
+          "tool": "SQL查询",
+          "detail": "查询批次BATCH-A-1008不良分布（8D D4）"
+        },
+        {
+          "type": "tool_end",
+          "tool": "SQL查询",
+          "detail": "返回1类不良"
+        },
+        {
+          "type": "agent_end",
+          "node": "qa_lead",
+          "label": "QA · 8D 牵头",
+          "summary": "客诉 1 单（未闭环）；8D 骨架已合成，D2=华为终端",
+          "status": "degraded",
+          "elapsed_ms": 2.8
+        },
+        {
+          "type": "agent_start",
+          "node": "business_sales",
+          "label": "业务 · 对客口径"
+        },
+        {
+          "type": "agent_start",
+          "node": "engineering",
+          "label": "工程 · 设计根因"
+        },
+        {
+          "type": "agent_start",
+          "node": "pqe_process",
+          "label": "PQE · 过程分析"
+        },
+        {
+          "type": "agent_start",
+          "node": "sqe_supplier",
+          "label": "SQE · 供应商侧"
+        },
+        {
+          "type": "tool_start",
+          "tool": "SQL查询",
+          "detail": "查询 shipment_status（注册查询）"
+        },
+        {
+          "type": "tool_start",
+          "tool": "SQL查询",
+          "detail": "查询批次BATCH-A-1008过程不良分布"
+        },
+        {
+          "type": "tool_start",
+          "tool": "规则模板",
+          "detail": "无 LLM/无数据源 → 模板化结论（不编造）"
+        },
+        {
+          "type": "tool_end",
+          "tool": "规则模板",
+          "detail": "设计根因：无 BOM/ECN/图纸数据源，未编造结论"
+        },
+        {
+          "type": "agent_end",
+          "node": "engineering",
+          "label": "工程 · 设计根因",
+          "summary": "设计根因：数据缺口（无 BOM/ECN 数据源）",
+          "status": "degraded",
+          "elapsed_ms": 2.2
+        },
+        {
+          "type": "tool_start",
+          "tool": "SQL查询",
+          "detail": "按批号 BATCH-A-1008 查供应商"
+        },
+        {
+          "type": "tool_end",
+          "tool": "SQL查询",
+          "detail": "返回1类不良"
+        },
+        {
+          "type": "agent_end",
+          "node": "pqe_process",
+          "label": "PQE · 过程分析",
+          "summary": "过程不良分布：1类，主导 贴片偏移（46pcs，合计46pcs）",
+          "status": "ok",
+          "elapsed_ms": 3.5
+        },
+        {
+          "type": "tool_end",
+          "tool": "SQL查询",
+          "detail": "返回1行"
+        },
+        {
+          "type": "agent_end",
+          "node": "sqe_supplier",
+          "label": "SQE · 供应商侧",
+          "summary": "批次供应商：供应商***（来料检验：合格）",
+          "status": "ok",
+          "elapsed_ms": 4.5
+        },
+        {
+          "type": "tool_end",
+          "tool": "SQL查询",
+          "detail": "返回2行（原文）"
+        },
+        {
+          "type": "agent_end",
+          "node": "business_sales",
+          "label": "业务 · 对客口径",
+          "summary": "对客订单/交期 2 单：SO-20261015-01 待发货 ETA 2026-10-17 10:00:00；SO-20261010-03 待发货 ETA 2026-10-14 10:00:00",
+          "status": "ok",
+          "elapsed_ms": 5.5
+        },
+        {
+          "type": "fan_in",
+          "node": "fanin",
+          "summary": "汇聚 4 域结果（降级: rd_engineering）",
+          "domains": [
+            "orchestration",
+            "quality",
+            "rd_engineering",
+            "supply_chain"
+          ],
+          "degraded": [
+            "rd_engineering"
+          ]
+        },
+        {
+          "type": "agent_start",
+          "node": "capa_flow",
+          "label": "complaint_8d_flow"
+        },
+        {
+          "type": "tool_start",
+          "tool": "工作流",
+          "detail": "创建工单：客诉 8D 整改工单（P1，SLA 72h）"
+        },
+        {
+          "type": "tool_end",
+          "tool": "工作流",
+          "detail": "工单 wf-c4bd412f60e1 已创建（P1 通知 QA,PQE,SQE,工程,业务，SLA 72h）"
+        },
+        {
+          "type": "agent_end",
+          "node": "capa_flow",
+          "label": "complaint_8d_flow",
+          "summary": "工单 wf-c4bd412f60e1 已创建（P1 通知 QA,PQE,SQE,工程,业务，SLA 72h）",
+          "status": "ok",
+          "elapsed_ms": 62.9
+        },
+        {
+          "type": "agent_start",
+          "node": "hitl_d8_close",
+          "label": "hitl_d8_close"
+        },
+        {
+          "type": "agent_end",
+          "node": "hitl_d8_close",
+          "label": "hitl_d8_close",
+          "summary": "8D 报告关闭确认 → waiting_hitl（审批人：质量总监、QA经理）",
+          "status": "ok",
+          "elapsed_ms": 39.5
+        },
+        {
+          "type": "agent_start",
+          "node": "hitl_complaint_reply",
+          "label": "hitl_complaint_reply"
+        },
+        {
+          "type": "agent_end",
+          "node": "hitl_complaint_reply",
+          "label": "hitl_complaint_reply",
+          "summary": "对客回复确认（脱敏后） → waiting_hitl（审批人：业务经理）",
+          "status": "ok",
+          "elapsed_ms": 33.4
+        },
+        {
+          "type": "agent_start",
+          "node": "report_complaint",
+          "label": "报告Agent · 8D/对客报告"
+        },
+        {
+          "type": "agent_end",
+          "node": "report_complaint",
+          "label": "报告Agent · 8D/对客报告",
+          "summary": "内部简报已生成（6 项）；含数据缺口；对客报告（degraded 模板化）",
+          "status": "ok",
+          "elapsed_ms": 0.3
+        }
+      ],
+      "result": {
+        "query": "华为投诉BATCH-A-1008",
+        "run_id": "run-bcd6bee7b5d0",
+        "route": {
+          "domain": "quality",
+          "scenario_key": "customer_complaint_v2",
+          "confidence": 1.0,
+          "level": "L0",
+          "entities": {
+            "product_model": "A型号",
+            "line_code": "SMT-1",
+            "urgency": "high",
+            "v1_scenario": "customer_complaint"
+          },
+          "low_confidence": false,
+          "reason": "场景触发词命中: customer_complaint_v2"
+        },
+        "scenario_key": "customer_complaint_v2",
+        "report": "尊敬的客户：关于贵司反馈的批次质量问题，我们已立案并启动 8D 专项整改，对在库/在途批次实施围堵与复检。当前主因分析进行中，整改措施与关闭时间将以正式 8D 报告同步。感谢理解与支持。",
+        "internal_brief": {
+          "客诉摘要": "客诉 1 单（未闭环）；8D 骨架已合成，D2=华为终端",
+          "8D报告": "D1_team=质量牵头（QA）+ PQE + SQE + 工程 + 业务（客户接口）；D2_problem=华为终端 反馈：贴片元件偏移导致功能失效，不良率约2.3%（型号 A型号，批次 BATCH-A-1008）；D3_containment=在库/在途该批次冻结，已发货批次通知客户加严检验；D4_root_cause=过程不良以「贴片偏移」为主（46pcs），疑似贴装/工艺偏移；D5_permanent=工艺参数复核 + 首件全检 + 供应商来料加严（如需）；D6_validation=连续 3 批 CPK 达标且无同类不良后解除围堵；D7_prevent=更新 SOP/FMEA，纳入过程监控与供应商评级；D8_closure=待质量总监/QA 经理 HITL 确认关闭",
+          "过程分析": "过程不良分布：1类，主导 贴片偏移（46pcs，合计46pcs）",
+          "供应商侧": "批次供应商：供应商***（来料检验：合格）",
+          "设计根因": "无 BOM/ECN/图纸数据源，未做设计根因推断",
+          "对客口径": "对客订单/交期 2 单：SO-20261015-01 待发货 ETA 2026-10-17 10:00:00；SO-20261010-03 待发货 ETA 2026-10-14 10:00:00",
+          "数据缺口": "设计根因：无 BOM/ECN/图纸数据源，未编造结论"
+        },
+        "provenance": [
+          {
+            "channel": "hitl",
+            "task_uid": "wf-777eda1737fb",
+            "approver_roles": [
+              "业务经理"
+            ],
+            "domain": "hitl"
+          },
+          {
+            "channel": "registered",
+            "query_name": "batch_supplier_by_no",
+            "desc": "QMS：按批号查供应商与检验结论",
+            "params": {
+              "batch_no": "BATCH-A-1008"
+            },
+            "tables": [
+              "material_batch"
+            ],
+            "row_count": 1,
+            "elapsed_ms": 2.2,
+            "sql": "SELECT batch_no, part_no, part_name, supplier, incoming_result FROM material_batch WHERE batch_no = :batch_no",
+            "masked": true,
+            "confidence": 0.85,
+            "fallback": null,
+            "warnings": [],
+            "error": null,
+            "domain": "quality"
+          },
+          {
+            "channel": "template",
+            "domain": "rd_engineering",
+            "degraded": true,
+            "note": "规则模板生成（无 LLM/无数据源）"
+          },
+          {
+            "channel": "data_gap",
+            "domain": "rd_engineering",
+            "note": "设计根因：无 BOM/ECN/图纸数据源，未编造结论"
+          },
+          {
+            "channel": "report",
+            "scenario": "customer_complaint_v2",
+            "degraded": true,
+            "masked_words": [
+              "设备故障",
+              "供应商来料不良",
+              "品质不良超标",
+              "停线",
+              "根因",
+              "维修"
+            ],
+            "domain": "report"
+          },
+          {
+            "channel": "data_gap",
+            "domain": "report",
+            "note": "设计根因：无 BOM/ECN/图纸数据源，未编造结论"
+          },
+          {
+            "channel": "registered",
+            "query_name": "shipment_status",
+            "desc": "TMS：型号发货单状态与 ETA（等价 V1 WarehouseAgent）",
+            "params": {
+              "model": "A型号"
+            },
+            "tables": [
+              "shipment"
+            ],
+            "row_count": 2,
+            "elapsed_ms": 4.8,
+            "sql": "SELECT order_no, product_model, qty, ship_status, eta FROM shipment WHERE product_model = :model",
+            "masked": false,
+            "confidence": 0.85,
+            "fallback": null,
+            "warnings": [],
+            "error": null,
+            "domain": "supply_chain"
+          },
+          {
+            "channel": "workflow",
+            "task_uid": "wf-c4bd412f60e1",
+            "wf_id": "complaint_8d_flow",
+            "assignees": [
+              "QA",
+              "PQE",
+              "SQE",
+              "工程",
+              "业务"
+            ],
+            "domain": "workflow"
+          },
+          {
+            "channel": "node_timing",
+            "node": "business_sales",
+            "elapsed_ms": 5.5,
+            "status": "ok"
+          },
+          {
+            "channel": "node_timing",
+            "node": "capa_flow",
+            "elapsed_ms": 62.9,
+            "status": "ok"
+          },
+          {
+            "channel": "node_timing",
+            "node": "engineering",
+            "elapsed_ms": 2.2,
+            "status": "degraded"
+          },
+          {
+            "channel": "node_timing",
+            "node": "hitl_complaint_reply",
+            "elapsed_ms": 33.4,
+            "status": "ok"
+          },
+          {
+            "channel": "node_timing",
+            "node": "hitl_d8_close",
+            "elapsed_ms": 39.5,
+            "status": "ok"
+          },
+          {
+            "channel": "node_timing",
+            "node": "intake",
+            "elapsed_ms": 0.3,
+            "status": "ok"
+          },
+          {
+            "channel": "node_timing",
+            "node": "pqe_process",
+            "elapsed_ms": 3.5,
+            "status": "ok"
+          },
+          {
+            "channel": "node_timing",
+            "node": "qa_lead",
+            "elapsed_ms": 2.8,
+            "status": "degraded"
+          },
+          {
+            "channel": "node_timing",
+            "node": "report_complaint",
+            "elapsed_ms": 0.3,
+            "status": "ok"
+          },
+          {
+            "channel": "node_timing",
+            "node": "sqe_supplier",
+            "elapsed_ms": 4.5,
+            "status": "ok"
+          }
+        ],
+        "hitl": [
+          {
+            "step": "hitl_d8_close",
+            "kind": "d8_close",
+            "prompt": "8D 报告关闭确认",
+            "status": "waiting_hitl",
+            "approver_roles": [
+              "质量总监",
+              "QA经理"
+            ],
+            "actions": [
+              {
+                "key": "close_8d",
+                "label": "确认关闭"
+              },
+              {
+                "key": "reopen",
+                "label": "退回补充"
+              }
+            ],
+            "task_uid": "wf-012d7aea6786",
+            "card": {
+              "title": "[待确认] 8D 报告关闭确认",
+              "body": "8D 报告关闭确认\n线体: SMT-1 | 型号: A型号\nFA评级: ? | 预估复线: ?h\n审批人: 质量总监、QA经理",
+              "actions": [
+                {
+                  "key": "close_8d",
+                  "label": "确认关闭"
+                },
+                {
+                  "key": "reopen",
+                  "label": "退回补充"
+                }
+              ],
+              "level": "P1"
+            },
+            "provenance": [
+              {
+                "channel": "hitl",
+                "task_uid": "wf-012d7aea6786",
+                "approver_roles": [
+                  "质量总监",
+                  "QA经理"
+                ]
+              }
+            ]
+          },
+          {
+            "step": "hitl_complaint_reply",
+            "kind": "complaint_reply",
+            "prompt": "对客回复确认（脱敏后）",
+            "status": "waiting_hitl",
+            "approver_roles": [
+              "业务经理"
+            ],
+            "actions": [
+              {
+                "key": "confirm_reply",
+                "label": "确认回复"
+              },
+              {
+                "key": "revise_reply",
+                "label": "修改回复"
+              }
+            ],
+            "task_uid": "wf-777eda1737fb",
+            "card": {
+              "title": "[待确认] 对客回复确认（脱敏后）",
+              "body": "对客回复确认（脱敏后）\n线体: SMT-1 | 型号: A型号\nFA评级: ? | 预估复线: ?h\n审批人: 业务经理",
+              "actions": [
+                {
+                  "key": "confirm_reply",
+                  "label": "确认回复"
+                },
+                {
+                  "key": "revise_reply",
+                  "label": "修改回复"
+                }
+              ],
+              "level": "P1"
+            },
+            "provenance": [
+              {
+                "channel": "hitl",
+                "task_uid": "wf-777eda1737fb",
+                "approver_roles": [
+                  "业务经理"
+                ]
+              }
+            ]
+          }
+        ],
+        "workflow_tasks": [
+          {
+            "ticket": {
+              "task_uid": "wf-c4bd412f60e1",
+              "wf_id": "complaint_8d_flow",
+              "title": "客诉 8D 整改工单",
+              "status": "running",
+              "priority": "P1",
+              "assignees": [
+                "QA",
+                "PQE",
+                "SQE",
+                "工程",
+                "业务"
+              ],
+              "context": {
+                "run_id": "run-bcd6bee7b5d0",
+                "line_code": "SMT-1",
+                "product_model": "A型号",
+                "step": "capa_flow",
+                "complaint_found": true
+              },
+              "hitl_prompt": "",
+              "history": [
+                {
+                  "ts": "2026-10-17T01:23:42.791426+00:00",
+                  "action": "create",
+                  "actor": "system",
+                  "comment": "",
+                  "from": "pending",
+                  "to": "pending",
+                  "reason": "创建工单"
+                },
+                {
+                  "ts": "2026-10-17T01:23:42.821712+00:00",
+                  "action": "start",
+                  "actor": "orchestrator",
+                  "comment": "客诉 8D 整改工单启动",
+                  "from": "pending",
+                  "to": "running",
+                  "reason": "客诉 8D 整改工单启动"
+                }
+              ],
+              "created_at": "2026-10-17T01:23:42.791397+00:00",
+              "updated_at": "2026-10-17T01:23:42.821706+00:00",
+              "sla_due_at": "2026-10-20T01:23:42.791397+00:00"
+            },
+            "notified": [
+              "QA",
+              "PQE",
+              "SQE",
+              "工程",
+              "业务"
+            ],
+            "notice": {
+              "level": "P1",
+              "targets": [
+                "QA",
+                "PQE",
+                "SQE",
+                "工程",
+                "业务"
+              ],
+              "title": "客诉 8D 整改工单",
+              "body": "客诉 8D 整改工单\n请相关角色处理（SLA 72h，超时自动升级）"
+            },
+            "provenance": [
+              {
+                "channel": "workflow",
+                "task_uid": "wf-c4bd412f60e1",
+                "wf_id": "complaint_8d_flow",
+                "assignees": [
+                  "QA",
+                  "PQE",
+                  "SQE",
+                  "工程",
+                  "业务"
+                ]
+              }
+            ]
+          }
+        ],
+        "timings": {
+          "intake": 0.3,
+          "qa_lead": 2.8,
+          "engineering": 2.2,
+          "pqe_process": 3.5,
+          "sqe_supplier": 4.5,
+          "business_sales": 5.5,
+          "capa_flow": 62.9,
+          "hitl_d8_close": 39.5,
+          "hitl_complaint_reply": 33.4,
+          "report_complaint": 0.3
+        },
+        "degraded": true,
+        "degraded_reasons": [
+          "报告生成 LLM 不可用：模板化 + 禁词表兜底"
+        ],
+        "fallback": null,
+        "elapsed_ms": 166.0,
+        "error": null
+      }
+    },
+    "A型号能发多少货": {
+      "events": [
+        {
+          "type": "agent_start",
+          "node": "intake",
+          "label": "业务Agent · 意图识别"
+        },
+        {
+          "type": "tool_start",
+          "tool": "意图识别",
+          "detail": "两级路由（L0 规则快路径 / L1 闭集分类 / 降级模糊匹配）"
+        },
+        {
+          "type": "tool_end",
+          "tool": "意图识别",
+          "detail": "识别场景：delivery_risk | 型号：A型号 | 线体：SMT-1"
+        },
+        {
+          "type": "agent_end",
+          "node": "intake",
+          "label": "业务Agent · 意图识别",
+          "summary": "识别场景：delivery_risk | 型号：A型号 | 线体：SMT-1",
+          "status": "ok",
+          "elapsed_ms": 0.2
+        },
+        {
+          "type": "agent_start",
+          "node": "business_order",
+          "label": "业务 · 订单/交期"
+        },
+        {
+          "type": "agent_start",
+          "node": "logistics",
+          "label": "物流 · 在途"
+        },
+        {
+          "type": "agent_start",
+          "node": "manufacturing_output",
+          "label": "制造 · 产出"
+        },
+        {
+          "type": "agent_start",
+          "node": "material_control",
+          "label": "物控 · 缺口"
+        },
+        {
+          "type": "agent_start",
+          "node": "planning",
+          "label": "计划 · 排产"
+        },
+        {
+          "type": "agent_start",
+          "node": "warehouse_atp",
+          "label": "仓库 · ATP"
+        },
+        {
+          "type": "tool_start",
+          "tool": "SQL查询",
+          "detail": "查询 shipment_status（注册查询）"
+        },
+        {
+          "type": "tool_start",
+          "tool": "SQL查询",
+          "detail": "查询库存可用量（on_hand - reserved）"
+        },
+        {
+          "type": "tool_start",
+          "tool": "SQL查询",
+          "detail": "查询 orders_by_model（注册查询）"
+        },
+        {
+          "type": "tool_start",
+          "tool": "SQL查询",
+          "detail": "查询 plan_impact_by_material（注册查询）"
+        },
+        {
+          "type": "tool_start",
+          "tool": "SQL查询",
+          "detail": "查询型号库存与订单量（缺口推演）"
+        },
+        {
+          "type": "tool_start",
+          "tool": "SQL查询",
+          "detail": "查询 output_by_model（注册查询）"
+        },
+        {
+          "type": "tool_start",
+          "tool": "SQL查询",
+          "detail": "查询 A型号 可用库存与发货状态"
+        },
+        {
+          "type": "tool_end",
+          "tool": "SQL查询",
+          "detail": "返回2行（原文）"
+        },
+        {
+          "type": "agent_end",
+          "node": "business_order",
+          "label": "业务 · 订单/交期",
+          "summary": "订单 2 单，合计 3500pcs",
+          "status": "ok",
+          "elapsed_ms": 7.7
+        },
+        {
+          "type": "tool_end",
+          "tool": "SQL查询",
+          "detail": "返回2行（原文）"
+        },
+        {
+          "type": "agent_end",
+          "node": "logistics",
+          "label": "物流 · 在途",
+          "summary": "发货 2 单，在途 0 单",
+          "status": "ok",
+          "elapsed_ms": 8.2
+        },
+        {
+          "type": "tool_end",
+          "tool": "SQL查询",
+          "detail": "返回1行（原文）"
+        },
+        {
+          "type": "tool_end",
+          "tool": "SQL查询",
+          "detail": "返回2行（原文）"
+        },
+        {
+          "type": "agent_end",
+          "node": "manufacturing_output",
+          "label": "制造 · 产出",
+          "summary": "产出达成：A型号 累计 6800pcs，平均OEE 59.2",
+          "status": "ok",
+          "elapsed_ms": 9.0
+        },
+        {
+          "type": "agent_end",
+          "node": "planning",
+          "label": "计划 · 排产",
+          "summary": "受影响排产 2 条：计划10000/实际6800",
+          "status": "ok",
+          "elapsed_ms": 8.9
+        },
+        {
+          "type": "tool_end",
+          "tool": "SQL查询",
+          "detail": "返回2行库存，3行缺口推演"
+        },
+        {
+          "type": "agent_end",
+          "node": "material_control",
+          "label": "物控 · 缺口",
+          "summary": "可用库存 2 个型号仓；其中 0 个仓可用量为 0",
+          "status": "ok",
+          "elapsed_ms": 9.8
+        },
+        {
+          "type": "tool_end",
+          "tool": "SQL查询",
+          "detail": "返回1行库存，2行发货"
+        },
+        {
+          "type": "agent_end",
+          "node": "warehouse_atp",
+          "label": "仓库 · ATP",
+          "summary": "A型号 可用库存合计 400pcs（1个仓）",
+          "status": "ok",
+          "elapsed_ms": 10.2
+        },
+        {
+          "type": "fan_in",
+          "node": "fanin",
+          "summary": "汇聚 3 域结果",
+          "domains": [
+            "manufacturing",
+            "orchestration",
+            "supply_chain"
+          ],
+          "degraded": []
+        },
+        {
+          "type": "agent_start",
+          "node": "atp_analysis",
+          "label": "ATP 分析 · 可承诺量"
+        },
+        {
+          "type": "tool_end",
+          "tool": "代码计算",
+          "detail": "ATP=400，缺口=3100"
+        },
+        {
+          "type": "agent_end",
+          "node": "atp_analysis",
+          "label": "ATP 分析 · 可承诺量",
+          "summary": "A型号 ATP=400pcs，订单需求=3500pcs，缺口=3100pcs，风险订单 2 单",
+          "status": "ok",
+          "elapsed_ms": 0.2
+        },
+        {
+          "type": "agent_start",
+          "node": "delivery_risk_wf",
+          "label": "delivery_risk_flow"
+        },
+        {
+          "type": "tool_start",
+          "tool": "工作流",
+          "detail": "创建工单：出货风险协同工单（P1，SLA 8h）"
+        },
+        {
+          "type": "tool_end",
+          "tool": "工作流",
+          "detail": "工单 wf-6b2f45b6e1b2 已创建（P1 通知 计划,物控,业务,物流，SLA 8h）"
+        },
+        {
+          "type": "agent_end",
+          "node": "delivery_risk_wf",
+          "label": "delivery_risk_flow",
+          "summary": "工单 wf-6b2f45b6e1b2 已创建（P1 通知 计划,物控,业务,物流，SLA 8h）",
+          "status": "ok",
+          "elapsed_ms": 78.8
+        },
+        {
+          "type": "agent_start",
+          "node": "hitl_delivery_commit",
+          "label": "hitl_delivery_commit"
+        },
+        {
+          "type": "agent_end",
+          "node": "hitl_delivery_commit",
+          "label": "hitl_delivery_commit",
+          "summary": "对客交期承诺确认 → waiting_hitl（审批人：业务经理）",
+          "status": "ok",
+          "elapsed_ms": 35.6
+        },
+        {
+          "type": "agent_start",
+          "node": "report_delivery",
+          "label": "报告Agent · 出货风险简报"
+        },
+        {
+          "type": "agent_end",
+          "node": "report_delivery",
+          "label": "报告Agent · 出货风险简报",
+          "summary": "内部简报已生成（7 项）；对客报告（degraded 模板化）",
+          "status": "ok",
+          "elapsed_ms": 0.4
+        }
+      ],
+      "result": {
+        "query": "A型号能发多少货",
+        "run_id": "run-99f31d7a4709",
+        "route": {
+          "domain": "supply_chain",
+          "scenario_key": "delivery_status_v2",
+          "confidence": 1.0,
+          "level": "L0",
+          "entities": {
+            "product_model": "A型号",
+            "line_code": "SMT-1",
+            "urgency": "normal",
+            "v1_scenario": "delivery_risk"
+          },
+          "low_confidence": false,
+          "reason": "场景触发词命中: delivery_status_v2"
+        },
+        "scenario_key": "delivery_status_v2",
+        "report": "尊敬的客户：经核实，贵司订单当前受产能与物料因素影响，存在交付风险。我方已启动跨部门协同（计划/物控/物流），并在确认后第一时间同步可承诺交期。敬请谅解，感谢支持。",
+        "internal_brief": {
+          "ATP承诺分析": "A型号 ATP=400pcs，订单需求=3500pcs，缺口=3100pcs，风险订单 2 单",
+          "风险订单": "order_no=SO-20261015-01；qty=2000；eta=2026-10-17 10:00:00；ship_status=待发货；order_no=SO-20261010-03；qty=1500；eta=2026-10-14 10:00:00；ship_status=待发货",
+          "订单": "订单 2 单，合计 3500pcs",
+          "排产": "受影响排产 2 条：计划10000/实际6800",
+          "库存评估": "可用库存 2 个型号仓；其中 0 个仓可用量为 0",
+          "产出": "产出达成：A型号 累计 6800pcs，平均OEE 59.2",
+          "物流在途": "发货 2 单，在途 0 单"
+        },
+        "provenance": [
+          {
+            "channel": "hitl",
+            "task_uid": "wf-b18739545dd8",
+            "approver_roles": [
+              "业务经理"
+            ],
+            "domain": "hitl"
+          },
+          {
+            "channel": "registered",
+            "query_name": "output_by_model",
+            "desc": "MES：型号产出达成与平均 OEE",
+            "params": {
+              "model": "A型号"
+            },
+            "tables": [
+              "production_output"
+            ],
+            "row_count": 1,
+            "elapsed_ms": 3.5,
+            "sql": "SELECT product_model, SUM(actual_qty) AS actual_qty, AVG(oee) AS oee FROM production_output WHERE product_model = :model GROUP BY product_model",
+            "masked": false,
+            "confidence": 0.85,
+            "fallback": null,
+            "warnings": [],
+            "error": null,
+            "domain": "manufacturing"
+          },
+          {
+            "channel": "report",
+            "scenario": "delivery_status_v2",
+            "degraded": true,
+            "masked_words": [
+              "设备故障",
+              "供应商来料不良",
+              "品质不良超标",
+              "停线",
+              "根因",
+              "维修"
+            ],
+            "domain": "report"
+          },
+          {
+            "channel": "compute",
+            "formula": "on_hand - reserved",
+            "available_qty": 400.0,
+            "demand_qty": 3500.0,
+            "gap_qty": 3100.0,
+            "source": "warehouse_available + orders_by_model",
+            "domain": "supply_chain"
+          },
+          {
+            "channel": "workflow",
+            "task_uid": "wf-6b2f45b6e1b2",
+            "wf_id": "delivery_risk_flow",
+            "assignees": [
+              "计划",
+              "物控",
+              "业务",
+              "物流"
+            ],
+            "domain": "workflow"
+          },
+          {
+            "channel": "node_timing",
+            "node": "atp_analysis",
+            "elapsed_ms": 0.2,
+            "status": "ok"
+          },
+          {
+            "channel": "node_timing",
+            "node": "business_order",
+            "elapsed_ms": 7.7,
+            "status": "ok"
+          },
+          {
+            "channel": "node_timing",
+            "node": "delivery_risk_wf",
+            "elapsed_ms": 78.8,
+            "status": "ok"
+          },
+          {
+            "channel": "node_timing",
+            "node": "hitl_delivery_commit",
+            "elapsed_ms": 35.6,
+            "status": "ok"
+          },
+          {
+            "channel": "node_timing",
+            "node": "intake",
+            "elapsed_ms": 0.2,
+            "status": "ok"
+          },
+          {
+            "channel": "node_timing",
+            "node": "logistics",
+            "elapsed_ms": 8.2,
+            "status": "ok"
+          },
+          {
+            "channel": "node_timing",
+            "node": "manufacturing_output",
+            "elapsed_ms": 9.0,
+            "status": "ok"
+          },
+          {
+            "channel": "node_timing",
+            "node": "material_control",
+            "elapsed_ms": 9.8,
+            "status": "ok"
+          },
+          {
+            "channel": "node_timing",
+            "node": "planning",
+            "elapsed_ms": 8.9,
+            "status": "ok"
+          },
+          {
+            "channel": "node_timing",
+            "node": "report_delivery",
+            "elapsed_ms": 0.4,
+            "status": "ok"
+          },
+          {
+            "channel": "node_timing",
+            "node": "warehouse_atp",
+            "elapsed_ms": 10.2,
+            "status": "ok"
+          }
+        ],
+        "hitl": [
+          {
+            "step": "hitl_delivery_commit",
+            "kind": "delivery_commit",
+            "prompt": "对客交期承诺确认",
+            "status": "waiting_hitl",
+            "approver_roles": [
+              "业务经理"
+            ],
+            "actions": [
+              {
+                "key": "confirm_commit",
+                "label": "确认交期"
+              },
+              {
+                "key": "revise_commit",
+                "label": "调整交期"
+              }
+            ],
+            "task_uid": "wf-b18739545dd8",
+            "card": {
+              "title": "[待确认] 对客交期承诺确认",
+              "body": "对客交期承诺确认\n线体: SMT-1 | 型号: A型号\nFA评级: ? | 预估复线: ?h\n审批人: 业务经理",
+              "actions": [
+                {
+                  "key": "confirm_commit",
+                  "label": "确认交期"
+                },
+                {
+                  "key": "revise_commit",
+                  "label": "调整交期"
+                }
+              ],
+              "level": "P1"
+            },
+            "provenance": [
+              {
+                "channel": "hitl",
+                "task_uid": "wf-b18739545dd8",
+                "approver_roles": [
+                  "业务经理"
+                ]
+              }
+            ]
+          }
+        ],
+        "workflow_tasks": [
+          {
+            "ticket": {
+              "task_uid": "wf-6b2f45b6e1b2",
+              "wf_id": "delivery_risk_flow",
+              "title": "出货风险协同工单",
+              "status": "running",
+              "priority": "P1",
+              "assignees": [
+                "计划",
+                "物控",
+                "业务",
+                "物流"
+              ],
+              "context": {
+                "run_id": "run-99f31d7a4709",
+                "line_code": "SMT-1",
+                "product_model": "A型号",
+                "step": "delivery_risk_wf",
+                "atp_result": {
+                  "model": "A型号",
+                  "available_qty": 400.0,
+                  "demand_qty": 3500.0,
+                  "gap_qty": 3100.0,
+                  "formula": "on_hand - reserved"
+                },
+                "risk_list": [
+                  {
+                    "order_no": "SO-20261015-01",
+                    "qty": 2000,
+                    "eta": "2026-10-17 10:00:00",
+                    "ship_status": "待发货"
+                  },
+                  {
+                    "order_no": "SO-20261010-03",
+                    "qty": 1500,
+                    "eta": "2026-10-14 10:00:00",
+                    "ship_status": "待发货"
+                  }
+                ]
+              },
+              "hitl_prompt": "",
+              "history": [
+                {
+                  "ts": "2026-10-17T01:23:42.964238+00:00",
+                  "action": "create",
+                  "actor": "system",
+                  "comment": "",
+                  "from": "pending",
+                  "to": "pending",
+                  "reason": "创建工单"
+                },
+                {
+                  "ts": "2026-10-17T01:23:43.010631+00:00",
+                  "action": "start",
+                  "actor": "orchestrator",
+                  "comment": "出货风险协同工单启动",
+                  "from": "pending",
+                  "to": "running",
+                  "reason": "出货风险协同工单启动"
+                }
+              ],
+              "created_at": "2026-10-17T01:23:42.964204+00:00",
+              "updated_at": "2026-10-17T01:23:43.010618+00:00",
+              "sla_due_at": "2026-10-17T09:23:42.964204+00:00"
+            },
+            "notified": [
+              "计划",
+              "物控",
+              "业务",
+              "物流"
+            ],
+            "notice": {
+              "level": "P1",
+              "targets": [
+                "计划",
+                "物控",
+                "业务",
+                "物流"
+              ],
+              "title": "出货风险协同工单",
+              "body": "出货风险协同工单\n请相关角色处理（SLA 8h，超时自动升级）"
+            },
+            "provenance": [
+              {
+                "channel": "workflow",
+                "task_uid": "wf-6b2f45b6e1b2",
+                "wf_id": "delivery_risk_flow",
+                "assignees": [
+                  "计划",
+                  "物控",
+                  "业务",
+                  "物流"
+                ]
+              }
+            ]
+          }
+        ],
+        "timings": {
+          "intake": 0.2,
+          "business_order": 7.7,
+          "logistics": 8.2,
+          "manufacturing_output": 9.0,
+          "planning": 8.9,
+          "material_control": 9.8,
+          "warehouse_atp": 10.2,
+          "atp_analysis": 0.2,
+          "delivery_risk_wf": 78.8,
+          "hitl_delivery_commit": 35.6,
+          "report_delivery": 0.4
+        },
+        "degraded": true,
+        "degraded_reasons": [
+          "报告生成 LLM 不可用：模板化 + 禁词表兜底"
+        ],
+        "fallback": null,
+        "elapsed_ms": 150.8,
+        "error": null
+      }
+    },
+    "SMT-1设备参数异常吗": {
+      "events": [
+        {
+          "type": "agent_start",
+          "node": "intake",
+          "label": "业务Agent · 意图识别"
+        },
+        {
+          "type": "tool_start",
+          "tool": "意图识别",
+          "detail": "两级路由（L0 规则快路径 / L1 闭集分类 / 降级模糊匹配）"
+        },
+        {
+          "type": "tool_end",
+          "tool": "意图识别",
+          "detail": "识别场景：equipment_warning | 型号：A型号 | 线体：SMT-1"
+        },
+        {
+          "type": "agent_end",
+          "node": "intake",
+          "label": "业务Agent · 意图识别",
+          "summary": "识别场景：equipment_warning | 型号：A型号 | 线体：SMT-1",
+          "status": "ok",
+          "elapsed_ms": 0.2
+        },
+        {
+          "type": "agent_start",
+          "node": "equipment_check",
+          "label": "设备Agent · 查EAM"
+        },
+        {
+          "type": "tool_start",
+          "tool": "SQL查询",
+          "detail": "查询SMT-1线设备异常"
+        },
+        {
+          "type": "tool_end",
+          "tool": "SQL查询",
+          "detail": "返回3条异常"
+        },
+        {
+          "type": "agent_end",
+          "node": "equipment_check",
+          "label": "设备Agent · 查EAM",
+          "summary": "近2小时3条设备异常：PRT-01 刮刀压力=0.8MPa（基准0.5）；PRT-01 钢网清洁周期=15min（基准4h）；OVN-02 回流温区3=245℃（基准235±5）",
+          "status": "ok",
+          "elapsed_ms": 1.3
+        },
+        {
+          "type": "agent_start",
+          "node": "engineering_param",
+          "label": "工程 · 参数建议"
+        },
+        {
+          "type": "agent_start",
+          "node": "maintenance",
+          "label": "制造 · 维保建议"
+        },
+        {
+          "type": "tool_start",
+          "tool": "规则模板",
+          "detail": "无 LLM/无数据源 → 模板化结论（不编造）"
+        },
+        {
+          "type": "tool_end",
+          "tool": "规则模板",
+          "detail": "工艺参数基线：无数据源，未编造结论"
+        },
+        {
+          "type": "agent_end",
+          "node": "engineering_param",
+          "label": "工程 · 参数建议",
+          "summary": "工艺参数建议：数据缺口（无参数基线数据源）",
+          "status": "degraded",
+          "elapsed_ms": 1.6
+        },
+        {
+          "type": "tool_start",
+          "tool": "SQL查询",
+          "detail": "查询 SMT-1 设备异常以生成维保建议"
+        },
+        {
+          "type": "agent_start",
+          "node": "planning_window",
+          "label": "计划 · 换产窗口"
+        },
+        {
+          "type": "agent_start",
+          "node": "spare_parts",
+          "label": "采购 · 备件需求"
+        },
+        {
+          "type": "tool_start",
+          "tool": "SQL查询",
+          "detail": "查询 A型号 排产以评估停机窗口"
+        },
+        {
+          "type": "tool_start",
+          "tool": "规则模板",
+          "detail": "无 LLM/无数据源 → 模板化结论（不编造）"
+        },
+        {
+          "type": "tool_end",
+          "tool": "规则模板",
+          "detail": "备件库存：无数据源，未编造结论"
+        },
+        {
+          "type": "agent_end",
+          "node": "spare_parts",
+          "label": "采购 · 备件需求",
+          "summary": "备件需求：数据缺口（无备件数据源）",
+          "status": "degraded",
+          "elapsed_ms": 1.2
+        },
+        {
+          "type": "tool_end",
+          "tool": "SQL查询",
+          "detail": "返回3条异常"
+        },
+        {
+          "type": "agent_end",
+          "node": "maintenance",
+          "label": "制造 · 维保建议",
+          "summary": "维保建议 3 项",
+          "status": "ok",
+          "elapsed_ms": 3.4
+        },
+        {
+          "type": "tool_end",
+          "tool": "SQL查询",
+          "detail": "返回2条排产"
+        },
+        {
+          "type": "agent_end",
+          "node": "planning_window",
+          "label": "计划 · 换产窗口",
+          "summary": "排产 2 条，需停机窗口",
+          "status": "ok",
+          "elapsed_ms": 3.2
+        },
+        {
+          "type": "fan_in",
+          "node": "fanin",
+          "summary": "汇聚 5 域结果（降级: rd_engineering,supply_chain）",
+          "domains": [
+            "equipment",
+            "manufacturing",
+            "orchestration",
+            "rd_engineering",
+            "supply_chain"
+          ],
+          "degraded": [
+            "rd_engineering",
+            "supply_chain"
+          ]
+        },
+        {
+          "type": "agent_start",
+          "node": "maintenance_flow",
+          "label": "maintenance_flow"
+        },
+        {
+          "type": "tool_start",
+          "tool": "工作流",
+          "detail": "创建工单：维保工单（P1，SLA 4h）"
+        },
+        {
+          "type": "tool_end",
+          "tool": "工作流",
+          "detail": "工单 wf-f66d65cb754c 已创建（P1 通知 设备,工程,计划，SLA 4h）"
+        },
+        {
+          "type": "agent_end",
+          "node": "maintenance_flow",
+          "label": "maintenance_flow",
+          "summary": "工单 wf-f66d65cb754c 已创建（P1 通知 设备,工程,计划，SLA 4h）",
+          "status": "ok",
+          "elapsed_ms": 64.7
+        },
+        {
+          "type": "agent_start",
+          "node": "hitl_maintenance_window",
+          "label": "hitl_maintenance_window"
+        },
+        {
+          "type": "agent_end",
+          "node": "hitl_maintenance_window",
+          "label": "hitl_maintenance_window",
+          "summary": "停机窗口确认 → waiting_hitl（审批人：制造现场负责人）",
+          "status": "ok",
+          "elapsed_ms": 30.3
+        },
+        {
+          "type": "agent_start",
+          "node": "report_equipment",
+          "label": "报告Agent · 设备简报"
+        },
+        {
+          "type": "agent_end",
+          "node": "report_equipment",
+          "label": "报告Agent · 设备简报",
+          "summary": "内部简报已生成（5 项）；含数据缺口",
+          "status": "ok",
+          "elapsed_ms": 0.3
+        }
+      ],
+      "result": {
+        "query": "SMT-1设备参数异常吗",
+        "run_id": "run-abdaa47d4189",
+        "route": {
+          "domain": "manufacturing",
+          "scenario_key": "equipment_warning_v2",
+          "confidence": 1.0,
+          "level": "L0",
+          "entities": {
+            "product_model": "A型号",
+            "line_code": "SMT-1",
+            "urgency": "normal",
+            "v1_scenario": "equipment_warning"
+          },
+          "low_confidence": false,
+          "reason": "场景触发词命中: equipment_warning_v2"
+        },
+        "scenario_key": "equipment_warning_v2",
+        "report": "",
+        "internal_brief": {
+          "设备告警": "近2小时3条设备异常：PRT-01 刮刀压力=0.8MPa（基准0.5）；PRT-01 钢网清洁周期=15min（基准4h）；OVN-02 回流温区3=245℃（基准235±5）",
+          "维保建议": "维保建议 3 项",
+          "换产窗口": "排产 2 条，需停机窗口",
+          "参数建议": "工艺参数建议：数据缺口（无参数基线数据源）",
+          "备件需求": "备件需求：数据缺口（无备件数据源）",
+          "数据缺口": "工艺参数基线：无数据源，未编造结论；备件库存：无数据源，未编造结论"
+        },
+        "provenance": [
+          {
+            "channel": "registered",
+            "query_name": "equip_alarms",
+            "desc": "EAM：线体设备异常告警（等价 V1 EquipmentAgent）",
+            "params": {
+              "line": "SMT-1"
+            },
+            "tables": [
+              "equipment_log"
+            ],
+            "row_count": 3,
+            "elapsed_ms": 1.1,
+            "sql": "SELECT equipment_id, alarm_code, param_name, param_value FROM equipment_log WHERE line_code = :line AND is_abnormal = 1",
+            "masked": false,
+            "confidence": 0.85,
+            "fallback": null,
+            "warnings": [],
+            "error": null,
+            "domain": "equipment"
+          },
+          {
+            "channel": "hitl",
+            "task_uid": "wf-95c419fa4013",
+            "approver_roles": [
+              "制造现场负责人"
+            ],
+            "domain": "hitl"
+          },
+          {
+            "channel": "registered",
+            "query_name": "equip_alarms",
+            "desc": "EAM：线体设备异常告警（等价 V1 EquipmentAgent）",
+            "params": {
+              "line": "SMT-1"
+            },
+            "tables": [
+              "equipment_log"
+            ],
+            "row_count": 3,
+            "elapsed_ms": 2.5,
+            "sql": "SELECT equipment_id, alarm_code, param_name, param_value FROM equipment_log WHERE line_code = :line AND is_abnormal = 1",
+            "masked": false,
+            "confidence": 0.85,
+            "fallback": null,
+            "warnings": [],
+            "error": null,
+            "domain": "manufacturing"
+          },
+          {
+            "channel": "template",
+            "domain": "rd_engineering",
+            "degraded": true,
+            "note": "规则模板生成（无 LLM/无数据源）"
+          },
+          {
+            "channel": "data_gap",
+            "domain": "rd_engineering",
+            "note": "工艺参数基线：无数据源，未编造结论"
+          },
+          {
+            "channel": "report",
+            "scenario": "equipment_warning_v2",
+            "degraded": true,
+            "masked_words": [
+              "设备故障",
+              "供应商来料不良",
+              "品质不良超标",
+              "停线",
+              "根因",
+              "维修"
+            ],
+            "domain": "report"
+          },
+          {
+            "channel": "data_gap",
+            "domain": "report",
+            "note": "工艺参数基线：无数据源，未编造结论"
+          },
+          {
+            "channel": "data_gap",
+            "domain": "report",
+            "note": "备件库存：无数据源，未编造结论"
+          },
+          {
+            "channel": "template",
+            "domain": "supply_chain",
+            "degraded": true,
+            "note": "规则模板生成（无 LLM/无数据源）"
+          },
+          {
+            "channel": "data_gap",
+            "domain": "supply_chain",
+            "note": "备件库存：无数据源，未编造结论"
+          },
+          {
+            "channel": "workflow",
+            "task_uid": "wf-f66d65cb754c",
+            "wf_id": "maintenance_flow",
+            "assignees": [
+              "设备",
+              "工程",
+              "计划"
+            ],
+            "domain": "workflow"
+          },
+          {
+            "channel": "node_timing",
+            "node": "engineering_param",
+            "elapsed_ms": 1.6,
+            "status": "degraded"
+          },
+          {
+            "channel": "node_timing",
+            "node": "equipment_check",
+            "elapsed_ms": 1.3,
+            "status": "ok"
+          },
+          {
+            "channel": "node_timing",
+            "node": "hitl_maintenance_window",
+            "elapsed_ms": 30.3,
+            "status": "ok"
+          },
+          {
+            "channel": "node_timing",
+            "node": "intake",
+            "elapsed_ms": 0.2,
+            "status": "ok"
+          },
+          {
+            "channel": "node_timing",
+            "node": "maintenance",
+            "elapsed_ms": 3.4,
+            "status": "ok"
+          },
+          {
+            "channel": "node_timing",
+            "node": "maintenance_flow",
+            "elapsed_ms": 64.7,
+            "status": "ok"
+          },
+          {
+            "channel": "node_timing",
+            "node": "planning_window",
+            "elapsed_ms": 3.2,
+            "status": "ok"
+          },
+          {
+            "channel": "node_timing",
+            "node": "report_equipment",
+            "elapsed_ms": 0.3,
+            "status": "ok"
+          },
+          {
+            "channel": "node_timing",
+            "node": "spare_parts",
+            "elapsed_ms": 1.2,
+            "status": "degraded"
+          }
+        ],
+        "hitl": [
+          {
+            "step": "hitl_maintenance_window",
+            "kind": "maintenance_window",
+            "prompt": "停机窗口确认",
+            "status": "waiting_hitl",
+            "approver_roles": [
+              "制造现场负责人"
+            ],
+            "actions": [
+              {
+                "key": "confirm_window",
+                "label": "确认窗口"
+              },
+              {
+                "key": "adjust_window",
+                "label": "调整窗口"
+              }
+            ],
+            "task_uid": "wf-95c419fa4013",
+            "card": {
+              "title": "[待确认] 停机窗口确认",
+              "body": "停机窗口确认\n线体: SMT-1 | 型号: A型号\nFA评级: ? | 预估复线: ?h\n审批人: 制造现场负责人",
+              "actions": [
+                {
+                  "key": "confirm_window",
+                  "label": "确认窗口"
+                },
+                {
+                  "key": "adjust_window",
+                  "label": "调整窗口"
+                }
+              ],
+              "level": "P1"
+            },
+            "provenance": [
+              {
+                "channel": "hitl",
+                "task_uid": "wf-95c419fa4013",
+                "approver_roles": [
+                  "制造现场负责人"
+                ]
+              }
+            ]
+          }
+        ],
+        "workflow_tasks": [
+          {
+            "ticket": {
+              "task_uid": "wf-f66d65cb754c",
+              "wf_id": "maintenance_flow",
+              "title": "维保工单",
+              "status": "running",
+              "priority": "P1",
+              "assignees": [
+                "设备",
+                "工程",
+                "计划"
+              ],
+              "context": {
+                "run_id": "run-abdaa47d4189",
+                "line_code": "SMT-1",
+                "product_model": "A型号",
+                "step": "maintenance_flow",
+                "has_alarm": true
+              },
+              "hitl_prompt": "",
+              "history": [
+                {
+                  "ts": "2026-10-17T01:23:43.106581+00:00",
+                  "action": "create",
+                  "actor": "system",
+                  "comment": "",
+                  "from": "pending",
+                  "to": "pending",
+                  "reason": "创建工单"
+                },
+                {
+                  "ts": "2026-10-17T01:23:43.140331+00:00",
+                  "action": "start",
+                  "actor": "orchestrator",
+                  "comment": "维保工单启动",
+                  "from": "pending",
+                  "to": "running",
+                  "reason": "维保工单启动"
+                }
+              ],
+              "created_at": "2026-10-17T01:23:43.106552+00:00",
+              "updated_at": "2026-10-17T01:23:43.140316+00:00",
+              "sla_due_at": "2026-10-17T05:23:43.106552+00:00"
+            },
+            "notified": [
+              "设备",
+              "工程",
+              "计划"
+            ],
+            "notice": {
+              "level": "P1",
+              "targets": [
+                "设备",
+                "工程",
+                "计划"
+              ],
+              "title": "维保工单",
+              "body": "维保工单\n请相关角色处理（SLA 4h，超时自动升级）"
+            },
+            "provenance": [
+              {
+                "channel": "workflow",
+                "task_uid": "wf-f66d65cb754c",
+                "wf_id": "maintenance_flow",
+                "assignees": [
+                  "设备",
+                  "工程",
+                  "计划"
+                ]
+              }
+            ]
+          }
+        ],
+        "timings": {
+          "intake": 0.2,
+          "equipment_check": 1.3,
+          "engineering_param": 1.6,
+          "spare_parts": 1.2,
+          "maintenance": 3.4,
+          "planning_window": 3.2,
+          "maintenance_flow": 64.7,
+          "hitl_maintenance_window": 30.3,
+          "report_equipment": 0.3
+        },
+        "degraded": true,
+        "degraded_reasons": [
+          "报告生成 LLM 不可用：模板化 + 禁词表兜底"
+        ],
+        "fallback": null,
+        "elapsed_ms": 123.2,
+        "error": null
+      }
+    }
   };
 
+  /** 向后兼容：默认回放 = line_stop 场景 */
+  const CHAT_DEMO = CHAT_DEMOS["A型号在SMT-1停线，何时复线？"];
+
   window.DEMO = {
-    ROLES, ALERT_SUMMARY, DEMO_TODOS, ORDERS, ALERTS, REPORTS, DEMO_HITL, CHAT_DEMO,
+    ROLES, ALERT_SUMMARY, DEMO_TODOS, ORDERS, ALERTS, REPORTS, DEMO_HITL, CHAT_DEMO, CHAT_DEMOS,
   };
 })();
