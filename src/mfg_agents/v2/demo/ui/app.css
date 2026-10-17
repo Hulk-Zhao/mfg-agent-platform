@@ -1652,3 +1652,19 @@ a:hover { text-decoration: underline; }
   white-space: pre-wrap; word-break: break-word;
   max-height: 340px; overflow: auto;
 }
+
+/* ---------- 数据直答卡（qa 策略） ---------- */
+.qa-table {
+  width: 100%; border-collapse: collapse; font-size: 11.8px;
+}
+.qa-table th {
+  background: #F4F8FC; color: var(--primary-deep); font-weight: 600;
+  padding: 5px 8px; border: 1px solid var(--border); text-align: left;
+  white-space: nowrap;
+}
+.qa-table td {
+  padding: 5px 8px; border: 1px solid var(--border); color: var(--text);
+  max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.flow-empty { padding: 12px 14px; font-size: 12.3px; color: var(--text-3); line-height: 1.7; }
+.flow-empty { padding: 12px 14px; font-size: 12.3px; color: var(--text-3); line-height: 1.7; }

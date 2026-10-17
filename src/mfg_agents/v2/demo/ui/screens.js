@@ -806,6 +806,7 @@
     let body = "";
     if (m.kind === "flow") body = flowPanelHtml(ctx, m);
     else if (m.kind === "result") body = resultCardHtml(ctx, m.result, { demo: !!m.demo });
+    else if (m.kind === "qa") body = qaAnswerCardHtml(ctx, m.result, { demo: !!m.demo });
     else if (m.kind === "fallback") body = fallbackCardHtml(ctx, m.result, { demo: !!m.demo });
     else if (m.kind === "hitl") body = hitlChatCardHtml(ctx, m);
     else if (m.kind === "error") body = `<div class="result-card"><div class="result-head"><div class="result-title">${UI.icon("warn", 15)}执行异常</div></div><div class="result-body"><div class="offline-banner">${UI.icon("warn", 14)}<span>${UI.esc(m.text)}</span></div></div></div>`;
@@ -1018,7 +1019,9 @@
     const UI = ctx.UI;
     const running = flow.order.filter((id) => flow.nodes[id].status === "running").length;
     let stateHtml;
-    if (flow.status === "done") stateHtml = `${UI.icon("check", 12)} 已完成 · ${flow.order.length} 节点`;
+    if (flow.status === "done") stateHtml = flow.order.length
+      ? `${UI.icon("check", 12)} 已完成 · ${flow.order.length} 节点`
+      : `${UI.icon("check", 12)} 直答完成（不经场景节点）`;
     else if (flow.status === "error") stateHtml = `${UI.icon("warn", 12)} 执行异常`;
     else stateHtml = `${UI.spinner()} 执行中（${running} 个节点运行中）`;
     return `<div class="flow-panel">
@@ -1029,6 +1032,11 @@
 
   function flowBodyHtml(ctx, flow) {
     let html = "";
+    if (!flow.order.length) {
+      return flow.status === "done"
+        ? `<div class="flow-empty">本问题为数据直答：未经场景编排，直接查询数据并返回（见下方结果卡）。</div>`
+        : `<div class="flow-empty">等待响应…</div>`;
+    }
     let i = 0;
     while (i < flow.order.length) {
       const node = flow.nodes[flow.order[i]];
@@ -1075,10 +1083,53 @@
 
   function resultCardMessage(ctx, result, demo) {
     const chat = chatStore(ctx);
+    // 三策略分流（V3.1）：qa=数据直答卡 / fallback=人工兜底卡 / 其余=场景结果卡。
+    // 注意：qa 直答 scenario_key 也是空——不能再按"scenario_key 空=兜底"判定，
+    // 否则查到真实数据的直答会被误渲染成"人工兜底"（截图反馈的 Bug）。
+    if (result && result.route && result.route.strategy === "qa"
+        && result.fallback !== "manual_ticket") {
+      return { kind: "qa", id: "m" + ++chat.seq, result, demo: !!demo };
+    }
     if (result && (result.fallback === "manual_ticket" || !result.scenario_key)) {
       return { kind: "fallback", id: "m" + ++chat.seq, result, demo: !!demo };
     }
     return { kind: "result", id: "m" + ++chat.seq, result, demo: !!demo };
+  }
+
+  /** 数据直答卡（qa 策略）：轻量呈现——结论 + 数据行 + 溯源，无场景节点无工单。 */
+  function qaAnswerCardHtml(ctx, result, opts) {
+    const UI = ctx.UI;
+    const demo = opts && opts.demo;
+    const route = result.route || {};
+    const provs = (result.provenance || []).filter((p) => p && (p.rows || p.row_count));
+    const rowsHtml = provs.slice(0, 3).map((p) => {
+      const rows = (p.rows || []).slice(0, 4);
+      if (!rows.length) return "";
+      const cols = Object.keys(rows[0]).slice(0, 6);
+      return `<div style="margin-top:9px;overflow:auto">
+        <div style="font-size:11.5px;color:var(--text-3);margin-bottom:4px">${UI.esc(p.query_name || p.channel || "查询结果")}（${p.row_count ?? rows.length} 行）</div>
+        <table class="qa-table"><tr>${cols.map((c) => `<th>${UI.esc(c)}</th>`).join("")}</tr>
+        ${rows.map((r) => `<tr>${cols.map((c) => `<td>${UI.esc(String(r[c] ?? ""))}</td>`).join("")}</tr>`).join("")}</table>
+      </div>`;
+    }).join("");
+    return `<div class="result-card">
+      <div class="result-head">
+        <div class="result-title">${UI.icon("chat", 15)}数据直答</div>
+        <div class="badges">
+          ${demo ? UI.demoFlag("演示回放") : UI.realFlag("真实链路")}
+          ${result.degraded ? UI.badge("受限模式", "badge-amber") : UI.badge("完整", "badge-green")}
+          ${UI.badge(result.run_id || "", "badge-gray")}
+        </div>
+      </div>
+      <div class="result-body">
+        <div style="font-size:13px;line-height:1.9;white-space:pre-wrap">${UI.esc(result.report || "")}</div>
+        ${rowsHtml}
+        ${provs.length ? `<details style="margin-top:10px"><summary style="font-size:12px;color:var(--primary);cursor:pointer">数据溯源（SQL 原文 · 命中行 · 脱敏标记）</summary>
+          <div class="brief-grid" style="margin-top:8px">${provs.map((p) => `<div class="brief-item"><span class="k">SQL</span><span class="v">${UI.esc((p.sql || "").slice(0, 160))}</span></div>`).join("")}</div>
+        </details>` : ""}
+        <div style="margin-top:8px;font-size:11.3px;color:var(--text-3)">直答模式：数据查询不经协同场景链路，无工单产生。匹配域：${UI.esc(route.domain || "-")} · 匹配度 ${route.confidence ?? "-"}</div>
+      </div>
+    </div>`;
   }
 
   function resultCardHtml(ctx, result, opts) {
@@ -1172,7 +1223,7 @@
         </div>
       </div>
       <div class="result-body">
-        <div class="offline-banner" style="margin-bottom:12px">${UI.icon("info", 14)}<span><b>当前问题超出平台已覆盖范围（或路由匹配度低），已转人工兜底工单处理。</b>人工兜底是平台设计的一部分——确定性流程之外的问题不臆造结论。</span></div>
+        <div class="offline-banner" style="margin-bottom:12px">${UI.icon("info", 14)}<span><b>${UI.esc((result.route || {}).strategy === 'qa' ? '数据直答未能获取结果（权限或数据源限制），已转人工跟进。' : '当前问题超出平台已覆盖范围（或路由匹配度低），已转人工兜底工单处理。')}</b>人工兜底是平台设计的一部分——确定性流程之外的问题不臆造结论。</span></div>
         ${(result.suggestions || []).length ? `<div class="fallback-suggest">
           <div style="font-size:12.3px;font-weight:650;margin-bottom:6px">${UI.icon("sparkle", 13)} 你可能想问（点击直接提问）</div>
           <div class="act-chips">${result.suggestions.map((s) =>
