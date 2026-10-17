@@ -10,9 +10,10 @@
 ![LLM](https://img.shields.io/badge/LLM-optional-lightgrey)
 
 <p float="left">
-  <img src="docs/images/screenshot-dashboard.png" width="32%" />
-  <img src="docs/images/screenshot-chat.png" width="32%" />
-  <img src="docs/images/screenshot-hitl.png" width="32%" />
+  <img src="docs/images/screenshot-dashboard.png" width="24.5%" />
+  <img src="docs/images/screenshot-chat.png" width="24.5%" />
+  <img src="docs/images/screenshot-hitl.png" width="24.5%" />
+  <img src="docs/images/screenshot-spc.png" width="24.5%" />
 </p>
 
 ---
