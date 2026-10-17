@@ -126,3 +126,13 @@ queries:
     tables: [admin_policy]
     keywords: [会议室, 食堂, 班车, 团建, 社团, 餐饮, 会议预订, 行政]
     sql: "SELECT policy_no, category, title, content FROM admin_policy WHERE title LIKE '%'||:kw||'%' OR keywords LIKE '%'||:kw||'%' OR content LIKE '%'||:kw||'%' LIMIT 5"
+  project_milestones:
+    desc: "项目/NPI 里程碑（EVT/DVT/PVT/MP 阶段、状态与风险）"
+    tables: [project_milestone]
+    keywords: [里程碑, NPI, EVT, DVT, PVT, 试产, 阶段, 项目]
+    sql: "SELECT product_model, phase, milestone, status, owner, planned_end, actual_end, risk_note FROM project_milestone ORDER BY planned_end LIMIT 8"
+  test_records_recent:
+    desc: "最近测试记录（可靠性/功能/软件，含失效描述）"
+    tables: [test_records]
+    keywords: [测试, 跌落, 高低温, 可靠性, 回归, 失效]
+    sql: "SELECT product_model, batch_no, test_type, test_item, result, defect_desc, tester, test_date FROM test_records ORDER BY test_date DESC LIMIT 6"

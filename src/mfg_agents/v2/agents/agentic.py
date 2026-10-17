@@ -33,6 +33,10 @@ AGENT_TOOLS_META: list[dict[str, str]] = [
     {"name": "explore_data", "desc": "自然语言明细探查（SQL 生成 → 八道防线审核 → 只读执行）", "kind": "只读"},
     {"name": "list_scenarios", "desc": "列出平台协同场景（复杂闭环问题的入口指引）", "kind": "只读"},
     {"name": "create_hitl_task", "desc": "发起人工确认工单（Agent 只发起，永不放行）", "kind": "写/HITL"},
+    {"name": "run_scenario", "desc": "按场景 key 直接触发协同场景（复杂闭环建议入口）", "kind": "写/编排"},
+    {"name": "search_knowledge", "desc": "检索知识库（财务/行政制度；工程知识随接入扩展）", "kind": "只读"},
+    {"name": "query_project_milestones", "desc": "查项目/NPI 里程碑（EVT/DVT/PVT/MP 阶段与状态）", "kind": "只读"},
+    {"name": "query_test_records", "desc": "查测试记录（可靠性/执行结果，引用记录编号）", "kind": "只读"},
 ]
 
 MAX_STEPS = 8          # 防卡死：单次任务最大工具循环步数
@@ -114,6 +118,66 @@ DOMAIN_AGENT_CONFIGS: dict[str, dict[str, str]] = {
                      "行政制度库已接入（会议室/餐饮/班车/社团/活动），可查 admin_policy。"),
         "hitl_rule": ("HITL 准则：涉及「用章审批」「培训资质确认」时发起"
                       " create_hitl_task；一般咨询不需要。"),
+    },
+    "test_engineer": {
+        "name": "工程测试智能体（TE）",
+        "role": ("你是工程测试域智能体，服务测试工程师/品质工程。"
+                 "意图：回答测试执行、测试报告、失效分析、可靠性测试"
+                 "（跌落/高低温/寿命）、测试计划与覆盖率类问题。"),
+        "boundary": ("边界：只回答测试执行与可靠性域问题；软件/Bug 走研发测试；"
+                     "结构设计走 ME。测试数据表已接入（test_records），"
+                     "测试结论必须引用记录编号与数据。"),
+        "hitl_rule": ("HITL 准则：涉及「测试放行判定」「可靠性不通过处置」"
+                      "时发起 create_hitl_task；查询类不需要。"),
+    },
+    "me_engineer": {
+        "name": "结构工程智能体（ME）",
+        "role": ("你是结构工程（ME）智能体，服务结构工程师。"
+                 "意图：回答结构设计、模具、公差配合、装配问题、"
+                 "变形/断裂/间隙、材料选型类问题。"),
+        "boundary": ("边界：只回答结构工程域问题；电路/固件不在职责内。"
+                     "3D 图纸/CAD 数据源未接入——遇到时诚实说明数据缺口。"),
+        "hitl_rule": ("HITL 准则：涉及「结构变更」「模具修改」时发起"
+                      " create_hitl_task；分析类不需要。"),
+    },
+    "ie_engineer": {
+        "name": "工业工程智能体（IE）",
+        "role": ("你是工业工程（IE）智能体，服务 IE 工程师/生产管理。"
+                 "意图：回答标准工时、产能测算、线平衡、效率改善、"
+                 "人力配置、layout 类问题。"),
+        "boundary": ("边界：只回答工业工程域问题；质量判定、财务成本不在职责内。"
+                     "MES 工时明细数据源未接入时诚实说明，可用产出数据近似推算并注明口径。"),
+        "hitl_rule": ("HITL 准则：涉及「产线重排」「工时标准变更」时发起"
+                      " create_hitl_task；测算类不需要。"),
+    },
+    "npi_engineer": {
+        "name": "NPI 导入智能体",
+        "role": ("你是 NPI（新产品导入）智能体，服务 NPI 工程师/项目组。"
+                 "意图：回答 EVT/DVT/PVT/MP 阶段、试产安排、DFM 问题、"
+                 "导入进度与风险类问题。"),
+        "boundary": ("边界：只回答 NPI 导入域问题；量产异常走制造域。"
+                     "项目里程碑表已接入（project_milestone），阶段结论引用数据。"),
+        "hitl_rule": ("HITL 准则：涉及「阶段转段判定」「试产放行」时发起"
+                      " create_hitl_task；进度查询不需要。"),
+    },
+    "project_manager": {
+        "name": "项目经理智能体（PM）",
+        "role": ("你是项目部智能体，服务项目经理/项目总监。"
+                 "意图：回答项目里程碑、跨部门协调、风险跟踪、资源冲突、"
+                 "项目健康度类问题。"),
+        "boundary": ("边界：只回答项目管理域问题；单域技术深挖引导到对应域智能体。"
+                     "项目里程碑表已接入，跨域风险汇总引用数据。"),
+        "hitl_rule": ("HITL 准则：涉及「里程碑变更」「资源跨部门调配」"
+                      "时发起 create_hitl_task；查询不需要。"),
+    },
+    "rd_test": {
+        "name": "研发测试智能体",
+        "role": ("你是研发测试智能体，服务软件/固件测试。"
+                 "意图：回答软件测试、固件验证、Bug 管理、版本回归类问题。"),
+        "boundary": ("边界：只回答软件/固件测试域问题；硬件可靠性走工程测试。"
+                     "Bug 管理系统数据源未接入时诚实说明。"),
+        "hitl_rule": ("HITL 准则：涉及「版本放行」「Bug 遗留判定」时发起"
+                      " create_hitl_task；查询不需要。"),
     },
     "gm": {
         "name": "经营总览智能体",
@@ -218,6 +282,40 @@ class AgenticDomainAgent:
                 {"key": m.key, "name": m.name, "domains": list(m.domains)}
                 for m in self.orchestrator.runtime.scenario_registry.list()]}
 
+        def run_scenario(scenario_key: str, query: str) -> dict:
+            """Agent 判断问题属于复杂闭环时，直接触发对应协同场景。"""
+            result = self.orchestrator.handle(query, user_ctx=self.user_ctx)
+            d = result.to_dict()
+            return {"scenario": d.get("scenario_key"), "report": (d.get("report") or "")[:300],
+                    "hitl": len(d.get("hitl") or []), "run_id": d.get("run_id")}
+
+        def search_knowledge(domain: str, kw: str) -> dict:
+            """检索知识库（finance_policy/admin_policy；表级 ACL 同源生效）。"""
+            registry = self.orchestrator.runtime.data_registry
+            table = {"finance": "finance_policy", "admin": "admin_policy"}.get(domain)
+            if not table:
+                return {"note": f"知识域 {domain!r} 暂未接入", "items": []}
+            rows = registry.execute_readonly_sql(
+                f"SELECT policy_no, category, title, content FROM {table} "
+                f"WHERE title LIKE '%'||:kw||'%' OR keywords LIKE '%'||:kw||'%' "
+                f"OR content LIKE '%'||:kw||'%' LIMIT 4",
+                {"kw": kw})
+            return {"items": rows[:4], "row_count": len(rows)}
+
+        def query_project_milestones(model: str) -> dict:
+            registry = self.orchestrator.runtime.data_registry
+            rows = registry.execute_readonly_sql(
+                "SELECT * FROM project_milestone WHERE product_model = :m "
+                "ORDER BY planned_end", {"m": model})
+            return {"rows": rows[:6], "row_count": len(rows)}
+
+        def query_test_records(model: str) -> dict:
+            registry = self.orchestrator.runtime.data_registry
+            rows = registry.execute_readonly_sql(
+                "SELECT * FROM test_records WHERE product_model = :m "
+                "ORDER BY test_date DESC LIMIT 5", {"m": model})
+            return {"rows": rows[:5], "row_count": len(rows)}
+
         def create_hitl_task(title: str, prompt: str, slot: str) -> dict:
             """Agent 发起 HITL（治理：只 propose，工单走完整治理链，Agent 永不放行）。"""
             task = wf.create_task(
@@ -230,6 +328,25 @@ class AgenticDomainAgent:
                     "note": "已创建人工确认工单，等待对应岗位处理"}
 
         return {
+            "run_scenario": (run_scenario, {
+                "type": "object",
+                "properties": {"scenario_key": {"type": "string"},
+                               "query": {"type": "string"}},
+                "required": ["scenario_key", "query"]}),
+            "search_knowledge": (search_knowledge, {
+                "type": "object",
+                "properties": {"domain": {"type": "string",
+                                          "enum": ["finance", "admin"]},
+                               "kw": {"type": "string"}},
+                "required": ["domain", "kw"]}),
+            "query_project_milestones": (query_project_milestones, {
+                "type": "object",
+                "properties": {"model": {"type": "string"}},
+                "required": ["model"]}),
+            "query_test_records": (query_test_records, {
+                "type": "object",
+                "properties": {"model": {"type": "string"}},
+                "required": ["model"]}),
             "query_metric": (query_metric, {
                 "type": "object",
                 "properties": {"metric_id": {"type": "string",
@@ -270,6 +387,10 @@ class AgenticDomainAgent:
         "explore_data": "自然语言明细探查（内部走 SQL 生成与八道防线审核）",
         "list_scenarios": "列出平台协同场景（复杂闭环问题应建议走对应场景）",
         "create_hitl_task": "发起人工确认工单（治理白名单决策时使用；只发起不放行）",
+        "run_scenario": "按场景 key 直接触发协同场景（Agent 判断属复杂闭环时使用）",
+        "search_knowledge": "检索财务/行政制度知识库（更多知识域随接入扩展）",
+        "query_project_milestones": "查项目/NPI 里程碑（EVT/DVT/PVT/MP）",
+        "query_test_records": "查测试记录（可靠性/执行结果）",
     }
 
     def _tool_schemas(self) -> list[dict]:

@@ -308,11 +308,32 @@ class V2Orchestrator:
                     result.run_id, qr.channel, len(qr.rows or []))
         return result
 
+    # 专业角色路由表（V3.3）：问题关键词 → 专属智能体（二级路由，覆盖域默认值）。
+    # 顺序敏感：更具体的词放前面。
+    ROLE_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
+        ("npi_engineer", ("NPI", "EVT", "DVT", "PVT", "试产", "DFM", "导入进度", "转段")),
+        ("ie_engineer", ("工时", "产能测算", "线平衡", "标准工时", "效率改善", "layout", "人力配置")),
+        ("me_engineer", ("结构", "模具", "公差", "装配问题", "变形", "断裂", "间隙", "卡扣")),
+        ("rd_test", ("软件测试", "固件", "Bug", "bug", "回归测试", "版本验证")),
+        ("test_engineer", ("测试报告", "可靠性", "跌落", "高低温", "测试执行", "失效分析", "测试计划")),
+        ("project_manager", ("项目里程碑", "项目风险", "资源协调", "跨部门协调", "项目健康度")),
+    ]
+
     def _run_agentic(self, domain, query, user_ctx, run_id):
-        """运行域组 Agentic Agent；无对应域（function/None）返回 None 走原兜底。"""
+        """运行域组 Agentic Agent；无对应域（function/None）返回 None 走原兜底。
+
+        二级路由（V3.3）：先按角色关键词匹配专属智能体（测试/ME/IE/NPI/PM），
+        无命中再落回域默认智能体——13 个智能体共享同一工具层与治理约束。
+        """
         from ..agents.agentic import DOMAIN_AGENT_CONFIGS, AgenticDomainAgent
 
-        agentic_domain = domain if domain in DOMAIN_AGENT_CONFIGS else None
+        agentic_domain = None
+        for role_key, words in self.ROLE_KEYWORDS:
+            if any(w in query for w in words):
+                agentic_domain = role_key
+                break
+        if agentic_domain is None:
+            agentic_domain = domain if domain in DOMAIN_AGENT_CONFIGS else None
         if agentic_domain is None:
             return None
         try:

@@ -44,7 +44,7 @@
       ${arrow(430, 140, 590, 190)}
       ${box(28, 192, 200, 64, "#FDF6E7", "#D9C58A", "协同场景 DAG", "停线 / 来料 / 客诉8D / 出货 / 设备", "#7A5B00")}
       ${box(262, 192, 200, 64, "#EAF6EF", "#8CC5A5", "数据直答", "指标库 → 注册查询 → 明细探查", "#1A6B3C")}
-      ${box(500, 192, 232, 64, "#F0EBFA", "#B39DDB", "Agentic 域智能体", "7 个域组 · 自主工具循环 · HITL 自判", "#4B3A78")}
+      ${box(500, 192, 232, 64, "#F0EBFA", "#B39DDB", "Agentic 域智能体", "13 个专业角色 · 自主工具循环 · HITL 自判", "#4B3A78")}
       <text x="380" y="282" text-anchor="middle" font-size="10.5" fill="#5F6B7A">统一工具层（与 MCP / A2A 同源 · 全部走 ACL 与脱敏）</text>
       ${arrow(128, 256, 128, 300)}
       ${arrow(362, 256, 362, 300)}
@@ -98,7 +98,7 @@
     root.innerHTML = `
       <div class="content-inner">
         <div class="page-title">帮助中心</div>
-        <div class="page-desc">平台由 7 个域组智能体协同工作：智能总控先判断你的问题类型，再分派给最合适的执行路径。各智能体的能力边界由提示词约束，全部工具调用可审计。</div>
+        <div class="page-desc">平台由 13 个专业角色智能体协同工作（7 大域 + 6 个工程专业角色）：智能总控先判断你的问题类型，再分派给最合适的执行路径。各智能体的能力边界由提示词约束，全部工具调用可审计。</div>
 
         <div class="section-title">协同架构 <span class="section-extra">分层视图 · 工具即能力边界</span></div>
         <div class="card" style="padding:16px">${architectureSvg()}</div>

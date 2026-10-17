@@ -101,3 +101,46 @@ INSERT OR IGNORE INTO admin_policy (id, policy_no, category, title, content, key
 (104, 'ADM-LOGI-01', '交通', '班车', '覆盖5条主要线路，时刻表见行政公告栏（OA-行政服务可查电子版）。', '班车,通勤,交通'),
 (105, 'ADM-ACT-01', '活动', '员工文体活动', '公司每年举办2次全员运动会（春季/秋季），全员可报名。每季度组织部门团建，人均标准200元，凭发票报销。年中/年会设置抽奖与优秀员工表彰。', '活动,运动会,团建,年会'),
 (106, 'ADM-ACT-02', '活动', '兴趣社团', '现有社团：篮球、足球、羽毛球、桌游、摄影、读书、跑步7个。每周固定时间段使用指定场地，社团活动室在B1层。加入社团在OA应用「社团中心」报名，新社团满10人可申请成立。', '社团,兴趣,活动');
+
+-- ============================================================
+-- V3.3 项目里程碑 + 测试记录（支撑 NPI/项目经理/测试智能体）
+-- 鉴权：project_milestone 全员可读（项目信息透明）；test_records 测试/质量/研发/PM 可读
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS project_milestone (
+  id INT PRIMARY KEY,
+  product_model VARCHAR(50),
+  phase VARCHAR(20),
+  milestone VARCHAR(60),
+  status VARCHAR(20),
+  owner VARCHAR(40),
+  planned_end DATE,
+  actual_end DATE,
+  risk_note VARCHAR(200)
+);
+CREATE TABLE IF NOT EXISTS test_records (
+  id INT PRIMARY KEY,
+  product_model VARCHAR(50),
+  batch_no VARCHAR(30),
+  test_type VARCHAR(40),
+  test_item VARCHAR(80),
+  result VARCHAR(20),
+  defect_desc VARCHAR(200),
+  tester VARCHAR(40),
+  test_date DATE
+);
+
+INSERT OR IGNORE INTO project_milestone (id, product_model, phase, milestone, status, owner, planned_end, actual_end, risk_note) VALUES
+(101, 'A型号', 'MP', '量产爬坡', 'done', 'NPI · 陈工', '2026-10-10', '2026-10-09', ''),
+(102, 'B型号', 'PVT', '小批量试产验证', 'in_progress', 'NPI · 刘工', '2026-10-20', NULL, '结构公差问题已闭环，待复测'),
+(103, 'B型号', 'PVT', '可靠性测试（跌落/高低温）', 'in_progress', 'TE · 张工', '2026-10-22', NULL, '高低温第一轮通过'),
+(104, 'B型号', 'DVT', '设计验证测试', 'done', 'TE · 张工', '2026-09-28', '2026-09-26', ''),
+(105, 'C型号', 'EVT', '工程验证', 'in_progress', 'NPI · 刘工', '2026-11-05', NULL, '主板供应商样品延迟 1 周'),
+(106, 'C型号', 'EVT', 'DFM 可制造性评审', 'pending', 'IE · 王工', '2026-11-10', NULL, '');
+
+INSERT OR IGNORE INTO test_records (id, product_model, batch_no, test_type, test_item, result, defect_desc, tester, test_date) VALUES
+(101, 'B型号', 'BATCH-B-1015', '可靠性', '高低温循环 -20℃~60℃', 'pass', '', '张工', '2026-10-14'),
+(102, 'B型号', 'BATCH-B-1015', '可靠性', '跌落 1.0m 六面', 'fail', '第 4 面跌落后电池仓间隙超差 0.3mm，判定卡扣强度不足', '张工', '2026-10-13'),
+(103, 'B型号', 'BATCH-B-1015', '功能', '整机功能全测', 'pass', '', '李工', '2026-10-12'),
+(104, 'C型号', 'BATCH-C-1009', '软件', '固件 V1.0 回归测试', 'fail', '蓝牙配对成功率 92%（目标≥99%），Bug #101 遗留', '研发测试 · 吴工', '2026-10-12'),
+(105, 'A型号', 'BATCH-A-1011', '可靠性', '跌落 1.0m 六面', 'pass', '', '张工', '2026-10-11');
