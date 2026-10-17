@@ -227,6 +227,14 @@ class Text2SQLService:
         model = re.search(r"([AB])\s*型号", question)
         if model:
             params["model"] = f"{model.group(1)}型号"
+        # V3.2：职能域知识检索参数（kw = 问题中命中的制度关键词；
+        # 词表与 queries.yaml 的 finance/admin_policy_search keywords 同源）
+        for kw in ("借支", "报销", "发票", "差旅", "开票", "备用金", "住宿标准",
+                   "伙食补助", "报销流程", "抬头", "会议室", "食堂", "班车",
+                   "团建", "社团", "餐饮", "会议预订", "行政"):
+            if kw in question:
+                params["kw"] = kw
+                break
         return params
 
     # ---------- 内部 ----------

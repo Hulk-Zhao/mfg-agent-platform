@@ -8,3 +8,6 @@ wheels/
 
 # Virtual environments
 .venv
+
+# 本地模型权重（391MB，不入库）
+models/

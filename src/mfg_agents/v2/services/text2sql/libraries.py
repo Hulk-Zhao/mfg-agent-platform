@@ -24,6 +24,13 @@ TABLE_ACL: dict[str, set[str]] = {
     "inventory": {"warehouse", "supply_chain", "coordinator"},
     "shipment": {"business", "warehouse", "coordinator"},
     "customer_complaint": {"quality", "business", "coordinator"},
+    # V3.2 职能域：财务制度**高管限定**（PM 鉴权裁定——财务数据仅总经理/财务可咨询）
+    "finance_policy": {"finance", "gm", "coordinator"},
+    # 行政制度全员可读（公开制度，15 角色全量）
+    "admin_policy": {"manufacturing", "planning", "quality", "procurement",
+                     "material_control", "sales", "warehouse",
+                     "rd_engineering", "finance", "gm", "quality_director",
+                     "qa_manager", "qa", "sqe", "pqe", "equipment", "coordinator"},
 }
 
 

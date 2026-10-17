@@ -116,3 +116,13 @@ queries:
     tables: [production_output]
     keywords: [排产影响, 计划调整]
     sql: "SELECT record_date, line_code, product_model, planned_qty, actual_qty FROM production_output WHERE product_model = :model"
+  finance_policy_search:
+    desc: "财务制度查询（借支/报销/发票/差旅/备用金）。鉴权：仅财务与总经理高管可查"
+    tables: [finance_policy]
+    keywords: [借支, 报销, 发票, 差旅, 开票, 备用金, 住宿标准, 伙食补助, 报销流程, 抬头]
+    sql: "SELECT policy_no, category, title, content FROM finance_policy WHERE title LIKE '%'||:kw||'%' OR keywords LIKE '%'||:kw||'%' OR content LIKE '%'||:kw||'%' LIMIT 5"
+  admin_policy_search:
+    desc: "行政制度查询（会议室/餐饮/班车/社团/团建），全员可读"
+    tables: [admin_policy]
+    keywords: [会议室, 食堂, 班车, 团建, 社团, 餐饮, 会议预订, 行政]
+    sql: "SELECT policy_no, category, title, content FROM admin_policy WHERE title LIKE '%'||:kw||'%' OR keywords LIKE '%'||:kw||'%' OR content LIKE '%'||:kw||'%' LIMIT 5"

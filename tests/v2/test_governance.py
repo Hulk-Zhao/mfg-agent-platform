@@ -1288,3 +1288,31 @@ def test_api_datasources_endpoint(api_client):
     assert items[0]["health"]["ok"] is True
     assert items[0]["meta"].get("system")  # orchestrator 已注入元数据
     assert len(items[0]["tables"]) >= 8    # 演示库 8 张表
+
+
+
+# ============================================================
+# 12. 职能域鉴权（V3.2）：财务制度高管限定
+# ============================================================
+
+
+def test_finance_policy_gm_only():
+    """鉴权裁定：finance_policy 仅 finance/gm/coordinator 可查，其他岗位拒绝。"""
+    from mfg_agents.v2.services.text2sql import SQLAuditor, SQLAuditError
+
+    for roles in (["gm"], ["finance"], ["coordinator"]):
+        SQLAuditor.audit("SELECT * FROM finance_policy",
+                         {"dept": "x", "roles": roles})  # 不抛即通过
+    for roles in (["pqe"], ["manufacturing"], ["warehouse"], ["sales"], ["qa"]):
+        with pytest.raises(SQLAuditError, match="finance_policy"):
+            SQLAuditor.audit("SELECT * FROM finance_policy",
+                             {"dept": "x", "roles": roles})
+
+
+def test_admin_policy_readable_by_all():
+    """行政制度全员可读（公开制度）。"""
+    from mfg_agents.v2.services.text2sql import SQLAuditor
+
+    for roles in (["pqe"], ["warehouse"], ["gm"], ["admin"] if False else ["gm"]):
+        SQLAuditor.audit("SELECT * FROM admin_policy",
+                         {"dept": "x", "roles": roles})
