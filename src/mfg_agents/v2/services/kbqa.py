@@ -5,13 +5,16 @@
 1. **L1 FAQ 前置**（``kbqa_faq_match.FAQMatcher``）：``kbqa_policy`` 制度主数据
    ∪ ``kbqa_faq`` 晋升对，词面加权计分 + 阈值/margin 双闸。命中则**不调 LLM、
    不碰 Milvus**，直接回权威制度正文（``channel=faq``）；
-2. **L2 RAG 兜底**（原方案 B 链路不动）：``search_kb``（BGE-M3 混合召回 +
+2. **意图路由**（``kbqa_intent.route``，sub-ms 词面）：L1 miss 后分流——
+   域内词命中走 L2 RAG；其余（域外/兜底）走**约束 LLM 直答**
+   （``channel=direct``，不调 ``search_kb``，省 1-1.5s 检索）；
+3. **L2 RAG 兜底**（原方案 B 链路不动）：``search_kb``（BGE-M3 混合召回 +
    Reranker）→ ``get_llm``（deepseek-flash）生成带出处回答；
    LLM 不可用时降级回放最相关片段（``degraded=True``）；
-3. **L0 缓存**只包 L2（昂贵路径）：键含 ``faq_version`` 命名空间——
+4. **L0 缓存**只包 L2/direct（昂贵路径）：键含 ``faq_version`` 命名空间——
    FAQ 任何写操作改变版本戳 → 旧键自然不可达，无需主动失效
    （ADR-001 D2）。L1 每问全量重算 sub-ms，不占缓存正确性面；
-4. **度量**：每问写 ``kbqa_query_log``（channel/confidence/latency），
+5. **度量**：每问写 ``kbqa_query_log``（channel/confidence/latency），
    遥测失败只告警不抛——统计写失败不能弄丢一次回答。
 
 数据面：知识块由 ``mfg_agents.common.kbqa_seed`` 导入 Milvus
@@ -32,7 +35,7 @@ from ...common.kbqa_seed import DEPT_CN, DEPT_ORDER
 from ...common.llm_factory import get_llm, llm_available
 from ...common.rag_tools import search_kb
 from ..core import cache
-from . import kbqa_store
+from . import kbqa_intent, kbqa_store
 from .kbqa_faq_match import FAQMatcher
 
 logger = logging.getLogger(__name__)
@@ -46,11 +49,12 @@ KBQA_DEPTS: list[dict[str, str]] = [
     for key in DEPT_ORDER
 ]
 
-# ---- 统一答案契约的 channel 取值（ADR-001 §5）----
+# ---- 统一答案契约的 channel 取值（ADR-001 §5 + DESIGN-2）----
 CHANNEL_FAQ = "faq"                    # L1 制度直答（本次实时匹配）
 CHANNEL_RAG = "rag"                    # L2 知识库检索生成（含降级回放）
 CHANNEL_RAG_UNAVAILABLE = "rag_unavailable"  # L2 整层不可用（如 Milvus 挂）
 CHANNEL_MISS = "miss"                  # L1/L2 都未检索到相关内容
+CHANNEL_DIRECT = "direct"              # 意图路由 → 约束 LLM 直答（无出处）
 
 _SYSTEM_PROMPT = """你是企业制度问答助手。根据以下制度片段回答员工问题。
 规则：
@@ -59,6 +63,20 @@ _SYSTEM_PROMPT = """你是企业制度问答助手。根据以下制度片段回
 3. 末尾标注出处，格式：【来源：{cn} · 文件名 第N段】，引用多个片段时全部列出
 ======
 {context}"""
+
+# DESIGN-2 直答 prompt：四约束（相关但无答案→指引对口部门；无关→身份声明+
+# 可帮方向；禁止编造制度条款；100 字以内）。直答不带 sources，UI 上与
+# faq/rag 视觉区分——没有出处的回答不许伪装成制度原文。
+_DIRECT_SYSTEM_PROMPT = """你是制造企业的制度问答助手，回答员工的各类提问。
+规则：
+1. 如果问题与企业运营相关但你无法确定答案，明确说"这超出了我已掌握的企业公开制度范围"，并指引员工咨询对口部门（人事/财务/IT/行政/生产/质量/供应链/安环）
+2. 如果问题与企业无关（天气、闲聊、写作、百科、娱乐等），先用一句话说明你是企业制度问答助手，再列举你能帮助的方向（考勤、请假、报销、IT 支持、设备、质量、采购等）
+3. 禁止编造任何制度条款、数字、审批流程或文件名，不确定就直说不知道
+4. 回答控制在100字以内，简洁友好，不要使用 markdown 格式"""
+
+# LLM 不可用时的直答降级话术（诚实告知，不缓存）
+_DIRECT_FALLBACK = ("助手直答暂不可用（语言模型服务连接异常），请稍后重试。"
+                    "企业制度问题（考勤、请假、报销、IT 等）也可直接咨询对口部门。")
 
 
 def _contract(answer: str, *, channel: str, tags: list[dict[str, str]],
@@ -152,9 +170,12 @@ def _log_query(session_id: str, query: str, channel: str,
 
 
 def answer(query: str, top_k: int = 3, session_id: str = "") -> dict[str, Any]:
-    """企业制度问答入口：L1 前置 → L2 兜底，返回统一答案契约。
+    """企业制度问答入口：L1 前置 → 意图路由 → L2 RAG/约束直答，返回统一契约。
 
     L1 数据层（库）不可用时整层跳过而非报错——FAQ 是加速层，不是依赖。
+    意图路由（DESIGN-2）零延迟词面分流：域内词命中保 RAG 全链路（要出处），
+    其余走约束直答（不调 search_kb）；``KBQA_DIRECT_ENABLED=false`` 可整体
+    关掉直答回落纯 RAG 行为。
     """
     started = time.time()
 
@@ -189,13 +210,27 @@ def answer(query: str, top_k: int = 3, session_id: str = "") -> dict[str, Any]:
             faq_version=version,
         )
 
-    # ---- L2：RAG 兜底（缓存只包 L2；键含版本命名空间）----
+    # ---- 意图路由（DESIGN-2）：域内词命中 → RAG；其余 → 约束直答 ----
+    # 零延迟词面分流（sub-ms）。"都不命中走直答"是 Hulk 确认的策略：
+    # thinking-disabled 裸 LLM ~1.0s < search_kb+LLM ~2.6s；直答 prompt 的
+    # 四约束保证不编造制度条款，兜底质量由 stats 的 direct 分布回看兜住。
+    decision = kbqa_intent.route(query)
+    use_direct = not decision.domain and settings.KBQA_DIRECT_ENABLED
+    if use_direct:
+        logger.info("[kbqa] 意图路由→直答: query=%r", query[:60])
+
+    # ---- L2/direct：昂贵路径进缓存（键含版本命名空间）----
     key = _cache_key(query, top_k, version)
     result = cache.get_or_compute(
         key, KBQA_CACHE_TTL_S,
-        lambda: _answer_rag(query, top_k, started=started, version=version))
-    if result.get("channel") == CHANNEL_RAG_UNAVAILABLE:
+        lambda: (_answer_direct(query, started=started, version=version)
+                 if use_direct
+                 else _answer_rag(query, top_k, started=started,
+                                  version=version)))
+    if result.get("channel") == CHANNEL_RAG_UNAVAILABLE or (
+            result.get("channel") == CHANNEL_DIRECT and result.get("degraded")):
         # 不可用状态绝不缓存 30 分钟——中间件恢复后要被立刻放行
+        # （rag_unavailable = Milvus 挂；degraded direct = LLM 挂）
         cache.cache_delete(key)
     # 缓存回放时刷新本次实际耗时（契约里的 latency 必须反映这一次调用）
     result["latency_ms"] = int((time.time() - started) * 1000)
@@ -279,5 +314,45 @@ def _answer_rag(query: str, top_k: int, *, started: float,
         tags=tags, sources=sources, category=category,
         degraded=False,
         latency_ms=latency_ms,
+        faq_version=version,
+    )
+
+
+def _answer_direct(query: str, *, started: float,
+                   version: str) -> dict[str, Any]:
+    """（内部）意图路由命中"非域内"时的约束 LLM 直答，不调 ``search_kb``。
+
+    实测 thinking-disabled 裸 LLM ~1.0s（瓶颈在首 token，max_tokens 影响小），
+    比 search_kb+LLM 全链路省 ~1.6s。prompt 四约束见 ``_DIRECT_SYSTEM_PROMPT``；
+    LLM 不可用 → 诚实降级话术（``degraded=True``，由 ``answer`` 负责不缓存）。
+    直答契约**不带 sources**——没有出处的回答不许伪装成制度原文。
+    """
+    if not llm_available():
+        return _contract(
+            answer=_DIRECT_FALLBACK,
+            channel=CHANNEL_DIRECT,
+            tags=[], sources=[], category={"name": "助手"},
+            degraded=True,
+            latency_ms=int((time.time() - started) * 1000),
+            faq_version=version,
+        )
+
+    llm = get_llm(temperature=0.3, thinking="disabled",
+                  max_tokens=settings.KBQA_DIRECT_MAX_TOKENS, timeout=30)
+    msgs = [
+        ("system", _DIRECT_SYSTEM_PROMPT),
+        ("human", query),
+    ]
+    resp = llm.invoke(msgs)
+    text = getattr(resp, "content", None) or str(resp)
+    if isinstance(text, list):  # 部分模型返回分段 content
+        text = "".join(str(part.get("text", part)) if isinstance(part, dict) else str(part)
+                       for part in text)
+    return _contract(
+        answer=str(text).strip(),
+        channel=CHANNEL_DIRECT,
+        tags=[], sources=[], category={"name": "助手"},
+        degraded=False,
+        latency_ms=int((time.time() - started) * 1000),
         faq_version=version,
     )

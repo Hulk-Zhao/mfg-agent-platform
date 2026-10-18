@@ -19,7 +19,10 @@ import asyncio
 import json
 import logging
 import queue
+import threading
+import time
 import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Optional
 
@@ -30,7 +33,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from ...common.config import settings
-from ...common.rag_tools import kb_count
+from ...common.rag_tools import kb_count, search_kb
 from ..contracts.im_gateway import ReplyCard
 from ..contracts.adapters.wecom import WeComAdapter
 from ..contracts.permissions import get_permission_registry
@@ -51,7 +54,31 @@ from ..services.workflow import (
 
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="mfg-agent-platform v2", version="2.0.0")
+
+@asynccontextmanager
+async def _lifespan(_: FastAPI):
+    """启动钩子：后台预热 KB 检索（消首问冷启动），不阻塞服务就绪。"""
+    threading.Thread(target=_preheat_kb, name="kbqa-preheat", daemon=True).start()
+    yield
+
+
+def _preheat_kb() -> None:
+    """预热 BGE-M3 模型 + Milvus 连接（DESIGN-2 同迭代项）。
+
+    实测冷启动首问 ``search_kb`` 10659ms——391MB 嵌入模型现加载全耗在
+    第一跳上，演示第一问体验死刑。预热放 daemon 线程：服务秒起，模型在
+    后台加载；失败只告警不抛——预热是体验优化，不是依赖（Milvus 挂了
+    首问冷启动 + 诚实降级，行为与没有预热时一致）。
+    """
+    t0 = time.time()
+    try:
+        search_kb("预热", n_results=1)
+        logger.info("[kbqa] 预热完成：search_kb 就绪（%.1fs）", time.time() - t0)
+    except Exception as exc:  # noqa: BLE001 - 预热失败必须可绕过
+        logger.warning("[kbqa] 预热失败（首问将冷启动）: %s", exc)
+
+
+app = FastAPI(title="mfg-agent-platform v2", version="2.0.0", lifespan=_lifespan)
 
 # ---------- 动态 index：静态资源版本号 = 文件 mtime（文件一改缓存自动失效） ----------
 import os as _os

@@ -211,6 +211,12 @@ class Settings:
     KBQA_ADMIN_TOKEN: str = os.getenv("KBQA_ADMIN_TOKEN", "")
     # query_log 遥测写入开关：false 时只跑问答不落度量（调试用）
     KBQA_LOG_WRITES: bool = _env_bool("KBQA_LOG_WRITES", True)
+    # DESIGN-2 意图路由：L1 miss 且域内词表不命中 → 约束 LLM 直答（channel=direct）。
+    # 实测依据：thinking-disabled 裸 LLM ~1.0s vs search_kb+LLM ~2.6s，省 1.6s。
+    # 总开关做逃生阀：置 false 时全部回落 L2 RAG（迭代一行为，零质量回退）。
+    KBQA_DIRECT_ENABLED: bool = _env_bool("KBQA_DIRECT_ENABLED", True)
+    # 直答 max_tokens：prompt 已约束 100 字以内，200 足够兜住；与 RAG 的 400 区分
+    KBQA_DIRECT_MAX_TOKENS: int = int(os.getenv("KBQA_DIRECT_MAX_TOKENS", "200"))
 
 
 settings = Settings()

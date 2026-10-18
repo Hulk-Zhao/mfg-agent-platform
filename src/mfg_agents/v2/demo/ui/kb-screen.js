@@ -61,13 +61,13 @@
     };
   }
 
-  /** channel → 角标文案（统一答案契约，ADR-001 §5）。 */
-  const CH_LABEL = { faq: "制度直答", rag: "知识库检索", miss: "未找到", rag_unavailable: "知识库不可用" };
+  /** channel → 角标文案（统一答案契约，ADR-001 §5 + DESIGN-2 direct）。 */
+  const CH_LABEL = { faq: "制度直答", rag: "知识库检索", miss: "未找到", rag_unavailable: "知识库不可用", direct: "助手直答" };
 
   /** bot 消息的契约角标行：命中通道 + 耗时 + 点赞反馈（ADR-001 晋升管线入口）。 */
   function messageMetaHtml(m, idx) {
     if (m.role !== "bot" || !m.channel) return "";
-    const cls = m.channel === "rag_unavailable" ? "warn" : (m.channel === "faq" ? "faq" : "rag");
+    const cls = m.channel === "rag_unavailable" ? "warn" : (m.channel === "faq" ? "faq" : (m.channel === "direct" ? "direct" : "rag"));
     const lat = (typeof m.latency === "number") ? `<span>${m.latency}ms</span>` : "";
     const like = `<button class="kbqa-like" data-idx="${idx}" title="答得好？点赞后进入 FAQ 晋升待审队列">👍 有帮助</button>`;
     return `<div class="kbqa-meta"><span class="kbqa-badge kbqa-badge-${cls}">${esc(CH_LABEL[m.channel] || m.channel)}</span>${lat}${like}</div>`;

@@ -343,10 +343,17 @@ def test_r_cache_key_includes_version():
         kbqa_service._cache_key("年假怎么休", 5, "v")
 
 
-def test_r_l1_store_failure_does_not_break_answer(monkeypatch):
-    """L1 数据层故障 → 整层跳过，问答照常走 L2（加速层不是依赖）。"""
+def test_r_l1_store_failure_does_not_break_answer(monkeypatch, no_redis_cache):
+    """L1 数据层故障 → 整层跳过，问答照常走 L2（加速层不是依赖）。
+
+    查询刻意选**域内词**（"报销"）：意图路由下域内问题保 RAG 全链路，
+    L1 挂了也应看到 L2 的 miss 而不是被路由去直答——这条用例守护的是
+    "L1 故障不影响 L2 可达"，不是路由本身（路由由 test_kbqa_intent.py 守）。
+    缓存必须隔离（no_redis_cache）：否则本用例结果取决于 6380  Redis 上
+    有没有同键旧条目——实测旧架构缓存的 miss 会让它假绿（2026-10-18）。
+    """
     monkeypatch.setattr(kbqa_store, "faq_corpus", _boom)
     monkeypatch.setattr(kbqa_service, "search_kb", lambda q, n_results=3: [])
-    out = kbqa_service.answer("任意问题")
+    out = kbqa_service.answer("报销多久到账")
     assert out["channel"] == "miss"
     assert "answer" in out

@@ -2616,6 +2616,8 @@ a:hover { text-decoration: underline; }
 .kbqa-badge-faq { background: var(--k-src-bg); color: var(--k-src-text); border: 1px solid var(--k-src-border); }
 .kbqa-badge-rag { background: var(--k-tag-bg); color: var(--k-tag-text); border: 1px solid var(--k-tag-border); }
 .kbqa-badge-warn { background: rgba(230, 80, 60, .10); color: #b3261e; border: 1px solid rgba(230, 80, 60, .25); }
+/* direct = 意图路由约束直答：无出处的回答必须与 faq/rag 视觉区分，不许伪装制度原文 */
+.kbqa-badge-direct { background: rgba(90, 90, 110, .10); color: #5a5a6e; border: 1px solid rgba(90, 90, 110, .25); }
 .kbqa-like { border: none; background: transparent; cursor: pointer; font-size: 11px; color: var(--k-sub); padding: 1px 4px; border-radius: 8px; }
 .kbqa-like:hover { color: var(--k-src-text); background: var(--k-src-bg); }
 .kbqa-like-done { color: var(--k-src-text); cursor: default; }
