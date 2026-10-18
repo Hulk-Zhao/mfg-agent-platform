@@ -27,6 +27,8 @@ services:
       - ./data/init.sql:/docker-entrypoint-initdb.d/10_init.sql:ro
       # 数据集扩充（512 行历史数据）：文件名前缀保证在 init.sql 之后执行
       - ./data/seed_mysql_extra.sql:/docker-entrypoint-initdb.d/20_seed_extra.sql:ro
+      # 企业制度库（kbqa_policy，16 类制造制度）行数据
+      - ./data/seed_kbqa.sql:/docker-entrypoint-initdb.d/30_seed_kbqa.sql:ro
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-pdemo123"]
       interval: 10s

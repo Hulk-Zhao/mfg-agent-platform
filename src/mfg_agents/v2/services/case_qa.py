@@ -348,9 +348,12 @@ class CaseQAService:
         enhanced = len({hit["case_id"] for hit in search.hits})
         items = [f"归一化后命中案例 {enhanced} 个"]
         if baseline >= 0 and normalized != raw:
-            items.insert(0, f"原文直接检索命中 {baseline} 个")
-            summary = (f"同名异义已归一：原文检索 {baseline} 个案例 → "
-                       f"本体归一后 {enhanced} 个")
+            # 口径说明：原文检索命中更多，往往是因为字面重合更宽（噪声也进来了）；
+            # 归一化后命中更少但更准。所以这里**不宣称"增益"**，只如实并列两个数字。
+            items.insert(0, f"未归一化的原文检索命中 {baseline} 个")
+            items.append("归一化把不同叫法合并，命中更聚焦（少而准）")
+            summary = (f"同一句话：原文检索 {baseline} 个案例 / "
+                       f"本体归一后 {enhanced} 个（少而准）")
         else:
             summary = f"本体归一后命中 {enhanced} 个案例"
         return {"summary": summary, "items": items,

@@ -3191,3 +3191,88 @@ a:hover { text-decoration: underline; }
 }
 .case-chunk-act { flex: none; display: flex; align-items: center; gap: 6px; }
 .case-cited-flag { font-style: normal; font-size: 11px; color: var(--ok); }
+
+/* ---------- 主区重排：问答在上、检索在下 ---------- */
+.case-block { margin-bottom: 14px; }
+.case-block-title {
+  margin: 0 0 8px; font-size: 14px; color: var(--text);
+  display: flex; align-items: baseline; gap: 10px;
+}
+.case-block-fold > summary {
+  cursor: pointer; font-size: 13px; color: var(--text-2); padding: 7px 0;
+  user-select: none; font-weight: 600;
+}
+.case-block-fold > summary:hover { color: var(--primary); }
+.case-side-links { display: flex; gap: 8px; margin: 10px 0; flex-wrap: wrap; }
+.case-link {
+  border: 1px solid var(--border); background: var(--card); color: var(--text-2);
+  border-radius: 999px; padding: 4px 12px; font-size: 12px; cursor: pointer;
+}
+.case-link:hover { border-color: var(--primary); color: var(--primary); }
+.case-link.is-active { background: var(--primary); border-color: var(--primary); color: #fff; }
+
+/* ---------- 本体增强处理轨迹 ---------- */
+.case-trace { margin: 0 0 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); }
+.case-trace > summary {
+  cursor: pointer; padding: 8px 10px; font-size: 12.5px; font-weight: 600;
+  color: var(--text); user-select: none;
+}
+.case-trace-list { margin: 0; padding: 4px 12px 10px 30px; }
+.case-trace-step { margin-bottom: 8px; }
+.case-trace-no {
+  display: inline-block; min-width: 18px; height: 18px; line-height: 18px;
+  text-align: center; border-radius: 50%; background: var(--primary-light-2);
+  color: var(--primary); font-size: 11px; margin-right: 6px;
+}
+.case-trace-body b { font-size: 12.5px; color: var(--text); }
+.case-trace-body p { margin: 2px 0; font-size: 11.5px; color: var(--text-2); line-height: 1.6; }
+.case-trace-items { margin: 3px 0 0; padding-left: 16px; }
+.case-trace-items li { font-size: 11.5px; color: var(--text-3); line-height: 1.7; }
+
+/* ---------- 技术详情（英文标识只允许出现在这里） ---------- */
+.case-tech { margin-top: 4px; }
+.case-tech > summary {
+  cursor: pointer; font-size: 11px; color: var(--text-3); user-select: none;
+}
+.case-tech > code {
+  display: block; margin-top: 4px; padding: 6px 8px; border-radius: 5px;
+  background: var(--primary-light-2); font-size: 10.5px; color: var(--text-2);
+  white-space: pre-wrap; word-break: break-all;
+}
+
+/* ---------- 访问申请 ---------- */
+.case-restricted { margin-top: 10px; }
+.case-table { width: 100%; border-collapse: collapse; margin-top: 6px; }
+.case-table th, .case-table td {
+  text-align: left; padding: 6px 8px; font-size: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.case-table th { color: var(--text-3); font-weight: 600; }
+.case-mini-key { border-color: var(--primary); color: var(--primary); }
+.case-access-form {
+  margin-top: 10px; padding: 10px; border-radius: 8px;
+  background: var(--primary-light-2); border: 1px solid var(--border);
+}
+.case-textarea {
+  width: 100%; box-sizing: border-box; padding: 8px; font-size: 12.5px;
+  border: 1px solid var(--border); border-radius: 6px; resize: vertical;
+  font-family: inherit; color: var(--text);
+}
+.case-access-act { margin-top: 8px; display: flex; gap: 8px; }
+
+/* ---------- 本体与资产（侧栏） ---------- */
+.case-gain {
+  margin: 8px 0; padding: 8px 10px; border-radius: 6px;
+  background: var(--ok-bg); color: var(--ok); font-size: 11.5px; line-height: 1.6;
+}
+.case-gain b { display: block; margin-bottom: 2px; }
+.case-dist-row {
+  display: flex; align-items: center; gap: 6px; font-size: 11.5px;
+  color: var(--text-2); margin-bottom: 4px;
+}
+.case-dist-row span { flex: none; width: 72px; }
+.case-dist-row i {
+  display: block; height: 8px; border-radius: 4px;
+  background: var(--primary-light-2); border-left: 3px solid var(--primary);
+}
+.case-dist-row b { flex: none; color: var(--text-3); font-weight: 500; }

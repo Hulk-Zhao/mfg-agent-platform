@@ -284,6 +284,11 @@ class CaseStore:
                     f"ACL 维度名非法: {dim!r}（允许：{', '.join(TOKEN_DIMS)}）")
             if effect == "allow" and not value:
                 raise CaseStoreError(f"ACL 条目 {dim} 缺少 value")
+            if dim == "user" and ":" in value:
+                # 令牌前缀由 compute_acl_tokens / principal_token 统一拼；
+                # 这里再写一遍会变成 "user:user:xxx"，永远匹配不上（静默失效）。
+                raise CaseStoreError(
+                    f"ACL 维度 user 的值应是纯 user_id（不带 'user:' 前缀）：{value!r}")
             normalized.append((dim, value, effect))
 
         existing = {(row["dim"], row["value"], row["effect"])

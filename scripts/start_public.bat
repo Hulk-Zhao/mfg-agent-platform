@@ -67,11 +67,16 @@ start "mfg-tunnel" /min "%CFEXE%" tunnel --no-autoupdate --protocol http2 --url 
 echo       Waiting for public URL and edge registration ^(up to 60s^) ...
 set PUBURL=
 set REGOK=
-for /l %%i in (1,1,24) do (
-    if "!PUBURL!"=="" call :grab_url
-    if "!REGOK!"=="" call :check_reg
-    if "!PUBURL!"=="" if "!REGOK!"=="" "%SystemRoot%\System32\ping.exe" -n 3 127.0.0.1 >nul 2>nul
-)
+set /a WAITN=0
+:tunnel_wait
+if "!PUBURL!"=="" call :grab_url
+if "!REGOK!"=="" call :check_reg
+if not "!PUBURL!"=="" if not "!REGOK!"=="" goto :tunnel_done
+set /a WAITN+=1
+if !WAITN! geq 24 goto :tunnel_done
+"%SystemRoot%\System32\ping.exe" -n 3 127.0.0.1 >nul 2>nul
+goto :tunnel_wait
+:tunnel_done
 if not defined PUBURL (
     echo [ERROR] No public URL created. Check %CFLOG%
     echo         ^(no network to Cloudflare - China alternatives:
@@ -86,7 +91,7 @@ if not defined REGOK (
     echo           %PUBURL%
     echo.
     echo         Last error from cloudflared:
-    powershell -NoProfile -Command "Get-Content '%CFLOG%' -Tail 60 -ErrorAction SilentlyContinue ^| Select-String -Pattern 'ERR|error' ^| Select-Object -Last 2 ^| ForEach-Object { '    ' + $_.Line }"
+    powershell -NoProfile -Command "Get-Content '%CFLOG%' -Tail 60 -ErrorAction SilentlyContinue | Select-String -Pattern 'ERR|error' | Select-Object -Last 2 | ForEach-Object { '    ' + $_.Line }"
     echo.
     echo         Usual cause on this kind of network: a TUN-mode VPN ^(fake-ip^)
     echo         hijacks DNS, so cloudflared cannot reach Cloudflare edge
@@ -114,11 +119,11 @@ for /l %%i in (1,1,12) do (
 )
 
 rem ---------- [4/4] summary ----------
+rem LAN IP = IPv4 of the interface that owns the default route: virtual
+rem adapters (WSL / VMware / Docker / TUN-mode fake-ip) have no default
+rem gateway, so they are ruled out without hard-coding address ranges.
 set LANIP=
-rem filter out virtual adapters: 169.254 (APIPA), 192.168.88 (VMware),
-rem 172.28 (WSL), 198.18 (TUN-mode VPN fake-ip interface)
-for /f "tokens=2 delims=:" %%a in ('ipconfig ^| findstr /C:"IPv4" ^| findstr /V "169.254" ^| findstr /V "192.168.88" ^| findstr /V "172.28" ^| findstr /V "198.18."') do set LANIP=%%a
-set LANIP=%LANIP: =%
+for /f "delims=" %%i in ('powershell -NoProfile -Command "(Get-NetIPConfiguration | Where-Object { $_.IPv4DefaultGateway } | Select-Object -First 1).IPv4Address.IPAddress" 2^>nul') do set LANIP=%%i
 
 echo.
 echo ============================================================

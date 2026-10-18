@@ -70,7 +70,7 @@ echo       Waiting for public URL ^(up to 45s^) ...
 set PUBURL=
 for /l %%i in (1,1,18) do (
     if "!PUBURL!"=="" (
-        for /f "delims=" %%u in ('powershell -NoProfile -Command "$m = Select-String -Path '%TLOG%' -Pattern 'https://[a-z0-9.-]+\.pinggy-free\.link' -ErrorAction SilentlyContinue ^| ForEach-Object { $_.Matches[0].Value } ^| Select-Object -Last 1; if ($m) { $m }" 2^>nul') do set PUBURL=%%u
+        for /f "delims=" %%u in ('powershell -NoProfile -Command "$m = Select-String -Path '%TLOG%' -Pattern 'https://[a-z0-9.-]+\.pinggy-free\.link' -ErrorAction SilentlyContinue | ForEach-Object { $_.Matches[0].Value } | Select-Object -Last 1; if ($m) { $m }" 2^>nul') do set PUBURL=%%u
         if "!PUBURL!"=="" "%SystemRoot%\System32\ping.exe" -n 3 127.0.0.1 >nul 2>nul
     )
 )
@@ -102,11 +102,11 @@ if not defined VOK (
     exit /b 0
 )
 rem ---------- summary ----------
+rem LAN IP = IPv4 of the interface that owns the default route: virtual
+rem adapters (WSL / VMware / Docker / TUN-mode fake-ip) have no default
+rem gateway, so they are ruled out without hard-coding address ranges.
 set LANIP=
-rem filter out virtual adapters: 169.254 (APIPA), 192.168.88 (VMware),
-rem 172.28 (WSL), 198.18 (TUN-mode VPN fake-ip interface)
-for /f "tokens=2 delims=:" %%a in ('ipconfig ^| findstr /C:"IPv4" ^| findstr /V "169.254" ^| findstr /V "192.168.88" ^| findstr /V "172.28" ^| findstr /V "198.18."') do set LANIP=%%a
-set LANIP=%LANIP: =%
+for /f "delims=" %%i in ('powershell -NoProfile -Command "(Get-NetIPConfiguration | Where-Object { $_.IPv4DefaultGateway } | Select-Object -First 1).IPv4Address.IPAddress" 2^>nul') do set LANIP=%%i
 
 echo.
 echo ============================================================

@@ -107,6 +107,19 @@ CREATE TABLE customer_complaint (
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- 企业制度库（kbqa_policy）：16 类制造企业制度的 MySQL 结构化镜像
+-- 行数据由 seed_kbqa.sql 装载（docker-entrypoint-initdb.d）
+CREATE TABLE kbqa_policy (
+  id INT PRIMARY KEY,
+  dept VARCHAR(40),
+  dept_cn VARCHAR(30),
+  policy_no VARCHAR(30),
+  category VARCHAR(30),
+  title VARCHAR(100),
+  content TEXT,
+  keywords VARCHAR(200)
+);
+
 -- ============================================================
 -- 模拟数据（以2026-10-15为"今天"）
 -- ============================================================

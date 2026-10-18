@@ -21,7 +21,7 @@ import logging
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from typing import Any, Mapping, Optional
 
 from ..contracts.case_acl import Principal
 from ..contracts.case_index import IndexHealth  # noqa: F401 - 类型保持一致
@@ -90,7 +90,7 @@ class AccessTransitionError(AccessRequestError):
 
 @dataclass(frozen=True)
 class AccessRequest:
-    """一条访问申请。"""
+    """一条访问申请（结构化视图；持久化行由 :meth:`CaseAccessService.get` 返回）。"""
 
     request_id: str
     case_id: str
@@ -105,6 +105,15 @@ class AccessRequest:
     created_at: str = ""
     decided_at: str = ""
     expires_at: str = ""
+
+    @classmethod
+    def from_row(cls, row: Mapping[str, Any]) -> "AccessRequest":
+        """DB 行 → 结构化申请。"""
+        return cls(**{key: row.get(key, "") for key in
+                      ("request_id", "case_id", "requester_id", "requester_dept",
+                       "requester_role", "reason", "scope", "status",
+                       "approver_id", "decision_reason", "created_at",
+                       "decided_at", "expires_at")})
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -196,7 +205,7 @@ class CaseAccessService:
         logger.info("[case_access] 收到访问申请 %s：%s → %s", request_id,
                     principal.user_id, case_id)
         row = self.get(request_id)
-        return row.to_dict() if row else {"request_id": request_id}
+        return row or {"request_id": request_id}
 
     # ---------- 待办 / 裁决 ----------
 
@@ -228,11 +237,11 @@ class CaseAccessService:
         row = self.get(request_id)
         if row is None:
             raise AccessNotFound(f"申请不存在: {request_id}")
-        if row.status != "pending":
+        if str(row.get("status")) != "pending":
             raise AccessTransitionError(
-                f"申请 {request_id} 已是 {row.status}，不能再裁决")
+                f"申请 {request_id} 已是 {row.get('status')}，不能再裁决")
 
-        case = self._store.get_case(row.case_id)
+        case = self._store.get_case(str(row.get("case_id") or ""))
         if case is None:
             raise AccessNotFound("案例不存在，无法批准")
         self._assert_functional_dept(principal, case)
@@ -252,26 +261,25 @@ class CaseAccessService:
         self._audit.append(
             actor=principal.user_id,
             action=f"case.access.{'approved' if approve else 'rejected'}",
-            case_id=row.case_id,
-            detail={"request_id": request_id, "requester_id": row.requester_id,
+            case_id=str(row.get("case_id") or ""),
+            detail={"request_id": request_id,
+                    "requester_id": str(row.get("requester_id") or ""),
                     "expires_at": expires_at})
         logger.info("[case_access] 申请 %s → %s by %s", request_id, target,
                     principal.user_id)
-        updated = self.get(request_id)
-        return updated.to_dict() if updated else {}
+        return self.get(request_id) or {}
 
     def cancel(self, principal: Principal, request_id: str) -> dict[str, Any]:
         """申请人撤回自己的 pending 申请。"""
         row = self.get(request_id)
         if row is None:
             raise AccessNotFound(f"申请不存在: {request_id}")
-        if row.requester_id != principal.user_id:
+        if str(row.get("requester_id")) != principal.user_id:
             raise AccessNotRequestable("只能撤回自己提交的申请")
         self._transition(row, "cancelled", actor=principal.user_id)
         self._audit.append(actor=principal.user_id, action="case.access.cancelled",
-                           case_id=row.case_id, detail={"request_id": request_id})
-        updated = self.get(request_id)
-        return updated.to_dict() if updated else {}
+                           case_id=str(row.get("case_id") or ""), detail={"request_id": request_id})
+        return self.get(request_id) or {}
 
     # ---------- 回收 ----------
 
@@ -288,7 +296,7 @@ class CaseAccessService:
             for row in rows:
                 conn.execute(
                     "DELETE FROM case_acl WHERE case_id=? AND dim='user' AND value=?",
-                    (str(row["case_id"]), f"user:{row['requester_id']}"))
+                    (str(row["case_id"]), str(row["requester_id"])))
                 conn.execute(
                     "UPDATE case_access_request SET status='expired' WHERE request_id=?",
                     (str(row["request_id"]),))
@@ -307,11 +315,13 @@ class CaseAccessService:
         days = _grant_ttl_days()
         expires = _iso(_now() + timedelta(days=days))
         entries = [dict(item) for item in self._store.acl_entries(str(case["case_id"]))]
+        # 值存**纯 user_id**（与 dept→quality / plant→P1 的口径一致）：
+        # 令牌前缀由 `compute_acl_tokens` / `principal_token` 统一拼，
+        # 这里再写一遍 "user:" 会变成 "user:user:xxx"，永远匹配不上。
+        user_id = str(row["requester_id"])
         keep = [item for item in entries
-                if not (str(item["dim"]) == "user"
-                        and str(item["value"]) == f"user:{row['requester_id']}")]
-        keep.append({"dim": "user", "value": f"user:{row['requester_id']}",
-                     "effect": "allow"})
+                if not (str(item["dim"]) == "user" and str(item["value"]) == user_id)]
+        keep.append({"dim": "user", "value": user_id, "effect": "allow"})
         # ★ allow_widen=True 的**唯一**合法来源：审批通过的服务端路径。
         # BR-12（只可收紧）对普通写路径仍然成立；这里放宽是"审批"这个动作本身，
         # 且必须同时重算 visibility_class 并重建索引，让向量侧与关系库同时生效。

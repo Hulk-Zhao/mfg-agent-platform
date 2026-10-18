@@ -63,6 +63,23 @@ __all__ = [
 #: 默认返回条数。
 DEFAULT_K = 5
 
+#: 受限清单最多回多少条（标题级信息也不能变成批量导出）。
+RESTRICTED_MAX = 20
+#: 计算受限清单时最多扫描多少候选 chunk。
+MAX_RESTRICTED_SCAN = 10000
+
+#: 可走访问申请的状态（与 services/case_access.REQUESTABLE_STATUS 对齐）。
+_REQUESTABLE_STATUS: frozenset[str] = frozenset({"active", "deprecated"})
+
+
+def _is_requestable(case: Mapping[str, Any]) -> bool:
+    """这条案例能不能走"申请访问"（涉密与未结案不走）。"""
+    try:
+        rank = int(case.get("cls_rank") or 0)
+    except (TypeError, ValueError):
+        return False
+    return rank < 3 and str(case.get("status") or "") in _REQUESTABLE_STATUS
+
 
 def source_ticket_ref(source_ticket_id: str) -> str:
     """来源单据号的**不可反推引用句柄**（``st_`` + sha256 前 10 位）。
@@ -115,6 +132,8 @@ class SearchResponse:
     denied_code: str = ""
         #: 人类可读的过滤条件解释（供前端「为什么看不到」面板）。**不含原始 expr / AST**。
     filter_explain: list[str] = field(default_factory=list)
+    #: 本次结果的分类分布（按 subcategory 计数；前端画条形图用，**真实统计**）。
+    category_dist: dict[str, int] = field(default_factory=dict)
     #: 受限案例（"有，但你看不透"）：只回 case_id/title/category/reason/requestable。
     #: **不回正文、不回密级细节、不回 ACL 明细**——否则就成了新的泄漏面。
     restricted: list[dict[str, Any]] = field(default_factory=list)
@@ -125,6 +144,7 @@ class SearchResponse:
             "hidden_count": self.hidden_count,
             "hidden_count_unit": self.hidden_count_unit,
             "restricted": self.restricted,
+            "category_dist": self.category_dist,
             "degraded": self.degraded,
             "notice": self.notice,
             "low_confidence": self.low_confidence,
@@ -249,7 +269,10 @@ class CaseSearchService:
         # 否则只剩一句"N 条不可见"，无处申请。这里只回 5 个字段：
         # case_id / title / category / reason / requestable——
         # **不回正文、不回密级细节、不回 ACL 明细**，否则申请通道会变成新的泄漏面。
-        restricted = self._restricted(principal, ordered, hits,
+        # 受限清单的数据源是"仅硬维度"的候选集（软维度过滤掉的那部分）。
+        # 注意：不能从 ``deduped`` 取——前置过滤已经把越权的挡在召回之前，
+        # 二次授权拦不到东西（这正是 BR-01 的设计），所以要从硬维度候选里找。
+        restricted = self._restricted(principal, request.action, filter_node,
                                       {h["case_id"] for h in hits})
 
         # ── 15. 审计（只记哈希与计数）────────────────────────────
@@ -269,8 +292,12 @@ class CaseSearchService:
         notice, low_confidence = self._compose_notice(
             hits=len(hits), k=request.k, hidden=hidden, dropped=len(dropped),
             query=request.query)
+        dist: dict[str, int] = {}
+        for hit in hits:
+            key = str(hit.get("subcategory") or "") or "other"
+            dist[key] = dist.get(key, 0) + 1
         return SearchResponse(
-            hits=hits, restricted=restricted,
+            hits=hits, restricted=restricted, category_dist=dist,
             hidden_count=hidden, degraded=False, notice=notice,
             low_confidence=low_confidence, second_stage_dropped=len(dropped),
             action=request.action, query_hash=qh, filter_hash=fh,
@@ -507,20 +534,30 @@ class CaseSearchService:
 
     # ---------- 受限案例（可见存在、可申请） ----------
 
-    #: 受限列表最多回多少条（防止变成"标题批量导出"）。
-    RESTRICTED_MAX = 20
-
-    def _restricted(self, principal: Principal, ordered: Sequence[SearchHit],
-                    hits: Sequence[Mapping[str, Any]],
+    def _restricted(self, principal: Principal, action: str,
+                    filter_node: FilterNode,
                     visible_ids: set[str]) -> list[dict[str, Any]]:
-        """被二次授权挡下的命中 → "有，但你看不透"的清单。
+        """软维度挡住的案例 → "有，但你看不透"的清单（可发起访问申请）。
 
-        关键取舍：**只回标题级信息**。给了标题 + 分类 + 可申请性，用户就能发起
-        审批；给了正文/密级/ACL 明细，这条通道立刻变成绕过过滤的读接口。
+        这是**有意披露**：用户看不到、但确实存在的案例，如果只留一句"N 条不可见"，
+        就没有任何合法的争取路径（要么忍，要么找人私下要截图——更糟）。
+        所以给出标题级信息 + 申请入口。
+
+        关键取舍：**只回 5 个字段**（case_id / title / category / reason /
+        requestable）。给了标题 + 可申请性，用户就能走审批；给了正文、密级细节
+        或 ACL 明细，这条通道立刻变成绕过过滤的读接口——那才是真泄漏。
         """
         out: list[dict[str, Any]] = []
+        try:
+            hard_only = self._compiler.compile_hard_only(
+                principal, action, policy=self._policy)
+            candidates = self._index_service.index.search(
+                "", hard_only, MAX_RESTRICTED_SCAN)
+        except Exception as exc:  # noqa: BLE001 - 受限清单是增强项，绝不影响主流程
+            logger.warning("[case_search] 受限清单计算失败: %s", exc)
+            return out
         seen: set[str] = set()
-        for hit in ordered:
+        for hit in candidates:
             case_id = str(hit.case_id)
             if case_id in visible_ids or case_id in seen:
                 continue
@@ -528,14 +565,17 @@ class CaseSearchService:
             case = self._store.get_case(case_id)
             if not case:
                 continue
+            if self._evaluator.authorize(
+                    principal, self._store.eval_rows(case_id), action).allow:
+                continue
             out.append({
                 "case_id": case_id,
                 "title": str(case.get("title") or case_id),
                 "category": str(case.get("category") or ""),
                 "reason": "该案例属于其他职能域，可申请访问",
-                "requestable": True,
+                "requestable": _is_requestable(case),
             })
-            if len(out) >= self.RESTRICTED_MAX:
+            if len(out) >= RESTRICTED_MAX:
                 break
         return out
 

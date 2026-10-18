@@ -82,6 +82,7 @@
     customer_complaint: "CRM 客诉单",
     finance_policy: "财务制度库",
     admin_policy: "行政制度库",
+    kbqa_policy: "企业制度库",
     project_milestone: "NPI 项目库",
     test_records: "可靠性测试库",
   };
@@ -108,6 +109,7 @@
     plan_impact_by_material: "来料异常影响的排产",
     finance_policy_search: "财务制度查询",
     admin_policy_search: "行政制度查询",
+    kbqa_policy_search: "企业制度查询",
     project_milestones: "NPI 项目里程碑",
     test_records_recent: "最近可靠性测试记录",
     asset_status_by_equipment: "设备状态与参数趋势",

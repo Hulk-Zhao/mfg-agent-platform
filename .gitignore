@@ -79,3 +79,18 @@ docs/V2-前端展示应用-说明.md
 docs/办公助手Agent-竞品调研与植入评估.md
 docs/我的看板-竞品调研与下钻设计.md
 docs/订单履约看板-竞品调研与L2L3设计.md
+
+# ---- Local debug scratch (QA runs, temp probes, logs) ----
+_qa/
+tmp_pt/
+tmp_sm/
+_acc.log
+_pt_full.log
+_rl.log
+_se.log
+_se1.log
+_se2.log
+_tc.log
+_dbg_grant.py
+_dbg_grant2.py
+_smoke.py

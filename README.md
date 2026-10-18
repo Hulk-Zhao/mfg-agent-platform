@@ -1,11 +1,11 @@
 # mfg-agent-platform
 
-制造业多智能体协同平台。17 个领域智能体、7 个协同场景，LangGraph 子图编排、人工在环会签、Text2SQL 只读治理、A2A / MCP 双协议接入。
+制造业多智能体协同平台。17 个领域智能体、7 个协同场景，LangGraph 子图编排、人工在环会签、Text2SQL 只读治理、本地增强 Agentic RAG 案例检索、A2A / MCP 双协议接入。
 
 [![tests](https://github.com/Hulk-Zhao/mfg-agent-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/Hulk-Zhao/mfg-agent-platform/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![tests](https://img.shields.io/badge/tests-971%20offline-brightgreen)
+![tests](https://img.shields.io/badge/tests-1004%20offline-brightgreen)
 
 <p float="left">
   <img src="docs/images/screen-dashboard.png" width="24.5%" />
@@ -70,6 +70,16 @@
 **Text2SQL 八道防线**。仅 SELECT、多语句拦截、sqlglot AST 提取表名、表级 ACL（fail-closed）、行数上限、按角色脱敏、provenance 全溯源、人工兜底。数字从哪张表哪条 SQL 来，全程可追溯。
 
 **SPC 统计内核**。Cpk / Pp / Ppk / 柏拉图由 `core/spc.py` 纯函数计算，不经过 LLM；无测量数据时输出 `data_gap=True` 并强制走人工确认——缺数据也要人拍板，而不是编一个结论。
+
+**本地增强 Agentic RAG · 制造案例检索**。独立案例域（contracts / services / security / agents 共 20+ 模块），一句话概括：**授权发生在检索之前，无引用不输出**。
+
+- **两段式安全检索**：服务端按身份编译过滤条件（ABAC：显式 deny > 全局硬门禁 > 维度 AND > RBAC > 默认拒绝）并**下推向量库**——过滤在召回前生效，不是召回后筛选；返回前再用关系库 ACL 做第二次授权（独立代码路径）。候选不足时**绝不放宽过滤重试**：`hits == 0` 返回空 + `hidden_count`，宁可少给，不给不该给的。
+- **最小泄漏面**：无权案例统一 `404 CASE_NOT_FOUND_OR_NOT_VISIBLE`，不泄漏存在性；`hidden_count` 只在候选不足时才计算，避免"结果够了还告诉你还有多少"。
+- **无引用不输出**：每条结论必须挂 `(case_id, chunk_id, content_version)` 三元组，引用校验器回查知识层，版本不一致即丢弃；全部断言被丢弃就明示拒答。**引用合法 ≠ 答的是所问**：相关度低于阈值直接拒绝——问"食堂几点开饭"不会得到一段锡膏印刷的答案。演示态用确定性模板作答（全链路本地可跑、可复现），接 LLM 只需注入同一个 `Answerer` 协议。
+- **本体增强**：受控词表（缺陷模式 / 根因 / 对策，受控编码 DM-SMT / RC-EQP…）把"同一现象的不同叫法"归一，再做同义扩展与混合检索；重排按 状态权重 × 新鲜度 × 有效性 确定性计算，同案例去重 ≤ 2 块。
+- **向量后端可插拔**：一套 `CaseIndex` 契约三个实现——内存（默认）/ ChromaDB / Milvus，`CASE_VECTOR_BACKEND` 环境变量切换，零代码改动。
+- **案例域独立权限表**：六个检索动词（检索命中 / 预览 / 读全文 / 引用 / 导出 / 外发）各自声明可见状态白名单——未结案与已撤权永不进索引；**导出默认拒绝**（可看 ≠ 可带走，走申请审批），**外发分享恒定拒绝**。Agent 不自动批准访问申请：`CaseAccessAgent` 只按受控词表把申请路由到职能部门并留痕，推断不出就明说，路由错了比不推更糟。
+- **审计链可对账**：每次检索/问答落审计（主体 / 动作 / 命中数 / 查询哈希 / 过滤哈希），只记哈希不记正文；提供一键校验，逐环核对哈希与计数。
 
 **协议接入**。两套标准协议都是最小自实现（零第三方依赖）：
 
@@ -168,15 +178,17 @@ uv run uvicorn mfg_agents.v2.demo.api:app --port 8004
 
 ## 门户一览
 
-| 订单履约看板 | 制造综合看板 |
+| 制造案例检索（本地增强 Agentic RAG） | 订单履约看板 |
 |---|---|
-| ![订单履约看板](docs/images/screen-orders.png) | ![制造综合看板](docs/images/screen-mfgboard.png) |
-| **预警中心** | **报告中心** |
-| ![预警中心](docs/images/screen-alerts.png) | ![报告中心](docs/images/screen-reports.png) |
-| **企业咨询助手（RAG 结论带出处）** | **企业助手（Agentic 工具循环）** |
-| ![企业咨询助手](docs/images/screen-kbqa.png) | ![企业助手](docs/images/screen-office.png) |
-| **登录选岗（31 岗位 5 组）** | **帮助中心（架构与职责说明）** |
-| ![登录选岗](docs/images/screen-login.png) | ![帮助中心](docs/images/screen-help.png) |
+| ![制造案例检索](docs/images/screen-cases.png) | ![订单履约看板](docs/images/screen-orders.png) |
+| **制造综合看板** | **预警中心** |
+| ![制造综合看板](docs/images/screen-mfgboard.png) | ![预警中心](docs/images/screen-alerts.png) |
+| **报告中心** | **企业咨询助手（RAG 结论带出处）** |
+| ![报告中心](docs/images/screen-reports.png) | ![企业咨询助手](docs/images/screen-kbqa.png) |
+| **企业助手（Agentic 工具循环）** | **登录选岗（31 岗位 5 组）** |
+| ![企业助手](docs/images/screen-office.png) | ![登录选岗](docs/images/screen-login.png) |
+| **帮助中心（架构与职责说明）** | |
+| ![帮助中心](docs/images/screen-help.png) | |
 
 ## LLM 接入
 
@@ -190,13 +202,13 @@ uv run uvicorn mfg_agents.v2.demo.api:app --port 8004
 
 ## 测试
 
-971 条离线确定性测试（探针恒 False、不发外网请求），CI 在 Python 3.11 / 3.12 / 3.13 三个版本执行：
+1004 条离线确定性测试（探针恒 False、不发外网请求），CI 在 Python 3.11 / 3.12 / 3.13 三个版本执行：
 
 ```bash
 uv run pytest tests/ -q
 ```
 
-覆盖：治理链（权限目录自检、会签幂等、越权拦截）、Text2SQL 防线（红队用例）、场景端到端、看板下钻、SPC 内核、MCP / A2A 协议、企微加解密、飞书适配；以及**架构守卫**（治理库拒绝非 SQLite、方言判定不乱猜、健康探针不抛异常、导航按岗位收敛——见 `tests/v2/test_架构守卫.py`）、**数据范围守卫**（看板按岗位裁决 / 403 不降级成演示数据 / 脱敏与下钻键成对处理——见 `tests/v2/test_数据范围.py`）和**待办可见性守卫**（令牌为准 / 跨域 404 / 三条通道同一口径——见 `tests/v2/test_待办可见性.py`）。
+覆盖：治理链（权限目录自检、会签幂等、越权拦截）、Text2SQL 防线（红队用例）、场景端到端、看板下钻、SPC 内核、**案例域安全检索**（两段式授权 / 引用校验 / RBAC-ABAC 策略 / 审计链对账 / 限流）、MCP / A2A 协议、企微加解密、飞书适配；以及**架构守卫**（治理库拒绝非 SQLite、方言判定不乱猜、健康探针不抛异常、导航按岗位收敛——见 `tests/v2/test_架构守卫.py`）、**数据范围守卫**（看板按岗位裁决 / 403 不降级成演示数据 / 脱敏与下钻键成对处理——见 `tests/v2/test_数据范围.py`）和**待办可见性守卫**（令牌为准 / 跨域 404 / 三条通道同一口径——见 `tests/v2/test_待办可见性.py`）。
 
 ## 项目结构
 
@@ -209,14 +221,15 @@ mfg-agent-platform/
 │   ├── core/                     #   编排内核：两级路由 / YAML→LangGraph 子图 / 共享上下文 / SPC 内核 / 缓存
 │   ├── agents/                   #   域 Agent（quality / supply_chain / engineering / hitl / office / agentic）
 │   ├── intent/                   #   意图分类器与路由策略
-│   ├── services/                 #   Text2SQL 服务链 / 工作流引擎 / 通知 / 看板 / 认证 / 数据范围 / 待办可见性 / 飞书日历
+│   ├── services/                 #   Text2SQL 服务链 / 工作流引擎 / 通知 / 看板 / 认证 / 数据范围 / 待办可见性 / 案例检索问答 / 飞书日历
+│   ├── security/                 #   案例域安全：RBAC / ABAC 策略编译与求值 / 过滤翻译 / 限流
 │   ├── scenarios/                #   7 个场景 YAML（新场景零代码新增）
 │   ├── mcp_tools/                #   ToolRegistry + 自实现 MCP server（stdio JSON-RPC）
 │   ├── a2a.py                    #   A2A 协议（Agent Card / message/send / tasks/get）
 │   └── demo/                     #   FastAPI 入口 / CLI / 演示门户（纯静态零构建）
-├── data/                         # 演示数据种子 SQL + 知识库 JSONL
+├── data/                         # 演示数据种子 SQL + 知识库 JSONL + 案例种子
 ├── deploy/                       # Milvus standalone 内嵌 etcd 配置
-├── tests/                        # 971 条离线测试（治理 / 红队 / 端到端 / 协议 / 架构守卫 / 数据范围 / 待办可见性）
+├── tests/                        # 1004 条离线测试（治理 / 红队 / 端到端 / 协议 / 架构守卫 / 数据范围 / 待办可见性 / 案例域）
 ├── docs/                         # 架构 / 接口 / HITL 设计 / 部署指南
 └── scripts/                      # Windows 一键启动脚本（本地 / Docker / 公网隧道）
 ```

@@ -126,6 +126,11 @@ queries:
     tables: [admin_policy]
     keywords: [会议室, 食堂, 班车, 团建, 社团, 餐饮, 会议预订, 行政]
     sql: "SELECT policy_no, category, title, content FROM admin_policy WHERE title LIKE '%'||:kw||'%' OR keywords LIKE '%'||:kw||'%' OR content LIKE '%'||:kw||'%' LIMIT 5"
+  kbqa_policy_search:
+    desc: "企业制度查询（品质/生产/供应链/设备/EHS/研发/仓储/售后等 16 类制造制度），全员可读"
+    tables: [kbqa_policy]
+    keywords: [品质制度, 生产制度, 采购制度, 设备管理, 安全环保, EHS, 研发流程, NPI, 仓储制度, 售后政策, 企业制度, 制度查询]
+    sql: "SELECT dept_cn, policy_no, category, title, content FROM kbqa_policy WHERE dept_cn LIKE '%'||:kw||'%' OR title LIKE '%'||:kw||'%' OR keywords LIKE '%'||:kw||'%' OR content LIKE '%'||:kw||'%' LIMIT 5"
   project_milestones:
     desc: "项目/NPI 里程碑（EVT/DVT/PVT/MP 阶段、状态与风险）"
     tables: [project_milestone]

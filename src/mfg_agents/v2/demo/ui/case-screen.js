@@ -56,6 +56,76 @@
   const ACTION_LABEL = { query: "检索", preview: "预览", read: "读全文", cite: "引用" };
   const RETRIEVAL_ACTIONS = ["query", "cite", "read"];
 
+  /* ============ 中文化映射表（硬约束：中文文案只放这里，不散落在模板里） ============ */
+  const ZH = {
+    /** 审计动作 → 中文 */
+    action: {
+      "case.query": "案例检索", "case.query.denied": "案例检索·已拒绝",
+      "case.preview": "预览摘要", "case.read": "查看详情",
+      "case.cite": "引用到工单", "case.ingest": "案例入库",
+      "case.answer": "问答", "case.answer.refused": "问答·已拒答",
+      "case.access.requested": "访问申请", "case.access.approved": "访问申请·已批准",
+      "case.access.rejected": "访问申请·已驳回", "case.access.cancelled": "访问申请·已撤回",
+      "case.access.expired": "访问申请·已过期", "case.access.pushed": "访问申请·已推送",
+      "case.access.push.denied": "访问申请·推送失败",
+    },
+    /** 审计表头 → 中文 */
+    auditCol: {
+      ts: "时间", actor: "操作人", action: "动作", case_id: "案例",
+      filter_hash: "过滤指纹", hit_count: "命中数", hidden_count: "不可见数",
+      query_hash: "查询指纹",
+    },
+    /** 部门 → 中文（后端也会给 label；这里兜底登录前阶段） */
+    dept: {
+      quality: "品质部", equipment: "设备工程部", management: "总经理室",
+      manufacturing: "制造部", procurement: "采购部", supply_chain: "供应链部",
+      rd_engineering: "研发部", pm: "项目管理部", sales: "销售部",
+      service: "客户服务部", finance: "财务部", warehouse: "仓储部",
+      admin: "行政人事部", ehs: "环境安全部",
+    },
+    /** 令牌维度 → 中文 */
+    tokenDim: {
+      role: "岗位", dept: "部门", plant: "工厂", line: "产线", prj: "项目",
+      cus: "客户", sup: "供应商", pf: "产品族", etype: "用工类型", user: "个人特批",
+    },
+    /** 状态 */
+    requestStatus: {
+      pending: "待审批", approved: "已批准", rejected: "已驳回",
+      expired: "已过期", cancelled: "已撤回",
+    },
+  };
+
+  /** `role:qa` 这类令牌 → 「岗位：质量工程」；无法翻译的原样返回。 */
+  function tokenText(token, meta) {
+    const raw = String(token || "");
+    const idx = raw.indexOf(":");
+    if (idx < 0) return raw;
+    const dim = ZH.tokenDim[raw.slice(0, idx)] || raw.slice(0, idx);
+    const value = raw.slice(idx + 1);
+    return dim + "：" + (roleLabel(value, meta) || (ZH.dept[value] || value));
+  }
+
+  /** 岗位 key → 中文名（meta 到位后用服务端口径）。 */
+  function roleLabel(key, meta) {
+    const roles = (meta && meta.rbac && meta.rbac.roles) || [];
+    const hit = roles.filter(function (r) { return r.key === key; })[0];
+    return hit ? (hit.name || hit.key) : "";
+  }
+
+  /** `u-equipment_manager` → 「陈工（设备经理）」（中文岗位名 + 姓名）。 */
+  function actorLabel(userId, meta) {
+    const raw = String(userId || "");
+    const key = raw.replace(/^u-/, "");
+    const name = roleLabel(key, meta);
+    return name ? raw + "（" + name + "）" : raw;
+  }
+
+  /** 令牌列表 → 人类可读；原始串进"技术详情"。 */
+  function tokensHuman(tokens, meta) {
+    return (tokens || []).map(function (t) { return tokenText(t, meta); })
+      .filter(Boolean);
+  }
+
   const EMPLOYMENT_LABEL = {
     employee: "正式员工", outsource: "外协", temp: "临时工",
     supplier: "供应商", customer: "客户",
@@ -85,22 +155,45 @@
     rd_engineering: "rd", me_engineer: "rd", test_engineer: "rd",
   };
 
-  /** 首次建会话前的岗位候选（纯展示；登录后由 meta.rbac.roles 整体替换）。 */
+  /** 首次建会话前的岗位候选（纯展示；登录后由 meta.rbac.roles 整体替换）。
+
+   第三列是**部门**：级联选择器在 meta 到位前也要能按部门过滤，
+   否则"先选部门"这一步会把岗位清空（meta 拿不到，因为要令牌）。
+   这份数据由 `security/case_rbac.py` 的矩阵导出，与服务端同源。
+   */
   const FALLBACK_ROLES = [
-    ["qa", "QA"], ["pqe", "PQE"], ["sqe", "SQE"], ["qa_manager", "QA经理"],
-    ["quality_director", "质量总监"], ["gm", "总经理"],
-    ["equipment", "设备工程"], ["equipment_manager", "设备经理"],
-    ["maintenance_tech", "设备维保技师"], ["manufacturing", "制造"],
-    ["product_engineering", "产品/工艺工程"], ["ie_engineer", "IE 工业工程"],
-    ["me_engineer", "结构工程师"], ["test_engineer", "工程测试工程师"],
-    ["rd_manager", "研发经理"], ["rd_engineering", "工程"],
-    ["npi_engineer", "NPI 导入工程师"], ["project_manager", "项目经理"],
-    ["supply_chain_manager", "供应链经理"], ["procurement_manager", "采购经理"],
-    ["procurement", "采购"], ["planning", "计划"], ["material_control", "物控"],
-    ["warehouse_manager", "仓储经理"], ["warehouse", "仓库"],
-    ["customer_service", "客户服务"], ["sales", "业务"],
-    ["finance_manager", "财务经理"], ["finance", "财务"],
-    ["admin_hr", "行政人事"], ["ehs", "EHS 安全环保"],
+    ["admin_hr", "行政人事", "admin"],
+    ["customer_service", "客户服务", "service"],
+    ["ehs", "EHS 安全环保", "ehs"],
+    ["equipment", "设备工程", "equipment"],
+    ["equipment_manager", "设备经理", "equipment"],
+    ["finance", "财务", "finance"],
+    ["finance_manager", "财务经理", "finance"],
+    ["gm", "总经理", "management"],
+    ["ie_engineer", "IE 工业工程", "rd_engineering"],
+    ["maintenance_tech", "设备维保技师", "equipment"],
+    ["manufacturing", "制造", "manufacturing"],
+    ["material_control", "物控", "supply_chain"],
+    ["me_engineer", "结构工程师", "rd_engineering"],
+    ["npi_engineer", "NPI 导入工程师", "rd_engineering"],
+    ["planning", "计划", "supply_chain"],
+    ["pqe", "PQE", "quality"],
+    ["procurement", "采购", "procurement"],
+    ["procurement_manager", "采购经理", "procurement"],
+    ["product_engineering", "产品/工艺工程", "rd_engineering"],
+    ["project_manager", "项目经理", "pm"],
+    ["qa", "QA", "quality"],
+    ["qa_manager", "QA经理", "quality"],
+    ["quality_director", "质量总监", "quality"],
+    ["rd_engineering", "工程", "rd_engineering"],
+    ["rd_manager", "研发经理", "rd_engineering"],
+    ["rd_test_engineer", "研发测试工程师", "rd_engineering"],
+    ["sales", "业务", "sales"],
+    ["sqe", "SQE", "quality"],
+    ["supply_chain_manager", "供应链经理", "supply_chain"],
+    ["test_engineer", "工程测试工程师", "rd_engineering"],
+    ["warehouse", "仓库", "warehouse"],
+    ["warehouse_manager", "仓储经理", "warehouse"],
   ];
 
   /* ================= 存储 ================= */
@@ -176,17 +269,34 @@
     return UI.badge(label || meta.label, meta.cls, true);
   }
 
-  function roleOptions(meta, selected) {
+  /** 部门清单（来自 meta.rbac.departments；登录前用 ZH.dept 兜底）。 */
+  function deptOptions(UI, meta, selected) {
+    const depts = (meta && meta.rbac && meta.rbac.departments) || [];
+    const keys = depts.length ? depts.map(function (d) { return d.key; })
+      : Object.keys(ZH.dept);
+    const labels = {};
+    depts.forEach(function (d) { labels[d.key] = d.label; });
+    return keys.map(function (key) {
+      return '<option value="' + UI.esc(key) + '"'
+        + (key === selected ? " selected" : "") + ">"
+        + UI.esc(labels[key] || ZH.dept[key] || key) + "</option>";
+    }).join("");
+  }
+
+  /** 岗位下拉：**按部门过滤**（级联第二级）；英文 key 只做括号补充。 */
+  function roleOptions(UI, meta, selected, dept) {
     const roles = (meta && meta.rbac && meta.rbac.roles) || [];
-    if (!roles.length) {
-      return FALLBACK_ROLES.map(function (pair) {
-        return '<option value="' + pair[0] + '"' + (pair[0] === selected ? " selected" : "")
-          + ">" + pair[0] + " · " + pair[1] + "</option>";
-      }).join("");
+    const list = roles.length ? roles : FALLBACK_ROLES.map(function (row) {
+      return { key: row[0], name: row[1], dept: row[2] };
+    });
+    const scoped = dept ? list.filter(function (r) { return r.dept === dept; }) : list;
+    if (!scoped.length) {
+      return '<option value="">该部门下暂无岗位</option>';
     }
-    return roles.map(function (r) {
-      return '<option value="' + r.key + '"' + (r.key === selected ? " selected" : "") + ">"
-        + r.key + " · " + (r.name || "") + "（" + (r.actions || []).length + " 项）</option>";
+    return scoped.map(function (r) {
+      return '<option value="' + UI.esc(r.key) + '"'
+        + (r.key === selected ? " selected" : "") + ">"
+        + UI.esc(r.name || r.key) + "（" + UI.esc(r.key) + "）</option>";
     }).join("");
   }
 
@@ -199,7 +309,7 @@
       session: null,            // 建会话时返回的 principal（含 token 与 tv/pv）
       meta: null, metaError: "", metaLoading: false,
       authError: "",            // 401/403 的专门文案（不弹 toast 了事）
-      tab: "search",
+      tab: "ask",        // 主视觉是问答（布局裁定：问答在上、检索在下）
       query: "锡膏印刷偏移 虚焊 连锡",
       action: "query",
       k: 20,
@@ -216,6 +326,9 @@
       compareDeptA: null, compareDeptB: null, comparing: false,
       audit: null,
       ingestForm: null, ingestResult: null,
+      // 跨部门访问申请
+      myRequests: null, deptRequests: null, accessLoading: false,
+      accessForm: null, accessResult: null,
     };
   }
 
@@ -227,6 +340,7 @@
     const state = ctx.state;
     state.screenState = state.screenState || {};
     const S = state.screenState.cases || (state.screenState.cases = initialState());
+    window.__caseState = S;
 
     if (!api.online()) {
       root.innerHTML = '<div class="case-offline">'
@@ -260,7 +374,6 @@
   /** 身份条：demo 的核心说服点——令牌是可见的，四类前缀一眼看到。 */
   function identityBar(UI, S) {
     const id = S.identity;
-    const roles = roleOptions(S.meta, id.role);
     const etypeOptions = ["employee", "outsource", "temp", "supplier", "customer"]
       .map(function (t) {
         return '<option value="' + t + '"' + (id.employment_type === t ? " selected" : "")
@@ -274,8 +387,9 @@
     return '<header class="case-identity">'
       + '<div class="case-identity-left">'
       + '<div class="case-id-row">'
-      + '<label>岗位<select id="case-role">' + roles + "</select></label>"
-      + '<label>部门<input id="case-dept" value="' + UI.esc(id.dept) + '" placeholder="quality"></label>'
+      + '<label>部门<select id="case-dept">' + deptOptions(UI, S.meta, id.dept) + "</select></label>"
+      + '<label>岗位<select id="case-role">'
+      + roleOptions(UI, S.meta, id.role, id.dept) + "</select></label>"
       + '<label>工厂<input id="case-plant" value="' + UI.esc(id.plant) + '" placeholder="P1"></label>'
       + '<label>用工类型<select id="case-etype">' + etypeOptions + "</select></label>"
       + '<label>可见密级<select id="case-rank">' + rankOptions + "</select></label>"
@@ -312,9 +426,13 @@
         + "即可看到服务端签发的维度令牌。</div></div>";
     }
     if (!p) return '<div class="case-principal case-principal-empty">读取主体中…</div>';
-    const tokens = (p.principal_tokens || []).map(function (t) {
+    const rawTokens = p.principal_tokens || [];
+    const tokens = tokensHuman(rawTokens, S.meta).map(function (t) {
       return '<code class="case-token">' + UI.esc(t) + "</code>";
     }).join("");
+    const techTokens = rawTokens.length
+      ? '<details class="case-tech"><summary>技术详情（原始维度令牌）</summary><code>'
+        + UI.esc(rawTokens.join("\n")) + "</code></details>" : "";
     return '<div class="case-principal">'
       + '<div class="case-principal-name">' + UI.esc(p.user_id || "-")
       + "<i>" + UI.esc((p.roles || []).join(",") || "-") + "</i>"
@@ -328,7 +446,7 @@
       + "</div>"
       + '<div class="case-token-row">' + (tokens
         || '<span class="case-hint">无维度令牌（fail-closed：查不到任何带业务 ACL 的案例）</span>')
-      + "</div></div>";
+      + "</div>" + techTokens + "</div>";
   }
 
   function authErrorBar(UI, S) {
@@ -347,6 +465,9 @@
       return '<div class="case-side-empty">元信息加载失败：<br>' + UI.esc(S.metaError) + "</div>";
     }
     if (!S.meta) return '<div class="case-side-empty">' + UI.spinner() + " 加载元信息…</div>";
+
+    // 本体增强收益由问答结果携带（后端 case_qa._ontology_gain），检索态无此数据。
+    const gain = (S.result && S.result.ontology_gain) || null;
 
     const p = S.meta.principal || {};
     const mine = ((S.meta.rbac && S.meta.rbac.roles) || []).filter(function (r) {
@@ -377,12 +498,18 @@
     const canIngest = myActions.indexOf("case.ingest") >= 0;
 
     return '<div class="case-side-block">'
+      + '<div class="case-side-title">本体与资产</div>'
+      + '<div class="case-hint">受控词表把"同一现象的不同叫法"归一，'
+      + "检索因此更准、口径更一致。</div>"
+      + (vocabRows || '<span class="case-hint">-</span>')
+      + (gain ? '<div class="case-gain"><b>本体增强带来的差别</b>'
+        + UI.esc(gain.summary || "") + "</div>" : "")
+      + (distRows ? '<div class="case-side-title">本次结果分类分布</div>'
+        + '<div class="case-dist">' + distRows + "</div>" : "")
       + '<div class="case-side-title">我的动作</div>'
       + '<div class="case-chip-row">' + actionChips + "</div>"
       + '<div class="case-side-title">动作门禁（持有角色数）</div>'
       + (allActions || '<span class="case-hint">-</span>')
-      + '<div class="case-side-title">受控词表</div>'
-      + (vocabRows || '<span class="case-hint">-</span>')
       + '<div class="case-side-title">治理</div>'
       + '<button class="case-btn case-btn-wide" id="case-audit">校验审计链</button>'
       + (canIngest
@@ -400,18 +527,117 @@
         + "选一个岗位，服务端把它编译成过滤条件，再下推到向量库——过滤发生在召回之前。</p>"
         + '<p class="case-hint">越权检索不会返回"空结果 + 提示无权限"，而是根本进不了候选集。</p></div>';
     }
-    const tabs = [["search", "检索"], ["ask", "问答"], ["compare", "岗位对比"], ["audit", "审计"]];
-    const bar = '<div class="case-tabs">' + tabs.map(function (t) {
-      return '<button class="case-tab' + (S.tab === t[0] ? " is-active" : "")
-        + '" data-tab="' + t[0] + '">' + t[1] + "</button>";
-    }).join("") + "</div>";
+    // 布局裁定：**问答在上、检索在下**。问答是主视觉（本体增强 Agentic RAG 的
+    // 卖点在这里），检索是次级工具。取消平铺页签，避免四个入口抢注意力。
+    const sideLinks = '<div class="case-side-links">'
+      + '<button class="case-link' + (S.tab === "compare" ? " is-active" : "")
+      + '" data-tab="compare">岗位对比</button>'
+      + '<button class="case-link' + (S.tab === "audit" ? " is-active" : "")
+      + '" data-tab="audit">审计链</button>'
+      + '<button class="case-link' + (S.tab === "access" ? " is-active" : "")
+      + '" data-tab="access">访问申请待办</button>'
+      + "</div>";
 
-    let body = "";
-    if (S.tab === "search") body = searchPane(UI, S);
-    else if (S.tab === "ask") body = askPane(UI, S);
-    else if (S.tab === "compare") body = comparePane(UI, S);
-    else body = auditPane(UI, S);
-    return bar + body;
+    const askBlock = '<section class="case-block case-block-ask">'
+      + '<h3 class="case-block-title">智能问答'
+      + '<span class="case-hint">本体增强 Agentic RAG：术语归一 → 同义扩展 → 三元组检索 → 权限过滤 → 引用校验</span>'
+      + "</h3>" + askWithTrace(UI, S, S.answer) + "</section>";
+
+    const searchOpen = S.tab !== "search" && !S.result;
+    const searchBlock = '<section class="case-block case-block-search">'
+      + '<details class="case-block-fold"' + (searchOpen ? "" : " open") + ">"
+      + "<summary>案例检索（按关键词查历史案例）</summary>"
+      + searchPane(UI, S) + "</details></section>";
+
+    let body = askBlock + searchBlock + sideLinks;
+    if (S.tab === "compare") body += '<section class="case-block">' + comparePane(UI, S) + "</section>";
+    else if (S.tab === "audit") body += '<section class="case-block">' + auditPane(UI, S) + "</section>";
+    else if (S.tab === "access") body += '<section class="case-block">' + accessPane(UI, S) + "</section>";
+    return body;
+  }
+
+  /* ================= 访问申请 ================= */
+
+  function accessPane(UI, S) {
+    if (S.tab !== "access") return "";
+    if (!S.token) return '<div class="case-hint case-pad">请先建立案例会话。</div>';
+    if (S.accessLoading) return '<div class="case-loading">' + UI.spinner() + " 加载申请…</div>";
+    const mine = S.myRequests || [];
+    const todo = S.deptRequests || [];
+    const row = function (r, approver) {
+      return '<tr><td>' + UI.esc(r.case_id || "") + "</td>"
+        + "<td>" + UI.esc((r.reason || "").slice(0, 24)) + "</td>"
+        + "<td>" + UI.esc(ZH.requestStatus[r.status] || r.status || "") + "</td>"
+        + "<td>" + UI.esc((r.decision_reason || "").slice(0, 20)) + "</td>"
+        + "<td>" + (approver && r.status === "pending"
+          ? '<button class="case-mini" data-act="access-approve" data-rid="'
+            + UI.esc(r.request_id) + '">批准</button>'
+          + '<button class="case-mini" data-act="access-reject" data-rid="'
+            + UI.esc(r.request_id) + '">驳回</button>'
+          : '<span class="case-hint">-</span>') + "</td></tr>";
+    };
+    const table = function (title, rows, approver) {
+      return "<h4>" + title + "</h4>"
+        + (rows.length
+          ? '<table class="case-table"><thead><tr><th>案例</th><th>申请理由</th>'
+            + "<th>状态</th><th>审批意见</th><th>操作</th></tr></thead><tbody>"
+            + rows.map(function (r) { return row(r, approver); }).join("")
+            + "</tbody></table>"
+          : '<div class="case-hint">暂无记录</div>');
+    };
+    return '<div class="case-pad">'
+      + '<div class="case-hint">跨部门案例可发起访问申请；批准后由服务端写入授权'
+      + "（带有效期，到期自动回收）。Agent 只负责推送与留痕，不代替人审批。</div>"
+      + table("我提交的申请", mine, false)
+      + table("待我审批（本部门收到的申请）", todo, true)
+      + "</div>";
+  }
+
+  /** 受限案例（"有但看不到"）清单 + 申请入口。 */
+  function restrictedPane(UI, S, r) {
+    const list = (r && r.restricted) || [];
+    if (!list.length) return "";
+    const applied = S.myRequests || [];
+    const statusOf = function (caseId) {
+      for (let i = 0; i < applied.length; i++) {
+        if (applied[i].case_id === caseId && applied[i].status === "pending") {
+          return applied[i];
+        }
+      }
+      return null;
+    };
+    const rows = list.map(function (item) {
+      const req = statusOf(item.case_id);
+      const btn = req
+        ? '<span class="case-chip case-chip-on">已推送，等待审批</span>'
+        : (item.requestable
+          ? '<button class="case-mini case-mini-key" data-act="access-open" data-id="'
+            + UI.esc(item.case_id) + '">申请访问</button>'
+          : '<span class="case-hint">不可申请</span>');
+      return "<tr><td>" + UI.esc(item.title || item.case_id) + "</td>"
+        + '<td>' + UI.esc(item.reason || "") + "</td><td>" + btn + "</td></tr>";
+    }).join("");
+    return '<div class="case-block case-restricted"><h4>其他职能域的案例（可见但不可读）</h4>'
+      + '<div class="case-hint">这些案例确实存在，但不在你的权限范围内。需要时可发起访问申请，'
+      + "由职能部门审批后授权。</div>"
+      + '<table class="case-table"><thead><tr><th>案例</th><th>说明</th><th>操作</th></tr></thead>'
+      + "<tbody>" + rows + "</tbody></table>"
+      + (S.accessForm ? accessForm(UI, S) : "")
+      + "</div>";
+  }
+
+  function accessForm(UI, S) {
+    return '<div class="case-access-form">'
+      + "<h4>申请访问：" + UI.esc(S.accessForm.case_id || "") + "</h4>"
+      + '<p class="case-hint">请说明用途（至少 10 个字），审批人需要判断是否合理。</p>'
+      + '<textarea id="case-access-reason" class="case-textarea" rows="3" '
+      + 'placeholder="例如：需要引用该案例做设备异常分析">' + UI.esc(S.accessForm.reason || "")
+      + "</textarea>"
+      + '<div class="case-access-act">'
+      + '<button class="case-btn" data-act="access-submit" data-id="'
+      + UI.esc(S.accessForm.case_id) + '">提交申请并推送</button>'
+      + '<button class="case-btn case-btn-ghost" data-act="access-close">取消</button>'
+      + "</div></div>";
   }
 
   function searchPane(UI, S) {
@@ -442,7 +668,8 @@
       + degradeBar(UI, r || {})
       + noticeBar(UI, r || {})
       + whyPanel(UI, S, r)
-      + '<div class="case-hits">' + hitList(UI, S, r) + "</div>";
+      + '<div class="case-hits">' + hitList(UI, S, r) + "</div>"
+      + restrictedPane(UI, S, r);
   }
 
   function degradeBar(UI, data) {
@@ -607,6 +834,31 @@
       + "</div></article>";
   }
 
+  /** 问答面板 = 处理轨迹 + 结论卡片（轨迹来自后端，前端只渲染）。 */
+  function askWithTrace(UI, S, a) {
+    const pane = askPane(UI, S);
+    return a ? tracePane(UI, S, a) + pane : pane;
+  }
+
+  /** 本体增强处理轨迹（数据来自后端 /cases/ask 的 trace，前端只渲染）。 */
+  function tracePane(UI, S, a) {
+    const trace = a.trace || [];
+    if (!trace.length) return "";
+    const rows = trace.map(function (step) {
+      const items = (step.items || []).map(function (x) {
+        return '<li>' + UI.esc(x) + "</li>";
+      }).join("");
+      return '<li class="case-trace-step"><span class="case-trace-no">'
+        + UI.esc(String(step.step)) + "</span>"
+        + '<div class="case-trace-body"><b>' + UI.esc(step.title || "") + "</b>"
+        + "<p>" + UI.esc(step.detail || "") + "</p>"
+        + (items ? '<ul class="case-trace-items">' + items + "</ul>" : "")
+        + "</div></li>";
+    }).join("");
+    return '<details class="case-trace" open><summary>处理轨迹（这一步 Agent 做了什么、为什么）'
+      + '</summary><ol class="case-trace-list">' + rows + "</ol></details>";
+  }
+
   function askPane(UI, S) {
     const a = S.answer;
     let body = '<div class="case-hint case-pad">提问后系统检索案例、拼装带引用的结论；'
@@ -700,16 +952,25 @@
         : '<b class="case-bad">断裂 @ seq ' + UI.esc(String(chain.broken_seq)) + "</b>")
         + " · 行数 " + (chain.rows || 0) + " · " + UI.esc(chain.detail || "") + "</div>";
       const rows = (a.recent || []).map(function (row) {
-        return "<tr><td>" + row.seq + "</td><td>" + UI.esc(row.action) + "</td><td>"
-          + UI.esc(row.actor) + "</td><td>" + UI.esc(row.case_id || "-") + "</td><td>"
-          + (row.hit_count || 0) + "</td><td>" + (row.hidden_count || 0) + "</td><td><code>"
-          + UI.esc((row.row_hash || "").slice(0, 10)) + "</code></td></tr>";
+        const actionZh = ZH.action[row.action] || row.action;
+        const actorZh = actorLabel(row.actor, S.meta);
+        const detail = ['<details class="case-tech"><summary>技术详情</summary><code>'
+          + UI.esc([row.action, row.actor, row.case_id || "-",
+                    "filter_hash=" + String(row.filter_hash || "").slice(0, 12),
+                    "query_hash=" + String(row.query_hash || "").slice(0, 12),
+                    "row_hash=" + String(row.row_hash || "").slice(0, 12),
+                    "prev_hash=" + String(row.prev_hash || "").slice(0, 12)]
+            .join("\n")) + "</code></details>"].join("");
+        return "<tr><td>" + row.seq + "</td><td>" + UI.esc(actionZh) + "</td><td>"
+          + UI.esc(actorZh) + "</td><td>" + UI.esc(row.case_id || "-") + "</td><td>"
+          + (row.hit_count || 0) + "</td><td>" + (row.hidden_count || 0) + "</td><td>"
+          + detail + "</td></tr>";
       }).join("");
-      out += '<table class="case-audit-table"><thead><tr><th>#</th><th>动作</th><th>主体</th>'
-        + "<th>案例</th><th>命中</th><th>不可见</th><th>row_hash</th></tr></thead><tbody>"
+      out += '<table class="case-audit-table"><thead><tr><th>#</th><th>动作</th><th>操作人</th>'
+        + "<th>案例</th><th>命中数</th><th>不可见数</th><th>技术信息</th></tr></thead><tbody>"
         + (rows || '<tr><td colspan="7">暂无记录</td></tr>') + "</tbody></table>";
       out += '<div class="case-hint">改动任意一行后重跑校验，链会断在那一行（'
-        + "row_hash 覆盖全字段，篡改无法自愈）。</div>";
+        + "记录指纹覆盖全字段，篡改无法自愈）。</div>";
     }
     return '<div class="case-searchbar"><button class="case-btn" id="case-audit-run">重新校验</button></div>' + out;
   }
@@ -835,9 +1096,18 @@
       const plantEl = root.querySelector("#case-plant");
       const etypeEl = root.querySelector("#case-etype");
       const rankEl = root.querySelector("#case-rank");
+      const dept = ((deptEl && deptEl.value) || "").trim();
+      let role = (roleEl && roleEl.value) || S.identity.role;
+      // 兜底：若所选岗位不属于所选部门（级联尚未刷新的竞态），自动取该部门第一个岗位。
+      // 不这么做的话会出现"部门=设备、岗位=QA"这种自相矛盾的身份被提交上去。
+      const allowed = rolesOfDept(S.meta, dept);
+      if (!role || (dept && allowed.indexOf(role) < 0)) {
+        role = allowed[0] || S.identity.role;
+        if (roleEl) roleEl.value = role;
+      }
       const identity = {
-        role: (roleEl && roleEl.value) || S.identity.role,
-        dept: ((deptEl && deptEl.value) || "").trim(),
+        role: role,
+        dept: dept,
         plant: ((plantEl && plantEl.value) || "").trim(),
         employment_type: (etypeEl && etypeEl.value) || "employee",
         max_classification_rank: parseInt((rankEl && rankEl.value) || "1", 10) || 1,
@@ -915,12 +1185,28 @@
       S.ingestForm = {}; S.ingestResult = null; repaint();
     });
 
-    Array.prototype.forEach.call(root.querySelectorAll(".case-tab"), function (el) {
-      el.addEventListener("click", function () {
-        S.tab = el.getAttribute("data-tab");
-        repaint();
-        if (S.tab === "audit" && !S.audit) doAudit();
+    Array.prototype.forEach.call(root.querySelectorAll(".case-link[data-tab]"),
+      function (el) {
+        el.addEventListener("click", function () {
+          S.tab = el.getAttribute("data-tab");
+          repaint();
+          if (S.tab === "audit" && !S.audit) doAudit();
+          if (S.tab === "access" && !S.myRequests) doAccessList();
+        });
       });
+
+    // 部门级联：切部门后岗位下拉只保留该部门的岗位
+    on("#case-dept", "change", function () {
+      const deptEl = root.querySelector("#case-dept");
+      const roleEl = root.querySelector("#case-role");
+      const dept = deptEl ? deptEl.value : "";
+      S.identity.dept = dept;
+      const allowed = rolesOfDept(S.meta, dept);
+      if (allowed.indexOf(S.identity.role) < 0) {
+        S.identity.role = allowed[0] || "";
+        if (roleEl && S.identity.role) roleEl.value = S.identity.role;
+      }
+      repaint();
     });
 
     Array.prototype.forEach.call(root.querySelectorAll("[data-act]"), function (el) {
@@ -935,6 +1221,17 @@
           doCite(id, el.getAttribute("data-chunk"), el.getAttribute("data-ver"));
         }
         else if (act === "ingest-submit") submitIngest();
+        else if (act === "access-open") { S.accessForm = { case_id: id, reason: "" }; repaint(); }
+        else if (act === "access-close") { S.accessForm = null; repaint(); }
+        else if (act === "access-submit") {
+          doAccessSubmit(id, (root.querySelector("#case-access-reason") || {}).value || "");
+        }
+        else if (act === "access-approve") {
+          doAccessDecide(el.getAttribute("data-rid"), true);
+        }
+        else if (act === "access-reject") {
+          doAccessDecide(el.getAttribute("data-rid"), false);
+        }
       });
     });
 
@@ -1066,6 +1363,73 @@
       caseFetch(base, "/api/v2/cases/" + encodeURIComponent(id), { token: S.token })
         .then(function (data) { S.detail = { case: data }; repaint(); })
         .catch(function (err) { S.detail = { error: err }; repaint(); });
+    }
+
+    /** 某部门下的岗位 key 列表（级联用）。
+
+     * 两级回退：先用 meta（服务端口径），为空则用内置兜底表，再为空则不过滤。
+     * 自动化脚本与 meta 到达的竞态下，这保证了"部门"始终能选出一个岗位。
+     */
+    function rolesOfDept(meta, dept) {
+      const fromMeta = ((meta && meta.rbac && meta.rbac.roles) || [])
+        .filter(function (r) { return !dept || r.dept === dept; })
+        .map(function (r) { return r.key; });
+      if (fromMeta.length) return fromMeta;
+      const fromFallback = FALLBACK_ROLES
+        .filter(function (row) { return !dept || row[2] === dept; })
+        .map(function (row) { return row[0]; });
+      if (fromFallback.length) return fromFallback;
+      return FALLBACK_ROLES.map(function (row) { return row[0]; });
+    }
+
+    function doAccessList() {
+      if (!S.token) return;
+      S.accessLoading = true;
+      repaint();
+      Promise.all([
+        caseFetch(base, "/api/v2/cases/access/requests?scope=mine",
+          { token: S.token }),
+        caseFetch(base, "/api/v2/cases/access/requests?scope=dept",
+          { token: S.token }),
+      ]).then(function (res) {
+        S.accessLoading = false;
+        S.myRequests = res[0].requests || [];
+        S.deptRequests = res[1].requests || [];
+        repaint();
+      }).catch(function (err) {
+        S.accessLoading = false;
+        handle(err, "加载申请失败");
+        repaint();
+      });
+    }
+
+    function doAccessSubmit(caseId, reason) {
+      if (!caseId) return;
+      caseFetch(base, "/api/v2/cases/" + encodeURIComponent(caseId)
+        + "/request-access",
+        { token: S.token, body: { reason: String(reason || "").trim() } })
+        .then(function (data) {
+          S.accessForm = null;
+          S.accessResult = data;
+          UI.toast(data.message || "申请已提交", "ok");
+          doAccessList();
+        }).catch(function (err) {
+          UI.toast("申请提交失败：" + (err.message || err.code || ""), "err");
+        });
+    }
+
+    function doAccessDecide(requestId, approve) {
+      if (!requestId) return;
+      caseFetch(base, "/api/v2/cases/access/requests/"
+        + encodeURIComponent(requestId) + "/decide",
+        { token: S.token, body: { approve: !!approve,
+          reason: approve ? "同意本岗位引用" : "本岗位暂不开放该案例" } })
+        .then(function () {
+          UI.toast(approve ? "已批准：授权已生效（带有效期）" : "已驳回", "ok");
+          doAccessList();
+        }).catch(function (err) {
+          UI.toast("审批失败：" + (err.message || err.code || ""), "err");
+        });
     }
 
     function doCite(id, chunkType, version) {

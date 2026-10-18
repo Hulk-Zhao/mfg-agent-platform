@@ -148,7 +148,7 @@
     root.innerHTML = `
       <div class="content-inner content-wide">
         <div class="page-title">帮助中心</div>
-        <div class="page-desc">平台由 14 个智能体协同工作（7 大域 + 6 个工程专业角色 + 1 个办公与数据速查助手）：智能总控先判断你的问题类型，再分派给最合适的执行路径。各智能体的能力边界由提示词约束，全部工具调用可审计。</div>
+        <div class="page-desc">平台由 14 个智能体协同工作（7 大域 + 6 个工程专业角色 + 1 个办公与数据速查助手），另有独立的案例访问路由 Agent 负责案例权限申请的分派。智能总控先判断你的问题类型，再分派给最合适的执行路径；制造案例检索走独立的本地增强 Agentic RAG 链路。各智能体的能力边界由提示词约束，全部工具调用可审计。</div>
 
         <div class="section-title">协同架构 <span class="section-extra">分层视图 · 工具即能力边界</span></div>
         <div class="card" style="padding:16px">${architectureSvg()}</div>
@@ -162,6 +162,16 @@
           <div class="card" style="padding:13px"><b style="color:var(--primary)">⑤ 办公与数据速查（独立 Agentic Agent）</b><div style="font-size:12.3px;color:var(--text-2);margin-top:5px;line-height:1.7">两件事都由它管：① 办公事务（会议室预订 / 订餐）走独立助手，命中办公意图关键词即直达，自主调工具办理，报告厅/客餐等高影响事项停下发起人工确认；② 制造数据速查（材料库存 / 成品库存与可发量 / 来料批次与检验结论 / 库龄呆滞 / 缺料缺口 / 批次追溯）为只读，转发平台统一口径注册查询，受岗位数据权限约束。</div></div>
         </div>
 
+        <div class="section-title">本地增强 Agentic RAG · 制造案例检索 <span class="section-extra">授权发生在检索之前 · 无引用不输出</span></div>
+        <div class="grid grid-2">
+          <div class="card" style="padding:13px"><b style="color:var(--primary)">权限前置：同一句话，岗位不同结果不同</b><div style="font-size:12.3px;color:var(--text-2);margin-top:5px;line-height:1.7">检索前由服务端按你的身份编译过滤条件并<b>下推给向量库</b>（在召回前生效，不是召回后筛选）；返回前再用关系库 ACL 做<b>第二次授权</b>（独立代码路径）。无权案例统一 404，不泄漏"存在性"；结果不足时如实返回并附 hidden_count，<b>绝不放宽过滤重试补齐</b>。</div></div>
+          <div class="card" style="padding:13px"><b style="color:var(--primary)">检索链路：混合召回 + 确定性重排</b><div style="font-size:12.3px;color:var(--text-2);margin-top:5px;line-height:1.7">受控词表（缺陷模式 / 根因 / 对策）先把"同一现象的不同叫法"归一，再做同义扩展与向量检索；重排按 状态权重 × 新鲜度 × 有效性 计算，同案例去重（≤2 块）。全程确定性可复现，不依赖大模型。</div></div>
+          <div class="card" style="padding:13px"><b style="color:var(--primary)">无引用不输出</b><div style="font-size:12.3px;color:var(--text-2);margin-top:5px;line-height:1.7">每条结论必须挂 <b>(案例ID, 块ID, 内容版本)</b> 三元组；引用校验器回查知识层，版本不一致即丢弃该结论（提示"案例已更新，请复核"）；全部断言被丢弃就<b>明示拒答</b>——引用合法不等于答的是所问，相关度低于阈值直接拒绝。演示态用确定性模板作答（全链路本地可跑），接 LLM 只需注入同一个 Answerer 协议。</div></div>
+          <div class="card" style="padding:13px"><b style="color:var(--primary)">向量后端可插拔 + 独立权限表</b><div style="font-size:12.3px;color:var(--text-2);margin-top:5px;line-height:1.7">向量层一套契约三个实现：<b>内存 / ChromaDB / Milvus</b>，环境变量切换零代码改动。案例域权限独立于 HITL 目录：六个动词（检索命中 / 预览 / 读全文 / 引用 / 导出 / 外发）各声明可见状态白名单——未结案与已撤权永不进索引；<b>导出默认拒绝</b>（可看 ≠ 可带走，必须走申请审批），<b>外发分享恒定拒绝</b>。</div></div>
+          <div class="card" style="padding:13px"><b style="color:var(--primary)">访问申请：Agent 只路由不批准</b><div style="font-size:12.3px;color:var(--text-2);margin-top:5px;line-height:1.7">看到无权案例可发起访问申请，CaseAccessAgent 按 受控词表前缀 → 职能部门 推断路由（SMT 过程类 → 品质部、机加模具类 → 设备工程部）并留痕；<b>推断不出来就明说"无法推断"，绝不自动批准、不编造路由</b>——路由错了比不推更糟。留痕只记推送对象与理由摘要，不含案例正文。</div></div>
+          <div class="card" style="padding:13px"><b style="color:var(--primary)">全程可对账的审计链</b><div style="font-size:12.3px;color:var(--text-2);margin-top:5px;line-height:1.7">每次检索/问答落审计：主体、动作、命中数、hidden_count、查询哈希、过滤哈希——<b>只记哈希不记正文</b>。页面提供"校验审计链"一键对账：逐环核对哈希与计数，能证明"你看到的这批结果，就是当时按这套权限算出来的那批"。</div></div>
+        </div>
+
         <div class="section-title">智能体配置 <span class="section-extra" id="help-agents-source">加载中…</span></div>
         <div class="grid agent-grid" id="help-agents-grid"><div class="empty">正在加载智能体配置…</div></div>
 
@@ -173,6 +183,7 @@
           <b style="color:var(--text)">关键决策人工在环</b>：复线、退换货/特采、对客承诺、8D 关闭、ECN 会签等白名单决策必须人工确认，智能体（无论场景还是 Agentic）只发起、不放行。<br/>
           <b style="color:var(--text)">权限同源</b>：所有数据访问（场景 / 直答 / 智能体 / MCP / A2A）走同一套表级 ACL 与字段脱敏，工具不是后门。财务制度等敏感数据仅限授权岗位（如总经理）查询。<br/>
           <b style="color:var(--text)">全程可审计</b>：每次查询与每步工具调用都记录 SQL 原文、命中行、脱敏标记与耗时（结果卡「数据溯源」可展开）。<br/>
+          <b style="color:var(--text)">案例域最小泄漏面</b>：无权案例统一 404（不确认存在性）；hidden_count 只在候选不足时计算；审计只记哈希不记正文；导出默认拒绝、外发恒定拒绝。<br/>
           <b style="color:var(--text)">诚实降级</b>：数据源未接入或查询失败时明示缺口，绝不编造数字；服务不可用时界面明确标注演示模式。
         </div>
       </div>`;

@@ -219,14 +219,55 @@ class CaseRbacRegistry:
             ],
             "roles": [
                 {"key": role, "name": self._registry.role_name(role),
+                 # 部门取自平台权限注册表（只读；案例域不另建一份部门表，
+                 # 避免两边漂移）。前端据此做"部门 → 岗位"级联选择器。
+                 "dept": self._dept_of(role),
                  "actions": list(actions)}
                 for role, actions in sorted(self._grants.items())
             ],
+            # 部门清单（级联选择器的第一级）
+            "departments": self.departments(),
         }
+
+    def _dept_of(self, role: str) -> str:
+        """角色 → 部门（来自平台注册表；取不到返回空串）。"""
+        item = self._registry.role(role)
+        return str(getattr(item, "dept", "") or "") if item is not None else ""
+
+    def departments(self) -> list[dict[str, str]]:
+        """案例域涉及的部门清单（``{key, label}``），按 key 排序。"""
+        seen: dict[str, int] = {}
+        for role in self._grants:
+            dept = self._dept_of(role)
+            if dept:
+                seen[dept] = seen.get(dept, 0) + 1
+        return [{"key": dept, "label": DEPT_LABEL.get(dept, dept),
+                 "roles": str(count)}
+                for dept, count in sorted(seen.items())]
 
     def role_count(self) -> int:
         return len(self._grants)
 
+
+#: 部门中文名（前端主视图用；英文 key 放技术详情）。
+DEPT_LABEL: dict[str, str] = {
+    "management": "总经理室",
+    "quality": "品质部",
+    "equipment": "设备工程部",
+    "manufacturing": "制造部",
+    "production": "制造部",
+    "procurement": "采购部",
+    "supply_chain": "供应链部",
+    "rd_engineering": "研发部",
+    "engineering": "研发部",
+    "pm": "项目管理部",
+    "sales": "销售部",
+    "service": "客户服务部",
+    "finance": "财务部",
+    "warehouse": "仓储部",
+    "admin": "行政人事部",
+    "ehs": "环境安全部",
+}
 
 _CASE_RBAC: Optional[CaseRbacRegistry] = None
 

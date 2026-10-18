@@ -56,6 +56,10 @@ _DIM_TO_TOKEN = {
     "sup": "sup",
     "pf": "pf",
     "etype": "etype",
+    # ★ 跨部门访问申请的授权维度（审批通过后写 case_acl dim=user）。
+    # 加进映射后，授权对编译器（ARRAY_ANY on acl_tokens）与二次授权（这里）
+    # 同时生效——**不需要第二套判定**。
+    "user": "user",
 }
 
 

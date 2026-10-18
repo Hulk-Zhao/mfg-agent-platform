@@ -12,11 +12,16 @@
 """
 from __future__ import annotations
 
+import hashlib
 from typing import Any
 
 from ...common.kbqa_seed import DEPT_CN, DEPT_ORDER
 from ...common.llm_factory import get_llm, llm_available
 from ...common.rag_tools import search_kb
+from ..core import cache
+
+#: 制度问答结果缓存 TTL（制度问答无个人数据，缓存 30 分钟安全）
+KBQA_CACHE_TTL_S = 1800
 
 #: 前端"支持类别"面板数据（保持原项目文案与顺序）
 KBQA_DEPTS: list[dict[str, str]] = [
@@ -24,7 +29,7 @@ KBQA_DEPTS: list[dict[str, str]] = [
     for key in DEPT_ORDER
 ]
 
-_SYSTEM_PROMPT = """你是企业咨询助手。根据以下制度片段回答员工问题。
+_SYSTEM_PROMPT = """你是企业制度问答助手。根据以下制度片段回答员工问题。
 规则：
 1. 仅基于片段回答，片段中没有就说"未在制度中找到相关内容"，禁止编造
 2. 简洁友好，150字以内
@@ -63,8 +68,24 @@ def _tags_and_sources(hits: list[dict[str, Any]]) -> tuple[list[dict[str, str]],
     return tags, sources
 
 
+def _cache_key(query: str, top_k: int) -> str:
+    """制度问答缓存键：``mfg:kbqa:{sha1(query|top_k)}``。"""
+    raw = f"{query.strip()}|{int(top_k)}"
+    return "mfg:kbqa:" + hashlib.sha1(raw.encode("utf-8")).hexdigest()
+
+
 def answer(query: str, top_k: int = 3) -> dict[str, Any]:
-    """检索制度片段并生成带出处回答。
+    """检索制度片段并生成带出处回答（Redis 可用时按 query+top_k 缓存 30 分钟）。
+
+    缓存未配置/不可用时 ``core.cache`` 自动降级为直算，行为不变。
+    """
+    return cache.get_or_compute(
+        _cache_key(query, top_k), KBQA_CACHE_TTL_S,
+        lambda: _answer_uncached(query, top_k))
+
+
+def _answer_uncached(query: str, top_k: int = 3) -> dict[str, Any]:
+    """（内部）实际检索 + 生成，无缓存。
 
     返回：``{answer, tags, sources, category, degraded}``。
     LLM 不可用（离线/无 key）时降级为直接回放最相关片段（``degraded=True``），

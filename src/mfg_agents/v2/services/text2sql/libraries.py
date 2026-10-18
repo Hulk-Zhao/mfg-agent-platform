@@ -54,6 +54,13 @@ TABLE_ACL: dict[str, set[str]] = {
                      "qa_manager", "qa", "sqe", "pqe", "equipment", "coordinator",
                      "equipment_manager", "rd_manager", "supply_chain_manager",
                      "procurement_manager", "warehouse_manager", "finance_manager"},
+    # V3.8 企业制度库（16 类制造制度，公开制度全员可读，口径与 admin_policy 一致）
+    "kbqa_policy": {"manufacturing", "planning", "quality", "procurement",
+                    "material_control", "sales", "warehouse",
+                    "rd_engineering", "finance", "gm", "quality_director",
+                    "qa_manager", "qa", "sqe", "pqe", "equipment", "coordinator",
+                    "equipment_manager", "rd_manager", "supply_chain_manager",
+                    "procurement_manager", "warehouse_manager", "finance_manager"},
     # V3.3 项目/测试（NPI/PM/测试智能体数据底座）：项目信息透明全员可读；
     # 测试记录限测试/质量/研发/PM/制造相关角色
     "project_milestone": {"manufacturing", "planning", "quality", "procurement",

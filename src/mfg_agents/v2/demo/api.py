@@ -176,13 +176,19 @@ def kbqa_meta() -> dict[str, Any]:
 
 
 @app.post("/api/v2/kbqa")
-def kbqa_query(req: KbQueryRequest) -> dict[str, Any]:
+def kbqa_query(req: KbQueryRequest, request: Request) -> dict[str, Any]:
     """企业制度问答：检索制度片段 → LLM 生成带出处回答。
 
     独立通道，不经 TwoLevelRouter / 制造场景 DAG；LLM 不可用时降级回放片段。
+    结果经 ``core.cache`` 按 query+top_k 缓存 30 分钟；公网演示下按 IP 限流。
     """
     if not req.query.strip():
         raise HTTPException(status_code=400, detail="query 不能为空")
+    client_ip = request.client.host if request.client else "unknown"
+    if cache.rate_limit_exceeded(f"kbqa:{client_ip}", settings.RATE_LIMIT_PER_MIN):
+        raise HTTPException(status_code=429, detail={
+            "code": "KBQA_RATE_LIMITED",
+            "message": "提问过于频繁，请稍后再试"})
     data = kbqa_service.answer(req.query, top_k=max(1, min(int(req.top_k), 8)))
     return {"code": 0, "data": data, "message": "ok"}
 

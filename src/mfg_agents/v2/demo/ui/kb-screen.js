@@ -35,6 +35,10 @@
     finance_expense: ["💰", "#fef3c7"], hr_onboarding: ["👥", "#fce7f3"],
     admin_logistics: ["🍱", "#ffedd5"], engineering_eq: ["🔧", "#e2e8f0"],
     legal_contract: ["📜", "#ede9fe"], sales_marketing: ["📈", "#dcfce7"],
+    quality_qms: ["✅", "#cffafe"], production_mes: ["🏭", "#fde68a"],
+    scm_purchase: ["🚚", "#d9f99d"], equipment_eam: ["⚙️", "#e0e7ff"],
+    ehs_safety: ["🦺", "#fee2e2"], npi_rd: ["🧪", "#f5d0fe"],
+    warehouse_wms: ["📦", "#fef9c3"], service_after_sales: ["🎧", "#c7d2fe"],
   };
 
   // 元数据（支持类别 / 块数）仅拉一次，跨重渲染复用
