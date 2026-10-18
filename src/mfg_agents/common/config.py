@@ -193,5 +193,24 @@ class Settings:
     # 配成 0 或负数表示关闭（仅限本地调试）。
     CASE_RATE_LIMIT_PER_MIN: int = int(os.getenv("CASE_RATE_LIMIT_PER_MIN", "60"))
 
+    # ================= 企业问答助手（kbqa）FAQ 前置层 =================
+    # ADR-001：L1 制度直答阈值 + L0 缓存版本命名空间 + 晋升管理端点保护。
+    # 以下均为**新增项**，不改变任何既有字段的语义与默认值。
+    #
+    # L1 匹配阈值：中文二元组覆盖度归一分（关键词×2/标题×3/内容×1 加权，封顶 1.0）。
+    # **初始值须用真实查询分布定标**（GET /api/v2/kbqa/stats 是取数处），
+    # 不要当成恒定真理——定标前它只保证"宁落 L2 不错答"。
+    # 0.70 的来历：单个 2 字符关键词命中 = 2×2/6 ≈ 0.67，必须**独自过不了闸**——
+    # "酒店发票抬头怎么写"只该命中含"发票"关键词的制度是不够的（答案不覆盖
+    # "抬头"），要求关键词之外还有标题或内容佐证，避免 L1 抢答半相关答案。
+    KBQA_MATCH_THRESHOLD: float = float(os.getenv("KBQA_MATCH_THRESHOLD", "0.70"))
+    # top1 与 top2 的分差下限：两条都能答时不许乱指，回落 L2 更安全
+    KBQA_MARGIN_THRESHOLD: float = float(os.getenv("KBQA_MARGIN_THRESHOLD", "0.15"))
+    # FAQ 晋升管理端点令牌：留空 = 仅 127.0.0.1 可调（本地管理态）；
+    # 配置后任意来源凭 X-FAQ-Admin-Token 头访问
+    KBQA_ADMIN_TOKEN: str = os.getenv("KBQA_ADMIN_TOKEN", "")
+    # query_log 遥测写入开关：false 时只跑问答不落度量（调试用）
+    KBQA_LOG_WRITES: bool = _env_bool("KBQA_LOG_WRITES", True)
+
 
 settings = Settings()

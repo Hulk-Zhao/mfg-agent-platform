@@ -121,6 +121,46 @@ CREATE TABLE kbqa_policy (
 );
 
 -- ============================================================
+-- 企业问答助手 FAQ 前置层（ADR-001 L1 数据面）
+-- kbqa_faq = 晋升/人工维护的问答对；kbqa_faq_draft = 待审草稿；
+-- kbqa_query_log = 查询度量（channel 分布 / 低置信占比 / 待晋升取数）。
+-- 纪律：晋升只写 kbqa_faq，**不碰 kbqa_policy 制度主数据**。
+-- ============================================================
+CREATE TABLE IF NOT EXISTS kbqa_faq (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  question TEXT NOT NULL,
+  answer TEXT NOT NULL,
+  keywords VARCHAR(200),
+  origin VARCHAR(32) NOT NULL DEFAULT 'manual',
+  source_ref VARCHAR(60),
+  dept VARCHAR(40),
+  dept_cn VARCHAR(30),
+  status VARCHAR(16) NOT NULL DEFAULT 'active',
+  created_by VARCHAR(64),
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS kbqa_faq_draft (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  question TEXT NOT NULL,
+  answer TEXT NOT NULL,
+  origin VARCHAR(32) NOT NULL DEFAULT 'rag_feedback',
+  query_log_id BIGINT,
+  status VARCHAR(16) NOT NULL DEFAULT 'pending',
+  reviewer VARCHAR(64),
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS kbqa_query_log (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  session_id VARCHAR(36),
+  question TEXT NOT NULL,
+  channel VARCHAR(16) NOT NULL,
+  confidence REAL,
+  top_score REAL,
+  latency_ms INTEGER,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ============================================================
 -- 模拟数据（以2026-10-15为"今天"）
 -- ============================================================
 

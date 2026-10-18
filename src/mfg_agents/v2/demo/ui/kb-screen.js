@@ -61,8 +61,20 @@
     };
   }
 
+  /** channel → 角标文案（统一答案契约，ADR-001 §5）。 */
+  const CH_LABEL = { faq: "制度直答", rag: "知识库检索", miss: "未找到", rag_unavailable: "知识库不可用" };
+
+  /** bot 消息的契约角标行：命中通道 + 耗时 + 点赞反馈（ADR-001 晋升管线入口）。 */
+  function messageMetaHtml(m, idx) {
+    if (m.role !== "bot" || !m.channel) return "";
+    const cls = m.channel === "rag_unavailable" ? "warn" : (m.channel === "faq" ? "faq" : "rag");
+    const lat = (typeof m.latency === "number") ? `<span>${m.latency}ms</span>` : "";
+    const like = `<button class="kbqa-like" data-idx="${idx}" title="答得好？点赞后进入 FAQ 晋升待审队列">👍 有帮助</button>`;
+    return `<div class="kbqa-meta"><span class="kbqa-badge kbqa-badge-${cls}">${esc(CH_LABEL[m.channel] || m.channel)}</span>${lat}${like}</div>`;
+  }
+
   /** 单条消息 → 微信式气泡 HTML（bot 左 / user 右，含时间分隔与标签）。 */
-  function messageHtml(m, esc) {
+  function messageHtml(m, esc, idx) {
     const time = m.time ? `<div class="kbqa-time">${esc(m.time)}</div>` : "";
     if (m.role === "user") {
       return time
@@ -77,7 +89,7 @@
     const pending = m.pending ? " kbqa-pending" : "";
     return time
       + `<div class="kbqa-row kbqa-bot"><div class="kbqa-avatar kbqa-av-bot">${BOT_ICON}</div>`
-      + `<div class="kbqa-wrap"><div class="kbqa-bubble${pending}">${esc(m.content)}</div>${tags}</div></div>`;
+      + `<div class="kbqa-wrap"><div class="kbqa-bubble${pending}">${esc(m.content)}</div>${tags}${messageMetaHtml(m, idx)}</div></div>`;
   }
 
   function catsHtml(esc) {
@@ -131,10 +143,28 @@
     const chat = root.querySelector("#kbqa-chat");
     const input = root.querySelector("#kbqa-input");
     const paint = () => {
-      chat.innerHTML = S.messages.map((m) => messageHtml(m, esc)).join("");
+      chat.innerHTML = S.messages.map((m, i) => messageHtml(m, esc, i)).join("");
       chat.scrollTop = chat.scrollHeight;
     };
     paint();
+
+    // 点赞反馈（事件委托：paint 会整体重渲染，监听器挂在容器上）
+    chat.addEventListener("click", (e) => {
+      const btn = e.target.closest(".kbqa-like");
+      if (!btn || btn.dataset.done) return;
+      const m = S.messages[Number(btn.dataset.idx)];
+      if (!m || m.role !== "bot") return;
+      btn.dataset.done = "1";
+      api.kbqaFeedback(m.query, 5, { channel: m.channel || "" })
+        .then(() => {
+          btn.textContent = "已反馈 ✓";
+          btn.classList.add("kbqa-like-done");
+        })
+        .catch(() => {
+          btn.dataset.done = "";
+          UI.toast("反馈发送失败，请稍后重试", "err");
+        });
+    });
 
     const send = async () => {
       const q = (input.value || "").trim();
@@ -152,7 +182,10 @@
       try {
         if (!api.online()) throw new Error("后端离线：企业制度问答需要连接后端知识库");
         const data = await api.kbqaQuery(q);
-        replaceLastBot({ role: "bot", content: data.answer, tags: data.tags, time: nowHM() });
+        replaceLastBot({
+          role: "bot", content: data.answer, tags: data.tags, time: nowHM(),
+          channel: data.channel, latency: data.latency_ms, query: q,
+        });
       } catch (err) {
         replaceLastBot({
           role: "bot", tags: null, time: nowHM(),

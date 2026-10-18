@@ -128,6 +128,11 @@ def test_cache_key_is_deterministic():
 
 
 def test_answer_delegates_to_cache(monkeypatch):
+    """answer 走 core.cache.get_or_compute（隔离 L1：本例只守护 L2 委派语义）。
+
+    L1 前置层上线后「首件检验要求」会被制度直答命中（同题直中 1.0），
+    不再到达 L2；patch 空语料把 L1 摘掉，才能继续验证缓存委派。
+    """
     seen: dict[str, object] = {}
 
     def _fake_get_or_compute(key, ttl, producer):
@@ -135,6 +140,9 @@ def test_answer_delegates_to_cache(monkeypatch):
         seen["ttl"] = ttl
         return producer()
 
+    monkeypatch.setattr(kbqa_service.kbqa_store, "faq_corpus", lambda **kw: [])
+    monkeypatch.setattr(kbqa_service.kbqa_store, "faq_version", lambda: "test")
+    monkeypatch.setattr(kbqa_service.kbqa_store, "log_query", lambda *a, **k: None)
     monkeypatch.setattr(cache, "get_or_compute", _fake_get_or_compute)
     monkeypatch.setattr(kbqa_service, "search_kb", lambda q, n_results=3: [])
     out = kbqa_service.answer("首件检验要求", top_k=2)
@@ -162,9 +170,10 @@ def test_kbqa_blank_query_returns_400(client):
 def test_kbqa_endpoint_rate_limited(client, monkeypatch):
     """超限返回 429 + KBQA_RATE_LIMITED（不影响前几次正常请求）。"""
     monkeypatch.setattr(kbqa_service, "answer",
-                        lambda q, top_k=3: {"answer": "ok", "tags": [], "sources": [],
-                                            "category": {"name": "品质制度"},
-                                            "degraded": False})
+                        lambda q, top_k=3, session_id="":
+                        {"answer": "ok", "tags": [], "sources": [],
+                         "category": {"name": "品质制度"},
+                         "degraded": False})
     state = {"n": 0}
 
     def _fake_limit(bucket, limit, window_s=60):

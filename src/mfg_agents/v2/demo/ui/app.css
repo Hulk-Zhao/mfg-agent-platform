@@ -2610,6 +2610,16 @@ a:hover { text-decoration: underline; }
 .kbqa-tag.first { background: var(--k-tag-first-bg); color: var(--k-tag-first-text); border-color: var(--k-tag-first-border); }
 .kbqa-tag.src { background: var(--k-src-bg); color: var(--k-src-text); border-color: var(--k-src-border); }
 
+/* ---- 统一答案契约角标 + 反馈（ADR-001） ---- */
+.kbqa-meta { margin: 6px 0 0 12px; display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--k-sub); }
+.kbqa-badge { padding: 1px 8px; border-radius: 10px; font-size: 11px; line-height: 1.6; }
+.kbqa-badge-faq { background: var(--k-src-bg); color: var(--k-src-text); border: 1px solid var(--k-src-border); }
+.kbqa-badge-rag { background: var(--k-tag-bg); color: var(--k-tag-text); border: 1px solid var(--k-tag-border); }
+.kbqa-badge-warn { background: rgba(230, 80, 60, .10); color: #b3261e; border: 1px solid rgba(230, 80, 60, .25); }
+.kbqa-like { border: none; background: transparent; cursor: pointer; font-size: 11px; color: var(--k-sub); padding: 1px 4px; border-radius: 8px; }
+.kbqa-like:hover { color: var(--k-src-text); background: var(--k-src-bg); }
+.kbqa-like-done { color: var(--k-src-text); cursor: default; }
+
 .kbqa-inputbar { flex: none; display: flex; gap: 10px; padding: 12px 20px 16px; background: var(--k-page); border-top: 1px solid var(--k-header-border); }
 .kbqa-input {
   flex: 1; border: 1px solid var(--k-input-border); border-radius: 12px; padding: 10px 14px;

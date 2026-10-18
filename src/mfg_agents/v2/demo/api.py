@@ -38,6 +38,7 @@ from ..core import cache
 from ..core.events import EventHub, QueueSink, bind_existing, hub, unbind
 from ..core.orchestrator import V2Orchestrator, create_default_orchestrator
 from ..services import kbqa as kbqa_service
+from ..services import kbqa_store
 from ..services import workflow_scope
 from ..services.auth import AuthError, get_codec, resolve_login_roles
 from ..services.data_scope import get_data_scope
@@ -160,11 +161,13 @@ class KbQueryRequest(BaseModel):
     """企业制度问答请求。
 
     - ``query``：员工自然语言问题；
-    - ``top_k``：检索制度片段数（默认 3）。
+    - ``top_k``：检索制度片段数（默认 3）；
+    - ``session_id``：会话标识（可选，仅用于 query_log 分组度量）。
     """
 
     query: str
     top_k: int = 3
+    session_id: str = ""
 
 
 @app.get("/api/v2/kbqa/meta")
@@ -177,10 +180,10 @@ def kbqa_meta() -> dict[str, Any]:
 
 @app.post("/api/v2/kbqa")
 def kbqa_query(req: KbQueryRequest, request: Request) -> dict[str, Any]:
-    """企业制度问答：检索制度片段 → LLM 生成带出处回答。
+    """企业制度问答：L1 FAQ 前置 → L2 RAG 兜底，返回统一答案契约。
 
-    独立通道，不经 TwoLevelRouter / 制造场景 DAG；LLM 不可用时降级回放片段。
-    结果经 ``core.cache`` 按 query+top_k 缓存 30 分钟；公网演示下按 IP 限流。
+    独立通道，不经 TwoLevelRouter / 制造场景 DAG；L1 命中不调 LLM，
+    L2 结果经 ``core.cache`` 按 query+top_k+FAQ版本 缓存；公网演示下按 IP 限流。
     """
     if not req.query.strip():
         raise HTTPException(status_code=400, detail="query 不能为空")
@@ -189,8 +192,116 @@ def kbqa_query(req: KbQueryRequest, request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=429, detail={
             "code": "KBQA_RATE_LIMITED",
             "message": "提问过于频繁，请稍后再试"})
-    data = kbqa_service.answer(req.query, top_k=max(1, min(int(req.top_k), 8)))
+    data = kbqa_service.answer(req.query, top_k=max(1, min(int(req.top_k), 8)),
+                               session_id=req.session_id)
     return {"code": 0, "data": data, "message": "ok"}
+
+
+# ---------- FAQ 晋升管线（ADR-001：反馈 → 草稿 → 发布） ----------
+
+
+class KbFeedbackRequest(BaseModel):
+    """问答反馈请求。``rating>=4`` 且 ``channel=rag`` 的回答进待审队列。"""
+
+    query: str
+    answer: str = ""
+    rating: int = 0
+    channel: str = ""
+    session_id: str = ""
+
+
+@app.post("/api/v2/kbqa/feedback")
+def kbqa_feedback(req: KbFeedbackRequest, request: Request) -> dict[str, Any]:
+    """问答反馈：好评（rating>=4）的 RAG 回答进入 FAQ 晋升待审队列。
+
+    L1 直答（channel=faq）不需要晋升——它本就是权威制度；
+    feedback 只回收"RAG 答得好"的长尾，等管理员 publish 后进 L1 语料。
+    """
+    if not req.query.strip():
+        raise HTTPException(status_code=400, detail="query 不能为空")
+    client_ip = request.client.host if request.client else "unknown"
+    if cache.rate_limit_exceeded(f"kbqa:fb:{client_ip}", settings.RATE_LIMIT_PER_MIN):
+        raise HTTPException(status_code=429, detail={
+            "code": "KBQA_RATE_LIMITED",
+            "message": "操作过于频繁，请稍后再试"})
+    drafted = False
+    if req.rating >= 4 and req.channel == "rag" and req.answer.strip():
+        try:
+            kbqa_store.insert_draft(req.query.strip(), req.answer.strip(),
+                                    origin="rag_feedback")
+            drafted = True
+        except Exception as exc:  # noqa: BLE001 - 入库失败必须显式暴露，不静默吞
+            logger.warning("[kbqa] 反馈草稿入库失败: %s", exc)
+            raise HTTPException(status_code=500, detail={
+                "code": "KBQA_FEEDBACK_FAILED",
+                "message": "反馈保存失败，请稍后重试"})
+    return {"code": 0, "data": {"drafted": drafted}, "message": "ok"}
+
+
+def _kbqa_admin_guard(request: Request) -> None:
+    """FAQ 管理端点保护（ADR-001 §3 D4，Hulk 已确认）：
+
+    - 配置 ``KBQA_ADMIN_TOKEN`` → 任意来源凭 ``X-FAQ-Admin-Token`` 头访问；
+    - 未配置 → 仅 127.0.0.1/::1（本地管理态）。
+    """
+    if settings.KBQA_ADMIN_TOKEN:
+        if request.headers.get("X-FAQ-Admin-Token", "") != settings.KBQA_ADMIN_TOKEN:
+            raise HTTPException(status_code=403, detail={
+                "code": "KBQA_ADMIN_DENIED",
+                "message": "管理令牌缺失或不正确"})
+        return
+    host = request.client.host if request.client else ""
+    if host not in ("127.0.0.1", "::1", "localhost"):
+        raise HTTPException(status_code=403, detail={
+            "code": "KBQA_ADMIN_DENIED",
+            "message": "管理端点仅限本机访问（或配置 KBQA_ADMIN_TOKEN）"})
+
+
+@app.get("/api/v2/kbqa/drafts")
+def kbqa_drafts(request: Request) -> dict[str, Any]:
+    """FAQ 晋升待审队列（管理态）。"""
+    _kbqa_admin_guard(request)
+    try:
+        drafts = kbqa_store.list_drafts("pending")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[kbqa] 草稿列表读取失败: %s", exc)
+        raise HTTPException(status_code=500, detail="草稿列表读取失败")
+    return {"code": 0, "data": {"drafts": drafts}, "message": "ok"}
+
+
+@app.post("/api/v2/kbqa/drafts/{draft_id}/publish")
+def kbqa_publish_draft(draft_id: int, request: Request) -> dict[str, Any]:
+    """草稿过审 → 写入 kbqa_faq（active）→ FAQ 版本戳变 → L0 旧缓存自然失效。"""
+    _kbqa_admin_guard(request)
+    try:
+        faq_id = kbqa_store.publish_draft(draft_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail={
+            "code": "KBQA_DRAFT_NOT_FOUND",
+            "message": f"草稿不存在: {draft_id}"})
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail={
+            "code": "KBQA_DRAFT_STATE",
+            "message": str(exc)})
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[kbqa] 草稿发布失败: %s", exc)
+        raise HTTPException(status_code=500, detail="草稿发布失败")
+    return {"code": 0, "data": {"faq_id": faq_id}, "message": "ok"}
+
+
+@app.get("/api/v2/kbqa/stats")
+def kbqa_stats(request: Request, days: int = 7) -> dict[str, Any]:
+    """问答度量：近 N 天 channel 分布 / 低置信 RAG 占比（管理态）。
+
+    ADR-001 的 KG 启用判据与 L1 阈值定标都从这里取数。
+    """
+    _kbqa_admin_guard(request)
+    try:
+        stats = kbqa_store.channel_stats(max(1, min(int(days), 90)))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[kbqa] 度量统计失败: %s", exc)
+        raise HTTPException(status_code=500, detail="度量统计失败")
+    return {"code": 0, "data": stats, "message": "ok"}
 
 
 # 演示默认用户上下文：**仅用于只读/问数路径**（POST /api/v2/query 未显式传

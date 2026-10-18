@@ -628,6 +628,12 @@
     /** 企业咨询助手元数据：支持类别面板 + 知识库块数 */
     kbqaMeta() { return this._get("/api/v2/kbqa/meta"); },
 
+    /** 企业咨询助手反馈：好评（rating>=4）的 RAG 回答进 FAQ 晋升待审队列 */
+    kbqaFeedback(query, rating, extra) {
+      return this._post("/api/v2/kbqa/feedback",
+        Object.assign({ query: query, rating: rating || 0 }, extra || {}));
+    },
+
     /* ---------- 企业综合助手（Agentic Agent：办公事务 + 制造数据只读速查） ---------- */
 
     /** 企业助手对话（强制定向该 Agent；返回含工具调用留痕 steps） */
