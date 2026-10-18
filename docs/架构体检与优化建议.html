@@ -1,0 +1,974 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>mfg-agent-platform 架构体检与优化建议</title>
+<style>
+  :root{
+    --bg:#f6f8fb; --panel:#ffffff; --ink:#1a2332; --ink-2:#4a5768; --ink-3:#7c8798;
+    --line:#e3e8ef; --line-2:#edf1f6;
+    --brand:#185FA5; --brand-soft:#eaf2fb; --brand-line:#c4dbf2;
+    --red:#c0392b; --red-soft:#fdeeec; --red-line:#f5c6bf;
+    --amber:#a86400; --amber-soft:#fff6e5; --amber-line:#f0dcae;
+    --green:#0f7a52; --green-soft:#e9f7f1; --green-line:#b9e2d0;
+    --mono:"Cascadia Mono","Consolas","SF Mono",Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:-apple-system,"PingFang SC","Microsoft YaHei","Segoe UI",sans-serif;
+    font-size:15px; line-height:1.75; -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1080px;margin:0 auto;padding:0 28px 100px}
+
+  /* ---------- 页头 ---------- */
+  header.hero{
+    background:linear-gradient(135deg,#123d6b 0%,#185FA5 55%,#2a7fc4 100%);
+    color:#fff;padding:56px 0 48px;margin-bottom:44px;
+  }
+  header.hero .wrap{padding-bottom:0}
+  .kicker{font-size:12.5px;letter-spacing:.14em;text-transform:uppercase;opacity:.72;margin-bottom:14px}
+  h1{font-size:33px;line-height:1.28;margin:0 0 16px;font-weight:650;letter-spacing:-.01em}
+  .hero-sub{font-size:16px;opacity:.9;max-width:760px;margin:0}
+  .hero-meta{margin-top:28px;display:flex;gap:26px;flex-wrap:wrap;font-size:13px;opacity:.82}
+  .hero-meta b{font-weight:600}
+
+  /* ---------- 通用块 ---------- */
+  section{margin-bottom:52px}
+  h2{
+    font-size:22px;font-weight:650;margin:0 0 6px;letter-spacing:-.01em;
+    padding-bottom:12px;border-bottom:2px solid var(--line);display:flex;align-items:baseline;gap:12px;
+  }
+  h2 .num{
+    font-family:var(--mono);font-size:13px;color:var(--brand);background:var(--brand-soft);
+    border:1px solid var(--brand-line);border-radius:5px;padding:2px 8px;font-weight:600;flex:none;
+  }
+  h3{font-size:16.5px;font-weight:640;margin:30px 0 10px;color:var(--ink)}
+  h4{font-size:14.5px;font-weight:640;margin:20px 0 8px;color:var(--ink-2)}
+  p{margin:10px 0}
+  ul,ol{margin:10px 0;padding-left:22px}
+  li{margin:5px 0}
+  code{
+    font-family:var(--mono);font-size:.875em;background:#eef2f7;color:#1c3f63;
+    padding:1.5px 5px;border-radius:4px;border:1px solid var(--line-2);
+  }
+  pre{
+    font-family:var(--mono);font-size:12.5px;line-height:1.65;background:#1c2635;color:#d6e2f0;
+    padding:16px 18px;border-radius:9px;overflow-x:auto;margin:14px 0;
+  }
+  pre .c{color:#7f93ab}
+  pre .k{color:#7fc4ff}
+  pre .bad{color:#ff9a8a}
+  pre .ok{color:#7ee0a8}
+
+  /* ---------- 卡片 ---------- */
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:22px 24px;margin:16px 0}
+  .card.tight{padding:16px 20px}
+
+  .callout{border-radius:10px;padding:16px 20px;margin:18px 0;border-left:4px solid}
+  .callout .ct{font-weight:640;font-size:14px;margin-bottom:5px;display:flex;align-items:center;gap:7px}
+  .callout p{margin:5px 0;font-size:14.2px}
+  .callout.red{background:var(--red-soft);border-color:var(--red);color:#7d2419}
+  .callout.red .ct{color:var(--red)}
+  .callout.amber{background:var(--amber-soft);border-color:#d99b1a;color:#6d4a05}
+  .callout.amber .ct{color:var(--amber)}
+  .callout.green{background:var(--green-soft);border-color:#159a67;color:#0b5c3e}
+  .callout.green .ct{color:var(--green)}
+  .callout.blue{background:var(--brand-soft);border-color:var(--brand);color:#12456f}
+  .callout.blue .ct{color:var(--brand)}
+
+  /* ---------- 表格 ---------- */
+  table{width:100%;border-collapse:collapse;margin:16px 0;font-size:13.6px;background:var(--panel)}
+  th{
+    text-align:left;padding:10px 12px;background:#f0f4f9;color:var(--ink-2);
+    font-weight:620;font-size:12.5px;letter-spacing:.02em;border-bottom:1px solid var(--line);
+  }
+  td{padding:9px 12px;border-bottom:1px solid var(--line-2);vertical-align:top}
+  tr:last-child td{border-bottom:none}
+  td.mono,th.mono{font-family:var(--mono);font-size:12.3px}
+  tbody tr:hover{background:#fafbfd}
+
+  /* ---------- 徽标 ---------- */
+  .tag{
+    display:inline-block;font-size:11.5px;font-weight:620;padding:2px 8px;border-radius:20px;
+    border:1px solid;line-height:1.6;white-space:nowrap;font-family:var(--mono);
+  }
+  .tag.p0{background:var(--red-soft);border-color:var(--red-line);color:var(--red)}
+  .tag.p1{background:var(--amber-soft);border-color:var(--amber-line);color:var(--amber)}
+  .tag.p2{background:#f0f2f6;border-color:#d8dee8;color:#5a6675}
+  .tag.ok{background:var(--green-soft);border-color:var(--green-line);color:var(--green)}
+  .tag.no{background:var(--red-soft);border-color:var(--red-line);color:var(--red)}
+  .tag.half{background:var(--amber-soft);border-color:var(--amber-line);color:var(--amber)}
+
+  /* ---------- 评分条 ---------- */
+  .grade{display:grid;grid-template-columns:150px 1fr 54px;gap:14px;align-items:center;margin:9px 0;font-size:13.6px}
+  .grade .bar{height:9px;background:#e8edf3;border-radius:5px;overflow:hidden}
+  .grade .bar i{display:block;height:100%;border-radius:5px}
+  .grade .v{text-align:right;font-family:var(--mono);font-size:12.5px;color:var(--ink-2)}
+  .b-high{background:linear-gradient(90deg,#159a67,#3cc08a)}
+  .b-mid{background:linear-gradient(90deg,#d99b1a,#eebc55)}
+  .b-low{background:linear-gradient(90deg,#c0392b,#e0705f)}
+
+  /* ---------- 架构图 ---------- */
+  .diagram{background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:24px;margin:18px 0}
+  .layer{border:1px solid var(--line);border-radius:9px;padding:12px 16px;margin:9px 0;background:#fbfcfe}
+  .layer .lt{font-size:12px;font-weight:640;letter-spacing:.06em;color:var(--ink-3);text-transform:uppercase;margin-bottom:7px}
+  .layer .row{display:flex;gap:8px;flex-wrap:wrap}
+  .chip{
+    font-size:12.5px;padding:5px 11px;border-radius:6px;background:#fff;border:1px solid var(--line);
+    color:var(--ink-2);font-family:var(--mono);
+  }
+  .chip.bad{background:var(--red-soft);border-color:var(--red-line);color:#8d2c1f;font-weight:600}
+  .chip.warn{background:var(--amber-soft);border-color:var(--amber-line);color:#7d5108;font-weight:600}
+  .chip.good{background:var(--green-soft);border-color:var(--green-line);color:#0b5c3e;font-weight:600}
+  .arrow{text-align:center;color:#b6c2d1;font-size:15px;line-height:1;margin:3px 0}
+  .legend{display:flex;gap:18px;flex-wrap:wrap;font-size:12.5px;color:var(--ink-3);margin-top:14px;padding-top:14px;border-top:1px dashed var(--line)}
+
+  /* ---------- 证据链 ---------- */
+  .evi{
+    border:1px solid var(--line);border-radius:8px;overflow:hidden;margin:14px 0;background:var(--panel);
+  }
+  .evi-h{
+    background:#f0f4f9;padding:9px 14px;font-size:12.5px;font-weight:640;color:var(--ink-2);
+    font-family:var(--mono);border-bottom:1px solid var(--line);display:flex;justify-content:space-between;
+  }
+  .evi-b{padding:0}
+  .evi-b pre{margin:0;border-radius:0;font-size:12.3px}
+
+  /* ---------- 清单 ---------- */
+  .task{
+    display:grid;grid-template-columns:auto 1fr;gap:14px;padding:16px 0;border-bottom:1px solid var(--line-2);
+  }
+  .task:last-child{border-bottom:none}
+  .task .idx{
+    font-family:var(--mono);font-size:12px;font-weight:700;color:#fff;background:var(--brand);
+    width:26px;height:26px;border-radius:7px;display:flex;align-items:center;justify-content:center;flex:none;margin-top:2px;
+  }
+  .task.p0 .idx{background:var(--red)}
+  .task.p1 .idx{background:#d99b1a}
+  .task.p2 .idx{background:#8b96a5}
+  .task h4{margin:0 0 4px;font-size:15px;color:var(--ink)}
+  .task .meta{font-size:12.5px;color:var(--ink-3);margin-bottom:6px;font-family:var(--mono)}
+  .task p{margin:5px 0;font-size:14px}
+  .task ul{margin:6px 0;font-size:13.8px}
+
+  footer{margin-top:60px;padding-top:24px;border-top:1px solid var(--line);font-size:13px;color:var(--ink-3)}
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <div class="kicker">Architecture Review · 2026-10-18</div>
+    <h1>mfg-agent-platform 架构体检与优化建议</h1>
+    <p class="hero-sub">
+      结论先给：<b>你的编排内核和治理设计在同类产品里属于上游水平，但"可替换的持久化"只做了一半</b>，
+      导致 README 承诺的生产形态目前是纸面的。产品侧 31 个岗位没有收敛成角色化信息架构，
+      演示时"人人一个样"——这直接影响客户对你的判断。
+    </p>
+    <div class="hero-meta">
+      <span>代码基线 <b>16,554 行 Python</b></span>
+      <span>前端 <b>6,130 行 / 600KB</b></span>
+      <span>测试 <b>971 条全绿</b></span>
+      <span>扫描范围 <b>src / compose / Dockerfile / docs</b></span>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+<!-- ============ 执行进度 ============ -->
+<section>
+  <h2><span class="num">✓</span>执行进度（2026-10-18 更新）</h2>
+  <p>本报告是诊断快照，诊断结论不变；下表记录已落地的修复，避免后续读者误以为全部待办。</p>
+  <table>
+    <thead><tr><th style="width:9%">编号</th><th style="width:34%">问题</th><th style="width:12%">状态</th><th>落地方式</th></tr></thead>
+    <tbody>
+      <tr>
+        <td class="mono">P0-1</td><td>治理链 sqlite3 硬绑，切 MySQL 静默分裂数据</td>
+        <td><span class="tag ok">已止血</span></td>
+        <td>新增 <code>assert_sqlite_backed()</code> 启动期 fail-fast；<code>WORKFLOW_DB</code> 不再继承非 SQLite 的 <code>DB_URL</code>；顺带修掉 <code>"sqlite" in db_url</code> 子串误判与父目录不创建两个既有缺陷。<b>根治（仓储抽象）仍待做</b></td>
+      </tr>
+      <tr>
+        <td class="mono">P1-1</td><td>31 个岗位导航完全同构</td>
+        <td><span class="tag ok">已完成</span></td>
+        <td><code>NAV_ITEMS[].roles</code> 声明 + <code>visibleNav()</code> 过滤；侧边栏重排为「运营视图 → 智能协同 → 流程治理 → 复盘沉淀」四段。实测总经理 12 屏、HR 7 屏、MT 8 屏，分组标题不出现空组；<b>审批确认中心对 HR 关闭</b>（它不持有任何 HITL 权限，给一个点进去只说"不参与"的入口比不给更糟），并有一条测试与 <code>permissions.yaml</code> 交叉校验两侧不漂移</td>
+      </tr>
+      <tr>
+        <td class="mono">P1-2</td><td>健康检查硬编码 ok，假阳性</td>
+        <td><span class="tag ok">已完成</span></td>
+        <td>新增 <code>v2/services/health.py</code> 结构化探针（5 项依赖）；前端顶栏改四态。实测 Milvus 未起时返回 <code>degraded</code> 并提示"向量库超时"</td>
+      </tr>
+      <tr>
+        <td class="mono">P0-2</td><td>看板无行级/列级权限</td>
+        <td><span class="tag ok">已完成</span></td>
+        <td>新增 <code>v2/data/data_scope.yaml</code>（声明式：看板 allow_roles + 字段脱敏规则）与
+        <code>v2/services/data_scope.py</code>（构造期自检 + 路径解析 + 稳定代号脱敏）。
+        四个看板端点与 <code>/dashboard/drill</code> 统一走裁决：无令牌 401、无权限 403、
+        未登记看板 fail-closed。<br>
+        <b>脱敏不只藏名字</b>：命中脱敏的排行行同时移除下钻实体并标 <code>masked</code>，
+        否则"客户 A"一点就按真值查回来；下钻 <code>rows[]</code> 由排行规则自动推导，堵掉
+        "排行看不到、下钻全列出来"。<br>
+        <b>前端不再把 403 当普通失败</b>：过去任何异常都回落演示数据，等于用编造数据掩盖越权；
+        现在单独拦 <code>permission_denied</code> 并如实展示，同时新增 <code>已脱敏 N 项</code> 角标。<br>
+        <b>仍未做</b>：<b>行级</b>范围（按组织/产线过滤到本人辖区）、物控/采购侧的<b>供应商名</b>脱敏、
+        <code>/api/v2/data/describe</code> 与 Text2SQL 通道尚未纳入同一目录</td>
+      </tr>
+      <tr>
+        <td class="mono">P0-3</td><td>双 compose 拼不出生产栈</td>
+        <td><span class="tag ok">已完成</span></td>
+        <td>诊断时判断"合并为单 compose"是错的解法——真正缺的是
+        <b><code>app</code> 根本没读 <code>.env</code></b>（只列了 4 个 LLM 变量，
+        <code>DB_URL</code> / <code>VECTOR_BACKEND</code> / <code>MILVUS_URI</code> / <code>REDIS_URL</code> 全部落空），
+        以及<b>地址视角混淆</b>（<code>.env</code> 是宿主机视角，容器里的
+        <code>localhost:19531</code> 指向容器自己）。<br>
+        解法：给 <code>app</code> 加 <code>env_file</code>，再用
+        <code>CONTAINER_MILVUS_URI</code> / <code>CONTAINER_REDIS_URL</code> / <code>CONTAINER_DB_URL</code>
+        提供容器视角覆盖（与 <code>OLLAMA_BASE_URL</code> 同一套路）。<br>
+        <b>生产形态用组合启动而非合并文件</b>：<code>docker compose -f docker-compose.yml -f docker-compose.infra.yml up</code>
+        —— 同目录即同 project，<b>网络自动合并为 <code>mfg_infra</code></b>（实测
+        <code>docker compose config</code>），app 与中间件可直接用服务名
+        <code>mysql</code> / <code>milvus</code> / <code>redis</code>，既不用映射宿主机端口也不用 host-gateway。
+        两个文件保持职责分离（应用 / 中间件），比合并成一个大文件更好维护。<br>
+        连通性实测：alpine 容器内经 <code>host.docker.internal</code> 访问 19531 / 6380 / 3307 全部可达</td>
+      </tr>
+      <tr>
+        <td class="mono">P0-2b</td><td>待办队列/工单详情可被任意岗位拉走</td>
+        <td><span class="tag ok">已完成</span></td>
+        <td>体检时三条通道同时裸奔：<code>/workflow/pending</code> 的 <code>role</code> 来自 query
+        且不传即返回全量 621 条；<code>/workflow/{task_id}</code> 完全无鉴权；MCP 的
+        <code>workflow.pending</code> 允许 <code>args.roles</code> 覆盖真实身份。<br>
+        现在统一到 <code>v2/services/workflow_scope.py</code>：判据只有一条——<b>我是否持有该
+        HITL 槽位的权限</b>（直接读 <code>permissions.yaml</code> 的角色矩阵，不新增第二份配置）。
+        可见分 <code>mine</code>（可动作）/ <code>domain</code>（域内只读），跨域不可见。<br>
+        <b>关键效果</b>：行政人事的审批中心从"看到全厂 8D 与停机工单"变成
+        <b>空队列 + "本岗位不参与治理审批"</b>；仓库岗只看交付承诺域；总经理看到
+        "0 项待办 · 域内 673 条待观察"——不是没事干，是活还没到终批。<br>
+        <b>顺带修掉的真 bug</b>：工作台简报取 <code>resp.data</code> 而 <code>_get</code> 返回的是数组，
+        "N 项待办"恒为 0（静默失效）；换岗位有 401 窗口期导致回落演示数据。<br>
+        <b>行级范围已评估，结论是"现在做不了真货"</b>：697 张工单里 <b>0 张</b>有
+        <code>dept/region</code> 字段；权限目录的 <code>dept</code> 是职能部门（quality / manufacturing / sales），
+        不是辖区；<code>line_code</code> 只有一个取值 <code>SMT-1</code>；31 个岗位与 32 个角色基本一一对应，
+        不存在"两个质量总监各管一片"。硬做只能编一份「角色→产线」映射，再让没有
+        <code>line_code</code> 的 302 张工单全部失效——那是一个看起来实现了、实际不起作用的过滤器。<br>
+        <b>仍未做</b>：未纳管的历史工单无槽位可判，统一进"无主池"（155 条），
+        需一次工单归属回填才能消掉</td>
+      </tr>
+      <tr>
+        <td class="mono">P1-6</td><td>首屏最长等 9 秒才判定"后端在线"</td>
+        <td><span class="tag ok">已完成</span></td>
+        <td>两个叠加原因：<code>Promise.all</code> 要等<b>全部</b>候选基址探完（只需要第一个可用），
+        同源 100ms 通了却要陪 <code>localhost</code> 拖满超时；<code>health</code> 的 5 项探针<b>串行</b>求值，
+        耗时是各项之和。<br>
+        改成<b>竞速</b>（第一个成功立即采用并 abort 其余）+ <b>并行探测</b>（<code>ThreadPoolExecutor</code>，
+        总耗时=最慢一项）。顺带修掉 <code>socket.create_connection(timeout=X)</code> 的陷阱——
+        X 是<b>每个地址族</b>各算一次，<code>localhost</code> 解析出 <code>::1</code> 与 <code>127.0.0.1</code>
+        就变成 2X（实测 Milvus 未起时该项 1.2s）；改为共用一份 deadline 的总预算。<br>
+        <b>health 端点 1221ms → 613ms</b>，端到端登录到"后端在线"约 1.0s</td>
+      </tr>
+      <tr>
+        <td class="mono">P1-7</td><td>首页/简报把演示数据混进真实链路</td>
+        <td><span class="tag ok">已完成</span></td>
+        <td>工作台简报的三条预警是<b>无条件</b>拼接的演示数据（文案写死"华为终端 S 级订单临期"），
+        与后端是否在线无关——行政人事因此凭空看到一条自己根本不该管的订单风险。
+        改为<b>仅离线演示模式</b>展示；在线时空列表文案也从"一切正常"改成
+        "实时预警尚未接入"（没接入不等于没异常）。<br>
+        首页 93 张指标卡同样来自 <code>DEMO.ROLE_KPIS</code>，但**不能简单接真实值**：
+        只有 16/93 张的 <code>drill.kpi</code> 能对上真实看板指标（gm 1/3、qd 0/3、wh 0/3），
+        接一半会真假混杂；且演示值 92.4% 与 seed 真算的 71.4% 差距来自"演示数字本来就好看"
+        这一有意设定。所以选择<b>显式标注</b>而不是伪造一致，并加测试守住这条标注不被删。<br>
+        <b>治本需要产品决策</b>：重写 31 岗位 × 3 张卡的指标定义，让每张都指向真实可算指标</td>
+      </tr>
+      <tr>
+        <td class="mono">P1-3~5</td><td>首屏 600KB / api.py 单文件 / 版本号不一致</td>
+        <td><span class="tag p2">待做</span></td>
+        <td>见 §05</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="callout green">
+    <b>这条曾记为"未修的新缺口"，现已按 P1-7 关闭</b><br>
+    当时的症状：行政人事的工作台「今日你需要关注」里出现
+    <b>「订单履约风险 1 单：华为终端 S 级订单临期」</b>，而 HR 并不在订单看板的
+    <code>allow_roles</code> 内。根因是 <code>loadDashboardBriefing</code> 后半段<b>无条件</b>读
+    <code>DEMO.ALERT_SUMMARY[role.id]</code>——演示数据，与后端是否在线无关，
+    且绕开了刚建好的 <code>data_scope.yaml</code>。<br>
+    处理方式：演示预警<b>仅在离线演示模式</b>展示；在线时简报只放真实待办；
+    空列表文案改为"实时预警尚未接入"，不再宣称"一切正常"。同时把
+    <code>ALERT_SUMMARY.hr.order</code> 由 1 改为 0——人事不承担订单职能，
+    演示态也不该凭空多一条订单风险。
+  </div>
+
+  <p style="font-size:13.5px;color:var(--ink-3);margin-top:14px">
+    新增 <b>38 条架构守卫用例</b>（<code>tests/v2/test_架构守卫.py</code>），全量
+    <b>971 passed</b>（含数据范围守卫 40 条、待办可见性守卫 32 条）。每条用例对应本文一个具体事故场景，删改前请先读模块 docstring。
+  </p>
+</section>
+
+<!-- ============ 0 摘要 ============ -->
+<section>
+  <h2><span class="num">00</span>一页纸结论</h2>
+
+  <p>先说做得好的，这不是客套——这些是你真正的护城河，别在重构中弄丢：</p>
+  <div class="callout green">
+    <div class="ct">✓ 真正的差异化资产</div>
+    <p><b>声明式场景编排</b>（7 个 YAML → LangGraph 子图，新场景零代码）、
+    <b>治理层构造期自检</b>（Agent 持 <code>*.approve</code> 直接启动失败，这个设计很硬）、
+    <b>Text2SQL 八道防线 + provenance 全溯源</b>、<b>587 条离线确定性测试</b>。
+    这四样东西大部分"制造业 AI 平台"都没有，客户 POC 时能打。</p>
+  </div>
+
+  <h3>但有三件事会在客户面前翻车</h3>
+
+  <div class="callout red">
+    <div class="ct">✗ P0-1　切 MySQL 会静默分裂数据，或直接崩</div>
+    <p>治理链（工单 / 会签 / SLA / HITL）是 <code>sqlite3</code> 硬编码，绕过你精心搭的 SQLAlchemy 抽象。
+    按 README 设 <code>DB_URL=mysql+pymysql://…</code> 后：建表走 MySQL，写入走本地一个叫
+    <code>mysql+pymysql://…</code> 的怪文件。<b>一份数据变两份，重启即丢。</b></p>
+  </div>
+
+  <div class="callout red">
+    <div class="ct">✗ P0-2　31 个岗位看到同一份真实数据</div>
+    <p>四个看板端点不接收角色参数，docstring 里明写"全员可见"。角色差异化只活在前端
+    <code>demo-data.js</code> 里。客户第一句就会问："HR 凭什么看 SPC 过程能力？"</p>
+  </div>
+
+  <div class="callout red">
+    <div class="ct">✗ P0-3　两个 compose 拼不出生产栈</div>
+    <p><code>docker-compose.yml</code> 的 app 不读 <code>.env</code>、不传 <code>DB_URL</code>、
+    不在 <code>mfg_infra</code> 网络里。容器内解析不到 <code>mysql</code>。
+    所以"Docker 部署"永远停在演示态，生产只能宿主机裸跑。</p>
+  </div>
+
+  <h3>六个维度的当前水位</h3>
+  <div class="card tight">
+    <div class="grade"><span>编排与契约层</span><div class="bar"><i class="b-high" style="width:88%"></i></div><span class="v">88</span></div>
+    <div class="grade"><span>治理与权限设计</span><div class="bar"><i class="b-high" style="width:85%"></i></div><span class="v">85</span></div>
+    <div class="grade"><span>测试与回归</span><div class="bar"><i class="b-high" style="width:90%"></i></div><span class="v">90</span></div>
+    <div class="grade"><span>持久化与部署</span><div class="bar"><i class="b-low" style="width:38%"></i></div><span class="v">38</span></div>
+    <div class="grade"><span>产品信息架构</span><div class="bar"><i class="b-mid" style="width:52%"></i></div><span class="v">52</span></div>
+    <div class="grade"><span>可观测与运维</span><div class="bar"><i class="b-low" style="width:35%"></i></div><span class="v">35</span></div>
+    <p style="margin:14px 0 0;font-size:13px;color:var(--ink-3)">
+      评分依据：88 分对应"设计正确 + 有测试 + 无双轨实现"；38 分对应"宣称能力与实现不符"。
+    </p>
+  </div>
+</section>
+
+<!-- ============ 1 基线核对 ============ -->
+<section>
+  <h2><span class="num">01</span>基线核对：宣称 vs 实测</h2>
+  <p>我逐条跑了你 README 里的数字。大部分是真的，这点值得肯定——但关键的那条不是。</p>
+
+  <table>
+    <thead>
+      <tr><th style="width:29%">宣称</th><th style="width:26%">实测</th><th style="width:10%">一致</th><th>说明</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>17 个领域智能体</td><td class="mono">DOMAIN_AGENT_CONFIGS = 17</td><td><span class="tag ok">✓</span></td><td>逐个 import 验证，准确</td></tr>
+      <tr><td>7 个协同场景</td><td class="mono">scenarios/*.yaml = 7</td><td><span class="tag ok">✓</span></td><td>准确</td></tr>
+      <tr><td>587 条离线测试</td><td class="mono">587 → 现 971</td><td><span class="tag ok">✓</span></td><td>体检时 587；架构守卫 +38、数据范围守卫 +40、待办可见性守卫 +32，另有并行新增用例</td></tr>
+      <tr><td>31 个岗位免密登录</td><td class="mono">ROLES = 31</td><td><span class="tag ok">✓</span></td><td>准确</td></tr>
+      <tr><td>24 条权限 × 32 个治理角色</td><td class="mono">已声明在 YAML</td><td><span class="tag ok">✓</span></td><td>Pydantic 模型 + 自检</td></tr>
+      <tr>
+        <td><b>生产通过 DB_URL 切 MySQL，应用代码零改动</b></td>
+        <td class="mono">治理链 5 个模块直连 sqlite3</td>
+        <td><span class="tag no">✗</span></td>
+        <td><b>不成立。</b>详见 P0-1</td>
+      </tr>
+      <tr>
+        <td>同一问题不同岗位可见范围不同</td>
+        <td class="mono">仅 Text2SQL 路径生效</td>
+        <td><span class="tag half">△</span></td>
+        <td>看板 / MCP / A2A 是旁路</td>
+      </tr>
+      <tr>
+        <td>Docker 一条命令快速演示</td>
+        <td class="mono">镜像无 models/（4.3GB 被 dockerignore）</td>
+        <td><span class="tag half">△</span></td>
+        <td>能起，但 RAG 只能降级</td>
+      </tr>
+      <tr>
+        <td>把中间件栈切换为生产部署</td>
+        <td class="mono">两 compose 网络隔离</td>
+        <td><span class="tag no">✗</span></td>
+        <td>详见 P0-3</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="callout amber">
+    <div class="ct">⚠ 一个容易被忽略的小裂缝</div>
+    <p><code>.env</code> 里 <code>MYSQL_PORT=3306</code>，但 <code>docker-compose.infra.yml</code> 映射的是
+    <code>3307:3306</code>（注释说是为了避让 EDURAG 栈）。谁照着 <code>.env</code> 建 DB_URL 就连不上，
+    而且报错是"连接被拒绝"，排查方向会往防火墙带偏。</p>
+  </div>
+</section>
+
+<!-- ============ 2 P0-1 ============ -->
+<section>
+  <h2><span class="num">02</span>P0-1　持久化双轨制</h2>
+  <p>这是全篇最严重的问题，因为它<b>不会报错</b>，只会静默产生第二份数据。</p>
+
+  <h3>证据链</h3>
+  <div class="evi">
+    <div class="evi-h"><span>src/mfg_agents/v2/services/workflow.py:243-271</span><span>治理链核心</span></div>
+    <div class="evi-b"><pre>self.db_path = sqlite_path_from_url(db_url)   <span class="c"># ← 无论传什么 URL</span>
+...
+<span class="bad">conn = sqlite3.connect(self.db_path, timeout=10.0)   # ← 永远是 sqlite3</span></pre></div>
+  </div>
+
+  <div class="evi">
+    <div class="evi-h"><span>src/mfg_agents/common/platform_schema.py:128-134</span><span>URL 解析</span></div>
+    <div class="evi-b"><pre>if db_url.startswith("sqlite:///"): return db_url[10:]
+if db_url.startswith("sqlite://"):  return db_url[9:]
+<span class="bad">return db_url        # ← mysql+pymysql://… 原样返回</span></pre></div>
+  </div>
+
+  <div class="evi">
+    <div class="evi-h"><span>src/mfg_agents/common/platform_schema.py:156-165</span><span>建表（这一步反而支持 MySQL）</span></div>
+    <div class="evi-b"><pre>if "sqlite" in db_url:
+    ensure_platform_schema_sqlite(db_url); <span class="k">return</span>
+engine = create_engine(db_url)   <span class="ok"># MySQL 走 SQLAlchemy，表建得进去</span></pre></div>
+  </div>
+
+  <h3>所以设了 DB_URL 之后会发生什么</h3>
+  <div class="diagram">
+    <div class="layer">
+      <div class="lt">启动时 · 建表</div>
+      <div class="row"><span class="chip good">SQLAlchemy → MySQL mfg_agent</span><span class="chip good">平台表创建成功 ✓</span></div>
+    </div>
+    <div class="arrow">↓</div>
+    <div class="layer" style="border-color:var(--red-line);background:var(--red-soft)">
+      <div class="lt" style="color:var(--red)">运行中 · 写工单</div>
+      <div class="row"><span class="chip bad">sqlite3.connect("mysql+pymysql://root:…@localhost:3306/mfg_agent")</span></div>
+      <div style="margin-top:10px;font-size:13.5px;color:#7d2419">
+        Linux 容器：在工作目录创建一个<b>文件名就是整条 URL</b> 的 SQLite 文件<br>
+        Windows 宿主：文件名含 <code>:</code> 非法 → <b>直接抛异常，整个治理链不可用</b>
+      </div>
+    </div>
+    <div class="legend">
+      <span>结果：MySQL 里一批空表 + 本地一个怪文件里的全部工单。跨进程重启后工单"消失"（因为 CWD 变了）。</span>
+    </div>
+  </div>
+
+  <h3>同样直连 sqlite3 的还有 4 个模块</h3>
+  <table>
+    <thead><tr><th style="width:34%">模块</th><th style="width:14%">行数</th><th>承担的职责</th></tr></thead>
+    <tbody>
+      <tr><td class="mono">v2/services/workflow.py</td><td class="mono">1,025</td><td>工单状态机 / 会签 / SLA / 分级通知 —— <b>整个治理链的写路径</b></td></tr>
+      <tr><td class="mono">v2/services/spc_store.py</td><td class="mono">—</td><td>SPC 测量数据存取</td></tr>
+      <tr><td class="mono">v2/core/orchestrator.py</td><td class="mono">588</td><td>启动期演示数据播种（<code>INSERT OR IGNORE</code> 全是 SQLite 方言）</td></tr>
+      <tr><td class="mono">common/platform_schema.py</td><td class="mono">215</td><td>平台表 DDL 含 <code>AUTOINCREMENT</code> / <code>INSERT OR REPLACE</code></td></tr>
+      <tr><td class="mono">v2/contracts/data_source.py</td><td class="mono">238</td><td>用的是 <code>PRAGMA table_info</code> 做自描述</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout red">
+    <div class="ct">✗ 架构层面的真问题</div>
+    <p>你把平台切成了<b>读路径</b>（业务数据，走 <code>DataSource</code> 契约）和<b>写路径</b>（治理数据，裸 sqlite3），
+    两条路径用两套持久化机制。而契约层只覆盖了一半——<b>"契约"这个词在你的架构图里被高估了</b>。
+    客户做技术尽调，第一个问的就是这个。</p>
+  </div>
+
+  <h3>怎么改（不必大重构）</h3>
+  <p>核心思路：<b>不要为了 MySQL 重写 1025 行，而是先把"不能换"这件事变成显式的、可检测的</b>，再决定换不换。</p>
+
+  <div class="card">
+    <h4>第一步 · 止血（半天，必做）</h4>
+    <ul>
+      <li>在 <code>WorkflowEngine.__init__</code> 里加硬校验：<code>db_url</code> 不以 <code>sqlite</code> 开头就抛
+      <code>NotImplementedError("WorkflowEngine 目前仅支持 SQLite，见 README 生产化清单")</code>。</li>
+      <li>把 <code>config.py</code> 里的 <code>WORKFLOW_DB</code> 与 <code>DB_URL</code> <b>解耦</b>——现在默认继承 DB_URL 就是地雷。</li>
+      <li>README 的部署表格里，"中间件栈"一行加一列<b>明确标注</b>：「治理数据仍在 SQLite（单点）」，别让读者以为一键生产。</li>
+    </ul>
+    <p style="margin-top:10px;color:var(--green);font-weight:600">收益：不会再有客户/同事踩到静默分裂数据的坑。这一步没有风险，立刻做。</p>
+  </div>
+
+  <div class="card">
+    <h4>第二步 · 抽仓储接口（2-3 天）</h4>
+    <p>在 <code>contracts/</code> 下加一个 <code>WorkflowRepository</code> 抽象（create_task / get / transition / append_approval / list_pending 五个方法就够），
+    <code>WorkflowEngine</code> 只依赖它。<code>SqliteWorkflowRepository</code> 把现有 1025 行原样搬进去——<b>逻辑零改动</b>。</p>
+    <p>这样你立刻获得两个东西：① 单测可以用 <code>:memory:</code> 实现，跑得更快；
+    ② 将来写 <code>SqlAlchemyWorkflowRepository</code> 时，<code>WorkflowEngine</code> 一个字都不用动。</p>
+    <p style="color:var(--ink-3);font-size:13.5px">这与你已有的 <code>DataSource</code> / <code>VectorStore</code> / <code>IMGateway</code> 三契约完全同构，
+    架构叙事也就自洽了：<b>四契约</b>，而不是"三个契约 + 一个特例"。</p>
+  </div>
+
+  <div class="card">
+    <h4>第三步 · 真正上 MySQL（按需，1-2 天）</h4>
+    <p>只有当客户明确要"多实例 / 高可用"时才做。前提是第二步已完成，否则直接改 workflow.py 是灾难。</p>
+    <p>顺带把 README 生产化清单里的"会签并发幂等需 DB 级"一起解决——独立签名表 +
+    <code>UNIQUE(task_uid, role_key, actor, verb)</code> 唯一索引，替换掉现在的进程内 <code>RLock</code>。
+    <b>这两件事天然是一起做的</b>，分开做等于返工。</p>
+  </div>
+</section>
+
+<!-- ============ 3 P0-2 ============ -->
+<section>
+  <h2><span class="num">03</span>P0-2　看板是治理的旁路</h2>
+  <p>你对治理层很认真：24 条权限、构造期自检、<code>Agent</code> 只允许 <code>*.propose</code>、
+    Text2SQL 八道防线、字段按角色脱敏。这套东西做得比大多数同类产品都细。</p>
+  <p><b>但它只管"谁能签什么"，不管"谁能看什么"。</b></p>
+
+  <div class="evi">
+    <div class="evi-h"><span>src/mfg_agents/v2/demo/api.py · 四个看板端点</span><span>P0-2</span></div>
+    <div class="evi-b"><pre><span class="k">@app.get</span>("/api/v2/dashboard/manufacturing")
+<span class="bad">def api_dashboard_manufacturing() -> dict[str, Any]:   # ← 不接收 request / role</span>
+    """制造看板：稼动率 / 报废率 / 报工完成率 / 测试直通率（<span class="bad">全员可见</span>）。"""</pre></div>
+  </div>
+
+  <p>四个端点（manufacturing / quality / orders / spc）签名一模一样：<b>零角色参数，零 ACL 校验</b>。
+  31 个岗位登录后拿到的是完全相同的数字。</p>
+
+  <h3>那"角色差异化"是谁在做？前端</h3>
+  <div class="evi">
+    <div class="evi-h"><span>src/mfg_agents/v2/demo/ui/screens.js:293</span><span>演示态</span></div>
+    <div class="evi-b"><pre>const sum = DEMO.ALERT_SUMMARY[role.id] || DEMO.ALERT_SUMMARY.gm;
+const kpis = DEMO.ROLE_KPIS[role.id];     <span class="c"># 31 条硬编码映射</span></pre></div>
+  </div>
+
+  <p>我数了：<code>ROLE_KPIS</code> 覆盖 31 个岗位 + 1 个 <code>risks</code>，<code>ALERT_SUMMARY</code> 覆盖 30 个。
+  做得挺完整——<b>问题恰恰在这：这份映射的完整度说明你花了大量精力，但它放在了一个真实数据接上后就失效的位置</b>。</p>
+
+  <div class="callout red">
+    <div class="ct">✗ 演示现场会被当场问倒的三个问题</div>
+    <p><b>① </b>"我用 HR 账号登进去，为什么能看到 SMT-1 的稼动率和客诉批次？"——因为看板没有行级权限。</p>
+    <p><b>② </b>"后端一接真实数据，这些差异化还在吗？"——不在。<code>ROLE_KPIS</code> 是前端常量，
+    真实看板数据从 <code>/dashboard/*</code> 来，那四个端点对所有人返回同一份。</p>
+    <p><b>③ </b>"你说 A2A 不是绕过治理的后门，那看板是吗？"——是。MCP 和 A2A 都接了治理链，看板没有。</p>
+  </div>
+
+  <h3>怎么改</h3>
+  <div class="card">
+    <h4>方案 A · 声明式数据范围目录（推荐，与现有范式同构）</h4>
+    <p>你已经有一个极好的模式：<b>权限目录声明在 YAML，构造期自检</b>。把它复制一份给数据可见性即可。</p>
+<pre><span class="c"># 提案形态（实际落地见下方说明）</span>
+dashboard_scopes:
+  manufacturing:
+    default: [gm, mfg, eq, eqm, mt, qd, pqe, ie]
+    masked:  [hr, fin, proc]        <span class="c"># 可见但脱敏（隐藏成本/客户名）</span>
+    denied:  [cs, biz]              <span class="c"># 403</span>
+  spc:
+    default: [gm, qd, pqe, sqe, qa, pe, te]
+    denied:  [hr, finm, fin, cs, biz, procm, whm, wh]</pre>
+    <p><code>build_*_dashboard</code> 全部改成接收 <code>role_key</code>，进函数第一件事查 scope，
+    denied 直接 <code>403</code>，masked 走已有的字段脱敏器（你 Text2SQL 那边已经写好了，复用即可）。</p>
+    <p><b>关键收益</b>：这份 YAML 可以<b>反哺前端</b>——<code>/api/v2/agents/configs</code> 已经在返回角色配置了，
+    加一个 <code>nav_scope</code> 字段，导航收敛（见 P1-1）就是免费的，不用再维护第二份映射。</p>
+
+    <div class="callout">
+      <div class="ct">实际落地形态（与上面提案的差异，以及为什么）</div>
+      <p><b>路径</b>：落在 <code>src/mfg_agents/v2/data/data_scope.yaml</code>，与已有的
+      <code>permissions.yaml</code> / <code>queries.yaml</code> 同目录——治理数据集中一处，
+      比另开 <code>config/</code> 更好找。</p>
+      <p><b>结构</b>：<code>default / masked / denied</code> 三档简化为
+      <code>allow_roles</code> + 字段级 <code>mask[]</code>。理由：三档里 <code>masked</code> 到底遮哪几个字段
+      说不清，而"把人挡在门外"和"进去但看不见客户是谁"是两种完全不同的语义，用两个结构表达比用三个标签清楚。</p>
+      <p><b>脱敏键</b>：<code>mask[]</code> 的每条规则声明 <code>path</code>（支持
+      <code>rankings[key=otd].items[].name</code> 这类维度选择器）+ <code>keep_roles</code> +
+      替换策略（稳定代号 / 固定文本）。<b>客户代号按字典序分配</b>，同一客户在风险清单与排行里
+      代号相同——否则两张表一比对就能还原。</p>
+      <p><b>没有照抄 <code>nav_scope</code> 反哺前端</b>：前端 <code>NAV_ITEMS[].roles</code> 已按岗位职责写完，
+      再让后端下发会变成第三份事实源。改为<b>测试交叉校验</b>两份目录的角色集合，不一致就红。</p>
+    </div>
+
+    <div class="callout red">
+      <div class="ct">✗ 这次没覆盖到的，别当成已经解决</div>
+      <p><b>① 行级范围</b>：现在回答的是"这个岗位能不能看这块数据"，还没回答"能不能看<b>他这条线</b>的"。
+      数据范围目录需要从<b>角色维度</b>扩到<b>组织维度</b>（<code>dept</code> / <code>line</code> / 本人辖区），
+      这才是真实制造企业的诉求。</p>
+      <p><b>② 待办中心仍是全局的</b>：HR 隐藏了看板菜单，但"待人工确认 504"仍是全厂计数、
+      待办列表仍能看到品质 8D 工单。<code>/api/v2/workflow/pending</code> 走的是会签角色过滤
+      （只过滤"该不该我签"），不是数据范围过滤。这条<b>必须单独排期</b>。</p>
+      <p><b>③ 旁路还没堵完</b>：<code>/api/v2/data/describe</code> 会吐出数据源与表结构；
+      Text2SQL 通道能问出"华为终端的 OTD"——它走表级 ACL，但不认这份 <code>data_scope.yaml</code>。
+      <b>两个通道、两套口径</b>，是目前最不一致的地方。</p>
+    </div>
+  </div>
+
+  <div class="callout blue">
+    <div class="ct">→ 这一步做完，你的架构故事就闭环了</div>
+    <p>"<b>一个声明式治理目录，管住三件事：谁能签、谁能看、谁能用哪个屏</b>"——
+    这句话比现在的"24 条权限 + 8 个 HITL 槽位"好讲得多，客户也听得懂。</p>
+  </div>
+</section>
+
+<!-- ============ 4 P0-3 ============ -->
+<section>
+  <h2><span class="num">04</span>P0-3　部署分布：两个 compose 是平行线</h2>
+
+  <table>
+    <thead><tr><th style="width:26%">检查项</th><th style="width:30%">docker-compose.yml（app）</th><th style="width:30%">docker-compose.infra.yml</th><th>后果</th></tr></thead>
+    <tbody>
+      <tr><td>是否读 .env</td><td class="mono">无 env_file</td><td class="mono">无</td><td>只有 yaml 里写了 ${} 的才生效</td></tr>
+      <tr><td>DB_URL</td><td class="mono">未传</td><td>—</td><td>app 永远 SQLite</td></tr>
+      <tr><td>VECTOR_BACKEND</td><td class="mono">未传</td><td>—</td><td>回落默认 <code>chroma</code>，Milvus 白起</td></tr>
+      <tr><td>REDIS_URL</td><td class="mono">未传</td><td>—</td><td>缓存永久降级，限流失效</td></tr>
+      <tr><td>网络</td><td class="mono">default</td><td class="mono">name: mfg_infra</td><td><b>容器内解析不到 mysql</b></td></tr>
+      <tr><td>模型权重</td><td class="mono">dockerignore 排除 models/</td><td>—</td><td>镜像里没有 bge-m3，RAG 无从跑</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout amber">
+    <div class="ct">⚠ 这就导致一个尴尬事实</div>
+    <p>你的"生产部署"路径实际上只能是：<b>docker compose 起中间件 + 宿主机上 uv 裸跑应用</b>。
+    这条路能通，但它不是"部署"，是"开发环境"。而 README 的部署表格让人以为有三个形态可选。</p>
+  </div>
+
+  <h3>怎么改：一个 compose、三个 profile</h3>
+  <p>别维护两份 yaml。合成一份，用 <code>profiles:</code> 区分形态，<code>env_file</code> 统一注入。</p>
+<pre>services:
+  app:
+    <span class="ok">env_file: .env</span>                  <span class="c"># ← 一行解决 90% 的配置漂移</span>
+    networks: [mfg_net]
+    depends_on:
+      mysql:   { condition: service_healthy, required: false }
+      redis:   { condition: service_healthy, required: false }
+
+  mysql:  { profiles: [infra] }        <span class="c"># 不激活就不起</span>
+  milvus: { profiles: [infra, rag] }
+  redis:  { profiles: [infra] }
+
+networks:
+  mfg_net: {}                          <span class="c"># 单一网络，别用两份 yaml 各自的默认网</span></pre>
+  <p>用法变成：</p>
+  <pre>docker compose up -d                      <span class="c"># 演示：只起 app（SQLite + Chroma）</span>
+docker compose --profile infra up -d      <span class="c"># 生产：app + MySQL + Redis</span>
+docker compose --profile rag  up -d       <span class="c"># 全栈：再加 Milvus</span></pre>
+  <p>同时把端口避让改成 <code>${MYSQL_PORT:-3307}:3306</code>，让 <code>.env</code> 成为唯一事实源。</p>
+
+  <div class="callout blue">
+    <div class="ct">→ 顺带解决镜像臃肿</div>
+    <p><code>pyproject.toml</code> 里 <code>streamlit&gt;=1.36</code> 还是主依赖（V1 遗留，V2 完全不用），
+    <code>flagembedding</code> / <code>sentence-transformers</code> 会拖进 torch。
+    Dockerfile 直接 <code>pip install "."</code> → 镜像 3GB+，<b>而单容器演示根本不需要这些</b>。</p>
+    <p>拆 optional extras：<code>[project.optional-dependencies] rag = [...]</code>，
+    基础镜像只装 fastapi/langgraph/sqlglot，镜像体积能砍到 1/3。演示启动会明显变快。</p>
+  </div>
+</section>
+
+<!-- ============ 5 P1 ============ -->
+<section>
+  <h2><span class="num">05</span>P1　"用起来流畅"的五个堵点</h2>
+
+  <div class="task p1">
+    <div class="idx">1</div>
+    <div>
+      <h4>导航 11 项平铺，31 个岗位看到一模一样的菜单</h4>
+      <div class="meta">app.js:670 renderNav() · NAV_ITEMS 无角色过滤</div>
+      <p>你自己的 <code>docs/V3-UX优化方案.md</code> 里写得很清楚："操作工只需 3 个功能却面对几十个菜单 = 信息过载"。
+      但 V3 那轮落地了简报横幅、KPI 下钻、问数历史、常用语（我逐个查了，都在），<b>唯独导航角色化没做</b>。</p>
+      <p><b>改法</b>：给 <code>NAV_ITEMS</code> 的每项加 <code>roles: []</code>（空 = 全员），
+      <code>renderNav()</code> 按当前角色过滤。31 个岗位里，生产一线（mt/wh/whm/ehs）应该只看到 3-4 项。
+      数据来源直接用 P0-2 那份 <code>nav_scope</code>，不做第二份映射。</p>
+      <p style="color:var(--ink-3);font-size:13.5px">这是投入产出比最高的一项：<b>改 30 行，演示观感立刻不一样</b>。</p>
+    </div>
+  </div>
+
+  <div class="task p1">
+    <div class="idx">2</div>
+    <div>
+      <h4>健康检查是假阳性，"后端已连接"不可信</h4>
+      <div class="meta">api.py:134 · 返回硬编码 {"status":"ok"}</div>
+      <p>这个端点不探测 DB、不探测 Milvus、不探测 Redis、不探测 LLM。
+      也就是说 <b>所有依赖全挂，它照样返回 ok</b>。Docker 的 HEALTHCHECK 和将来的 K8s 探针都会当真。</p>
+      <p>更麻烦的是前端：顶栏那个"后端状态"圆点探的就是它。所以演示时圆点变绿，
+      <b>只代表 uvicorn 进程活着</b>，不代表问数能出结果。</p>
+      <p><b>改法</b>：改成结构化依赖探针，各项独立降级：</p>
+<pre>{ "status": "degraded",
+  "checks": { "db": "ok", "redis": "ok", "milvus": "down", "llm": "down" },
+  "latency_ms": { "db": 3, "redis": 1, "milvus": 2001 } }</pre>
+      <p>前端圆点分三色：ok 绿 / degraded 黄（"部分能力降级"）/ down 红。
+      <b>客户看到黄灯会觉得你专业，看到绿灯但其实查不出东西才会觉得你糊弄。</b></p>
+    </div>
+  </div>
+
+  <div class="task p1">
+    <div class="idx">3</div>
+    <div>
+      <h4>首屏 600KB 未分包，公网隧道要等 4 秒</h4>
+      <div class="meta">demo-data 211KB + screens 210KB + office 36KB + app.css 109KB</div>
+      <p>你在 <code>index.html</code> 注释里已经踩过这个坑（"白屏从 ~12s 降到 ~4s"，靠 defer + GZip）。
+      但根因没解：<code>demo-data.js</code> 和 <code>screens.js</code> 各 210KB，<b>且是同步加载的</b>。</p>
+      <p><b>改法</b>（按性价比排序）：</p>
+      <ul>
+        <li>把 <code>DEMO_TODOS / ORDERS / SPC_DASHBOARD / ALERTS / REPORTS</code> 这些纯演示常量
+        拆成 <code>demo-data.dashboard.js</code> / <code>.chat.js</code>，<code>navigate()</code> 时按屏懒加载。
+        首屏只需要 <code>ROLES + ROLE_KPIS</code>，能砍掉 150KB+。</li>
+        <li>给静态资源加 <code>Cache-Control: public, max-age=31536000, immutable</code>。你已经用 mtime 做版本号了，
+        说明本来就想长期缓存——现在是矛盾的做法。</li>
+        <li>服务端 <code>gzip_static</code> 或预先压好 <code>.gz</code>，省掉每次请求的压缩 CPU。</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="task p1">
+    <div class="idx">4</div>
+    <div>
+      <h4>api.py 单文件 958 行 / 约 40 个路由，全部挂在 app 上</h4>
+      <div class="meta">无 APIRouter 拆分 · OpenAPI 无 tags 分组</div>
+      <p>这不只是代码整洁问题。<b>你用 <code>/docs</code> 给客户做接口演示时，现在是一坨 40 条的平铺列表。</b>
+      按域拆成 router + tags，OpenAPI 首页立刻变成一张产品能力地图：</p>
+<pre>routers/
+  query.py       tags=["06 协同问数"]
+  workflow.py    tags=["05 审批确认"]
+  dashboard.py   tags=["01 运营看板"]
+  kbqa.py        tags=["07 企业咨询"]
+  office.py      tags=["08 办公助手"]   <span class="c"># 12 个端点，现在全混在 api.py 里</span>
+  governance.py  tags=["09 治理与数据源"]
+  im.py          tags=["10 渠道接入"]</pre>
+      <p><b>顺序按用户任务流排，不按技术分层排</b>——这是"产品展示更清晰"最直接的一招，且零业务风险。</p>
+    </div>
+  </div>
+
+  <div class="task p1">
+    <div class="idx">5</div>
+    <div>
+      <h4>版本号三处不一致，客户会问"这到底是 V2 还是 V3"</h4>
+      <div class="meta">pyproject 0.1.0 / FastAPI 2.0.0 / 页面 V2.0.0 / compose 注释 V3 / 目录只有 v2/</div>
+      <p>实情是：<code>src/</code> 下只有 <code>common</code> 和 <code>v2</code>，没有 v3。<code>docker-compose.yml</code> 注释却写
+      "V3 演示入口"，<code>docs/</code> 里有 <code>PRD-V3.md</code> 和 <code>V2-INCREMENT-DESIGN.md</code>。</p>
+      <p><b>改法</b>：对外只有一个产品版本号（建议 <code>2.x</code>），"V3"降级为<b>内部迭代代号</b>，
+      在 README 顶部一句话说明："V3 = 演示门户形态，产品版本 2.x"。
+      同时 <code>pyproject version</code> 与 <code>FastAPI(version=)</code> 从同一常量读，别写死两遍。</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 6 产品信息架构 ============ -->
+<section>
+  <h2><span class="num">06</span>产品展示：把"功能清单"重排成"任务路径"</h2>
+
+  <p>现在的 11 项导航按<b>功能类型</b>分了三组（运营视图 / 智能协同 / 流程治理）。
+  这是从实现视角切的，不是从用户视角切的。客户第一次打开会问："我该从哪开始？"</p>
+
+  <h3>现在是这样的</h3>
+  <div class="diagram">
+    <div class="layer">
+      <div class="lt">运营视图（4 项）</div>
+      <div class="row"><span class="chip">工作台</span><span class="chip">订单履约看板</span><span class="chip">制造综合看板</span><span class="chip">SPC 过程能力看板</span></div>
+    </div>
+    <div class="layer">
+      <div class="lt">智能协同（5 项）</div>
+      <div class="row"><span class="chip">协同问数</span><span class="chip">企业咨询助手</span><span class="chip">预警中心</span><span class="chip">报告中心</span><span class="chip">企业助手</span></div>
+    </div>
+    <div class="layer">
+      <div class="lt">流程治理（2 项）</div>
+      <div class="row"><span class="chip">审批确认中心</span><span class="chip">帮助中心</span></div>
+    </div>
+    <div class="legend"><span>问题：11 项 × 31 岗 = 341 种组合，但没有一条线告诉用户"你的活儿在哪"。</span></div>
+  </div>
+
+  <h3>建议改成"感知 → 追问 → 处置 → 沉淀"四段</h3>
+  <p>这四段正好对应你产品的实际价值链路，而且和 README 里那句话完全一致
+  （"把提问 → 路由 → 多域并行取证 → 工单 → 人工会签 → 对客报告收敛成一条可审计的链路"）。
+  <b>你的产品逻辑是对的，只是界面没按这个逻辑排。</b></p>
+
+  <div class="diagram">
+    <div class="layer" style="border-left:4px solid #185FA5">
+      <div class="lt">① 感知 · 今天要我关注什么</div>
+      <div class="row"><span class="chip good">我的工作台</span><span class="chip">预警中心</span></div>
+    </div>
+    <div class="arrow">↓</div>
+    <div class="layer" style="border-left:4px solid #2a7fc4">
+      <div class="lt">② 追问 · 这事到底怎么回事</div>
+      <div class="row"><span class="chip good">协同问数</span><span class="chip">企业咨询助手</span><span class="chip">企业助手</span></div>
+    </div>
+    <div class="arrow">↓</div>
+    <div class="layer" style="border-left:4px solid #a86400">
+      <div class="lt">③ 处置 · 谁来拍板、拍什么板</div>
+      <div class="row"><span class="chip good">审批确认中心</span><span class="chip">报告中心</span></div>
+    </div>
+    <div class="arrow">↓</div>
+    <div class="layer" style="border-left:4px solid #0f7a52">
+      <div class="lt">④ 复盘 · 趋势与能力</div>
+      <div class="row"><span class="chip good">运营看板组</span><span class="chip" style="opacity:.6">订单 / 制造 / SPC 合并为二级 Tab</span></div>
+    </div>
+    <div class="legend">
+      <span>效果：一级导航从 11 项降到 6-7 项；三个看板合并为一个"运营看板"入口 + 内部 Tab；
+      <b>再叠加 P0-2 的角色过滤，一线岗位登录后只剩 3 项</b>。</span>
+    </div>
+  </div>
+
+  <div class="callout blue">
+    <div class="ct">→ 演示脚本也跟着变清晰了</div>
+    <p>现在演示要讲 11 个屏，容易散。改成四段之后，5 分钟能讲完一个完整闭环：
+    <b>工作台看到停线预警（感知）→ 点进去协同问数，三域并行取证（追问）→ 跳出会签卡片，换三个身份签（处置）→ 报告中心出对客 ETA（复盘）</b>。
+    一条线，一个故事，客户记得住。</p>
+  </div>
+
+  <h3>还有一处：帮助中心可以变成"角色说明书"</h3>
+  <p>现在 <code>help-screen.js</code> 讲的是<b>智能体协同架构</b>——这是给技术评审看的。
+  建议同时提供第二个视图：<b>"我是 QA，平台能帮我做什么"</b>。
+  31 个岗位各一段，三句话：我的日常痛点 / 平台替我做什么 / 我该点哪个屏。</p>
+  <p>这个视图对销售极其有用——客户不会问"你有几个智能体"，只会问"这能帮我干什么"。</p>
+</section>
+
+<!-- ============ 7 P2 ============ -->
+<section>
+  <h2><span class="num">07</span>P2　代码分布与仓库观感</h2>
+
+  <h3>三个 god module 会持续拖慢迭代</h3>
+  <table>
+    <thead><tr><th style="width:36%">文件</th><th style="width:12%">行数</th><th>问题</th><th style="width:22%">建议切法</th></tr></thead>
+    <tbody>
+      <tr>
+        <td class="mono">v2/mcp_tools/tools.py</td><td class="mono">1,775</td>
+        <td>你自己定的纪律是"按域分治，单 server ≤ 15 工具"，但实现全挤在一个文件</td>
+        <td>按已有分域切：<code>tools/data.py</code> <code>assets.py</code> <code>quality.py</code> <code>workflow.py</code> <code>knowledge.py</code></td>
+      </tr>
+      <tr>
+        <td class="mono">v2/services/dashboard.py</td><td class="mono">1,611</td>
+        <td>四个看板 + 下钻 L2-L5 + 降级骨架全在一起</td>
+        <td><code>dashboard/{orders,manufacturing,quality,spc,drill}.py</code></td>
+      </tr>
+      <tr>
+        <td class="mono">v2/demo/ui/screens.js</td><td class="mono">4,008 / 126 函数</td>
+        <td>126 个函数平铺在一个 IIFE 里，改一个屏要在 4000 行里翻</td>
+        <td>按屏拆 <code>ui/screens/{dashboard,orders,chat,hitl,alerts,reports}.js</code></td>
+      </tr>
+    </tbody>
+  </table>
+  <p style="color:var(--ink-3);font-size:13.5px">
+    注意：这些都是<b>纯搬迁</b>，不改逻辑。做完 587 条测试必须依然全绿——这也正是你测试覆盖度的价值所在。
+  </p>
+
+  <h3>仓库观感：对内很整洁，对外缺一份"给客户看的东西"</h3>
+  <ul>
+    <li><b>做得对的</b>：<code>.gitignore</code> 已经把三个一次性 HTML 交付物目录、<code>.env</code>、<code>models/</code>、本地隧道二进制全部排除，边界很清楚。</li>
+    <li><b>小瑕疵</b>：<code>.gitignore</code> 里有一条孤零零的 <code>1.3.3</code>，是误写的临时条目，删掉。</li>
+    <li><b>结构性缺口</b>：<code>docs/</code> 有 14 个 md，其中 9 个被 gitignore（PRD / 架构演进 / 竞品调研）。
+      对外只暴露 4 个技术文档。<b>结果是一个 To B 产品没有"产品介绍 / 客户价值 / 场景演示脚本"这类面向买家的文档。</b></li>
+  </ul>
+  <p><b>建议补一份 <code>docs/产品总览.md</code></b>：不讲 LangGraph、不讲契约层，只讲——
+  三个客户痛点、四段闭环、七个场景各一段真实剧本、上线后能省什么。这份文档决定客户愿不愿意进技术评审。</p>
+
+  <h3>CI 少了一道闸</h3>
+  <p>当前 CI 只跑 <code>pytest</code>。项目里有 <code>ruff_cache</code> 却没配 ruff 检查。
+  加一条 <code>uv run ruff check src/</code>，成本 10 分钟，能挡住一大类低级退化。
+  <b>顺手把 <code>streamlit</code> 从主依赖删掉时，也需要 lint 帮你确认没有残留 import。</b></p>
+</section>
+
+<!-- ============ 8 路线 ============ -->
+<section>
+  <h2><span class="num">08</span>改造顺序</h2>
+  <p>排序原则：<b>先堵会静默出问题的坑，再做演示观感，最后做结构美化</b>。反过来做等于给漏水的船刷漆。</p>
+
+  <table>
+    <thead><tr><th style="width:8%">序</th><th style="width:24%">动作</th><th style="width:10%">风险</th><th style="width:14%">改动面</th><th>做完能解决什么</th></tr></thead>
+    <tbody>
+      <tr>
+        <td class="mono">1</td>
+        <td><b>WorkflowEngine 硬校验 + 解耦 WORKFLOW_DB</b></td>
+        <td><span class="tag ok">极低</span></td>
+        <td class="mono">约 10 行 + README</td>
+        <td>堵住"切 MySQL 静默丢工单"，这是唯一会造成数据事故的坑</td>
+      </tr>
+      <tr>
+        <td class="mono">2</td>
+        <td><b>健康检查结构化 + 前端三色状态</b></td>
+        <td><span class="tag ok">低</span></td>
+        <td class="mono">api.py 1 个函数 + app.js</td>
+        <td>演示时"降级"变可解释，而不是看起来像挂了</td>
+      </tr>
+      <tr>
+        <td class="mono">3</td>
+        <td><b>导航角色化过滤</b></td>
+        <td><span class="tag ok">低</span></td>
+        <td class="mono">NAV_ITEMS + renderNav</td>
+        <td>31 岗位菜单不再同构，观感提升最大的一项</td>
+      </tr>
+      <tr>
+        <td class="mono">4</td>
+        <td><b>数据范围目录 + 四个看板接 role</b></td>
+        <td><span class="tag half">中</span></td>
+        <td class="mono">新 YAML + dashboard.py</td>
+        <td>堵住"HR 看 SPC"的合规质疑，同时给第 3 步提供数据源</td>
+      </tr>
+      <tr>
+        <td class="mono">5</td>
+        <td><b>合并 compose + env_file + profiles</b></td>
+        <td><span class="tag half">中</span></td>
+        <td class="mono">两个 yaml → 一个</td>
+        <td>Docker 路径第一次真正能跑生产形态</td>
+      </tr>
+      <tr>
+        <td class="mono">6</td>
+        <td><b>api.py 拆 router + OpenAPI tags</b></td>
+        <td><span class="tag ok">低</span></td>
+        <td class="mono">纯搬迁</td>
+        <td>/docs 从"40 条平铺"变成产品能力地图</td>
+      </tr>
+      <tr>
+        <td class="mono">7</td>
+        <td><b>WorkflowRepository 抽象</b></td>
+        <td><span class="tag half">中</span></td>
+        <td class="mono">新契约 + 搬迁</td>
+        <td>架构叙事自洽（四契约），并为 MySQL 铺路</td>
+      </tr>
+      <tr>
+        <td class="mono">8</td>
+        <td><b>依赖瘦身 + 前端分包 + 三个 god module</b></td>
+        <td><span class="tag ok">低</span></td>
+        <td class="mono">纯搬迁</td>
+        <td>镜像体积、首屏时间、长期可维护性</td>
+      </tr>
+      <tr>
+        <td class="mono">9</td>
+        <td><b>真正写入 MySQL + 签名表唯一索引</b></td>
+        <td><span class="tag no">高</span></td>
+        <td class="mono">新仓储实现</td>
+        <td>多实例 / 高可用。客户不要求就别做</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="callout green">
+    <div class="ct">✓ 1-3 步加起来不超过两天，但能解掉全部"会翻车"的风险</div>
+    <p>如果现在就要拿去见客户，<b>做完 1、2、3，你就没有硬伤了</b>。4 是锦上添花（真被问起就说"数据范围目录在下一迭代"），
+    5 取决于客户要不要 Docker 交付，7-9 是技术尽调通过后的活。</p>
+  </div>
+</section>
+
+<!-- ============ 9 不要动 ============ -->
+<section>
+  <h2><span class="num">09</span>明确不要动的部分</h2>
+  <p>架构评审最容易犯的错是"顺手重构"。这几样东西别碰，它们是资产不是负债：</p>
+
+  <div class="card">
+    <ul style="margin:0">
+      <li><b>场景 YAML 的声明式范式</b>——7 个场景零代码新增，这是最有说服力的架构证据，改成 Python 编排就是自毁。</li>
+      <li><b>PermissionRegistry 的构造期自检</b>——"Agent 持 <code>*.approve</code> 直接启动失败"这种 fail-fast 设计，比任何文档都有说服力。</li>
+      <li><b>587 条离线确定性测试</b>——探针恒 False、不发外网。这是你敢做上面所有搬迁的底气。</li>
+      <li><b>Text2SQL 八道防线 + provenance</b>——"数字从哪张表哪条 SQL 来全程可追溯"是真正的护城河，别为了性能削它。</li>
+      <li><b>零构建前端</b>——HTML/CSS/JS 直接挂 FastAPI，没有 npm、没有打包。演示分发极其方便。P1-3 说的分包是<b>文件级拆分</b>，不要趁机引入 webpack/vite。</li>
+      <li><b>SPC 纯函数内核</b>——不经过 LLM 算 Cpk，缺数据强制人工确认。这个纪律比功能值钱。</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ============ 结语 ============ -->
+<section>
+  <h2><span class="num">10</span>一句话收尾</h2>
+  <div class="callout blue">
+    <p style="font-size:15.5px;margin:6px 0">
+      你的问题是<b>"宣称"跑在了"实现"前面一步</b>，不是设计能力不够。
+      把三处宣称对齐（MySQL 可切 / 全员可见 / 一条命令部署），
+      再把 11 个屏按用户任务流重排一次，这个产品的对外说服力会跨一个台阶。
+    </p>
+    <p style="margin:6px 0;font-size:14px;opacity:.85">
+      相反，如果再往上堆智能体和场景，而这三处不对齐，客户做技术尽调时一处失分就会连累全部——<b>包括那些真正做得好的部分</b>。
+    </p>
+  </div>
+</section>
+
+<footer>
+  <p>体检基线：2026-10-18 · 16,554 行 Python / 6,130 行前端 / 当时 587 条测试全绿（现 971）<br>
+  所有结论均带可复现证据（文件路径 + 行号），未依赖文档自述。文中行号为本次扫描时的实际行号。</p>
+</footer>
+
+</div>
+</body>
+</html>

@@ -5,7 +5,7 @@
 [![tests](https://github.com/Hulk-Zhao/mfg-agent-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/Hulk-Zhao/mfg-agent-platform/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![tests](https://img.shields.io/badge/tests-587%20offline-brightgreen)
+![tests](https://img.shields.io/badge/tests-971%20offline-brightgreen)
 
 <p float="left">
   <img src="docs/images/screen-dashboard.png" width="24.5%" />
@@ -65,6 +65,8 @@
 
 **治理层**。声明式权限目录（对标 Huly controlled-documents 范式）：8 个 HITL 槽位 × 3 个动词（propose / cosign / approve）= 24 条权限、32 个治理角色，全部声明在 YAML。`PermissionRegistry` 构造期自检：Agent 身份只允许 `*.propose`，持有 `*.approve` 直接启动失败。会签一人一签、并发幂等。
 
+**待办可见性同源于权限目录**。`/workflow/pending` 不再接受任何形式的口头身份：角色一律由 Bearer 令牌裁决，`role` 参数只能收窄不能扩宽；可见范围 = 我持有权限的 HITL 槽位（`mine` 可动作 / `domain` 域内只读）。**行政人事这类无治理职责的岗位拿到的是空队列**——不是"没资格看"，而是"本来就没有你的活"，两种状态在响应里可区分。详情接口同理，跨域返回 404 而非 403（403 会确认工单存在）。MCP / A2A 通道走同一套判据，工具参数里的 `roles` 无法覆盖真实身份。
+
 **Text2SQL 八道防线**。仅 SELECT、多语句拦截、sqlglot AST 提取表名、表级 ACL（fail-closed）、行数上限、按角色脱敏、provenance 全溯源、人工兜底。数字从哪张表哪条 SQL 来，全程可追溯。
 
 **SPC 统计内核**。Cpk / Pp / Ppk / 柏拉图由 `core/spc.py` 纯函数计算，不经过 LLM；无测量数据时输出 `data_gap=True` 并强制走人工确认——缺数据也要人拍板，而不是编一个结论。
@@ -76,19 +78,35 @@
 
 **数据与缓存**。SQLAlchemy 2.0 抽象：本地开发默认 SQLite（零依赖），生产通过 `DB_URL` 切 MySQL 8.0。向量检索双路召回 + 重排：BGE-M3（dense + sparse）加 BGE-Reranker-v2-M3，后端可换 Milvus standalone。Redis 承担会话上下文缓存、查询结果缓存与单 IP 限流，连接失败自动降级为无缓存。
 
-**认证**。演示门户 31 个岗位免密选择登录，写接口凭 HMAC 签名的岗位访问令牌（8 小时 TTL）；`AUTH_SECRET` 未配置时生成进程级随机密钥并告警。
+**认证与岗位分层**。演示门户 31 个岗位免密选择登录，写接口凭 HMAC 签名的岗位访问令牌（8 小时 TTL）；`AUTH_SECRET` 未配置时生成进程级随机密钥并告警。
+
+分两层，且**两层都在服务端**（菜单只挡入口，不挡 `curl`）：
+
+| 层 | 落点 | 行为 |
+|---|---|---|
+| 导航 | `app.js` 的 `NAV_ITEMS[].roles` | 总经理 12 屏全开，HR 只见 7 屏且**没有审批入口**，一线岗位不见经营看板；侧边栏按「运营视图 → 智能协同 → 流程治理 → 复盘沉淀」四段排列，深链接与手输 hash 同样回落 |
+| 待办 | `v2/services/workflow_scope.py` | 只看「我的活」+「我治理域内待观察」；无治理职责的岗位是**空队列**而非 403，跨域工单详情返回 404 |
+| 数据 | `v2/data/data_scope.yaml` | 四个 `/dashboard/*` + `/dashboard/drill` 按岗位裁决：无令牌 401、无权限 **403**（不返回 200 空数据）；订单看板客户身份按岗位脱敏，仓库/采购/物控看到「客户 A / 客户 B」并失去客户维度下钻键 |
+
+两份目录在加载期做构造校验（角色必须在 32 角色权限目录内、脱敏路径必须可解析、`api.py` 新增端点必须登记），写错一个字母启动即失败。导航的 `roles` 另有一条测试与 `permissions.yaml` **交叉校验**——「审批确认中心」的可见岗位必须等于「持有 HITL 槽位权限的岗位」，两边不会各自漂移。
+
+前端不做权限判断，只如实呈现服务端的裁决结果（含「已脱敏 N 项」角标）。**演示数据一律显式标注**：后端在线时简报不再拼演示预警（否则人事会看到一条不存在的订单风险），首页指标卡带「演示配置」角标——它显示 OTD 92.4%，而真实链路按 seed 数据算出的是 71.4%，两套口径必须说清楚。
+
+**健康检查**。`/api/v2/health` 是结构化依赖探针（业务库 / 治理库 / Redis / 向量库 / LLM），返回 `ok` / `degraded` 与逐项明细，前端顶栏据此显示绿 / 黄 / 红三色；探针**不触发编排器初始化**，可供 Docker `HEALTHCHECK` 高频调用。
 
 **前端**。原生 HTML/CSS/JS，零构建零 npm 依赖，挂载于 FastAPI，SSE 实时事件流驱动。
 
 ## 部署形态
 
-SQLite + 本地 ChromaDB 是**本地开发的零依赖默认值**，不是平台的边界——所有存储组件都走契约或环境变量，按部署形态切换：
+SQLite + 本地 ChromaDB 是**本地开发的零依赖默认值**，不是平台的边界——**业务读路径**（DataSource / VectorStore 契约）按部署形态切换，应用代码零改动；**治理写路径**（工单 / 会签 / SLA）当前仍固定 SQLite，见下表说明：
 
-| 形态 | 数据库 | 向量库 | 缓存 | 适用 |
-|---|---|---|---|---|
-| 本地开发 | SQLite（默认） | ChromaDB 本地持久化 | 无（自动降级） | 跑通全链路、跑测试 |
-| Docker 单容器 | 同上（`app_data` 卷） | 同上 | 同上 | 快速演示 |
-| 中间件栈 | MySQL 8.0 | Milvus standalone + BGE-M3/Reranker | Redis 7 | 生产部署 |
+| 形态 | 业务库 | 治理库（工单/会签/SLA） | 向量库 | 缓存 | 适用 |
+|---|---|---|---|---|---|
+| 本地开发 | SQLite（默认） | 同一 SQLite 文件 | ChromaDB 本地持久化 | 无（自动降级） | 跑通全链路、跑测试 |
+| Docker 单容器 | 同上（`app_data` 卷） | 同上 | 同上 | 同上 | 快速演示 |
+| 中间件栈 | MySQL 8.0 | **仍为 SQLite（`WORKFLOW_DB`，单文件单实例）** | Milvus standalone + BGE-M3/Reranker | Redis 7 | 单实例生产 |
+
+> **为什么治理库不跟着切 MySQL**：`WorkflowEngine` 直连 `sqlite3`，未接入 SQLAlchemy 抽象（1025 行，重写风险高于收益）。因此 `WORKFLOW_DB` **不继承 `DB_URL`**——`DB_URL` 指向 MySQL 时它自动回落本地 SQLite 文件；显式传入非 SQLite 地址会在启动时抛 `WorkflowBackendError`（fail-fast，不允许把 URL 当文件路径静默建库）。多实例部署前必须先抽 `WorkflowRepository` 契约，见「生产化清单」。
 
 中间件栈一条命令拉起（含健康检查、端口避让）：
 
@@ -96,7 +114,28 @@ SQLite + 本地 ChromaDB 是**本地开发的零依赖默认值**，不是平台
 docker compose -f docker-compose.infra.yml up -d   # MySQL :3307 / Milvus :19531 / Redis :6380
 ```
 
-再在 `.env` 里设 `DB_URL=mysql+pymysql://...`、`VECTOR_BACKEND=milvus`、`MILVUS_URI=...`、`REDIS_URL=...` 即完成切换，应用代码零改动。
+再在 `.env` 里设 `DB_URL=mysql+pymysql://...`、`VECTOR_BACKEND=milvus`、`MILVUS_URI=...`、`REDIS_URL=...` 即完成切换，应用代码零改动（**业务读路径**；治理库见上表说明，需另设 `WORKFLOW_DB` 指向 SQLite）。
+
+### 应用跑在容器里时：两套地址视角
+
+`.env` 是**宿主机视角**写的。应用一旦跑进容器，`localhost:19531` 指向的就是容器自己，连不到中间件。`docker-compose.yml` 已按此给了容器视角的默认值（与 `OLLAMA_BASE_URL` 同一套路），并实测容器内可访问宿主机映射的 19531 / 6380 / 3307：
+
+| 变量 | 作用 | 默认值 |
+|---|---|---|
+| `CONTAINER_MILVUS_URI` | 覆盖容器内的向量库地址 | `http://host.docker.internal:19531` |
+| `CONTAINER_REDIS_URL` | 覆盖容器内的缓存地址 | `redis://host.docker.internal:6380/0` |
+| `CONTAINER_DB_URL` | 覆盖容器内的业务库地址 | 空 = 回落默认 SQLite（单容器演示） |
+
+**生产形态建议用组合启动**——两个 compose 在同一目录（同一 project），网络自动合并，app 与中间件直接走服务名：
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.infra.yml up -d
+# 此时设：CONTAINER_MILVUS_URI=http://milvus:19530
+#      CONTAINER_REDIS_URL=redis://redis:6379/0
+#      CONTAINER_DB_URL=mysql+pymysql://root:demo123@mysql:3306/mfg_agent
+```
+
+组合启动时无需 `host.docker.internal`，也没有宿主机端口映射这一跳。
 
 ## 快速开始
 
@@ -151,13 +190,13 @@ uv run uvicorn mfg_agents.v2.demo.api:app --port 8004
 
 ## 测试
 
-587 条离线确定性测试（探针恒 False、不发外网请求），CI 在 Python 3.11 / 3.12 / 3.13 三个版本执行：
+971 条离线确定性测试（探针恒 False、不发外网请求），CI 在 Python 3.11 / 3.12 / 3.13 三个版本执行：
 
 ```bash
 uv run pytest tests/ -q
 ```
 
-覆盖：治理链（权限目录自检、会签幂等、越权拦截）、Text2SQL 防线（红队用例）、场景端到端、看板下钻、SPC 内核、MCP / A2A 协议、企微加解密、飞书适配。
+覆盖：治理链（权限目录自检、会签幂等、越权拦截）、Text2SQL 防线（红队用例）、场景端到端、看板下钻、SPC 内核、MCP / A2A 协议、企微加解密、飞书适配；以及**架构守卫**（治理库拒绝非 SQLite、方言判定不乱猜、健康探针不抛异常、导航按岗位收敛——见 `tests/v2/test_架构守卫.py`）、**数据范围守卫**（看板按岗位裁决 / 403 不降级成演示数据 / 脱敏与下钻键成对处理——见 `tests/v2/test_数据范围.py`）和**待办可见性守卫**（令牌为准 / 跨域 404 / 三条通道同一口径——见 `tests/v2/test_待办可见性.py`）。
 
 ## 项目结构
 
@@ -166,17 +205,18 @@ mfg-agent-platform/
 ├── src/mfg_agents/common/        # 基础设施：配置 / LLM 工厂(分级) / RAG / Text2SQL / 建库种子
 ├── src/mfg_agents/v2/            # 主链路
 │   ├── contracts/                #   接入契约：DataSource / VectorStore / IMGateway / 权限
+│   ├── data/                     #   声明式治理数据：permissions.yaml / queries.yaml / data_scope.yaml
 │   ├── core/                     #   编排内核：两级路由 / YAML→LangGraph 子图 / 共享上下文 / SPC 内核 / 缓存
 │   ├── agents/                   #   域 Agent（quality / supply_chain / engineering / hitl / office / agentic）
 │   ├── intent/                   #   意图分类器与路由策略
-│   ├── services/                 #   Text2SQL 服务链 / 工作流引擎 / 通知 / 看板 / 认证 / 飞书日历
+│   ├── services/                 #   Text2SQL 服务链 / 工作流引擎 / 通知 / 看板 / 认证 / 数据范围 / 待办可见性 / 飞书日历
 │   ├── scenarios/                #   7 个场景 YAML（新场景零代码新增）
 │   ├── mcp_tools/                #   ToolRegistry + 自实现 MCP server（stdio JSON-RPC）
 │   ├── a2a.py                    #   A2A 协议（Agent Card / message/send / tasks/get）
 │   └── demo/                     #   FastAPI 入口 / CLI / 演示门户（纯静态零构建）
 ├── data/                         # 演示数据种子 SQL + 知识库 JSONL
 ├── deploy/                       # Milvus standalone 内嵌 etcd 配置
-├── tests/                        # 587 条离线测试（治理 / 红队 / 端到端 / 协议）
+├── tests/                        # 971 条离线测试（治理 / 红队 / 端到端 / 协议 / 架构守卫 / 数据范围 / 待办可见性）
 ├── docs/                         # 架构 / 接口 / HITL 设计 / 部署指南
 └── scripts/                      # Windows 一键启动脚本（本地 / Docker / 公网隧道）
 ```
@@ -185,9 +225,12 @@ mfg-agent-platform/
 
 当前为单实例演示实现，治理层已落地（声明式权限目录 + 启动自检 + 一人一签幂等）。上线前待办：
 
-- **会签并发与幂等**：进程内 `RLock` 串行化需升级为数据库级——签名拆独立表 + 唯一索引 `(task_uid, role_key, actor, verb)` 幂等。
+- **治理库切换 MySQL**：`WorkflowEngine` 当前固定 SQLite（`WORKFLOW_DB`，单文件单实例）。已加启动期 fail-fast 拒绝非 SQLite 地址，避免把 MySQL URL 当文件路径静默建库；要落 MySQL 需先抽 `WorkflowRepository` 契约，再实现 SQLAlchemy 后端。
+- **会签并发与幂等**：进程内 `RLock` 串行化需升级为数据库级——签名拆独立表 + 唯一索引 `(task_uid, role_key, actor, verb)` 幂等。**与上一条应一并做**（多实例的前提是签名落库）。
+- **看板数据范围**：四个 `/dashboard/*` 端点已接声明式数据范围目录（`v2/data/data_scope.yaml`）：按岗位 allow + 字段级脱敏 + 下钻同源裁决，未登记看板 fail-closed。剩余缺口是**行级**（同一看板内按组织/产线过滤到本人辖区）——当前是"看到全厂该岗位该看的部分"，生产前需把 `data_scope.yaml` 从角色维度扩展到组织维度。
+- **待办数据范围**：`/workflow/pending` 与 `/workflow/{task_id}` 已按 HITL 槽位裁决（令牌为准、`role` 只能收窄、跨域 404、MCP 同口径）。剩余缺口与看板同类——**行级**：同一槽位内按组织归属过滤（华东/华南质量负责人各看各的）；另外**未纳管的历史工单**没有槽位可判，统一进"无主池"（对有治理职责的岗位只读可见），需要一次工单归属回填才能消掉。
 - **A2A 任务持久化**：`tasks/get` 结果当前进程内保留 1 小时，生产需持久化。
-- **公网访问认证**：隧道演示 = 链接即权限，对外正式提供前必须叠加认证并收敛 HITL 匿名写入。
+- **公网访问认证**：读接口（看板 / 下钻 / 待办 / 工单详情）均已 fail-closed 要求令牌；剩余的"链接即权限"在于**登录本身免密**（31 个岗位任选即入），对外正式提供前必须替换为 SSO。
 - **企微回调重放防护**：需补 timestamp 窗口验重 + nonce 缓存。
 - **超时代签**：字段位已预留（`on_behalf_of` / `overdue_signoff`），入口未开放。
 
