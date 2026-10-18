@@ -33,6 +33,7 @@ from mfg_agents.v2.services.workflow import (
 )
 
 UI_DIR = Path(__file__).resolve().parents[2] / "src" / "mfg_agents" / "v2" / "demo" / "ui"
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 # ============================================================
@@ -397,7 +398,70 @@ def test_nav_check_js_syntax():
 
 
 # ============================================================
-# 6. 真实配置不得是 MySQL（守住 .env 现状，避免误改产生事故）
+# 6. POST 必须有超时（2026-10-18「思考中」事故护栏）
+#
+# 事故链路：kbqa 提问走 _post（无超时）→ 后端冷启动/Milvus 悬挂
+# （MilvusClient 未设 timeout，pymilvus 默认无限等）→ fetch 永远等待 →
+# 前端「思考中…」静止转圈 6 分钟，S.sending 锁死后续全部提问。
+# 两层都必须有超时预算，缺一层事故就复现。
+# ============================================================
+
+def test_post_has_abort_timeout():
+    """_post 必须带 AbortController——_get 一直有，_post 曾是漏的。"""
+    src = (UI_DIR / "app.js").read_text(encoding="utf-8")
+    post = re.search(r"async _post\(path, body[^)]*\) \{(.*?)\n    \},", src, re.S)
+    assert post, "未找到 _post 实现（签名是否改为带 timeoutMs？）"
+    body = post.group(1)
+    assert "AbortController" in body, "_post 无超时保护：悬挂的 POST 会永远转圈"
+    assert "signal: ctrl.signal" in body, "_post 的 fetch 未挂 signal，超时形同虚设"
+
+
+def test_kbqa_query_has_explicit_timeout_budget():
+    """kbqaQuery 必须传显式超时：对齐后端最慢路径（rag=Milvus 15s+LLM 60s）。
+
+    按调用点断言而非函数体正则——函数体含对象字面量 ``{ ... },``，
+    非贪婪匹配会在 ``},`` 处提前截断（第一版断言就这么翻的车）。
+    """
+    src = (UI_DIR / "app.js").read_text(encoding="utf-8")
+    call = re.search(r'_post\(\s*"/api/v2/kbqa"[^;]*\)', src)
+    assert call, "未找到 kbqaQuery 的 _post 调用（路径改了？同步更新本断言）"
+    assert re.search(r",\s*\d{4,}\s*\)", call.group(0)), (
+        f"kbqaQuery 未传超时预算：默认 12s 会误杀后端 rag 路径"
+        f"（LLM timeout=60s）。实际调用：{call.group(0)!r}")
+
+
+def test_kbqa_pending_has_visible_timer_and_retry():
+    """pending 气泡必须显示等待秒数 + 失败可重试（用户能区分"在动"与"死了"）。"""
+    src = (UI_DIR / "kb-screen.js").read_text(encoding="utf-8")
+    assert "pendingSince" in src, "pending 消息无起始时间戳，无法显示等待秒数"
+    assert "思考中… ${secs}s" in src, "pending 气泡未渲染等待秒数"
+    assert 'err.name === "AbortError"' in src, "未区分超时错误：AbortError 会是英文原文"
+    assert "kbqa-retry" in src, "失败气泡无重试入口，用户只能手打一遍问题"
+
+
+def test_nav_check_kb_screen_js_syntax():
+    """kb-screen.js 语法检查（此前只有 app.js 有守护，改过的文件没人验）。"""
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node 不可用")
+    proc = subprocess.run([node, "--check", str(UI_DIR / "kb-screen.js")],
+                          capture_output=True, text=True)
+    assert proc.returncode == 0, f"kb-screen.js 语法错误：{proc.stderr}"
+
+
+def test_milvus_client_has_timeout():
+    """MilvusClient 必须设 timeout：pymilvus 默认 None=无限等，半死时挂住线程。"""
+    src = (REPO_ROOT / "src" / "mfg_agents" / "common" / "rag_tools.py").read_text(
+        encoding="utf-8")
+    m = re.search(r"MilvusClient\(uri=self\._uri([^)]*)\)", src)
+    assert m, "未找到 MilvusClient 构造（adapter 改名了？同步更新本断言）"
+    assert "timeout=" in m.group(1), (
+        "MilvusClient 未设 timeout：Milvus 半死时 search 永久挂起，"
+        "叠加前端无超时即复现 2026-10-18「思考中」事故")
+
+
+# ============================================================
+# 7. 真实配置不得是 MySQL（守住 .env 现状，避免误改产生事故）
 # ============================================================
 
 def test_current_workflow_db_is_sqlite():

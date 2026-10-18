@@ -2621,6 +2621,13 @@ a:hover { text-decoration: underline; }
 .kbqa-like { border: none; background: transparent; cursor: pointer; font-size: 11px; color: var(--k-sub); padding: 1px 4px; border-radius: 8px; }
 .kbqa-like:hover { color: var(--k-src-text); background: var(--k-src-bg); }
 .kbqa-like-done { color: var(--k-src-text); cursor: default; }
+/* 失败气泡（超时/离线/接口错误）的重试入口：明显但不如主按钮抢眼 */
+.kbqa-retry {
+  margin: 6px 0 0 12px; border: 1px solid var(--k-tag-border); background: var(--k-tag-bg);
+  color: var(--k-tag-text); cursor: pointer; font-size: 11px; padding: 3px 12px; border-radius: 14px;
+}
+.kbqa-retry:hover { border-color: var(--k-src-border); color: var(--k-src-text); background: var(--k-src-bg); }
+.kbqa-retry[data-done] { opacity: .5; cursor: default; }
 
 .kbqa-inputbar { flex: none; display: flex; gap: 10px; padding: 12px 20px 16px; background: var(--k-page); border-top: 1px solid var(--k-header-border); }
 .kbqa-input {

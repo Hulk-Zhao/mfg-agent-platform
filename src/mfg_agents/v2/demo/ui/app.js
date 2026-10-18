@@ -566,14 +566,31 @@
       return probeInFlight;
     },
 
-    async _post(path, body) {
+    /** POST 提交（登录 / 工单 / 问答等）。**必须带超时**：
+     *
+     *  2026-10-18 事故复盘——kbqa 提问走 _post（无超时）→ 后端冷启动（BGE-M3 预热
+     *  与请求争用）/ Milvus 无 timeout 悬挂时，无超时的 fetch 会永远等待：
+     *  前端「思考中…」转圈 6 分钟不消失，S.sending 锁死后续全部提问，
+     *  用户无法区分"慢"与"死"。_get 一直有 AbortController，_post 是漏的。
+     *
+     *  超时时长由调用方按链路预算传：kbqaQuery 传 75s（覆盖后端 rag 路径
+     *  LLM 60s 超时 + 余量），其余轻操作走默认 12s。 */
+    async _post(path, body, timeoutMs) {
       const headers = { "Content-Type": "application/json" };
       if (state.token) headers.Authorization = `Bearer ${state.token}`;
-      const resp = await fetch(`${this.base()}${path}`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(body || {}),
-      });
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), timeoutMs || DEFAULT_TIMEOUT_MS);
+      let resp;
+      try {
+        resp = await fetch(`${this.base()}${path}`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(body || {}),
+          signal: ctrl.signal,
+        });
+      } finally {
+        clearTimeout(timer);
+      }
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok || data.code !== 0) {
         if (resp.status === 401) handleAuthExpired(data);   // 令牌失效 → 回登录页
@@ -620,9 +637,13 @@
       return this._post("/api/v2/query", { query, request_id: requestId, user_ctx: userCtx });
     },
 
-    /** 企业咨询助手：Milvus 制度库检索 + LLM 生成带出处回答（独立通道） */
+    /** 企业咨询助手：Milvus 制度库检索 + LLM 生成带出处回答（独立通道）。
+     *
+     *  75s 超时预算对齐后端最慢路径：rag = search_kb(≤15s Milvus 超时) +
+     *  LLM(timeout=60s)；direct = LLM(timeout=30s)。前端多等 15s 余量，
+     *  保证"后端先超时降级、前端不提前杀请求"。 */
     kbqaQuery(query, topK) {
-      return this._post("/api/v2/kbqa", { query, top_k: topK || 3 });
+      return this._post("/api/v2/kbqa", { query, top_k: topK || 3 }, 75000);
     },
 
     /** 企业咨询助手元数据：支持类别面板 + 知识库块数 */

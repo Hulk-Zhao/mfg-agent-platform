@@ -96,7 +96,10 @@ class MilvusCollectionAdapter:
             return self._client
         from pymilvus import DataType, MilvusClient
 
-        self._client = MilvusClient(uri=self._uri)
+        # timeout 必须显式给：pymilvus 默认 None=无限等，Milvus 半死时
+        # search 会永久挂住线程（2026-10-18 事故链的一环——前端无超时 +
+        # 后端无超时 = 「思考中」转 6 分钟）。15s 覆盖检索/建索引全部 RPC。
+        self._client = MilvusClient(uri=self._uri, timeout=15)
         if not self._client.has_collection(self._name):
             schema = self._client.create_schema(
                 auto_id=False, enable_dynamic_field=False)

@@ -64,8 +64,12 @@
   /** channel → 角标文案（统一答案契约，ADR-001 §5 + DESIGN-2 direct）。 */
   const CH_LABEL = { faq: "制度直答", rag: "知识库检索", miss: "未找到", rag_unavailable: "知识库不可用", direct: "助手直答" };
 
-  /** bot 消息的契约角标行：命中通道 + 耗时 + 点赞反馈（ADR-001 晋升管线入口）。 */
-  function messageMetaHtml(m, idx) {
+  /** bot 消息的契约角标行：命中通道 + 耗时 + 点赞反馈（ADR-001 晋升管线入口）。
+   *
+   *  esc 必须由调用方传入——本函数在 render 作用域外定义，拿不到里面的
+   *  `const esc = UI.esc`（2026-10-18 浏览器实测抓到的存量 ReferenceError：
+   *  迭代一加角标时漏传参，任何带 channel 的回答都会让 paint 崩掉）。 */
+  function messageMetaHtml(m, esc, idx) {
     if (m.role !== "bot" || !m.channel) return "";
     const cls = m.channel === "rag_unavailable" ? "warn" : (m.channel === "faq" ? "faq" : (m.channel === "direct" ? "direct" : "rag"));
     const lat = (typeof m.latency === "number") ? `<span>${m.latency}ms</span>` : "";
@@ -87,9 +91,13 @@
         (t) => `<span class="kbqa-tag ${esc(t.cls || "")}">${esc(t.text)}</span>`).join("") + "</div>"
       : "";
     const pending = m.pending ? " kbqa-pending" : "";
+    // 失败气泡（超时/离线/接口错误）带重试入口：点一下原样重发，
+    // 不用用户手打一遍问题（事故复盘中"锁死后无法自救"的体验缺口）。
+    const retryBtn = m.retry
+      ? `<button class="kbqa-retry" data-q="${esc(m.retry)}">↻ 重试</button>` : "";
     return time
       + `<div class="kbqa-row kbqa-bot"><div class="kbqa-avatar kbqa-av-bot">${BOT_ICON}</div>`
-      + `<div class="kbqa-wrap"><div class="kbqa-bubble${pending}">${esc(m.content)}</div>${tags}${messageMetaHtml(m, idx)}</div></div>`;
+      + `<div class="kbqa-wrap"><div class="kbqa-bubble${pending}">${esc(m.content)}</div>${retryBtn}${tags}${messageMetaHtml(m, esc, idx)}</div></div>`;
   }
 
   function catsHtml(esc) {
@@ -148,8 +156,14 @@
     };
     paint();
 
-    // 点赞反馈（事件委托：paint 会整体重渲染，监听器挂在容器上）
+    // 点赞 + 重试（事件委托：paint 会整体重渲染，监听器挂在容器上）
     chat.addEventListener("click", (e) => {
+      const rbtn = e.target.closest(".kbqa-retry");
+      if (rbtn && !rbtn.dataset.done) {
+        rbtn.dataset.done = "1";
+        send(rbtn.dataset.q || "");
+        return;
+      }
       const btn = e.target.closest(".kbqa-like");
       if (!btn || btn.dataset.done) return;
       const m = S.messages[Number(btn.dataset.idx)];
@@ -166,16 +180,33 @@
         });
     });
 
-    const send = async () => {
-      const q = (input.value || "").trim();
-      if (!q || S.sending) return;
+    const send = async (arg) => {
+      // arg 只接受字符串（重试查询）；addEventListener("click", send) 会传入
+      // Event 对象，typeof 判断挡掉——2026-10-18 加了 retryQuery 参数后
+      // 漏修这行，点击发送直接 TypeError（pageerror 实测复现）。
+      const retryQuery = typeof arg === "string" ? arg : "";
+      const q = (retryQuery || input.value || "").trim();
+      if (!q) return;
+      if (S.sending) { UI.toast("上一条还在响应中，请稍候", "warn"); return; }
       input.value = "";
       S.sending = true;
       S.messages.push({ role: "user", content: q, tags: null, time: nowHM() });
-      S.messages.push({ role: "bot", content: "思考中…", tags: null, time: nowHM(), pending: true });
+      S.messages.push({ role: "bot", content: "思考中…", tags: null, time: nowHM(),
+                        pending: true, pendingSince: Date.now() });
       paint();
 
+      // 等待秒数可见：pending 期间每秒刷新气泡文案——用户能区分"在动"
+      // 与"死了"（2026-10-18 事故：无超时的 fetch 挂 6 分钟，气泡静止转圈）。
+      const ticker = setInterval(() => {
+        const p = S.messages.find((m) => m.pending);
+        if (!p) { clearInterval(ticker); return; }
+        const secs = Math.round((Date.now() - p.pendingSince) / 1000);
+        p.content = secs < 1 ? "思考中…" : `思考中… ${secs}s`;
+        paint();
+      }, 1000);
+
       const replaceLastBot = (msg) => {
+        clearInterval(ticker);
         const i = S.messages.map((m) => m.role).lastIndexOf("bot");
         if (i >= 0) S.messages[i] = msg;
       };
@@ -187,18 +218,24 @@
           channel: data.channel, latency: data.latency_ms, query: q,
         });
       } catch (err) {
+        // AbortError = _post 的 75s 超时预算打满（后端最慢路径 60s+15s 余量）
+        const timedOut = !!(err && err.name === "AbortError");
+        const msg = timedOut
+          ? "⚠️ 响应超时（等待 75s 后端无响应）。知识库服务可能正在冷启动或网络波动，"
+            + "请重试；持续超时时制度问题可先咨询对口部门。"
+          : `⚠️ ${(err && err.message) || err}`;
         replaceLastBot({
-          role: "bot", tags: null, time: nowHM(),
-          content: `⚠️ ${(err && err.message) || err}`,
+          role: "bot", content: msg, tags: null, time: nowHM(), retry: q, query: q,
         });
-        UI.toast(`问答失败：${(err && err.message) || err}`, "err");
+        UI.toast(timedOut ? "问答超时，请重试" : `问答失败：${(err && err.message) || err}`, "err");
       } finally {
+        clearInterval(ticker);
         S.sending = false;
         paint();
       }
     };
 
-    root.querySelector("#kbqa-send").addEventListener("click", send);
+    root.querySelector("#kbqa-send").addEventListener("click", () => send());
     input.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
     });
