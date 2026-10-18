@@ -73,7 +73,10 @@
     if (m.role !== "bot" || !m.channel) return "";
     const cls = m.channel === "rag_unavailable" ? "warn" : (m.channel === "faq" ? "faq" : (m.channel === "direct" ? "direct" : "rag"));
     const lat = (typeof m.latency === "number") ? `<span>${m.latency}ms</span>` : "";
-    const like = `<button class="kbqa-like" data-idx="${idx}" title="答得好？点赞后进入 FAQ 晋升待审队列">👍 有帮助</button>`;
+    // 文案说明点赞的后果（DESIGN-4 C 项）：点赞=把这条回答送进审核队列，
+    // 过审后进制度直答库、下次同问 0ms。只写"有帮助"用户不知道它的作用，
+    // 晋升管线就收不到素材。
+    const like = `<button class="kbqa-like" data-idx="${idx}" title="点赞后这条回答进入管理员审核队列，过审即收进制度直答库，下次同问 0ms 直答">👍 答得好？收进直答库</button>`;
     return `<div class="kbqa-meta"><span class="kbqa-badge kbqa-badge-${cls}">${esc(CH_LABEL[m.channel] || m.channel)}</span>${lat}${like}</div>`;
   }
 

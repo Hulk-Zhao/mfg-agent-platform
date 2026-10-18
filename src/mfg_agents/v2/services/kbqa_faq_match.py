@@ -27,6 +27,14 @@ from typing import Any, Optional
 _LATIN_RE = re.compile(r"[a-z0-9]+")
 _CJK_RE = re.compile(r"[\u4e00-\u9fff]+")
 
+# 流程/操作维度词（DESIGN-4）：查询与语料行的维度一致性判据。问"流程"时
+# 单事实卡（时效/标准/条件）不该和流程卡同分——否则双闸必判歧义。
+_PROCESS_RE = re.compile(r"流程|步骤|操作|办理")
+#: 维度不匹配时的衰减系数。0.8 使「流程卡 1.0 vs 单事实卡 0.8」拉开
+#: margin=0.2 > 默认 0.15，同时不至于把单事实卡压到阈值以下（0.8 > 0.70），
+#: 查询没有流程词时它仍是正确答案。
+_PROCESS_MISMATCH_PENALTY = 0.8
+
 
 def normalize(text: str) -> str:
     """归一化：去首尾空白、全角→半角、小写、内部空白折叠。
@@ -94,7 +102,14 @@ class MatchResult:
 
 
 def score_row(query_norm: str, tokens: list[str], row: dict[str, Any]) -> float:
-    """单行评分：同题直中 1.0；否则关键词×2 + 标题×3 + 内容×1，归一到 0..1。"""
+    """单行评分：同题直中 1.0；否则关键词×2 + 标题×3 + 内容×1，归一到 0..1。
+
+    **维度衰减**（DESIGN-4）：查询问「流程/步骤/操作/办理」时，标题与关键词
+    都不含流程维度词的行乘 0.8。不做这步时「报销流程是什么」在「费用报销
+    流程」与「费用报销时效」两行上都打满 1.0，margin=0 被双闸判歧义，
+    明明有完整的流程卡却命中不了（实测 6/6 流程类问法全 ambiguous_margin）。
+    只衰减不匹配的那一侧——匹配侧不加分，避免把分数推过封顶后区分度消失。
+    """
     if not tokens:
         return 0.0
     # 同题直中：归一化后与行标题全等 → 满分（FAQ 行的问法就是它的标题，
@@ -105,16 +120,30 @@ def score_row(query_norm: str, tokens: list[str], row: dict[str, Any]) -> float:
     content = str(row.get("answer") or "").lower()
     keywords = _split_keywords(row.get("keywords"))
 
+    # 主题匹配**剥离维度词**：「流程/步骤」是通用维度而非主题，若让它计分，
+    # 问「报销流程」时 16 张流程卡会靠共享的「流程」二字同时打满 1.0
+    # （实测 margin 全 0）。维度词只参与下面的维度衰减判定，不贡献主题分。
+    theme_kws = [kw for kw in keywords if not _PROCESS_RE.search(kw)]
+    theme_title_tokens = [t for t in _tokens(title) if not _PROCESS_RE.search(t)]
+
     # 关键词命中：长词更有信息量（2×len），单项封顶 6 防止长词表刷分
-    kw_raw = sum(2.0 * len(kw) for kw in keywords if kw in query_norm)
+    kw_raw = sum(2.0 * len(kw) for kw in theme_kws if kw in query_norm)
     kw_score = min(6.0, kw_raw)
     # 标题命中：标题二元组/拉丁词出现在查询里 → 强信号
-    title_score = 3.0 if any(t in query_norm for t in _tokens(title)) else 0.0
+    title_score = 3.0 if any(t in query_norm for t in theme_title_tokens) else 0.0
     # 内容弱命中：查询候选有多大比例落在正文（封顶 1，单独到不了阈值）
     content_hits = sum(1 for t in tokens if t in content)
     content_score = min(1.0, content_hits / len(tokens))
 
-    return min(1.0, (kw_score + title_score + content_score) / 6.0)
+    score = min(1.0, (kw_score + title_score + content_score) / 6.0)
+    # 对称衰减：维度必须一致——问流程时压单事实卡，问事实/标准时压流程卡。
+    # 双向生效才自洽：只压一侧的话「首件检验要求」会因新增的同主题流程卡
+    # 竞争而掉到 margin 以下（补语料的副作用）。0.8 保证被压侧仍高于阈值
+    # 0.70，同时把 margin 拉到 0.2 > 默认 0.15。
+    row_is_process = bool(_PROCESS_RE.search(title + " " + " ".join(keywords)))
+    if bool(_PROCESS_RE.search(query_norm)) != row_is_process:
+        score *= _PROCESS_MISMATCH_PENALTY
+    return score
 
 
 @dataclass

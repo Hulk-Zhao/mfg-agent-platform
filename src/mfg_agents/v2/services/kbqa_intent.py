@@ -10,6 +10,8 @@
 
 - 域内词命中 → 走 L2 RAG（保出处通道）
 - 其余（域外/兜底）→ 约束 LLM 直答（channel=direct，限长+防幻觉 prompt）
+- ``how_to`` 标记（DESIGN-4）独立上报：「怎么X」类操作咨询问法——
+  L1 即使有命中也应让位 RAG（速查卡答不全流程），由调用方裁决
 
 **词表维护纪律**（不对称代价决定"宁宽勿窄"）：
 
@@ -93,6 +95,12 @@ _DOMAIN_WORDS_BY_LEN: tuple[str, ...] = tuple(
 # 空串与纯标点（含全角 。？！、《》等 normalize 不转换的 CJK 标点）同样处理
 _CONTENT_RE = re.compile(r"[A-Za-z0-9\u4e00-\u9fff]")
 
+# 操作咨询类问法（DESIGN-4）：怎么/如何/怎样/咋办。这类问法要的是完整
+# 流程，L1 速查卡命中也答不全，让位 RAG（Milvus 有完整文档切片，miss 再
+# 回落 L1）。不收单字「咋」——「咋啦」类闲聊会误触，且误触后 domain=False
+# 仍走 direct 无害，收了反而让快照测试多一类边界。
+_HOW_TO_RE = re.compile(r"怎么|如何|怎样|咋办")
+
 
 @dataclass(frozen=True)
 class RouteDecision:
@@ -100,10 +108,17 @@ class RouteDecision:
 
     - ``domain``：True → 走 L2 RAG（保出处）；False → 约束 LLM 直答
     - ``matched``：触发域内判定的词（空串 = 退化输入保守放行，见 route）
+    - ``how_to``：True → 「怎么X」操作咨询类问法（DESIGN-4）。
+      这类问题要的是**完整流程**，而 L1 语料是 48 条 <60 字单事实速查卡，
+      命中一条就返回必然答不全（实测：「我要报销，怎么操作」只拿到
+      「30 天时限」）。how_to 命中时 L1 即使有命中也让位给 RAG
+      （Milvus 有完整文档切片，实测 9/9 主题全覆盖），RAG miss 再回落 L1。
+      域外 how_to（"怎么写诗"）仍走 direct——不白跑 Milvus。
     """
 
     domain: bool
     matched: str
+    how_to: bool = False
 
 
 def route(query: str) -> RouteDecision:
@@ -112,14 +127,20 @@ def route(query: str) -> RouteDecision:
     空/纯标点等退化输入**保守放行到 RAG**（与迭代一行为一致）——direct
     prompt 对空输入没有可约束的内容，而 L2 对它有既定的 miss 话术。
     注意 CJK 标点（。？！《》等）不在 normalize 的全角转换区，须单独判。
+
+    ``how_to``（DESIGN-4，Hulk 2026-10-18 拍板"所有怎么X走 RAG"）：
+    归一化后含 怎么/如何/怎样/怎样 → True。判据独立于 domain——
+    「怎么写诗」how_to=True 但 domain=False（走 direct，不白跑 Milvus）；
+    「年假怎么休」how_to=True 且 domain=True（走 RAG，要完整流程）。
     """
     norm = normalize(query)
     if not norm or not _CONTENT_RE.search(norm):
         return RouteDecision(domain=True, matched="")
+    how_to = bool(_HOW_TO_RE.search(norm))
     for word in _DOMAIN_WORDS_BY_LEN:
         if word in norm:
-            return RouteDecision(domain=True, matched=word)
+            return RouteDecision(domain=True, matched=word, how_to=how_to)
     m = _LATIN_RE.search(norm)
     if m:
-        return RouteDecision(domain=True, matched=m.group(1))
-    return RouteDecision(domain=False, matched="")
+        return RouteDecision(domain=True, matched=m.group(1), how_to=how_to)
+    return RouteDecision(domain=False, matched="", how_to=how_to)

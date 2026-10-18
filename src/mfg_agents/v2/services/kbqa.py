@@ -193,7 +193,14 @@ def answer(query: str, top_k: int = 3, session_id: str = "") -> dict[str, Any]:
         threshold=settings.KBQA_MATCH_THRESHOLD,
         margin=settings.KBQA_MARGIN_THRESHOLD)
     m = matcher.match(query)
-    if m.hit and m.row:
+
+    # ---- 意图路由（DESIGN-2 + DESIGN-4）：how_to 标记 + 域内/域外分流 ----
+    # how_to = 「怎么X」操作咨询：要完整流程，而 L1 是 <60 字单事实速查卡，
+    # 命中一条也答不全（Hulk 截图实证：「我要报销，怎么操作」只拿到时限）。
+    # 路由判定放在 L1 短路之前——L1 命中 + how_to 时让位 RAG。
+    decision = kbqa_intent.route(query)
+    if m.hit and m.row and not decision.how_to:
+        # ---- L1 直答（0ms 快车道）：单事实问法，速查卡内容即完整答案 ----
         row = m.row
         tags, sources = _l1_tags_and_sources(row, m.score)
         latency_ms = int((time.time() - started) * 1000)
@@ -210,23 +217,19 @@ def answer(query: str, top_k: int = 3, session_id: str = "") -> dict[str, Any]:
             faq_version=version,
         )
 
-    # ---- 意图路由（DESIGN-2）：域内词命中 → RAG；其余 → 约束直答 ----
-    # 零延迟词面分流（sub-ms）。"都不命中走直答"是 Hulk 确认的策略：
-    # thinking-disabled 裸 LLM ~1.0s < search_kb+LLM ~2.6s；直答 prompt 的
-    # 四约束保证不编造制度条款，兜底质量由 stats 的 direct 分布回看兜住。
-    decision = kbqa_intent.route(query)
-    use_direct = not decision.domain and settings.KBQA_DIRECT_ENABLED
-    if use_direct:
-        logger.info("[kbqa] 意图路由→直答: query=%r", query[:60])
-
     # ---- L2/direct：昂贵路径进缓存（键含版本命名空间）----
+    # use_direct 判定（DESIGN-2）：域外走约束直答。how_to 只影响"L1 是否
+    # 让位"，不改变域内/域外分流——「怎么写诗」how_to 但域外，仍 direct，
+    # 不白跑 Milvus；「年假怎么休」how_to 且域内，走 RAG 要完整流程。
+    use_direct = not decision.domain and settings.KBQA_DIRECT_ENABLED
     key = _cache_key(query, top_k, version)
     result = cache.get_or_compute(
         key, KBQA_CACHE_TTL_S,
         lambda: (_answer_direct(query, started=started, version=version)
                  if use_direct
                  else _answer_rag(query, top_k, started=started,
-                                  version=version)))
+                                  version=version,
+                                  l1_fallback=m.row if m.hit else None)))
     if result.get("channel") == CHANNEL_RAG_UNAVAILABLE or (
             result.get("channel") == CHANNEL_DIRECT and result.get("degraded")):
         # 不可用状态绝不缓存 30 分钟——中间件恢复后要被立刻放行
@@ -240,12 +243,16 @@ def answer(query: str, top_k: int = 3, session_id: str = "") -> dict[str, Any]:
     return result
 
 
-def _answer_rag(query: str, top_k: int, *, started: float,
-                version: str) -> dict[str, Any]:
+def _answer_rag(query: str, top_k: int, *, started: float, version: str,
+                l1_fallback: dict[str, Any] | None = None) -> dict[str, Any]:
     """（内部）L2 实际检索 + 生成，无缓存。
 
     返回统一契约；``search_kb`` 抛错（Milvus 挂等）时返回
     ``channel=rag_unavailable`` 的诚实降级契约——由 ``answer`` 负责不缓存它。
+
+    ``l1_fallback``（DESIGN-4）：how_to 问法让位 RAG 时传入 L1 命中的行，
+    用于 RAG 无命中时回落——半份答案也是答案，但契约里必须说清
+    "未找到完整流程"，不许让用户误以为这就是制度的全部。
     """
     try:
         hits = search_kb(query, n_results=top_k)
@@ -267,6 +274,24 @@ def _answer_rag(query: str, top_k: int, *, started: float,
     latency_ms = int((time.time() - started) * 1000)
 
     if not hits:
+        # 知识库无命中时，若 L1 原本有命中（how_to 让位场景），回落到 L1
+        # 速查卡并诚实标注"未找到完整流程"——半份答案也是答案，但必须让用户
+        # 知道这不是完整回答（DESIGN-4：RAG miss 回落 L1 兜底）。
+        if l1_fallback:
+            fb_tags, fb_sources = _l1_tags_and_sources(l1_fallback, 0.0)
+            ref = str(l1_fallback.get("ref") or "")
+            return _contract(
+                answer="未在知识库中找到该问题的完整流程说明。"
+                       "以下是最相关的制度条款（供参考）：\n"
+                       + str(l1_fallback.get("answer") or ""),
+                channel=CHANNEL_MISS,
+                tags=fb_tags, sources=fb_sources,
+                category={"name": str(l1_fallback.get("dept_cn") or "其他")},
+                degraded=not llm_available(),
+                latency_ms=latency_ms,
+                faq_version=version,
+                confidence=0.0,
+            )
         return _contract(
             answer="未在制度中找到相关内容，可以换个问法，"
                    "或咨询考勤、报销、IT、人事等业务问题。",

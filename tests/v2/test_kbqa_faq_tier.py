@@ -132,10 +132,15 @@ def test_m_single_two_char_keyword_cannot_pass_alone():
 
 
 def test_m_margin_ambiguity_falls_through():
-    """两条都能答（同分）时不许乱指 → 回落 L2。"""
+    """两条都能答（同分）时不许乱指 → 回落 L2。
+
+    语料两行**维度必须一致**（都不含流程维度词）：若一行是流程卡一行是
+    单事实卡，DESIGN-4 的维度衰减会主动拉开分差（那是刻意的区分，不是
+    歧义），本用例守护的"同分不许乱指"就测不到了。
+    """
     corpus = [
-        {"ref": "A", "question": "报销流程管理", "answer": "见OA。",
-         "keywords": "报销,流程", "src": "policy"},
+        {"ref": "A", "question": "报销管理规定", "answer": "见OA。",
+         "keywords": "报销,管理", "src": "policy"},
         {"ref": "B", "question": "报销时效规定", "answer": "30天。",
          "keywords": "报销,时效", "src": "policy"},
     ]
@@ -143,6 +148,23 @@ def test_m_margin_ambiguity_falls_through():
     r = m.match("报销")
     assert not r.hit
     assert r.reason == "ambiguous_margin"
+
+
+def test_m_process_dimension_breaks_tie():
+    """DESIGN-4：问"流程"时流程卡胜出，问事实时单事实卡胜出（双向衰减）。
+
+    不做维度判定时两行都打满 1.0，margin=0 被判歧义——明明有完整流程卡
+    却命中不了（实测：补语料后 6/6 流程类问法全 ambiguous_margin）。
+    """
+    corpus = [
+        {"ref": "A", "question": "报销流程", "answer": "填单→审批→付款。",
+         "keywords": "报销,流程", "src": "policy"},
+        {"ref": "B", "question": "报销时效", "answer": "30天。",
+         "keywords": "报销,时效", "src": "policy"},
+    ]
+    m = FAQMatcher(corpus=corpus)
+    assert m.match("报销流程是什么").row["ref"] == "A"
+    assert m.match("报销时效多久").row["ref"] == "B"
 
 
 def test_m_normalize_fullwidth_and_whitespace():
@@ -177,8 +199,10 @@ def test_c_contract_fields_complete():
 
 
 def test_c_l1_contract_shape(kbqa_db, no_redis_cache, monkeypatch):
+    # 查询刻意不含「怎么」：DESIGN-4 后 how_to 问法让位 RAG，要钉 L1 契约
+    # 形状必须用纯事实类问法（「年假规定」命中 QP-HR-003）。
     monkeypatch.setattr(kbqa_service, "search_kb", _boom)
-    out = kbqa_service.answer("年假怎么休", session_id="t")
+    out = kbqa_service.answer("年假规定", session_id="t")
     assert out["channel"] == "faq"
     assert out["answer"].startswith("入职满 1 年")
     assert out["sources"][0]["label"] == "QP-HR-003"
@@ -245,8 +269,13 @@ def test_s_log_query_never_raises(kbqa_db):
 # ---------------------------------------------------------------- A：API
 
 def test_a_l1_hit_no_llm(client, monkeypatch):
+    """L1 命中不调 LLM：search_kb 被打成 _boom，仍能给出制度直答。
+
+    查询刻意不含「怎么」——DESIGN-4 后 how_to 问法让位 RAG，用
+    「年假规定」这种事实类问法才测得到 L1 快车道。
+    """
     monkeypatch.setattr(kbqa_service, "search_kb", _boom)
-    resp = client.post("/api/v2/kbqa", json={"query": "年假怎么休"})
+    resp = client.post("/api/v2/kbqa", json={"query": "年假规定"})
     assert resp.status_code == 200
     data = resp.json()["data"]
     assert data["channel"] == "faq"
@@ -318,7 +347,8 @@ def test_a_publish_then_same_query_hits_l1(client, monkeypatch):
 def test_a_stats_endpoint(client, monkeypatch):
     monkeypatch.setattr(settings, "KBQA_ADMIN_TOKEN", "t0ken")
     head = {"X-FAQ-Admin-Token": "t0ken"}
-    client.post("/api/v2/kbqa", json={"query": "年假怎么休"})
+    # 不含「怎么」的事实类问法（how_to 会让位 RAG，计数就不是 faq 了）
+    client.post("/api/v2/kbqa", json={"query": "年假规定"})
     resp = client.get("/api/v2/kbqa/stats", headers=head)
     assert resp.status_code == 200
     data = resp.json()["data"]

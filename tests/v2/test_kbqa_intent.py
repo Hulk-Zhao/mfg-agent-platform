@@ -310,3 +310,68 @@ def test_a_stats_includes_direct_channel(client, monkeypatch):
     stats = kbqa_store.channel_stats(days=1)
     assert stats["distribution"].get("direct") == 1, \
         f"stats 未见 direct 计数: {stats}"
+
+
+# ------------------------------------------------- H：how_to 让位（DESIGN-4）
+#
+# 背景（Hulk 截图实证）：L1 语料是 48 条 <60 字单事实速查卡，"怎么报销"
+# 与"我要报销，怎么操作"都只拿到「30 天时限」。Hulk 拍板"所有怎么X走
+# RAG"——L1 命中也让位，由 Milvus 完整文档切片综合回答。
+
+_HOW_TO_QUERIES = ["怎么报销", "我要报销，怎么操作", "年假怎么休",
+                   "如何申请 VPN", "首件检验怎样做", "密码怎么修改"]
+
+#: 不含 how_to 的事实类问法（必须保持 L1 0ms 快车道，不许被误伤）
+_FACT_QUERIES = ["年假规定", "标准工时", "差旅住宿标准", "报销时效多久",
+                 "备用金借支上限"]
+
+
+def test_h_how_to_flag_detection():
+    """how_to 标记：怎么/如何/怎样/咋办 → True；事实类问法 → False。"""
+    for q in _HOW_TO_QUERIES:
+        assert kbqa_intent.route(q).how_to is True, f"漏判 how_to: {q}"
+    for q in _FACT_QUERIES:
+        assert kbqa_intent.route(q).how_to is False, f"误判 how_to: {q}"
+
+
+def test_h_how_to_domain_query_calls_search_kb(kbqa_db, no_redis_cache,
+                                               monkeypatch):
+    """域内 + how_to → 走 RAG（search_kb 被调用，不再 L1 短路）。"""
+    seen: list[str] = []
+    monkeypatch.setattr(kbqa_service, "search_kb",
+                        lambda q, n_results=3: seen.append(q) or [])
+    out = kbqa_service.answer("年假怎么休", session_id="h-1")
+    # L1 原本能命中 QP-HR-003，但 how_to 让位 → 必须真的去检索
+    assert seen == ["年假怎么休"], f"how_to 未让位 RAG: {seen}"
+    assert out["channel"] in ("miss", "rag")
+
+
+def test_h_how_to_rag_miss_falls_back_to_l1(kbqa_db, no_redis_cache,
+                                            monkeypatch):
+    """RAG 无命中 + L1 有命中 → 回落 L1 速查卡，但必须说清"未找到完整流程"。
+
+    半份答案也是答案，可不能让用户误以为这就是制度的全部（契约诚实性）。
+    """
+    monkeypatch.setattr(kbqa_service, "search_kb", lambda q, n_results=3: [])
+    out = kbqa_service.answer("年假怎么休", session_id="h-2")
+    assert out["channel"] == "miss"
+    assert "完整流程" in out["answer"] and "供参考" in out["answer"], \
+        f"回落未诚实说明: {out['answer']}"
+    assert "入职满 1 年" in out["answer"], "回落未带上 L1 内容"
+    assert out["sources"], "回落应保留 L1 出处"
+
+
+def test_h_out_of_domain_how_to_still_direct(monkeypatch, kbqa_db,
+                                             no_redis_cache, fake_llm):
+    """域外 + how_to → 仍走 direct，不白跑 Milvus（"怎么写诗"）。"""
+    monkeypatch.setattr(kbqa_service, "search_kb", _boom)
+    out = kbqa_service.answer("帮我写一首诗", session_id="h-3")
+    assert out["channel"] == "direct", f"域外 how_to 不应走 RAG: {out}"
+    assert fake_llm.calls == 1
+
+
+def test_h_fact_query_still_l1_zero_hop(kbqa_db, no_redis_cache, monkeypatch):
+    """事实类问法（不含怎么）保持 L1 快车道——how_to 不许误伤。"""
+    monkeypatch.setattr(kbqa_service, "search_kb", _boom)
+    out = kbqa_service.answer("年假规定", session_id="h-4")
+    assert out["channel"] == "faq", f"事实类问法被误伤成非 L1: {out}"
