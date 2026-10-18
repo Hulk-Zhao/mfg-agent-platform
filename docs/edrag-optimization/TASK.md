@@ -36,7 +36,7 @@
 - [x] **T8 测试套件**（依赖 T4-T7，可并行）
   - `tests/v2/test_kbqa_faq_tier.py`：匹配/契约/缓存版本/端点/鉴权/stats，遵循 `test_kbqa_seed.py` 离线风格与 docstring 表格约定
   - 验收：新增 ≥20 条全绿；`pytest tests/v2/ -q` 全量不回归
-- [ ] **T9 验证与交付**（依赖 T8，进行中）
+- [x] **T9 验证与交付**（依赖 T8）
   - 全量回归 + ruff（如可用）；自审对照 DESIGN §7 八条
   - 端到端（SQLite 演示路径）：起服务 → L1 直答 → publish → 同问走 L1，留证据
   - 交付：变更摘要 + Conventional Commit（feat 分支）+ 遗留项清单
