@@ -26,10 +26,16 @@ models/
 # ---- Logs ----
 logs/*.log
 logs/*.txt
+logs/*.xml
 
 # ---- Scratch / QA temp dirs ----
 .tmp-qa/
 .tmp-test/
+# pytest --basetemp / e2e 临时库残留（名字不可预测，通配收编；约定见
+# tests/v2/conftest.py 的 concurrent-pytest-guard docstring：跑测试带
+# --basetemp，别在仓库根目录留 _pt* / tmp_* 残渣）
+/_pt*/
+/tmp_*/
 
 # ---- Tunnel binaries + runtime logs (bin\*.exe are vendored binaries) ----
 bin/cloudflared.exe
@@ -81,16 +87,11 @@ docs/我的看板-竞品调研与下钻设计.md
 docs/订单履约看板-竞品调研与L2L3设计.md
 
 # ---- Local debug scratch (QA runs, temp probes, logs) ----
+# 一律锚定仓库根目录（/ 前缀）：src/ 下的 _helper.py 之类是正常文件，不能误伤
 _qa/
 tmp_pt/
 tmp_sm/
-_acc.log
-_pt_full.log
-_rl.log
-_se.log
-_se1.log
-_se2.log
-_tc.log
-_dbg_grant.py
-_dbg_grant2.py
-_smoke.py
+/_*.log
+/_*.txt
+/_dbg_*.py
+/_smoke*.py
