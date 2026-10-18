@@ -4,7 +4,7 @@
 - OfficeBackend 契约（demo 实现）：会议室预订/冲突拒绝/取消、订餐计价/审批标记、
   本人归属与越权拒绝、参数校验；
 - 路由：办公关键词命中 → strategy=office（LLM 不可用时同样命中，离线可演示）；
-- 统一工具层：10 个 office 工具注册、tier/readonly 标记、可被 registry.call；
+- 统一工具层：14 个 office 工具注册、tier/readonly 标记、可被 registry.call；
 - Agent 循环：脚本化 LLM 驱动 ReAct，工具调用落地、冲突反馈后换房重试、
   高影响资源触发 request_approval（HITL 只发起）；
 - 集成：orchestrator 办公通道离线诚实降级（不崩）。
@@ -150,14 +150,16 @@ def test_office_tools_registered(orch):
     from mfg_agents.v2.mcp_tools.tools import build_domain_toolsets
     toolsets = build_domain_toolsets(orch)
     office = toolsets["office"]
-    assert len(office) == 10 and len(office) <= 15
+    assert len(office) == 14 and len(office) <= 15
     by_name = {t.name: t for t in office}
     # 只读工具：tier=0 / readonly=True；写工具：tier=2 / readonly=False
     for name in ("office.list_rooms", "office.find_available_rooms",
-                 "office.my_bookings", "office.menu"):
+                 "office.my_bookings", "office.menu", "office.my_requests"):
         assert by_name[name].readonly is True and by_name[name].tier == 0
     for name in ("office.book_room", "office.cancel_booking",
-                 "office.place_order", "office.cancel_order"):
+                 "office.place_order", "office.cancel_order",
+                 "office.submit_expense", "office.apply_leave",
+                 "office.submit_attendance_fix"):
         assert by_name[name].readonly is False and by_name[name].tier == 2
 
 

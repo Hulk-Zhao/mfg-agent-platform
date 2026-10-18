@@ -48,6 +48,8 @@ curl -s -X POST http://127.0.0.1:8123/api/v2/cases/search \
 | `CASE_RERANK` | `deterministic` | 重排适配器选择（`bge` 为生产预留位） |
 | `CASE_DEFAULT_TENANT` | `T001` | 演示态默认租户 |
 | `CASE_K_DEFAULT` / `CASE_K_MAX` | `5` / `20` | 返回条数默认值 / 上限（超限**钳制**，不报错） |
+| `CASE_ACCESS_GRANT_TTL_DAYS` | `30` | 跨部门访问授权有效期（天；到期惰性回收） |
+| `CASE_ACCESS_AUTO_APPROVE_DEMO` | `true` | **演示专用**：申请提交后弹窗模拟职能部门审批通过。只在 `CASE_DEMO_MODE=true` 时生效；生产置 `false`，由真实审批流实现 `AccessApprover` 接口回调（见 §5） |
 
 ---
 
@@ -145,6 +147,7 @@ tests/v2/
 | 问答 | `Answerer`（Protocol） | `TemplateAnswerer`（模板拼装） | 注入 LLM，**必须走 `_assert_knowledge_layer` 与引用校验** |
 | 脱敏补充 | `RedactionService(extra_detectors=...)` | 规则（literal+regex） | 注入 NER / 词典服务 |
 | 工单回写 | `POST /api/v2/cases/{id}/cite` | 返回引用三元组 + 来源单据 + 审计 | 换成真实工单系统客户端；**保留** `chunk_type`/`content_version` 入参与 `409 CASE_CITATION_STALE` 语义 |
+| 访问申请审批人 | `AccessApprover`（ABC，`services/case_auto_approve.py`） | `DemoAgentApprover`（演示：归属职能部门管理岗代批） | 实现同一 ABC（OA / IM 审批流：负责人本人点同意后回调 `decide()`），在 `CaseRuntime.build` 装配处替换；**授权副作用仍只有 `decide()` 一条路** |
 | 审计 | `CaseAuditLog` | SQLite 哈希链 | 换成 WORM 存储；`verify_chain()` 语义不变 |
 
 ---
@@ -162,8 +165,11 @@ tests/v2/
 | `source_ticket_type` / `source_ticket_ref` | 检索/问答命中项 | **不返回 `source_ticket_id`**（R1）；`ref = "st_" + sha256(id)[:10]`，稳定可对账、不可反推 |
 | `source_ticket_id` + `X-Case-Trace: full` | `GET /cases/{id}` | 只有通过 `case.read` 且 `cls_rank` 达标的调用方才能拿到真号，响应头显式标注 |
 | `answered` / `reason` | `POST /cases/ask` | 拒答时 `answered=false` 且 `reason` 给出分数与阈值，前端原样照抄 |
+| `demo_approval: {available, approver_role?, reason?}` | `POST /cases/{id}/request-access` | 演示自动审批的**预检**（dry-run，不写库）：`available=true` 时前端弹窗走模拟审批；`false` 时按原行为只提示"已提交，等待审批"，`reason` 说明为什么不能自动批（开关关闭 / 该部门无审批岗） |
+| `case.access.approved.demo` | `GET /cases/audit/verify` | 演示代批的审计动作名（人工审批恒为 `case.access.approved`，无此后缀）。哈希链完整，事后可分辨"这条同意是谁点的" |
 | `citation` / `chunk_type` / `source_ticket` | `POST /cases/{id}/cite` | 引用三元组 + 来源单据（`ticket_ref` 恒有，`ticket_id` 需 `case.read`） |
-| `demo_warnings: string[]` | `GET /cases/meta` | 演示态风险（`AUTH_SECRET` 未配置 / `CASE_DEMO_MODE=true`），前端黄字常显 |
+| `demo_warnings: string[]` | `GET /cases/meta` | 演示态风险（`AUTH_SECRET` 未配置 / `CASE_DEMO_MODE=true`），前端黄字常显（可收起） |
+| `stats: {visible_total, restricted_total, by_category/by_subcategory/by_rank/by_status, my_requests, pending_for_me}` | `GET /cases/stats` | 顶部统计卡片的口径：**与检索同源**（同一套 filter 编译 + 二次授权 + 披露判定），分布求和 == 可见总数；只给数字不给任何案例明细（不能当导出接口用）；申请计数复用 `/cases/access/requests` 同一查询 |
 
 获取顺序也有约束：**`/cases/meta` 需要令牌**，所以登录前的岗位下拉用前端内置的 32 岗位兜底表
 （`FALLBACK_ROLES`，纯展示），建立会话后再用 `meta.rbac.roles`（含每个岗位的动作集合）整体替换。
@@ -276,6 +282,13 @@ tests/v2/
     `/cases/session` 返回 **503 `CASE_DEMO_DISABLED`**（原为 403 —— 403 会让人以为是权限配置问题，
     而事实是"这条通道在部署形态上就不该存在"）。
 
+21. **演示专用自动审批（`AccessApprover` 预留接口）**
+    架构文档只定义了"申请 → Agent 路由 → 职能部门审批"，未定义演示态的自动审批。新增
+    `services/case_auto_approve.py`：`AccessApprover`（ABC）是**预留接口**，演示实现
+    `DemoAgentApprover` 以归属职能部门管理岗的代批身份走同一条 `decide()`；授权副作用、
+    职能部门判定口径与人工审批完全同源，审计以 `.demo` 后缀显式区分。详见 §8.4。
+    架构文档未改（遵守"不改已有 docs"约束）。
+
 ---
 
 ## 7. 已知限制
@@ -299,7 +312,11 @@ tests/v2/
 零构建（原生 JS + 单一 CSS 命名空间 `case-`），不引入任何打包工具。
 
 **操作路径**：选岗位 → 点「建立案例会话」→ 检索 → 点卡片看全文 → 引用到工单；
-另有「问答」「岗位对比」「审计」三个页签。
+另有「问答」「岗位对比」「审计」三个页签。跨部门案例在受限清单里点「申请访问」，
+**演示模式**下提交后会弹出「智能 Agent · 跨部门访问审批」执行窗（分步展示受理 →
+推断职能部门 → 推送审批通道 → 职能部门审批通过 → 授权写入），约 2 秒演完；
+正式环境（`CASE_ACCESS_AUTO_APPROVE_DEMO=false`）不弹窗，由职能部门负责人在
+「访问申请待办」页裁决。
 
 屏幕信息架构（顺序即优先级）：**身份条**（岗位/部门/工厂/用工类型/可见密级 → 建立会话 →
 服务端签发的维度令牌 `role:… dept:… plant:… etype:…` 与 `tv/pv`，等宽小字常显）→
@@ -313,7 +330,13 @@ tests/v2/
 
 1. **没有、也不接受自定义过滤条件**：请求模型里没有 `filter` 字段，页面上明写"传了会被忽略"；
    页面只**展示**服务端给的 `filter_hash` 与 `filter_explain`（人类可读描述，不含原始表达式）；
-2. **`hidden_count` 与 `notice` 必须显著**：产品差异化证据，不折叠、不省略（黄色 notice 条常驻顶部）；
+2. **"有但看不到"要说清楚，并给出申请入口**：提示条常驻顶部，展示
+   「N 条案例属于其他职能域，可见但不可读，可发起访问申请」+（候选不足时）
+   「另有 M 条案例因权限范围不可见」。`restricted` 清单上限 `RESTRICTED_MAX=20`，
+   只含标题级字段（`case_id/title/category/requestable`）；
+   **涉密 / 未结案 / 已撤权案例连 `case_id` 都不进清单**（见架构文档 §7.6.1）。
+   演示话术是"这份清单里 N 条属于其他职能域，你可以直接发起访问申请，Agent 会路由到归属部门"——
+   **不要讲"隐藏了 N 条"**：那个说法口径不准（chunk / 案例两套），也讲不出下一步动作；
 3. **候选不足如实展示**：`notice` 原样显示（"不放宽过滤补齐"），绝不补齐、不"优化"；
 4. **问答拒答照抄后端**：`answered=false` 时原样展示 `reason`，前端**不编造兜底答案**；
 5. **后端离线不编数据 / 身份只来自服务端**：离线时整屏只显示"需要后端"，绝不回落 `demo-data.js`；
@@ -325,9 +348,125 @@ tests/v2/
 `qa` 20 张卡 / 10 个案例 / 不可见 12，`equipment` 18 张卡 / 9 个案例 / 不可见 16，差集为
 `qa` 独有 `RC-QA-2026-0009`、`QC-PD-2026-0055`，`equipment` 独有 `RC-EQP-2026-0005`。
 
-> 截图与交互回归脚本：`_shots/shoot_cases.js`（Playwright，装在
-> `~/.workbuddy/binaries/node/workspace`，非全局）。它不在测试集里，属手动验收工具；
-> 产出 `01_identity_gate.png` / `02_qa_search.png` / `03_equipment_search.png`。
+**两套证据，各证一件事**（命名已错开，不会混淆）：
+
+| 证据 | 位置 | 证明什么 | 怎么再验一次 |
+| --- | --- | --- | --- |
+| **功能截图** | `_qa/shots/10_cascade.png` / `11_layout.png` / `12_request.png` / `13_todo.png` | 级联选择器、问答在上检索在下、访问申请弹窗、审批待办页 | `node _qa/shots/shoot_incremental.js`（需先起 8123 服务） |
+| **自动审批截图** | `_qa/shots/14_auto_running.png` / `15_auto_approved.png` / `16_auto_replay.png` / `17_auto_access_tab.png` | 演示弹窗执行中 / 职能部门已审批通过 / 「再演一次」/ 审批通过后的申请列表 | `node _qa/shots/shoot_auto_approve.js`（需先起 8124 服务 + `CASE_DB` 指向临时库） |
+| **验收复现** | `_qa/shots/90_qa_identity_gate.png` / `91_qa_search.png` / `92_qa_equipment_search.png` | 登录门 → 建会话 → 检索 → 切身份，并把 `console_errors`、`hidden_count`、`notice` **原文**打出来 | `bash _qa/item9_ui.sh` |
+
+**可复现 > 可看**：评审要"再验一次"时跑的是 `item9_ui.sh`，不是看图。
+
+---
+
+### 8.1 拒答阈值必须随语料 / 后端重新标定（C2）
+
+`case_policy.yaml` 里四个配置共同决定"这次问答答不答"：
+
+| 配置 | 语义 | 当前值（99 例语料标定） |
+| --- | --- | --- |
+| `low_confidence_threshold` | 老阈值（语义不动，向后兼容） | 0.18 |
+| `answer_min_score` | 绝对下限：top1 低于它 → 拒答 | 0.20 |
+| `answer_margin` | 相对余量：top1 − 中位分 低于它 → 拒答 | 0.05 |
+| `answer_score_without_terms` | 问题里**零受控词条**时要求更高分数 | 0.27 |
+
+**实测分布（99 例语料，demo 级 blake2b 1–2gram 后端）**
+
+| 组 | n | min | p25 | median | p75 | max | p95 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 无关问句 top1 | 12 | 0.064 | 0.108 | 0.134 | 0.144 | **0.192** | 0.173 |
+| 相关问句 top1 | 12 | **0.155** | 0.274 | 0.285 | 0.339 | 0.515 | 0.380 |
+| 无关问句 margin | 12 | 0.014 | 0.036 | 0.045 | 0.051 | 0.094 | 0.087 |
+| 相关问句 margin | 12 | 0.045 | 0.072 | 0.115 | 0.145 | 0.311 | 0.176 |
+
+**两组分布是重叠的**（"食堂几点开饭" top1 0.192 比 "螺钉滑牙" 0.155 还高），
+所以"绝对下限 + 相对余量"两个条件**不足以**把两组分开——真正把两组分开的是
+**术语闸门**：12 条无关问句的受控词条命中数**全为 0**，而相关问句里多数 ≥1。
+术语闸门只对"零术语"问句抬高门槛（≥ 0.27，与无关组最高分 0.192 之间留了 **0.078** 间隔），
+命中术语的真问题不受影响。
+
+标定入口：
+
+```bash
+.venv/Scripts/python.exe tools/calibrate_answer_thresholds.py          # 打印两组分布与建议值
+.venv/Scripts/python.exe tools/calibrate_answer_thresholds.py --json   # 机器可读
+```
+
+⚠️ **接真实 embedding（BGE-M3 等）后这套阈值全部作废**：demo 后端是字符重合度，
+分数分布与语义相关性无关。必须重跑标定脚本，并同步
+`tests/v2/test_case_contracts.py` 的两组守护用例
+（当前钉住"9 组无关全部拒答 + 8 组相关全部作答且引用合法"）。
+
+**已知代价（如实记录）**：拒答优先意味着 2 条真实问题
+（"自动扭力枪滑牙" 0.155、"螺钉滑牙的判定标准" 0.181）低于绝对下限而被拒答。
+这是"拒答优先于误答"的取舍而非缺陷；要救回它们需要更强的检索后端，不是调阈值。
+
+---
+
+### 8.3 质量评估 vs 单元测试的边界（别再为这件事吵一轮）
+
+| | 守什么 | 在哪 | 换 embedding 后 |
+| --- | --- | --- | --- |
+| **单元测试** | **不变量**："闸门只拦含糊，不拦召回不到" | `tests/v2/test_case_answer_recall.py`<br>（被拒样本的目标案例必须不是 top-1） | **不敏感**，不用改 |
+| **POC 评测** | **质量指标**：K1 / K3 / K10 / MRR / 可回答率 | `tools/poc_case_eval.py`（**评测脚本，不是 PR 门禁**，默认 exit 0） | **漂**，必须重跑并重选样本 |
+
+```bash
+python tools/poc_case_eval.py                     # 内置 12 条样本
+python tools/poc_case_eval.py --labels my.json    # 导入人工标注集
+python tools/poc_case_eval.py --strict            # 低于阈值退 1（夜间任务）
+```
+**当前实测**：K1 = K3 = K10 = MRR = 1.00，可回答率 **0.83（10/12）**。
+
+换 embedding 后要做两件事：
+1. 跑一次 `poc_case_eval.py` 看趋势；
+2. 从"top-1 稳定命中"的案例里**重选** `SAMPLE_CASES` 写回单元测试常量——
+   **不要从语料随机抽**（语料一换就变成随机红）。
+
+拒答闸门阈值（`answer_min_score` / `answer_margin` / `answer_score_without_terms`）的
+标定入口是另一个脚本：`python tools/calibrate_answer_thresholds.py`。
+
+---
+
+### 8.2 CI / 看板口径：以退出码为准，别按 `failed` 关键字过滤
+
+案例域的**残留守卫**（`test_case_search_e2e.py::shared_runtime` 的 teardown）断言失败时，
+pytest 报的是 **ERROR 而不是 FAILED**（故障注入实测：`30 passed, 1 error`）。
+这是 pytest 对夹具 teardown 断言的既定行为，不是配置问题。
+
+后果：**任何按 `failed` 关键字过滤输出的看板 / 汇总脚本，都会漏掉残留守卫抓到的回归。**
+
+**本仓库 CI 无需改动**：`.github/workflows/ci.yml` 就是 `uv run pytest tests/ -q`，
+GitHub Actions 对非零退出码直接判失败——所以下面第 1 条在 CI 侧本来就成立。
+需要注意的是**外部看板 / 汇总脚本**（它们常常解析输出文本，而不是读退出码）。
+
+规矩：
+- **CI 判定一律用退出码**（`pytest ... ; echo $?`），不要 grep 输出里的 `failed`；
+- 汇总脚本若必须解析输出，`failed` 与 `error` 要**同时**计入；
+- 人工跑时看到 `N passed, M error` 时，**M 不是"可以忽略的噪声"**，先看是不是残留守卫。
+
+---
+
+### 8.4 演示专用：自动审批（预留接口，仅演示）
+
+跨部门访问申请的人工审批链路之外，有一条**演示专用**的自动审批：提交申请后前端弹窗
+分步展示「智能 Agent 已受理 → 解析申请理由与案例归属 → 推断职能部门 → 推送审批通道 →
+职能部门审批通过 → 授权写入」，约 2 秒演完，让评审现场一眼看完整链路。
+
+设计要点（这段是给评审的，不是给用户的）：
+
+| 问题 | 答案 |
+| --- | --- |
+| Agent 是不是自己批准了？ | **不是。** `case.access.approve` 依旧不在任何 Agent 身份角色的动作集里（`AGENT_FORBIDDEN_ACTIONS` 构造期自检）。弹窗里的"审批通过"由**演示代批身份**完成 |
+| 演示代批身份是哪来的？ | 服务端按案例归属职能部门，从 `case_roles.yaml` 里持有 `case.access.approve` 的角色中解析（`DemoAgentApprover.resolve`）。部门口径与人工审批的 `_assert_functional_dept` **同源**（共用 `case_departments()`） |
+| 和人工审批的区别？ | 只有"谁点的同意"：授权副作用走的仍是同一条 `decide()`——`case_acl` 写入、有效期、索引重建、审计一条不少。审计 action 打 `.demo` 后缀（`case.access.approved.demo`），哈希链完整，事后可分辨 |
+| 职责分离还管吗？ | 管。解析出的审批人恰好是申请人自己 → 跳过；无人可选 → fail-closed 409，不降级找"差不多的人"批 |
+| 什么情况下不弹窗？ | ① `CASE_DEMO_MODE=false`（生产形态）；② `CASE_ACCESS_AUTO_APPROVE_DEMO=false`；③ 该案例归属部门没有审批岗（如 finance）。三种情况 `request-access` 响应的 `demo_approval.available=false`，前端按原行为只提示"已提交，等待审批" |
+| 生产怎么接？ | 实现 `AccessApprover`（ABC，`services/case_auto_approve.py`）：职能部门负责人在真实审批流（OA / IM 审批）里点同意，系统回调 `decide()`。在 `CaseRuntime.build` 装配处替换 `DemoAgentApprover`，服务端零改动。**授权副作用必须仍只有 `decide()` 一条路** |
+
+测试：`tests/v2/test_case_auto_approve.py`（13 条）钉死上述不变量——授权生效、
+`.demo` 审计标记、人工审批路径一个字节不变、开关关闭 403、非申请人 403、
+重复触发 409、无审批岗 fail-closed、职责分离跳过自己、个人特批不外溢。
 
 ---
 
@@ -359,6 +498,7 @@ grep -rn "filter=None\|filter={}" src/mfg_agents/v2/
 | `test_case_redteam.py` | **HTTP 层红队 120 条**：无令牌/空 Bearer/篡改签名 → 401；tv 缺失或 tv=1 → `CASE_TOKEN_SCHEMA_LEGACY`；pv 撤权重放 → `CASE_PRINCIPAL_REVOKED`；六类越权（跨部门/跨工厂/跨密级/客户维/未结案 review/已撤权 withdrawn）各 ≥3 条且两路验证（详情 404 + k=50 检索里没有）；`export`/`share` → 403；非法动作 4xx 非 500；存在性不泄漏；k=50 不放宽；query 注入不改 `filter_hash`；20 次检索后审计链仍 valid 且无明文；响应不含证据层字段/原始客户名/订单号 |
 | `test_case_http_e2e.py` | **HTTP 层**完整链路：session→meta→search→detail→cite→ask→ingest→audit；含"无关问题必须拒答""入库落 review 且发布前检索不到"，以及引用契约（`chunk_type` 精确匹配、`source_ticket` 回执、`409 CASE_CITATION_STALE`、非法片段 400） |
 | `test_case_no_raw_leak.py` | **绕开 API 直读落地形态**：索引 `texts()`/`rows()` 全部脱敏、每个 chunk `is_knowledge_layer is True`、`case_chunk` 只有 `text_hash` 没有正文列、证据层 `uri` 不出现在知识层 |
+| `test_case_auto_approve.py` | **演示自动审批**（§8.4）：授权走同一条 `decide()`、审计 `.demo` 标记、人工审批路径不变、开关/非申请人/重复触发/fail-closed/职责分离 |
 
 ---
 

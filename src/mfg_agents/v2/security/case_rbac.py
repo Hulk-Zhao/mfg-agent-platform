@@ -46,7 +46,19 @@ DEFAULT_CASE_ROLES_PATH = (
 )
 
 #: Agent 身份角色不得持有的案例动作（Agent 只 propose，永不 approve/导出/入库）。
-AGENT_FORBIDDEN_ACTIONS: tuple[str, ...] = ("ingest", "export", "share")
+#: Agent 身份角色**不得**持有的动作。
+#: ``access.approve`` 在列：审批是**人的治理动作**，Agent 只负责路由与留痕
+#: （见 ``agents/case_access_agent.py``）。一旦某个 agent 角色拿到这个动作，
+#: 程序化自审批就通了——那正是 B9 要堵的洞，从注册表层堵比在服务层补检查更早。
+AGENT_FORBIDDEN_ACTIONS: tuple[str, ...] = (
+    "ingest", "export", "share", "access.approve",
+)
+
+#: **治理类动作**：不是检索动词（不进 ``case_acl.ACTIONS``，那是编译器语义），
+#: 但同样要在案例域 RBAC 里显式授权。当前只有"审批跨部门访问申请"。
+#: 为什么单独列：把 ``access.approve`` 塞进 ``ACTIONS`` 会让它变成"检索动作"，
+#: 进而被 ``AclCompiler`` 当成动作门禁处理——那是完全不同的语义。
+GOVERNANCE_ACTIONS: tuple[str, ...] = ("access.approve",)
 
 
 class CaseRbacError(Exception):
@@ -76,7 +88,8 @@ class CaseRbacRegistry:
                  action_labels: Optional[Mapping[str, str]] = None) -> None:
         self._registry = registry or get_permission_registry()
         self._grants: dict[str, tuple[str, ...]] = {}
-        known_actions = {f"{CASE_PERMISSION_PREFIX}{a}" for a in ACTIONS}
+        known_actions = ({f"{CASE_PERMISSION_PREFIX}{a}" for a in ACTIONS}
+                         | {f"{CASE_PERMISSION_PREFIX}{a}" for a in GOVERNANCE_ACTIONS})
         self._labels: dict[str, str] = {
             "case.query": "检索命中",
             "case.preview": "预览摘要",
@@ -85,6 +98,7 @@ class CaseRbacRegistry:
             "case.export": "导出（默认拒绝）",
             "case.share": "外发分享（恒定拒绝）",
             "case.ingest": "案例入库",
+            "case.access.approve": "审批跨部门访问申请",
         }
         for key, label in (action_labels or {}).items():
             self._labels[str(key)] = str(label)
@@ -122,7 +136,7 @@ class CaseRbacRegistry:
         return role_key
 
     def _assert_agent_discipline(self) -> None:
-        """Agent 身份角色不得持有 ingest / export / share。"""
+        """Agent 身份角色不得持有 ingest / export / share / access.approve。"""
         violations: list[str] = []
         for role_key, actions in self._grants.items():
             role = self._registry.role(role_key)
@@ -135,7 +149,9 @@ class CaseRbacRegistry:
         if violations:
             raise CaseRbacError(
                 "架构铁律被违反：Agent 身份角色不得持有案例的 "
-                f"ingest/export/share。违规：{violations}")
+                f"{'/'.join(AGENT_FORBIDDEN_ACTIONS)}"
+                "（审批是人的治理动作，Agent 只做路由与留痕）。"
+                f"违规：{violations}")
 
     # ---------- 加载 ----------
 

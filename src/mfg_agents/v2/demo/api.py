@@ -24,7 +24,7 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Mapping, Optional
 
 from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -818,12 +818,22 @@ def api_office_restaurants() -> dict[str, Any]:
 
 @app.get("/api/v2/office/my/{actor}")
 def api_office_mine(actor: str) -> dict[str, Any]:
-    """按操作人查其会议室预订与订餐订单（demo 演示用；真实环境按登录身份）。"""
+    """按操作人查其会议室预订、订餐订单与 OA 申请（demo 演示用；真实环境按登录身份）。
+
+    OA 申请含：费用报销、请假申请、补考勤补卡，以及年假/调休余额。
+    """
     be = get_orchestrator().runtime.office
     bookings = be.list_bookings(actor)
     orders = be.list_orders(actor)
-    return {"code": 0, "data": {"bookings": bookings, "orders": orders},
-            "message": "ok"}
+    expenses = be.list_expenses(actor)
+    leaves = be.list_leaves(actor)
+    attendance_fixes = be.list_attendance_fixes(actor)
+    balance = be.leave_balance(actor)
+    return {"code": 0, "data": {
+        "bookings": bookings, "orders": orders,
+        "expenses": expenses, "leaves": leaves,
+        "attendance_fixes": attendance_fixes, "leave_balance": balance,
+    }, "message": "ok"}
 
 
 @app.get("/api/v2/office/available")
@@ -851,7 +861,8 @@ def api_office_meta() -> dict[str, Any]:
     （会议室→飞书日历，见 ``services/feishu_calendar.py``），切换只改环境变量。
     """
     from ...common.llm_factory import llm_available
-    from ..services.office import ORDER_APPROVAL_AMOUNT
+    from ..services.office import EXPENSE_APPROVAL_AMOUNT, LEAVE_LONG_DAYS, \
+        ORDER_APPROVAL_AMOUNT
 
     office = get_orchestrator().runtime.office
     impl = type(office).__name__
@@ -860,6 +871,8 @@ def api_office_meta() -> dict[str, Any]:
         "backend_impl": impl,
         "llm_available": bool(llm_available()),
         "order_approval_amount": ORDER_APPROVAL_AMOUNT,
+        "expense_approval_amount": EXPENSE_APPROVAL_AMOUNT,
+        "leave_long_days": LEAVE_LONG_DAYS,
         "real_adapter": "飞书日历（会议室）· 适配层已就绪",
         "switch_hint": "OFFICE_BACKEND=feishu 即切到真实飞书日历；订餐 P1-B 再接美餐/美团",
     }, "message": "ok"}
@@ -1301,19 +1314,32 @@ def _mask_user(user_id: str) -> str:
 
 
 def _demo_warnings() -> list[str]:
-    """演示态风险清单（B5）：必须"显式且刺眼"，不能只躺在日志里。"""
+    """演示态风险清单（B5）：必须"显式且刺眼"，不能只躺在日志里。
+
+    文案纪律（2026-10-18 用户反馈优化）：主提示说人话，环境变量名退到括号里
+    做运维锚点——普通用户不需要懂 CASE_DEMO_MODE，运维需要能查到变量。
+    """
     warnings: list[str] = []
     secret = str(getattr(settings, "AUTH_SECRET", "") or "").strip()
     demo_mode = bool(getattr(settings, "CASE_DEMO_MODE", True))
     if not secret:
         if demo_mode:
             warnings.append(
-                "AUTH_SECRET 未配置：使用进程级随机密钥，重启后所有案例会话失效")
+                "服务未设置安全密钥（AUTH_SECRET）：重启后所有登录状态会失效，"
+                "需要重新选择岗位（演示环境可忽略）")
         else:
             warnings.append(
-                "AUTH_SECRET 未配置且 CASE_DEMO_MODE=false：本服务不会签发任何令牌")
+                "服务未设置安全密钥（AUTH_SECRET），且未开启演示模式："
+                "当前无法签发登录令牌，请联系管理员配置")
     if demo_mode:
-        warnings.append("CASE_DEMO_MODE=true：身份由前端选岗产生，仅限演示环境")
+        warnings.append(
+            "当前为演示模式（CASE_DEMO_MODE=true）：在页面上选择岗位即可登录"
+            "（无需密码），仅用于演示环境")
+    if demo_mode and bool(getattr(settings, "CASE_ACCESS_AUTO_APPROVE_DEMO", True)):
+        warnings.append(
+            "访问申请自动审批已开启（仅演示）：提交跨部门访问申请后，"
+            "将弹窗模拟职能部门审批并通过；正式环境由职能部门负责人在"
+            "「访问申请待办」页审批，系统记录会区分演示审批与正式审批")
     return warnings
 
 
@@ -1540,6 +1566,49 @@ def api_case_meta(request: Request) -> dict[str, Any]:
     }
 
 
+@app.get("/api/v2/cases/stats")
+def api_case_stats(request: Request) -> dict[str, Any]:
+    """案例域统计（顶部数字卡片）：口径与检索同源，fail-closed。
+
+    案例计数复用 ``CaseSearchService.stats``（与 ``/cases/search`` 同一套
+    filter 编译 + 二次授权 + 披露判定）——卡片数字与检索结果必须对得上，
+    否则现场一追问就穿。申请相关计数（我的申请 / 待我审批）复用
+    ``/cases/access/requests`` 的同一查询（``list_for_requester`` /
+    ``list_pending(dept=...)``），不另写 SQL。
+
+    失败语义：任何异常按空统计返回（``code=0`` + 全 0），**不 500**——
+    统计卡片是增强信息，不该让整页报错；前端对空数据安静降级。
+    """
+    principal = _case_principal(request)
+    _case_guard_rate_limit(request, principal, "search")
+    runtime = _case_runtime()
+    try:
+        data = runtime.search.stats(principal, action="query")
+    except Exception as exc:  # noqa: BLE001 - 统计失败降级为空，绝不带崩主链路
+        logger.warning("[cases/stats] 统计降级为空: %s", exc)
+        data = {"visible_total": 0, "restricted_total": 0,
+                "restricted_truncated": False,
+                "by_category": {}, "by_rank": {}, "by_status": {}}
+    # 申请相关计数：与申请列表端点同一查询，避免两处口径漂移
+    try:
+        runtime.access.reap_expired()
+        mine = runtime.access.list_for_requester(principal.user_id)
+        my_requests: dict[str, int] = {}
+        for row in mine:
+            key = str(row.get("status") or "unknown")
+            my_requests[key] = my_requests.get(key, 0) + 1
+        data["my_requests"] = my_requests
+        data["my_requests_total"] = len(mine)
+        data["pending_for_me"] = len(
+            runtime.access.list_pending(dept=principal.dept))
+    except Exception as exc:  # noqa: BLE001 - 同上：申请计数失败只缺这一块
+        logger.warning("[cases/stats] 申请计数降级: %s", exc)
+        data.setdefault("my_requests", {})
+        data.setdefault("my_requests_total", 0)
+        data.setdefault("pending_for_me", 0)
+    return {"code": 0, "data": data, "message": "ok"}
+
+
 @app.post("/api/v2/cases/search")
 def api_case_search(req: CaseSearchRequest, request: Request) -> dict[str, Any]:
     """检索（filter 在召回前生效 + 返回前二次授权；结果含 hidden_count）。"""
@@ -1632,8 +1701,28 @@ def api_case_request_access(case_id: str, req: CaseAccessRequestModel,
     return {"code": 0, "data": {
         "request": created,
         "route": dict(route),
+        # 演示专用自动审批的可用性预检（不落任何库）：前端据此决定
+        # 提交后是直接提示"等待审批"，还是弹窗走模拟审批链路。
+        "demo_approval": _case_demo_approval_preview(runtime, created, principal),
         "message": str(route.get("reason") or "申请已提交"),
     }, "message": "ok"}
+
+
+def _case_demo_approval_preview(runtime, request_row: Mapping[str, Any],
+                                principal: _CasePrincipal) -> dict[str, Any]:
+    """这条申请能不能走演示自动审批（resolve 的 dry-run，不写任何库）。"""
+    approver = getattr(runtime, "access_approver", None)
+    if approver is None:  # pragma: no cover - 装配缺失时应fail-closed
+        return {"available": False, "reason": "审批人提供者未装配"}
+    case_id = str((request_row or {}).get("case_id") or "")
+    case = runtime.store.get_case(case_id)
+    if case is None:
+        return {"available": False, "reason": "案例不存在或不可见"}
+    try:
+        return approver.preview(case, str(principal.user_id))
+    except Exception as exc:  # noqa: BLE001 - 预检失败只影响演示体验，不拦申请
+        logger.warning("[case-api] 演示审批预检失败：%s", exc)
+        return {"available": False, "reason": "预检失败，请人工审批"}
 
 
 @app.get("/api/v2/cases/access/requests")
@@ -1665,6 +1754,7 @@ def api_case_access_decide(request_id: str, req: CaseAccessDecision,
         AccessNotApprover,
         AccessNotFound,
         AccessRequestError,
+        AccessSelfApproval,
         AccessTransitionError,
     )
 
@@ -1672,6 +1762,11 @@ def api_case_access_decide(request_id: str, req: CaseAccessDecision,
         decided = runtime.access.decide(principal, request_id,
                                         approve=bool(req.approve),
                                         reason=req.reason)
+    except AccessSelfApproval as exc:
+        # 职责分离违反：单独错误码，方便审计与前端给出明确提示
+        raise HTTPException(status_code=403, detail={
+            "code": "CASE_ACCESS_SELF_APPROVAL_FORBIDDEN",
+            "message": str(exc)}) from exc
     except AccessNotApprover as exc:
         raise HTTPException(status_code=403, detail={
             "code": "CASE_ACCESS_NOT_APPROVER", "message": str(exc)}) from exc
@@ -1685,6 +1780,70 @@ def api_case_access_decide(request_id: str, req: CaseAccessDecision,
         raise HTTPException(status_code=400, detail={
             "code": "CASE_ACCESS_DECISION_INVALID", "message": str(exc)}) from exc
     return {"code": 0, "data": decided, "message": "ok"}
+
+
+@app.post("/api/v2/cases/access/requests/{request_id}/demo-approve")
+def api_case_access_demo_approve(request_id: str, request: Request) -> dict[str, Any]:
+    """演示专用：模拟「职能部门审批通过」的回调（**预留接口，仅演示**）。
+
+    生产形态：职能部门负责人在真实审批流（OA / IM 审批）里点同意，系统回调
+    同一个 :meth:`CaseAccessService.decide`；本端点只是把"谁点的同意"换成
+    演示身份，让评审现场能看到完整链路。三点硬约束：
+
+    1. 只有**申请人本人**能触发（避免拿别人的申请号刷授权）；
+    2. 审批人身份由服务端按案例归属职能部门解析（``DemoAgentApprover``），
+       解析不出 → 409，**不降级找"差不多的人"批**；
+    3. 授权副作用走的仍是 ``decide()`` 同一条路（ACL + 有效期 + 索引重建），
+       审计 action 打 ``.demo`` 后缀，哈希链上可见"这不是真人点的同意"。
+
+    开关：``CASE_DEMO_MODE=true`` 且 ``CASE_ACCESS_AUTO_APPROVE_DEMO=true``；
+    任一为 false → 403 ``CASE_DEMO_APPROVAL_DISABLED``（回到人工审批）。
+    """
+    principal = _case_principal(request)
+    _case_guard_rate_limit(request, principal, "access")
+    runtime = _case_runtime()
+    from ..services.case_auto_approve import (
+        DemoApprovalDisabled,
+        DemoApprovalNotRequester,
+        DemoApproverUnavailable,
+    )
+    from ..services.case_access import (
+        AccessNotFound,
+        AccessRequestError,
+        AccessTransitionError,
+    )
+
+    approver = getattr(runtime, "access_approver", None)
+    if approver is None:  # pragma: no cover - 装配缺失
+        raise HTTPException(status_code=503, detail={
+            "code": "CASE_APPROVER_UNAVAILABLE",
+            "message": "审批人提供者未装配（access_approver 缺失）"})
+    try:
+        decided = approver.approve(runtime.access, principal, request_id)
+    except DemoApprovalDisabled as exc:
+        raise HTTPException(status_code=403, detail={
+            "code": "CASE_DEMO_APPROVAL_DISABLED", "message": str(exc)}) from exc
+    except DemoApprovalNotRequester as exc:
+        raise HTTPException(status_code=403, detail={
+            "code": "CASE_ACCESS_NOT_REQUESTER", "message": str(exc)}) from exc
+    except DemoApproverUnavailable as exc:
+        raise HTTPException(status_code=409, detail={
+            "code": "CASE_ACCESS_DEMO_APPROVER_UNAVAILABLE",
+            "message": str(exc)}) from exc
+    except AccessNotFound as exc:
+        raise HTTPException(status_code=404, detail={
+            "code": "CASE_ACCESS_REQUEST_NOT_FOUND", "message": str(exc)}) from exc
+    except AccessTransitionError as exc:
+        raise HTTPException(status_code=409, detail={
+            "code": "CASE_ACCESS_INVALID_TRANSITION", "message": str(exc)}) from exc
+    except AccessRequestError as exc:
+        raise HTTPException(status_code=400, detail={
+            "code": "CASE_ACCESS_DECISION_INVALID", "message": str(exc)}) from exc
+    return {"code": 0, "data": {
+        "request": decided,
+        "demo": True,
+        "message": "职能部门已审批通过：授权已写入（带有效期，到期自动回收）",
+    }, "message": "ok"}
 
 
 @app.get("/api/v2/cases/{case_id}/access-hint")

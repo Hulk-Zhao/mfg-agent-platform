@@ -1,7 +1,7 @@
 {
   "version": 1,
   "tenant": "T001",
-  "note": "演示种子数据（虚构企业/人名，仅用于鉴权链路演示）。知识层文本已脱敏；证据层只登记元数据。",
+  "note": "演示种子数据（虚构企业/人名，仅用于鉴权链路演示）。知识层文本已脱敏；证据层只登记元数据。 受限案例由 tools/expand_restricted_seed.py 追加（部门/产线/客户/密级/未结案五域）。",
   "cases": [
     {
       "case_id": "QC-CC-2026-0087",
@@ -204,7 +204,11 @@
       "citation_count": 1,
       "author_role": "pqe",
       "acl": [
-        {"dim": "dept", "value": "quality", "effect": "allow"}
+        {
+          "dim": "dept",
+          "value": "quality",
+          "effect": "allow"
+        }
       ],
       "evidence": []
     },
@@ -235,7 +239,11 @@
       "citation_count": 2,
       "author_role": "sqe",
       "acl": [
-        {"dim": "plant", "value": "P2", "effect": "allow"}
+        {
+          "dim": "plant",
+          "value": "P2",
+          "effect": "allow"
+        }
       ],
       "evidence": []
     },
@@ -267,10 +275,18 @@
       "author_role": "sqe",
       "acl": [],
       "evidence": [
-        {"evidence_id": "EV-0110-8D", "kind": "8d_report",
-         "uri": "minio://case-evidence/8D-2026-0110/8D-report.pdf", "cls_rank": 3},
-        {"evidence_id": "EV-0110-MAIL", "kind": "customer_email",
-         "uri": "minio://case-evidence/8D-2026-0110/customer-mail.eml", "cls_rank": 3}
+        {
+          "evidence_id": "EV-0110-8D",
+          "kind": "8d_report",
+          "uri": "minio://case-evidence/8D-2026-0110/8D-report.pdf",
+          "cls_rank": 3
+        },
+        {
+          "evidence_id": "EV-0110-MAIL",
+          "kind": "customer_email",
+          "uri": "minio://case-evidence/8D-2026-0110/customer-mail.eml",
+          "cls_rank": 3
+        }
       ]
     },
     {
@@ -329,7 +345,11 @@
       "citation_count": 0,
       "author_role": "quality_director",
       "acl": [
-        {"dim": "dept", "value": "quality", "effect": "allow"}
+        {
+          "dim": "dept",
+          "value": "quality",
+          "effect": "allow"
+        }
       ],
       "evidence": []
     },
@@ -360,7 +380,11 @@
       "citation_count": 4,
       "author_role": "product_engineering",
       "acl": [
-        {"dim": "dept", "value": "rd_engineering", "effect": "allow"}
+        {
+          "dim": "dept",
+          "value": "rd_engineering",
+          "effect": "allow"
+        }
       ],
       "evidence": []
     },
@@ -391,7 +415,11 @@
       "citation_count": 5,
       "author_role": "equipment_manager",
       "acl": [
-        {"dim": "dept", "value": "equipment", "effect": "allow"}
+        {
+          "dim": "dept",
+          "value": "equipment",
+          "effect": "allow"
+        }
       ],
       "evidence": []
     },
@@ -422,7 +450,11 @@
       "citation_count": 3,
       "author_role": "qa_manager",
       "acl": [
-        {"dim": "dept", "value": "quality", "effect": "allow"}
+        {
+          "dim": "dept",
+          "value": "quality",
+          "effect": "allow"
+        }
       ],
       "evidence": []
     },
@@ -2048,6 +2080,1021 @@
       "citation_count": 4,
       "author_role": "pe",
       "acl": [],
+      "evidence": []
+    },
+    {
+      "case_id": "QC-PD-2026-0110",
+      "category": "quality_case",
+      "subcategory": "process_defect",
+      "title": "制程：回流焊后焊点空洞率超标（虚焊倾向）",
+      "summary": "回流焊后 X-Ray 抽检焊点空洞率 18%，判定为虚焊风险，锁定回流曲线与助焊剂活性。",
+      "phenomenon": "无铅回流焊后 BGA 焊点空洞率 15%-20%，通电后出现间歇性开路，客户抽检判定虚焊。",
+      "root_cause_text": "回流峰值温度 245℃ 停留不足 12 秒，助焊剂活性不足，焊点内部气体未充分逸出。",
+      "countermeasure_text": "峰值温度调整至 248℃ 并延长至 20 秒；每批次做 X-Ray 抽检 AQL 0.65；助焊剂活性每 3 个月复测。",
+      "defect_mode_code": "DM-SMT-012",
+      "root_cause_code": "RC-PARAM-TEMP-002",
+      "plant": "P1",
+      "line_code": "SMT-2",
+      "owner_dept": "quality",
+      "cls_rank": 1,
+      "status": "active",
+      "source_ticket_type": "8d",
+      "source_ticket_id": "8D-2026-0110",
+      "case_code": "QC-PD-2026-0110",
+      "content_version": 1,
+      "is_export_controlled": 0,
+      "published_at": "2026-09-01",
+      "last_verified_at": "2026-09-20",
+      "verified": 1,
+      "citation_count": 0,
+      "author_role": "quality",
+      "acl": [
+        {
+          "dim": "dept",
+          "value": "quality",
+          "effect": "allow"
+        }
+      ],
+      "evidence": []
+    },
+    {
+      "case_id": "QC-PD-2026-0112",
+      "category": "quality_case",
+      "subcategory": "process_defect",
+      "title": "制程：波峰焊润湿角不足导致焊点爬锡不良",
+      "summary": "波峰焊焊点润湿角小于 45°，爬锡高、虚焊风险大，调整预热与助焊剂涂覆量后改善。",
+      "phenomenon": "波峰焊后爬锡高度超规格 0.15mm，焊接强度抽检偏低，部分焊点存在虚焊风险。",
+      "root_cause_text": "预热区温度仅 110℃（低于 130℃ 基线），PCB 板面与波峰温差过大，润湿时间不足。",
+      "countermeasure_text": "预热温度提升至 135℃ 并延长带速至 1.6m/min；每班首件做润湿角与剥离强度抽检。",
+      "defect_mode_code": "DM-SMT-008",
+      "root_cause_code": "RC-PARAM-PREHEAT-003",
+      "plant": "P1",
+      "line_code": "THT-1",
+      "owner_dept": "quality",
+      "cls_rank": 1,
+      "status": "active",
+      "source_ticket_type": "8d",
+      "source_ticket_id": "8D-2026-0112",
+      "case_code": "QC-PD-2026-0112",
+      "content_version": 1,
+      "is_export_controlled": 0,
+      "published_at": "2026-09-01",
+      "last_verified_at": "2026-09-20",
+      "verified": 1,
+      "citation_count": 0,
+      "author_role": "quality",
+      "acl": [
+        {
+          "dim": "dept",
+          "value": "quality",
+          "effect": "allow"
+        }
+      ],
+      "evidence": []
+    },
+    {
+      "case_id": "QC-PD-2026-0114",
+      "category": "quality_case",
+      "subcategory": "process_defect",
+      "title": "制程：钢网开孔堵塞造成连锡批量不良",
+      "summary": "钢网清洗周期未按物料切换执行，孔洞堵塞引发连锡，改为按切换次数强制清洗。",
+      "phenomenon": "同一料号换线后连续 3 板出现引脚连锡，孔印检显示焊盘孔塞 40%。",
+      "root_cause_text": "钢网未按物料切换执行清洗，回流后残留锡膏在孔口结块。",
+      "countermeasure_text": "物料切换强制清洗钢网并留影像记录；印刷前 2 板做 SPI 全检，堵塞即停机。",
+      "defect_mode_code": "DM-SMT-013",
+      "root_cause_code": "RC-MAINT-CLEAN-004",
+      "plant": "P1",
+      "line_code": "SMT-1",
+      "owner_dept": "quality",
+      "cls_rank": 1,
+      "status": "active",
+      "source_ticket_type": "8d",
+      "source_ticket_id": "8D-2026-0114",
+      "case_code": "QC-PD-2026-0114",
+      "content_version": 1,
+      "is_export_controlled": 0,
+      "published_at": "2026-09-01",
+      "last_verified_at": "2026-09-20",
+      "verified": 1,
+      "citation_count": 0,
+      "author_role": "quality",
+      "acl": [
+        {
+          "dim": "dept",
+          "value": "quality",
+          "effect": "allow"
+        }
+      ],
+      "evidence": []
+    },
+    {
+      "case_id": "QC-PD-2026-0116",
+      "category": "quality_case",
+      "subcategory": "process_defect",
+      "title": "制程：注塑缩水率波动引发卡扣装配干涉",
+      "summary": "注塑件卡扣尺寸随批次缩水波动 0.08mm，装配出现干涉顶起，收紧模温与保压参数。",
+      "phenomenon": "卡扣高度公差 0.08mm 超上限 0.05mm，装配线出现顶起与异响，返修率 0.6%。",
+      "root_cause_text": "模温波动 ±5℃、保压压力 62MPa 低于基线 68MPa，缩水率偏离设计 0.12%。",
+      "countermeasure_text": "模温控温精度收紧至 ±2℃；保压提至 70MPa 并加装压力闭环监控；每模做尺寸 SPC。",
+      "defect_mode_code": "DM-PLS-004",
+      "root_cause_code": "RC-PARAM-MOLD-005",
+      "plant": "P1",
+      "line_code": "注塑-2",
+      "owner_dept": "quality",
+      "cls_rank": 1,
+      "status": "active",
+      "source_ticket_type": "8d",
+      "source_ticket_id": "8D-2026-0116",
+      "case_code": "QC-PD-2026-0116",
+      "content_version": 1,
+      "is_export_controlled": 0,
+      "published_at": "2026-09-01",
+      "last_verified_at": "2026-09-20",
+      "verified": 1,
+      "citation_count": 0,
+      "author_role": "quality",
+      "acl": [
+        {
+          "dim": "dept",
+          "value": "quality",
+          "effect": "allow"
+        }
+      ],
+      "evidence": []
+    },
+    {
+      "case_id": "QC-PD-2026-0118",
+      "category": "quality_case",
+      "subcategory": "material_defect",
+      "title": "来料：ABS 料批次熔指波动导致注塑工艺窗口偏移",
+      "summary": "更换 ABS 供应商批次后熔指由 22g/10min 漂到 26g/10min，注塑窗口整体上移。",
+      "phenomenon": "新批次 ABS 注塑件抗拉强度下降 6%，顶出力异常，批次熔指超出规格上限 24。",
+      "root_cause_text": "来料熔指未按批次抽检复测，超出规格仍上线生产。",
+      "countermeasure_text": "来料增加熔指 MFR 批次必检；超出规格自动隔离并通知供应商 8D。",
+      "defect_mode_code": "DM-MAT-002",
+      "root_cause_code": "RC-SUPPLIER-MAT-006",
+      "plant": "P1",
+      "line_code": "注塑-1",
+      "owner_dept": "quality",
+      "cls_rank": 1,
+      "status": "active",
+      "source_ticket_type": "iqc",
+      "source_ticket_id": "IQC-2026-0118",
+      "case_code": "QC-PD-2026-0118",
+      "content_version": 1,
+      "is_export_controlled": 0,
+      "published_at": "2026-09-01",
+      "last_verified_at": "2026-09-20",
+      "verified": 1,
+      "citation_count": 0,
+      "author_role": "quality",
+      "acl": [
+        {
+          "dim": "dept",
+          "value": "quality",
+          "effect": "allow"
+        }
+      ],
+      "evidence": []
+    },
+    {
+      "case_id": "QC-PD-2026-0120",
+      "category": "quality_case",
+      "subcategory": "process_defect",
+      "title": "机加：孔位度超差导致装配螺钉错位",
+      "summary": "夹具磨损导致孔位度超差 0.08mm，螺钉装配困难，优化夹具并加装首件检测。",
+      "phenomenon": "加工件孔距偏差 0.08mm 超公差，产线螺钉需强行压入，装配节拍异常。",
+      "root_cause_text": "定位夹具磨损未纳入点检，夹持力下降使工件在二次定位时偏移。",
+      "countermeasure_text": "夹具改为每 500 件点检并记录；首件用三坐标抽检孔位度；超差即停机换夹具。",
+      "defect_mode_code": "DM-MCH-006",
+      "root_cause_code": "RC-MAINT-FIXTURE-007",
+      "plant": "P1",
+      "line_code": "机加-1",
+      "owner_dept": "quality",
+      "cls_rank": 1,
+      "status": "active",
+      "source_ticket_type": "8d",
+      "source_ticket_id": "8D-2026-0132",
+      "case_code": "QC-PD-2026-0120",
+      "content_version": 1,
+      "is_export_controlled": 0,
+      "published_at": "2026-09-01",
+      "last_verified_at": "2026-09-20",
+      "verified": 1,
+      "citation_count": 0,
+      "author_role": "quality",
+      "acl": [
+        {
+          "dim": "dept",
+          "value": "quality",
+          "effect": "allow"
+        }
+      ],
+      "evidence": []
+    },
+    {
+      "case_id": "QC-PD-2026-0122",
+      "category": "quality_case",
+      "subcategory": "process_defect",
+      "title": "制程：P2 注塑线熔体温度传感器漂移引发色差投诉",
+      "summary": "P2 注塑机熔体温度传感器漂移 8℃，产品色差 ΔE 达 1.6，校正后恢复。",
+      "phenomenon": "同一料号相邻两箱产品色差 ΔE 1.6（限值 0.8），客户外观抽检判退。",
+      "root_cause_text": "熔体温度传感器超期未校准，示值漂移导致实际熔体温度高于设定 8℃。",
+      "countermeasure_text": "传感器纳入季度校准并留记录；开机后 3 模做色差确认；漂移超 3℃ 自动停机。",
+      "defect_mode_code": "DM-PLS-002",
+      "root_cause_code": "RC-MAINT-SENSOR-008",
+      "plant": "P2",
+      "line_code": "注塑-3",
+      "owner_dept": "quality",
+      "cls_rank": 1,
+      "status": "active",
+      "source_ticket_type": "8d",
+      "source_ticket_id": "8D-2026-0134",
+      "case_code": "QC-PD-2026-0122",
+      "content_version": 1,
+      "is_export_controlled": 0,
+      "published_at": "2026-09-01",
+      "last_verified_at": "2026-09-20",
+      "verified": 1,
+      "citation_count": 0,
+      "author_role": "quality",
+      "acl": [
+        {
+          "dim": "plant",
+          "value": "P2",
+          "effect": "allow"
+        }
+      ],
+      "evidence": []
+    },
+    {
+      "case_id": "QC-PD-2026-0124",
+      "category": "quality_case",
+      "subcategory": "equipment_failure",
+      "title": "设备：P2 波峰焊炉温偏离导致焊点强度不足",
+      "summary": "P2 波峰焊炉温实测低于设定 9℃，焊点剥离强度不足，调整温控并增加日校准。",
+      "phenomenon": "焊点剥离强度均值 3.8N 低于基线 4.5N，抽检 3 例弯曲后开裂。",
+      "root_cause_text": "波峰焊炉温控模块未接入日常点检，实测与设定偏差未纳入管控。",
+      "countermeasure_text": "炉温纳入每班点检并记录；每周用测温仪抽测一次；偏差超 5℃ 停机维修。",
+      "defect_mode_code": "DM-EQP-003",
+      "root_cause_code": "RC-MAINT-TEMP-009",
+      "plant": "P2",
+      "line_code": "THT-2",
+      "owner_dept": "quality",
+      "cls_rank": 1,
+      "status": "active",
+      "source_ticket_type": "8d",
+      "source_ticket_id": "8D-2026-0136",
+      "case_code": "QC-PD-2026-0124",
+      "content_version": 1,
+      "is_export_controlled": 0,
+      "published_at": "2026-09-01",
+      "last_verified_at": "2026-09-20",
+      "verified": 1,
+      "citation_count": 0,
+      "author_role": "quality",
+      "acl": [
+        {
+          "dim": "plant",
+          "value": "P2",
+          "effect": "allow"
+        }
+      ],
+      "evidence": []
+    },
+    {
+      "case_id": "QC-PD-2026-0126",
+      "category": "quality_case",
+      "subcategory": "process_defect",
+      "title": "装配：P2 产线扭力枪校准失效引发螺钉滑牙",
+      "summary": "P2 自动扭力枪校准超期，实际扭力低于设定 12%，螺钉滑牙返修率上升。",
+      "phenomenon": "自动扭力枪实际扭力 0.72N·m 低于设定 0.82N·m，滑牙不良率由 0.05% 升至 0.31%。",
+      "root_cause_text": "扭力枪月度校准未执行，控制器漂移未被发现。",
+      "countermeasure_text": "扭力枪纳入月度校准并留存曲线；每班抽测 5 件并记录；偏差超 5% 停机送修。",
+      "defect_mode_code": "DM-ASM-003",
+      "root_cause_code": "RC-MAINT-TORQUE-011",
+      "plant": "P2",
+      "line_code": "装配-2",
+      "owner_dept": "quality",
+      "cls_rank": 1,
+      "status": "active",
+      "source_ticket_type": "8d",
+      "source_ticket_id": "8D-2026-0138",
+      "case_code": "QC-PD-2026-0126",
+      "content_version": 1,
+      "is_export_controlled": 0,
+      "published_at": "2026-09-01",
+      "last_verified_at": "2026-09-20",
+      "verified": 1,
+      "citation_count": 0,
+      "author_role": "quality",
+      "acl": [
+        {
+          "dim": "plant",
+          "value": "P2",
+          "effect": "allow"
+        }
+      ],
+      "evidence": []
+    },
+    {
+      "case_id": "QC-PD-2026-0128",
+      "category": "quality_case",
+      "subcategory": "process_defect",
+      "title": "机加：P2 刀具寿命管理缺失导致尺寸批次性超差",
+      "summary": "P2 铣刀未按寿命更换，同批零件尺寸漂移 0.06mm，改用在机测量联动换刀。",
+      "phenomenon": "同一批次 200 件中 12 件孔径超上限，判退 12 件。",
+      "root_cause_text": "刀具按班次更换而非按切削寿命，首批与末批尺寸差异未纳入管控。",
+      "countermeasure_text": "刀具改为按切削寿命 300min 强制更换并登记；在机测量每 50 件抽检一次。",
+      "defect_mode_code": "DM-MCH-002",
+      "root_cause_code": "RC-MAINT-TOOL-012",
+      "plant": "P2",
+      "line_code": "机加-2",
+      "owner_dept": "quality",
+      "cls_rank": 1,
+      "status": "active",
+      "source_ticket_type": "8d",
+      "source_ticket_id": "8D-2026-0128",
+      "case_code": "QC-PD-2026-0128",
+      "content_version": 1,
+      "is_export_controlled": 0,
+      "published_at": "2026-09-01",
+      "last_verified_at": "2026-09-20",
+      "verified": 1,
+      "citation_count": 0,
+      "author_role": "quality",
+      "acl": [
+        {
+          "dim": "plant",
+          "value": "P2",
+          "effect": "allow"
+        }
+      ],
+      "evidence": []
+    },
+    {
+      "case_id": "QC-CC-2026-0132",
+      "category": "quality_case",
+      "subcategory": "customer_complaint",
+      "title": "客诉：客户 B 整机组装发现主板翘曲变形",
+      "summary": "客户 B 反馈主板在回流后翘曲 0.35mm，元器件焊点开裂，定位到板材 Tg 与工艺窗口不匹配。",
+      "phenomenon": "客户 B 产线回流后主板整体翘曲 0.35mm，元件应力位移导致焊点开裂 3 处/板。",
+      "root_cause_text": "换用高 Tg 板材后未同步调整回流曲线，峰值温升过快造成热应力累积。",
+      "countermeasure_text": "按高 Tg 板材重设回流曲线（升峰 1.2℃/s、峰值 250℃/40s）；每批做回流曲线记录。",
+      "defect_mode_code": "DM-SMT-020",
+      "root_cause_code": "RC-PARAM-PROFILE-013",
+      "plant": "P1",
+      "line_code": "SMT-2",
+      "owner_dept": "quality",
+      "cls_rank": 1,
+      "status": "active",
+      "source_ticket_type": "8d",
+      "source_ticket_id": "8D-2026-0132",
+      "case_code": "QC-CC-2026-0132",
+      "content_version": 1,
+      "is_export_controlled": 0,
+      "published_at": "2026-09-01",
+      "last_verified_at": "2026-09-20",
+      "verified": 1,
+      "citation_count": 0,
+      "author_role": "quality",
+      "acl": [
+        {
+          "dim": "cus",
+          "value": "CUST-B",
+          "effect": "allow"
+        }
+      ],
+      "evidence": []
+    },
+    {
+      "case_id": "QC-CC-2026-0134",
+      "category": "quality_case",
+      "subcategory": "customer_complaint",
+      "title": "客诉：客户 C 整机外观件色差投诉（限定批次）",
+      "summary": "客户 C 反馈某批次外壳色差 ΔE 1.4，锁定为 pigment 批次差异，仅该批次受影响。",
+      "phenomenon": "客户 C 收货抽检 200 件，18 件外壳色差 ΔE 超 1.0，判定外观 NG。",
+      "root_cause_text": "色母粒供应商更换后未做首件色差确认，色粉批次间色差 ΔE 0.9（接近限值）。",
+      "countermeasure_text": "更换色母粒后强制首件色差确认并封样；每批次色粉到货抽检 ΔE。",
+      "defect_mode_code": "DM-PLS-011",
+      "root_cause_code": "RC-SUPPLIER-PIG-014",
+      "plant": "P1",
+      "line_code": "注塑-4",
+      "owner_dept": "quality",
+      "cls_rank": 1,
+      "status": "active",
+      "source_ticket_type": "8d",
+      "source_ticket_id": "8D-2026-0134",
+      "case_code": "QC-CC-2026-0134",
+      "content_version": 1,
+      "is_export_controlled": 0,
+      "published_at": "2026-09-01",
+      "last_verified_at": "2026-09-20",
+      "verified": 1,
+      "citation_count": 0,
+      "author_role": "quality",
+      "acl": [
+        {
+          "dim": "cus",
+          "value": "CUST-C",
+          "effect": "allow"
+        }
+      ],
+      "evidence": []
+    },
+    {
+      "case_id": "QC-CC-2026-0136",
+      "category": "quality_case",
+      "subcategory": "customer_complaint",
+      "title": "客诉：客户 D 反馈连接器插拔力偏下限",
+      "summary": "客户 D 反馈连接器插拔力 18N 低于规格 20N，端子镀层厚度不足导致。",
+      "phenomenon": "客户 D 产线插拔力抽检 20 件，5 件低于 20N，最小值 17.6N。",
+      "root_cause_text": "端子镀金厚度实测 0.6μm 低于规格 1.0μm，摩擦系数偏高。",
+      "countermeasure_text": "来料镀金厚度 100% 抽测并留存切片；不合格批次整批退运并开 8D。",
+      "defect_mode_code": "DM-ASM-009",
+      "root_cause_code": "RC-SUPPLIER-PLATE-015",
+      "plant": "P1",
+      "line_code": "装配-1",
+      "owner_dept": "quality",
+      "cls_rank": 1,
+      "status": "active",
+      "source_ticket_type": "iqc",
+      "source_ticket_id": "IQC-2026-0136",
+      "case_code": "QC-CC-2026-0136",
+      "content_version": 1,
+      "is_export_controlled": 0,
+      "published_at": "2026-09-01",
+      "last_verified_at": "2026-09-20",
+      "verified": 1,
+      "citation_count": 0,
+      "author_role": "quality",
+      "acl": [
+        {
+          "dim": "cus",
+          "value": "CUST-D",
+          "effect": "allow"
+        }
+      ],
+      "evidence": []
+    },
+    {
+      "case_id": "QC-CC-2026-0138",
+      "category": "quality_case",
+      "subcategory": "customer_complaint",
+      "title": "客诉：客户 A 反馈标签翘边与批次追溯困难",
+      "summary": "客户 A 反馈标签在高温老化后翘边，且批次追溯字段缺失，定位到标签胶与打印系统。",
+      "phenomenon": "标签在 85℃/85%RH 老化 168h 后边缘翘起；MES 打印未写入供应商批次字段。",
+      "root_cause_text": "标签胶水在高温高湿环境下耐受性不足；打印模板缺少供应商批号字段。",
+      "countermeasure_text": "更换耐高温标签并做 168h 老化验证；打印模板增加供应商批号字段并与 MES 校验。",
+      "defect_mode_code": "DM-ASM-014",
+      "root_cause_code": "RC-MAINT-LABEL-016",
+      "plant": "P1",
+      "line_code": "装配-3",
+      "owner_dept": "quality",
+      "cls_rank": 1,
+      "status": "active",
+      "source_ticket_type": "8d",
+      "source_ticket_id": "8D-2026-0138",
+      "case_code": "QC-CC-2026-0138",
+      "content_version": 1,
+      "is_export_controlled": 0,
+      "published_at": "2026-09-01",
+      "last_verified_at": "2026-09-20",
+      "verified": 1,
+      "citation_count": 0,
+      "author_role": "quality",
+      "acl": [
+        {
+          "dim": "cus",
+          "value": "CUST-A",
+          "effect": "allow"
+        }
+      ],
+      "evidence": []
+    },
+    {
+      "case_id": "RC-EQP-2026-0010",
+      "category": "role_case",
+      "subcategory": "equipment_experience",
+      "title": "设备经验：回流炉风机轴承异响的早期判定与处置",
+      "summary": "通过温升异常与风量衰减提前判定回流炉风机轴承劣化，避免整炉停机。",
+      "phenomenon": "回流炉实测板温均匀性由 ±3℃ 漂移至 ±7℃，风机侧出现低频异响。",
+      "root_cause_text": "循环风量衰减伴随轴承温升 8℃，初始仅表现为板温均匀性漂移，易被误判为热电偶失准。",
+      "countermeasure_text": "建立板温均匀性日抽检；风机轴承温升纳入点检；均匀性超差即安排停机换轴承。",
+      "defect_mode_code": "DM-EQP-005",
+      "root_cause_code": "RC-MAINT-FAN-017",
+      "plant": "P1",
+      "line_code": "SMT-2",
+      "owner_dept": "equipment",
+      "cls_rank": 1,
+      "status": "active",
+      "source_ticket_type": "manual",
+      "source_ticket_id": "RC-2026-0010",
+      "case_code": "RC-EQP-2026-0010",
+      "content_version": 1,
+      "is_export_controlled": 0,
+      "published_at": "2026-09-01",
+      "last_verified_at": "2026-09-20",
+      "verified": 1,
+      "citation_count": 0,
+      "author_role": "equipment",
+      "acl": [
+        {
+          "dim": "dept",
+          "value": "equipment",
+          "effect": "allow"
+        }
+      ],
+      "evidence": []
+    },
+    {
+      "case_id": "RC-EQP-2026-0012",
+      "category": "role_case",
+      "subcategory": "equipment_experience",
+      "title": "设备经验：贴片机吸嘴堵塞的快速排查手法",
+      "summary": "用真空压力曲线快速定位吸嘴堵塞，避免整盘停机换嘴。",
+      "phenomenon": "贴片机连续 3 次吸料失败报警，吸嘴真空压力由 -45kPa 降至 -28kPa。",
+      "root_cause_text": "吸嘴内孔吸附锡珠，真空建立缓慢；逐嘴排查需拆机，耗时 40 分钟。",
+      "countermeasure_text": "按真空压力曲线定位异常吸嘴；每班用锡珠测试法抽检 5 支；孔径超差即更换。",
+      "defect_mode_code": "DM-EQP-008",
+      "root_cause_code": "RC-MAINT-NOZ-018",
+      "plant": "P1",
+      "line_code": "SMT-1",
+      "owner_dept": "equipment",
+      "cls_rank": 1,
+      "status": "active",
+      "source_ticket_type": "manual",
+      "source_ticket_id": "RC-2026-0012",
+      "case_code": "RC-EQP-2026-0012",
+      "content_version": 1,
+      "is_export_controlled": 0,
+      "published_at": "2026-09-01",
+      "last_verified_at": "2026-09-20",
+      "verified": 1,
+      "citation_count": 0,
+      "author_role": "equipment",
+      "acl": [
+        {
+          "dim": "dept",
+          "value": "equipment",
+          "effect": "allow"
+        }
+      ],
+      "evidence": []
+    },
+    {
+      "case_id": "RC-EQP-2026-0014",
+      "category": "role_case",
+      "subcategory": "equipment_experience",
+      "title": "设备经验：注塑机液压油温升高的预警阈值",
+      "summary": "以液压油温升速率作为预警指标，提前发现冷却器堵塞，避免停机清机。",
+      "phenomenon": "注塑机保压压力波动 0.3MPa，液压油温由 38℃ 升至 52℃。",
+      "root_cause_text": "冷却器滤芯堵塞导致散热能力下降，油温升高使 viscosity 变化进而影响压力稳定性。",
+      "countermeasure_text": "液压油温 45℃ 设预警、50℃ 设停机；冷却器每季度清洗并记录压差。",
+      "defect_mode_code": "DM-PLS-020",
+      "root_cause_code": "RC-MAINT-COOL-019",
+      "plant": "P1",
+      "line_code": "注塑-1",
+      "owner_dept": "equipment",
+      "cls_rank": 1,
+      "status": "active",
+      "source_ticket_type": "manual",
+      "source_ticket_id": "RC-2026-0014",
+      "case_code": "RC-EQP-2026-0014",
+      "content_version": 1,
+      "is_export_controlled": 0,
+      "published_at": "2026-09-01",
+      "last_verified_at": "2026-09-20",
+      "verified": 1,
+      "citation_count": 0,
+      "author_role": "equipment",
+      "acl": [
+        {
+          "dim": "dept",
+          "value": "equipment",
+          "effect": "allow"
+        }
+      ],
+      "evidence": []
+    },
+    {
+      "case_id": "RC-PRC-2026-0010",
+      "category": "role_case",
+      "subcategory": "process_experience",
+      "title": "工艺经验：细间距器件钢网厚度与刮刀速度的匹配表",
+      "summary": "给出 0.4mm QFP 与 0.3mm BGA 的钢网厚度—刮刀速度匹配经验，缩短调机时间。",
+      "phenomenon": "细间距器件印刷后桥连不良率 0.8%，调机需逐参数试错，平均耗时 90 分钟。",
+      "root_cause_text": "钢网厚度与刮刀速度未按器件间距匹配，缺少经验区间导致反复试错。",
+      "countermeasure_text": "建立间距—钢网—速度对照表；新料号导入时按表初设并做 SPI 首件确认。",
+      "defect_mode_code": "DM-SMT-013",
+      "root_cause_code": "RC-PARAM-SPEED-020",
+      "plant": "P1",
+      "line_code": "SMT-1",
+      "owner_dept": "rd_engineering",
+      "cls_rank": 1,
+      "status": "active",
+      "source_ticket_type": "manual",
+      "source_ticket_id": "RC-2026-0010",
+      "case_code": "RC-PRC-2026-0010",
+      "content_version": 1,
+      "is_export_controlled": 0,
+      "published_at": "2026-09-01",
+      "last_verified_at": "2026-09-20",
+      "verified": 1,
+      "citation_count": 0,
+      "author_role": "rd_engineering",
+      "acl": [
+        {
+          "dim": "dept",
+          "value": "rd_engineering",
+          "effect": "allow"
+        }
+      ],
+      "evidence": []
+    },
+    {
+      "case_id": "RC-PRC-2026-0012",
+      "category": "role_case",
+      "subcategory": "process_experience",
+      "title": "工艺经验：注塑缩水与浇口位置的权衡表",
+      "summary": "按壁厚与浇口位置给出缩水控制建议，减少试模轮次。",
+      "phenomenon": "深腔件平均缩水 1.8%，需反复调整保压与冷却，试模 4 轮才稳定。",
+      "root_cause_text": "深腔件冷却不均导致内外收缩不一致，缺少按壁厚分区的参数建议。",
+      "countermeasure_text": "按壁厚分区给冷却水路与保压曲线建议；试模首轮即做尺寸预测减少轮次。",
+      "defect_mode_code": "DM-PLS-004",
+      "root_cause_code": "RC-PARAM-GATE-021",
+      "plant": "P1",
+      "line_code": "注塑-2",
+      "owner_dept": "rd_engineering",
+      "cls_rank": 1,
+      "status": "active",
+      "source_ticket_type": "manual",
+      "source_ticket_id": "RC-2026-0012",
+      "case_code": "RC-PRC-2026-0012",
+      "content_version": 1,
+      "is_export_controlled": 0,
+      "published_at": "2026-09-01",
+      "last_verified_at": "2026-09-20",
+      "verified": 1,
+      "citation_count": 0,
+      "author_role": "rd_engineering",
+      "acl": [
+        {
+          "dim": "dept",
+          "value": "rd_engineering",
+          "effect": "allow"
+        }
+      ],
+      "evidence": []
+    },
+    {
+      "case_id": "RC-QA-2026-0014",
+      "category": "role_case",
+      "subcategory": "quality_experience",
+      "title": "质量经验：来料批次异常的快速围堵流程",
+      "summary": "以批次围堵 + 库存冻结双动作在 2 小时内切断风险扩散。",
+      "phenomenon": "某批次来料异常扩散至 3 条产线，累计投产 4800 件。",
+      "root_cause_text": "异常发现后仅停线未冻结库存，已投产批次继续流入后段。",
+      "countermeasure_text": "异常即触发批次围堵清单：停线 + 冻结库存 + 追溯已流出货；2 小时内完成。",
+      "defect_mode_code": "DM-MAT-002",
+      "root_cause_code": "RC-QUALITY-CONTAIN-022",
+      "plant": "P1",
+      "line_code": "来料-1",
+      "owner_dept": "quality",
+      "cls_rank": 1,
+      "status": "active",
+      "source_ticket_type": "manual",
+      "source_ticket_id": "RC-2026-0014",
+      "case_code": "RC-QA-2026-0014",
+      "content_version": 1,
+      "is_export_controlled": 0,
+      "published_at": "2026-09-01",
+      "last_verified_at": "2026-09-20",
+      "verified": 1,
+      "citation_count": 0,
+      "author_role": "quality",
+      "acl": [
+        {
+          "dim": "dept",
+          "value": "quality",
+          "effect": "allow"
+        }
+      ],
+      "evidence": []
+    },
+    {
+      "case_id": "RC-QA-2026-0016",
+      "category": "role_case",
+      "subcategory": "quality_experience",
+      "title": "质量经验：SPI 判定阈值分层（内控/客控）设置",
+      "summary": "把 SPI 阈值分为内控与客控两档，减少误判放行同时保住客诉防线。",
+      "phenomenon": "SPI 判定长期单档设置，内控过严导致大量误判停机，现场逐渐放宽。",
+      "root_cause_text": "阈值未分层，现场为减少停机自行放宽，客控风险随之上升。",
+      "countermeasure_text": "阈值分层并锁定权限：内控可由工艺放宽，客控仅质量总监可调并留痕。",
+      "defect_mode_code": "DM-SMT-012",
+      "root_cause_code": "RC-QUALITY-SPI-023",
+      "plant": "P1",
+      "line_code": "SMT-1",
+      "owner_dept": "quality",
+      "cls_rank": 1,
+      "status": "active",
+      "source_ticket_type": "manual",
+      "source_ticket_id": "RC-2026-0016",
+      "case_code": "RC-QA-2026-0016",
+      "content_version": 1,
+      "is_export_controlled": 0,
+      "published_at": "2026-09-01",
+      "last_verified_at": "2026-09-20",
+      "verified": 1,
+      "citation_count": 0,
+      "author_role": "quality",
+      "acl": [
+        {
+          "dim": "dept",
+          "value": "quality",
+          "effect": "allow"
+        }
+      ],
+      "evidence": []
+    },
+    {
+      "case_id": "QC-PD-2026-0130",
+      "category": "quality_case",
+      "subcategory": "process_defect",
+      "title": "制程：SMT-4 线锡膏黏度波动引发印刷拖影",
+      "summary": "SMT-4 线锡膏开封后未按黏度窗口使用，印刷出现拖影，调整冷藏回温流程。",
+      "phenomenon": "SMT-4 线印刷后焊盘出现拖影，SPI 判定面积超差，连续 5 板不合格。",
+      "root_cause_text": "锡膏开封后回温 4 小时即投入使用，黏度高于窗口上限 15%。",
+      "countermeasure_text": "开封锡膏回温满 8 小时并测黏度入窗口；每班开工做 2 板 SPI 首件。",
+      "defect_mode_code": "DM-SMT-012",
+      "root_cause_code": "RC-MAINT-PASTE-024",
+      "plant": "P1",
+      "line_code": "SMT-4",
+      "owner_dept": "quality",
+      "cls_rank": 1,
+      "status": "active",
+      "source_ticket_type": "8d",
+      "source_ticket_id": "8D-2026-0130",
+      "case_code": "QC-PD-2026-0130",
+      "content_version": 1,
+      "is_export_controlled": 0,
+      "published_at": "2026-09-01",
+      "last_verified_at": "2026-09-20",
+      "verified": 1,
+      "citation_count": 0,
+      "author_role": "quality",
+      "acl": [
+        {
+          "dim": "line",
+          "value": "SMT-4",
+          "effect": "allow"
+        }
+      ],
+      "evidence": []
+    },
+    {
+      "case_id": "QC-PD-2026-0132",
+      "category": "quality_case",
+      "subcategory": "process_defect",
+      "title": "制程：THT-3 线插件深度不足引发插拔异常",
+      "summary": "THT-3 线插件深度不足 0.3mm，连接器插入力偏高，调整压入深度限位。",
+      "phenomenon": "连接器插入力均值 32N 高于规格 28N，插针深度较图纸浅 0.3mm。",
+      "root_cause_text": "压装机深度限位偏移，压深 2.4mm（规格 2.7mm），未做首件确认。",
+      "countermeasure_text": "压深改为参数锁定并首件测深确认；每班抽测 3 件，超差停机调参。",
+      "defect_mode_code": "DM-ASM-005",
+      "root_cause_code": "RC-PARAM-DEPTH-025",
+      "plant": "P1",
+      "line_code": "THT-3",
+      "owner_dept": "quality",
+      "cls_rank": 1,
+      "status": "active",
+      "source_ticket_type": "8d",
+      "source_ticket_id": "8D-2026-0132",
+      "case_code": "QC-PD-2026-0132",
+      "content_version": 1,
+      "is_export_controlled": 0,
+      "published_at": "2026-09-01",
+      "last_verified_at": "2026-09-20",
+      "verified": 1,
+      "citation_count": 0,
+      "author_role": "quality",
+      "acl": [
+        {
+          "dim": "line",
+          "value": "THT-3",
+          "effect": "allow"
+        }
+      ],
+      "evidence": []
+    },
+    {
+      "case_id": "QC-PD-2026-0134",
+      "category": "quality_case",
+      "subcategory": "process_defect",
+      "title": "机加：CNC-2 刀具补偿值漂移导致孔径漂移",
+      "summary": "CNC-2 刀具补偿表未随换刀更新，孔径批次漂移，重建补偿基准。",
+      "phenomenon": "CNC-2 同批孔径漂移 0.06mm 超公差，抽检 50 件 5 件超差。",
+      "root_cause_text": "换刀后未做在机补偿复核，补偿值沿用旧刀参数。",
+      "countermeasure_text": "换刀后强制在机补偿复核并记录；每 200 件抽测孔径并做 SPC。",
+      "defect_mode_code": "DM-MCH-002",
+      "root_cause_code": "RC-PARAM-OFFSET-026",
+      "plant": "P1",
+      "line_code": "机加-2",
+      "owner_dept": "quality",
+      "cls_rank": 1,
+      "status": "active",
+      "source_ticket_type": "8d",
+      "source_ticket_id": "8D-2026-0134",
+      "case_code": "QC-PD-2026-0134",
+      "content_version": 1,
+      "is_export_controlled": 0,
+      "published_at": "2026-09-01",
+      "last_verified_at": "2026-09-20",
+      "verified": 1,
+      "citation_count": 0,
+      "author_role": "quality",
+      "acl": [
+        {
+          "dim": "line",
+          "value": "CNC-2",
+          "effect": "allow"
+        }
+      ],
+      "evidence": []
+    },
+    {
+      "case_id": "QC-PD-2026-0140",
+      "category": "quality_case",
+      "subcategory": "process_defect",
+      "title": "制程（内部）：新型号导入的关键参数窗口（限 L2）",
+      "summary": "新型号导入的关键参数窗口与验证结论，限内部受控传阅。",
+      "phenomenon": "新型号导入过程中关键参数窗口依赖经验，缺文档化导致重复试错。",
+      "root_cause_text": "参数窗口未文档化，换人后重复试错，单次导入多花 2 天。",
+      "countermeasure_text": "整理参数窗口基线文档并纳入受控清单；变更需评审后更新。",
+      "defect_mode_code": "DM-SMT-012",
+      "root_cause_code": "RC-PARAM-WINDOW-027",
+      "plant": "P1",
+      "line_code": "SMT-1",
+      "owner_dept": "quality",
+      "cls_rank": 2,
+      "status": "active",
+      "source_ticket_type": "8d",
+      "source_ticket_id": "8D-2026-0140",
+      "case_code": "QC-PD-2026-0140",
+      "content_version": 1,
+      "is_export_controlled": 0,
+      "published_at": "2026-09-01",
+      "last_verified_at": "2026-09-20",
+      "verified": 1,
+      "citation_count": 0,
+      "author_role": "quality",
+      "acl": [
+        {
+          "dim": "dept",
+          "value": "quality",
+          "effect": "allow"
+        }
+      ],
+      "evidence": []
+    },
+    {
+      "case_id": "QC-PD-2026-0142",
+      "category": "quality_case",
+      "subcategory": "material_defect",
+      "title": "来料（机密）：某供应商特供材料的工艺窗口与失效模式",
+      "summary": "特供材料的工艺窗口与失效模式属供应商保密信息，限 L3 受控。",
+      "phenomenon": "特供材料在湿热条件下强度衰减快，失效模式尚不完全明确。",
+      "root_cause_text": "特供材料窗口不公开，产线试错导致报废比例高。",
+      "countermeasure_text": "与供应商签保密协议后受控发放工艺窗口；失效模式研究纳入联合项目。",
+      "defect_mode_code": "DM-MAT-005",
+      "root_cause_code": "RC-SUPPLIER-CONF-028",
+      "plant": "P1",
+      "line_code": "注塑-1",
+      "owner_dept": "quality",
+      "cls_rank": 3,
+      "status": "active",
+      "source_ticket_type": "iqc",
+      "source_ticket_id": "IQC-2026-0142",
+      "case_code": "QC-PD-2026-0142",
+      "content_version": 1,
+      "is_export_controlled": 0,
+      "published_at": "2026-09-01",
+      "last_verified_at": "2026-09-20",
+      "verified": 1,
+      "citation_count": 0,
+      "author_role": "quality",
+      "acl": [
+        {
+          "dim": "dept",
+          "value": "quality",
+          "effect": "allow"
+        }
+      ],
+      "evidence": []
+    },
+    {
+      "case_id": "QC-PD-2026-0144",
+      "category": "quality_case",
+      "subcategory": "process_defect",
+      "title": "设备（机密）：某关键设备的维修参数与备件策略",
+      "summary": "关键设备维修窗口与备件库存策略属工厂运营机密，限 L3 受控。",
+      "phenomenon": "关键设备停机窗口受限，备件到货周期长，异常时只能降级运行。",
+      "root_cause_text": "维修参数与备件策略未受控管理，存在外泄风险。",
+      "countermeasure_text": "参数与备件策略入受控库；对外披露需质量总监审批并留痕。",
+      "defect_mode_code": "DM-EQP-005",
+      "root_cause_code": "RC-OPS-CONF-029",
+      "plant": "P1",
+      "line_code": "机加-1",
+      "owner_dept": "quality",
+      "cls_rank": 3,
+      "status": "active",
+      "source_ticket_type": "manual",
+      "source_ticket_id": "RC-2026-0144",
+      "case_code": "QC-PD-2026-0144",
+      "content_version": 1,
+      "is_export_controlled": 0,
+      "published_at": "2026-09-01",
+      "last_verified_at": "2026-09-20",
+      "verified": 1,
+      "citation_count": 0,
+      "author_role": "quality",
+      "acl": [
+        {
+          "dim": "dept",
+          "value": "quality",
+          "effect": "allow"
+        }
+      ],
+      "evidence": []
+    },
+    {
+      "case_id": "QC-PD-2026-0150",
+      "category": "quality_case",
+      "subcategory": "process_defect",
+      "title": "制程（待审）：新型锡膏量产验证中的偏移趋势",
+      "summary": "新型锡膏量产验证中，印刷偏移量呈上升趋势，根因仍在确认，暂不开放引用。",
+      "phenomenon": "连续 3 天印刷偏移均值由 12% 升至 19%，尚未确定是材料还是设备因素。",
+      "root_cause_text": "疑似材料批次与设备温控叠加，根因未收敛。",
+      "countermeasure_text": "待根因确认后再开放共享；当前仅工艺与设备工程师内部跟进。",
+      "defect_mode_code": "DM-SMT-012",
+      "root_cause_code": "RC-PARAM-TEMP-002",
+      "plant": "P1",
+      "line_code": "SMT-1",
+      "owner_dept": "quality",
+      "cls_rank": 1,
+      "status": "review",
+      "source_ticket_type": "8d",
+      "source_ticket_id": "8D-2026-0150",
+      "case_code": "QC-PD-2026-0150",
+      "content_version": 1,
+      "is_export_controlled": 0,
+      "published_at": "2026-09-01",
+      "last_verified_at": "2026-09-20",
+      "verified": 1,
+      "citation_count": 0,
+      "author_role": "quality",
+      "acl": [
+        {
+          "dim": "dept",
+          "value": "quality",
+          "effect": "allow"
+        }
+      ],
+      "evidence": []
+    },
+    {
+      "case_id": "QC-PD-2026-0152",
+      "category": "quality_case",
+      "subcategory": "process_defect",
+      "title": "制程（已撤权）：某型号外观判定标准误用",
+      "summary": "外观判定标准误用导致批量误判，案例已撤权归档，仅保留内部教训。",
+      "phenomenon": "外观判定标准引用了旧版本，误判 320 件为 NG。",
+      "root_cause_text": "标准版本未同步至产线终端，作业员按旧版判定。",
+      "countermeasure_text": "已撤权：案例内容不再对外共享，仅在质量内部复盘中引用教训。",
+      "defect_mode_code": "DM-PLS-002",
+      "root_cause_code": "RC-QUALITY-STD-030",
+      "plant": "P1",
+      "line_code": "注塑-2",
+      "owner_dept": "quality",
+      "cls_rank": 1,
+      "status": "withdrawn",
+      "source_ticket_type": "8d",
+      "source_ticket_id": "8D-2026-0152",
+      "case_code": "QC-PD-2026-0152",
+      "content_version": 1,
+      "is_export_controlled": 0,
+      "published_at": "2026-09-01",
+      "last_verified_at": "2026-09-20",
+      "verified": 1,
+      "citation_count": 0,
+      "author_role": "quality",
+      "acl": [
+        {
+          "dim": "dept",
+          "value": "quality",
+          "effect": "allow"
+        }
+      ],
       "evidence": []
     }
   ]

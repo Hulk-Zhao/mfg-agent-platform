@@ -42,9 +42,18 @@ def _auth(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-def _search(client, token: str, query: str = "锡膏印刷偏移 连锡", k: int = 50):
+def _search(client, token: str, query: str = "锡膏印刷偏移 连锡", k: int = 200):
+    # k 取足够大（种子扩到 70 例后可见 chunk 已 >120），让"候选不足"路径
+    # （hidden_count / notice）在 HTTP 层仍可被触发；与 top-k 截断无关。
     return client.post("/api/v2/cases/search", headers=_auth(token),
                        json={"query": query, "action": "query", "k": k})
+
+
+def _search_payload(client, token: str, query: str = "案例", k: int = 50) -> dict:
+    resp = client.post("/api/v2/cases/search", headers=_auth(token),
+                       json={"query": query, "action": "query", "k": k})
+    assert resp.status_code == 200, resp.text
+    return resp.json()["data"]
 
 
 def _runtime():
@@ -523,8 +532,16 @@ def test_b4_set_acl_recomputes_visibility_class(case_client):
 # ---------------------------------------------------------------- B5：演示态告警
 
 
-def test_b5_meta_exposes_demo_warnings(case_client):
-    """AUTH_SECRET 未配置必须出现在 meta 里（前端黄字），不能只写日志。"""
+def test_b5_meta_exposes_demo_warnings(case_client, monkeypatch):
+    """AUTH_SECRET 未配置必须出现在 meta 里（前端黄字），不能只写日志。
+
+    `monkeypatch.setattr` 把 AUTH_SECRET 清空：别的用例（数据范围/令牌重签）
+    可能在同进程里改过这个全局设置，本用例必须自证，不依赖执行顺序。
+    """
+    from mfg_agents.common.config import settings
+
+    monkeypatch.setattr(settings, "AUTH_SECRET", "", raising=False)
+    monkeypatch.setattr(settings, "CASE_DEMO_MODE", True, raising=False)
     token = _session(case_client, "qa", dept="quality")
     resp = case_client.get("/api/v2/cases/meta", headers=_auth(token))
     assert resp.status_code == 200, resp.text
@@ -559,3 +576,217 @@ def test_unknown_case_and_denied_case_share_status_code(case_client, case_id):
     resp = case_client.get(f"/api/v2/cases/{case_id}", headers=_auth(eq))
     assert resp.status_code == 404, f"{case_id} 对该身份可见，用例前提不成立：{resp.text}"
     assert resp.json()["detail"]["code"] == "CASE_NOT_FOUND_OR_NOT_VISIBLE"
+
+
+# ---------------------------------------------------------------- 批量优化与状态守护
+
+
+def test_batch_reads_match_per_case_reads(case_client):
+    """批量接口与逐条接口必须**逐字段一致**（优化不能改判定结果）。
+
+    背景：`_restricted()` 改成批量取案例与 ACL 行（一次连接两条查询）后，
+    性能从"每次检索上百次建连"降到两次。如果批量与逐条有任何字段差异，
+    受限清单就会和真实 ACL 不一致——那是安全结论出错，不是性能问题。
+    """
+    _session(case_client, "qa", dept="quality")
+    runtime = _runtime()
+    ids = [str(row["case_id"]) for row in runtime.store.list_cases()]
+    assert len(ids) >= 5, "案例太少，测试失效"
+
+    batch_rows = runtime.store.eval_rows_many(ids)
+    for case_id in ids:
+        assert [dict(r) for r in batch_rows.get(case_id, [])] == \
+            runtime.store.eval_rows(case_id), f"{case_id} 的批量 ACL 行与逐条不一致"
+
+    batch_cases = runtime.store.cases_by_ids(ids)
+    for case_id in ids:
+        assert dict(batch_cases.get(case_id) or {}) == \
+            (runtime.store.get_case(case_id) or {}), \
+            f"{case_id} 的批量案例行与逐条不一致"
+
+
+def test_restricted_matches_per_case_recomputation(case_client):
+    """受限清单 = 硬维度候选里**可披露存在且当前主体不可见**的那些。
+
+    "独立"指的是**独立于批量实现**：这条用例逐条调 ``eval_rows`` + ``authorize``，
+    与生产侧 ``_restricted()`` 用的 ``eval_rows_many`` 路径不同，因此能证明
+    批量优化没有改变判定结果。硬维度那一段仍复用生产同一个
+    ``compile_hard_only``（刻意如此：它就是 B10 的根因所在——硬维度的
+    ``cls_rank ≤ max`` 对 rank-3 主体是放行的，所以**披露性必须单独判**）。
+
+    B10 修复后：涉密 / 未结案 / 已撤权案例连 ``case_id`` 都不进清单。
+    """
+    from mfg_agents.v2.security.acl_compiler import get_acl_compiler
+    from mfg_agents.v2.security.acl_evaluator import get_acl_evaluator
+    from mfg_agents.v2.services.case_search import _is_disclosable
+
+    token = _session(case_client, "qa", dept="quality")
+    runtime = _runtime()
+    principal = runtime.resolver.from_token(token)
+
+    data = _search_payload(case_client, token)
+    visible = {h["case_id"] for h in data["hits"]}
+
+    index = runtime.index_service.index
+    hard = get_acl_compiler().compile_hard_only(principal, "query")
+    evaluator = get_acl_evaluator()
+    expected = set()
+    for hit in index.search("", hard, 100000):
+        case_id = str(hit.case_id)
+        if case_id in visible or case_id in expected:
+            continue
+        case = runtime.store.get_case(case_id)
+        if not case or not _is_disclosable(case):
+            continue          # B10：不可披露的，连 case_id 都不给
+        if evaluator.authorize(principal, runtime.store.eval_rows(case_id),
+                               "query").allow:
+            continue
+        expected.add(case_id)
+
+    got = {item["case_id"] for item in data["restricted"]}
+    assert got <= expected, f"受限清单多出了不该出现的案例：{got - expected}"
+    assert expected <= got, f"受限清单漏掉了应出现的案例：{expected - got}"
+    assert all(item.get("requestable") is True for item in data["restricted"]), \
+        "受限清单只应收录可申请的案例（标记不构成过滤）"
+
+
+def test_global_state_is_not_mutated_by_case_flows(case_client):
+    """守护用例：跑完检索/问答/引用后，全局配置与单例不得被改动。
+
+    为什么需要这条：曾经出现"单跑全绿、全量一片红"的现象，本质是**测试污染**
+    （某个模块改了 `settings` 或单例，后续模块读到被改过的值）。这类故障不会
+    在被污染的那个模块里报错，只会表现为下游莫名其妙地红，极难定位。
+    这条用例把"跑完之后世界没变"变成可断言的事实。
+    """
+    from mfg_agents.common.config import settings
+    from mfg_agents.v2.contracts.ontology import get_ontology_registry
+    from mfg_agents.v2.security.acl_compiler import get_acl_compiler
+    from mfg_agents.v2.security.acl_evaluator import get_acl_evaluator
+    from mfg_agents.v2.security.case_rbac import get_case_rbac
+
+    watched = ("CASE_DB", "CASE_ENABLED", "CASE_DEMO_MODE", "CASE_VECTOR_BACKEND",
+               "CASE_EXPOSE_HIDDEN_COUNT", "CASE_RERANK", "CASE_SEED_PATH",
+               "CASE_DEFAULT_TENANT", "CASE_K_DEFAULT", "CASE_K_MAX",
+               "CASE_REDACTION_EXTRA_TERMS", "CASE_ACCESS_GRANT_TTL_DAYS",
+               "AUTH_SECRET")
+    before = {name: getattr(settings, name, None) for name in watched}
+    singles_before = {
+        "compiler_policy": id(get_acl_compiler().policy),
+        "evaluator": id(get_acl_evaluator()),
+        "rbac": id(get_case_rbac()),
+        "ontology": id(get_ontology_registry()),
+    }
+
+    token = _session(case_client, "qa", dept="quality")
+    _search(case_client, token)
+    case_client.post("/api/v2/cases/ask", headers=_auth(token),
+                     json={"question": "锡膏印刷偏移怎么处置", "k": 5})
+    case_client.post(f"/api/v2/cases/{OPEN_CASE}/cite", headers=_auth(token),
+                     json={"chunk_type": "summary"})
+
+    after = {name: getattr(settings, name, None) for name in watched}
+    changed = {k: (before[k], after[k]) for k in watched if before[k] != after[k]}
+    assert not changed, f"案例链路改写了全局配置：{changed}"
+
+    singles_after = {
+        "compiler_policy": id(get_acl_compiler().policy),
+        "evaluator": id(get_acl_evaluator()),
+        "rbac": id(get_case_rbac()),
+        "ontology": id(get_ontology_registry()),
+    }
+    assert singles_after == singles_before, \
+        f"案例链路替换了全局单例：{singles_after} != {singles_before}"
+
+
+# ---------------------------------------------------------------- C2：拒答阈值标定
+
+
+#: 无关问句（现场真会问的外行问题）——必须**全部拒答**
+IRRELEVANT_QUESTIONS: tuple[str, ...] = (
+    "食堂几点开饭", "今天午饭吃什么", "明天股市会涨吗", "现在外面下雨吗",
+    "周末去哪儿玩比较好", "帮我写一首诗", "最近的油价是多少",
+    "孩子放学几点回家", "附近有什么好吃的",
+)
+
+#: 相关问句（制造域真实提问）——必须**全部作答**且引用合法
+RELEVANT_QUESTIONS: tuple[str, ...] = (
+    "锡膏印刷偏移连锡怎么处理", "回流焊后焊点空洞率高怎么办",
+    "波峰焊润湿角不足怎么改善", "注塑件缩水率波动怎么控制",
+    "钢网开孔堵塞导致连锡", "虚焊和空焊有什么区别",
+    "焊接后引脚连锡的根因", "锡膏黏度波动引发印刷拖影",
+)
+
+
+@pytest.mark.parametrize("question", IRRELEVANT_QUESTIONS)
+def test_c2_irrelevant_questions_are_refused(case_client, question):
+    """C2 标定结果钉死：无关问句**必须全部拒答**。
+
+    背景：语料从 15 例扩到 99 例后，demo 级字符重合度的分数分布整体上移，
+    绝对阈值 0.18 失效——「食堂几点开饭」拿到 0.205 后被煞有介事地答了一遍
+    （引用合法、内容无关）。现在闸门是"绝对下限 + 相对余量"双条件（OR），
+    阈值由 ``tools/calibrate_answer_thresholds.py`` 标定。
+
+    ⚠️ 换真实 embedding 后这套阈值会全废，必须重跑标定脚本并同步本用例。
+    """
+    token = _session(case_client, "qa", dept="quality")
+    resp = case_client.post("/api/v2/cases/ask", headers=_auth(token),
+                            json={"question": question, "k": 10})
+    assert resp.status_code == 200, resp.text
+    data = resp.json()["data"]
+    assert data["answered"] is False, (
+        f"无关问题「{question}」被作答了（score 分布漂移，需重跑标定）："
+        f"{(data.get('answer') or '')[:60]}")
+    assert "拒绝作答" in (data.get("reason") or "")
+
+
+@pytest.mark.parametrize("question", RELEVANT_QUESTIONS)
+def test_c2_relevant_questions_are_answered(case_client, question):
+    """相关问句必须全部作答，且每条结论都挂得上引用（拒答优先也不能拒真问题）。"""
+    token = _session(case_client, "qa", dept="quality")
+    resp = case_client.post("/api/v2/cases/ask", headers=_auth(token),
+                            json={"question": question, "k": 10})
+    assert resp.status_code == 200, resp.text
+    data = resp.json()["data"]
+    assert data["answered"] is True, (
+        f"相关问题「{question}」被拒答了：{data.get('reason')}")
+    assert data["citations"], "作答但没有任何引用"
+    for claim in data["claims"]:
+        assert claim["citations"], "存在无引用的结论"
+        for cite in claim["citations"]:
+            assert cite["case_id"] and cite["chunk_id"] and \
+                int(cite["content_version"]) >= 1
+
+
+def test_unregistered_person_scanner_flags_but_never_redacts():
+    """兜底扫描器：**要能报出未登记人名，也绝不能误伤技术术语**。
+
+    背景（QA 裁决②）：脱敏是 denylist，只能防**已知**名字；新名字第一次出现
+    必然先漏一次，且**失效是静默的**。所以补一条"疑似人名扫描"，
+    但**只产待办、不自动脱敏**——弱规则误伤会把正常技术表述替换成 `<PERSON>`，
+    污染知识层比漏一个名字严重得多。
+
+    这条用例把两件事都钉住：**能抓到**（联系人张三丰）+ **不误伤**（张紧并/间隙补偿）。
+    """
+    import importlib.util
+    import pathlib
+
+    spec = importlib.util.spec_from_file_location(
+        "scan_unregistered_person_names",
+        pathlib.Path(__file__).resolve().parents[2]
+        / "tools" / "scan_unregistered_person_names.py")
+    scanner = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(scanner)
+
+    texts = {
+        "leak.phenomenon": "客户现场联系人张三丰反馈回流后连锡，处理人李建国已到现场。",
+        "tech.summary": "工序由张紧并缩短清洗周期后恢复，间隙补偿到位，温度未变。",
+    }
+    findings = scanner.scan(texts)
+    names = {item["name"] for item in findings}
+    assert "张三丰" in names, f"未登记人名没被抓到：{findings}"
+    assert "李建国" in names, f"'处理人李建国'这种上下文没被抓到：{findings}"
+    for noise in ("张紧并", "间隙补", "温度未"):
+        assert not any(noise in name for name in names), \
+            f"技术术语被误判成人名：{sorted(names)}"
+    # 只产待办：扫描**不得**修改任何文本
+    assert texts["leak.phenomenon"].startswith("客户现场联系人张三丰"), "扫描器改了输入文本"

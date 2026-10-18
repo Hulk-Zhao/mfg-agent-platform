@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import logging
+import statistics
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping, Optional, Protocol, Sequence
 
@@ -150,6 +151,8 @@ class CaseQAService:
         self._ontology = ontology or get_ontology_registry()
         # ★ LLM 接入点：默认确定性模板；生产注入真实 answerer 即可
         self._answerer: Answerer = answerer or TemplateAnswerer()
+        # 单次问答内的案例行缓存（每次 answer() 开头重置，见 _citation_ok）
+        self._case_cache: dict[str, dict[str, Any]] = {}
 
     # ---------- 主入口 ----------
 
@@ -164,6 +167,9 @@ class CaseQAService:
         # ① 查询归一化（确定性；语义扩展只影响 query_text，不影响 filter）
         raw_question = str(question or "")
         normalized, trace = self._build_trace(raw_question)
+
+        # 本次问答内的案例行缓存（生命周期仅这一次调用，见 _citation_ok 注释）
+        self._case_cache = {}
 
         # ② 检索（内部完成权限前置 + 二次授权；action=read 要求能读全文）
         search = self._search.search(principal, normalized, action=action,
@@ -189,22 +195,60 @@ class CaseQAService:
         # 阈值取策略里的 ``low_confidence_threshold``（与前端 low_confidence 提示同源）。
         threshold = float(self._search.policy.setting(
             "low_confidence_threshold", 0.0) or 0.0)
-        best = max((float(hit.get("score") or 0.0) for hit in search.hits), default=0.0)
+        scores = sorted((float(hit.get("score") or 0.0) for hit in search.hits),
+                        reverse=True)
+        best = scores[0] if scores else 0.0
+        median = float(statistics.median(scores)) if scores else 0.0
+        margin = best - median
+        min_score = float(self._search.policy.setting("answer_min_score", 0.0) or 0.0)
+        min_margin = float(self._search.policy.setting("answer_margin", 0.0) or 0.0)
+        no_term_score = float(self._search.policy.setting(
+            "answer_score_without_terms", 0.0) or 0.0)
+        # 问题里命中的受控词条数（缺陷模式/根因/对策）——"有没有制造术语"
+        raw_terms = sum(
+            len(self._ontology.find_terms(vocab, raw_question, limit=3))
+            for vocab in ("defect_mode", "root_cause", "countermeasure"))
+
+        # 三个条件任一命中即拒答（OR，不是 AND）：
+        #   1. 老阈值 low_confidence_threshold（语义不动，向后兼容）
+        #   2. **绝对下限** answer_min_score：top1 低于它 → 拒答
+        #   3. **相对余量** answer_margin：top1 - 中位分 低于它 → 拒答
+        # 为什么必须有"相对"这一条：全库都不相关时绝对分数仍可能中等偏高
+        # （字符重合度天然不为 0），只有"最优是否明显优于中位"才区分得开。
+        # 为什么两个阈值都放 YAML：它们与检索后端的分数分布**强绑定**——
+        # demo 后端（blake2b 1-2gram）扩到 99 例后分布整体上移，
+        # 换真实 embedding 后必须重跑 tools/calibrate_answer_thresholds.py 重新标定。
+        reasons: list[str] = []
         if threshold > 0.0 and best < threshold:
+            reasons.append(f"最高匹配度 {best:.3f} 低于阈值 {threshold:.2f}")
+        if min_score > 0.0 and best < min_score:
+            reasons.append(f"最高匹配度 {best:.3f} 低于绝对下限 {min_score:.2f}")
+        if min_margin > 0.0 and margin < min_margin:
+            reasons.append(f"最优命中未显著优于中位分"
+                           f"（余量 {margin:.3f} < {min_margin:.2f}）")
+        if no_term_score > 0.0 and raw_terms == 0 and best < no_term_score:
+            # 零术语问题（"食堂几点开饭"）即使分数不低也不作答：
+            # 字符重合度对这类问句天然会给中等分，靠术语闸门才分得开。
+            reasons.append(f"问题未命中任何制造术语，要求分数 ≥ {no_term_score:.2f}"
+                           f"（当前 {best:.3f}）")
+        if reasons:
             self._audit.append(
                 actor=principal.user_id, action="case.answer.refused",
                 hit_count=len(search.hits), hidden_count=search.hidden_count,
                 query_hash=search.query_hash, filter_hash=search.filter_hash,
                 detail={"reason": "low_confidence", "best": round(best, 4),
-                        "threshold": threshold})
+                        "median": round(median, 4), "margin": round(margin, 4),
+                        "min_score": min_score, "min_margin": min_margin,
+                        "terms": raw_terms, "no_term_score": no_term_score,
+                        "legacy_threshold": threshold})
             trace.append(_trace_step(
                 4, "相关度闸门",
-                f"最高匹配度 {best:.3f} 低于阈值 {threshold:.2f}，拒绝作答",
-                []))
+                "；".join(reasons) + "，拒绝作答", []))
             return AnswerResult(
                 answered=False,
-                reason=(f"未检索到足够相关的案例（最高匹配度 {best:.3f} 低于阈值 "
-                        f"{threshold:.2f}），已拒绝作答：不拿无关案例凑结论"),
+                reason=(f"未检索到足够相关的案例（{'；'.join(reasons)}），"
+                        f"已拒绝作答：不拿无关案例凑结论"
+                        f"（最高匹配度 {best:.3f}，中位 {median:.3f}）"),
                 search=search, trace=trace,
                 ontology_gain=self._ontology_gain(raw_question, search, principal))
 
@@ -376,7 +420,7 @@ class CaseQAService:
         return " ".join([text, *expanded]) if expanded else text
 
     def _citation_ok(self, citation: Citation) -> bool:
-        """引用校验：案例存在、状态可引、``content_version`` 一致。"""
+        """引用校验：案例存在、状态可引、``content_version`` 一致、文本哈希一致。"""
         if not citation.case_id or not citation.chunk_id:
             return False
         expected_chunk = f"{citation.case_id}::"
@@ -386,9 +430,15 @@ class CaseQAService:
                 citation.case_id, citation.chunk_id.split("::", 1)[1],
                 citation.content_version):
             return False
-        # 双重保险：再用二次授权路径确认该案例仍然可见（防并发撤权）
-        case = self._store.get_case(citation.case_id)
-        return case is not None and str(case.get("status") or "") in (
+        # 双重保险：再用二次授权路径确认该案例仍然可见（防并发撤权）。
+        # 同一条案例常被多条断言引用，逐条 get_case 每次都新建 SQLite 连接——
+        # 这里按"本次问答"缓存案例行，5 条断言省掉 4 次建连。
+        # 缓存只活过一次问答，不跨请求，不存在"撤权后仍读到旧值"的问题。
+        case = self._case_cache.get(citation.case_id)
+        if case is None:
+            case = self._store.get_case(citation.case_id)
+            self._case_cache[citation.case_id] = case or {}
+        return bool(case) and str(case.get("status") or "") in (
             "active", "deprecated", "superseded", "archived")
 
     @staticmethod

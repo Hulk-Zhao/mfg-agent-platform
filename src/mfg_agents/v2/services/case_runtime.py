@@ -14,6 +14,7 @@
 | LLM | ``CaseQAService(answerer=...)`` |
 | 重排模型 | ``CaseSearchService(reranker=...)`` |
 | 词表审批流 | 替换 ``OntologyRegistry`` 的加载源（YAML → 审批服务 API） |
+| 访问申请审批人 | ``AccessApprover``（ABC，``services/case_auto_approve.py``） | ``DemoAgentApprover``（演示：职能管理岗代批） | 实现同一 ABC（如 OA/IM 审批流回调），在 ``CaseRuntime.build`` 装配处替换 |
 """
 from __future__ import annotations
 
@@ -53,6 +54,9 @@ class CaseRuntime:
     access: Any = None
     #: 访问申请的路由 Agent（只路由，不审批）
     access_agent: Any = None
+    #: 访问申请的审批人提供者（**预留接口**：演示实现 = 职能管理岗代批；
+    #: 生产替换为真实审批流实现，装配处换掉即可，服务端零改动）
+    access_approver: Any = None
 
     # ---------- 装配 ----------
 
@@ -71,13 +75,16 @@ class CaseRuntime:
         ingest = CaseIngestService(store, index_service,
                                    redaction=get_redaction_service())
         from ..agents.case_access_agent import CaseAccessAgent
-        from .case_access import CaseAccessService
+        from ..services.case_access import CaseAccessService
 
         runtime = cls(store=store, index_service=index_service, search=search,
                       qa=qa, ingest=ingest, audit=audit,
                       resolver=PrincipalResolver(),
                       access=CaseAccessService(store, index_service, audit=audit),
                       access_agent=CaseAccessAgent(store, audit))
+        from .case_auto_approve import DemoAgentApprover
+
+        runtime.access_approver = DemoAgentApprover(store)
         if auto_seed:
             runtime.ensure_seeded(seed_path)
         return runtime

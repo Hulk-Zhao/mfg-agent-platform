@@ -179,7 +179,10 @@ class Settings:
     CASE_DEFAULT_TENANT: str = os.getenv("CASE_DEFAULT_TENANT", "T001")
     # 默认返回条数 / 上限
     CASE_K_DEFAULT: int = int(os.getenv("CASE_K_DEFAULT", "5"))
-    CASE_K_MAX: int = int(os.getenv("CASE_K_MAX", "20"))
+    # k 上限：刻意压到 30。语料扩到 ~100 例 / 350+ chunk 后，若 k 上限过大，
+    # 任何内部岗位都能取满 k —— "候选不足 + 不可见 N 条"这条差异化提示就永远
+    # 演示不出来（k 必须真的能截断）。
+    CASE_K_MAX: int = int(os.getenv("CASE_K_MAX", "30"))
     # 脱敏补充词表（逗号分隔，命中的词替换为 <PERSON>）。
     # 用途：词表外的人名（客户联系人、现场工程师）在没有 NER 的演示环境里
     # 只能靠"显式声明"兜住——宁可让运维多填一行，也不要放过一个真名。
@@ -187,6 +190,22 @@ class Settings:
     # 跨部门访问申请的授权有效期（天；到期惰性回收）
     CASE_ACCESS_GRANT_TTL_DAYS: int = int(
         os.getenv("CASE_ACCESS_GRANT_TTL_DAYS", "30"))
+    # 演示专用：跨部门访问申请的「自动审批」开关（默认开，**仅演示**）。
+    #
+    # 打开时的链路：提交申请 → 前端弹窗分步展示「智能 Agent 受理 → 推断职能部门 →
+    # 推送审批通道 → 职能部门审批通过」→ 服务端由 DemoAgentApprover 以**归属
+    # 职能部门管理岗的演示身份**走同一条 decide()（ACL 写入 / 有效期 / 索引重建 /
+    # 审计一条不少，审计 action 打 ``.demo`` 后缀显式标记）。
+    #
+    # 为什么默认开：本开关只在 CASE_DEMO_MODE=true 时生效（见
+    # services/case_auto_approve.AccessApprover），而 CASE_DEMO_MODE 本身就是
+    # "演示环境"的部署开关；评审现场要能直接看到完整审批链路。
+    #
+    # 预留接口：生产置 false，由真实审批流（OA / IM 审批）实现同一个
+    # AccessApprover 接口——职能部门负责人本人点同意后回调 decide()，
+    # 服务端代码零改动。Agent 依旧只路由不审批（AGENT_FORBIDDEN_ACTIONS 不变）。
+    CASE_ACCESS_AUTO_APPROVE_DEMO: bool = _env_bool(
+        "CASE_ACCESS_AUTO_APPROVE_DEMO", True)
     # B8：单主体（user+IP 组合桶）每分钟可发起的案例检索/读取次数上限。
     # 超限返回 429 —— 用限流掐断探测流量，而不是削减审计写入：
     # 少写一条审计就会把 B1 刚消掉的"时间侧信道"请回来。

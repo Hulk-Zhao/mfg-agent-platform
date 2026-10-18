@@ -199,6 +199,14 @@ class AclEvaluator:
         if vc == 0:
             return AuthDecision(True, "可见性快路径（vc=0，全维无约束）")
 
+        # ── 10.5 跨部门通行角色（与编译器 cross-dept 路径同一语义）────
+        # 总经理等通行角色免做"令牌交集"匹配（role/dept/plant 等业务维全通）；
+        # 上面的显式 deny（步骤 9）与硬门禁（步骤 5-8）已经独立执行过——
+        # 豁免只放宽"业务范围"，不放宽任何安全约束。改这里必须同步改
+        # acl_compiler 的阶段 4，否则检索召回会被二次授权整批丢弃。
+        if self._policy.cross_dept_pass(principal):
+            return AuthDecision(True, "跨部门通行角色（业务维豁免，硬门禁照常）")
+
         matched: list[str] = []
         for dim, values in allow_dims.items():
             prefix = _DIM_TO_TOKEN.get(dim)

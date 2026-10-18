@@ -1,5 +1,11 @@
 /**
- * 企业综合助手 · demo 展示页（办公事务办理 + 制造数据只读速查）
+ * 数据速查 + OA 协同 · demo 展示屏（由原「办公与数据速查」拆分而来）
+ *
+ * 拆分动机：办公办理（会议室/订餐/我的预订）与制造数据只读速查是两类任务、
+ * 两套权限口径、两条变更节奏，混在一屏会导致心智混淆与回归互相牵制。
+ * 如今拆为两屏、共用同一份渲染实现，按当前屏名（ctx.state.screen）决定内容：
+ *   - screen=data → 「数据速查」：数据问答 + 制造数据速查卡（只读）
+ *   - screen=oa   → 「OA 协同」  ：办公问答 + 会议室 / 餐厅 / 我的预订订单
  *
  * 数据面（后端为 demo 后端：内存种子数据，进程重启复位；真实接入适配层已就绪，
  * OFFICE_BACKEND=feishu 即把会议室切到飞书日历，本页零改动）：
@@ -13,7 +19,7 @@
  *   GET  /api/v2/office/my/:actor         我的预订与订单
  *   POST /api/v2/office/cancel            取消本人预订 / 订单
  *
- * 注册方式：`window.Screens.render_office`（app.js 按 `render_<screenId>` 查找）。
+ * 注册方式：`window.Screens.render_data` / `window.Screens.render_oa`（app.js 按 `render_<screenId>` 查找）。
  * 样式：app.css 内 `.of-` 命名空间（沿用平台浅色主题变量）。
  *
  * 边界（不夸大）：办理动作一律由后端 Agent/后端服务执行，本页只做展示与触发；
@@ -25,17 +31,40 @@
 
   const SEND_ICON = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/></svg>';
 
-  // 快捷示例（办公办理 + 制造数据速查，直接喂给企业助手 Agent，展示工具调用链路）
-  const QUICK = [
+  // 快捷示例：按屏分流，直接喂给企业助手 Agent，展示工具调用链路
+  const DATA_QUICK = [
     "M8 螺栓还有多少库存",
     "A 型号成品现在能发多少",
     "最近有没有不合格的来料批次",
     "哪些料库龄超过 90 天了",
     "哪些料低于安全库存了",
+    "帮我追溯 BAT-LI-3000 这批来料",
+  ];
+  const OA_QUICK = [
     "帮我订 2026-10-20 14:00-15:00 一个 8 人的会议室，主题项目评审",
     "中午订个餐，来两份红烧狮子头套餐",
     "查一下我的会议室预订和订餐订单",
+    "我要报销一笔费用",
+    "我要请假",
+    "我要补考勤打卡",
   ];
+
+  // OA 自助办理入口 → 种子问句（缺失项由助手 ask_user 弹窗反问补齐）
+  const ENTRY_SEED = {
+    expense: "我要报销一笔费用",
+    leave: "我要请假",
+    attendance: "我要补考勤打卡",
+  };
+
+  // OA 申请单据状态（与后端 status 口径一致）
+  const FORM_STATUS = {
+    pending_approval: { t: "待审批", c: "badge-amber" },
+    approved: { t: "已通过", c: "badge-green" },
+    rejected: { t: "已驳回", c: "badge-red" },
+    cancelled: { t: "已撤销", c: "badge-gray" },
+  };
+  function formStatusText(s) { return (FORM_STATUS[s] || { t: s || "-" }).t; }
+  function formStatusCls(s) { return (FORM_STATUS[s] || { c: "badge-gray" }).c; }
 
   // IQC 结论徽章（与后端 inspect_status 口径一致）
   const SNAP_STATUS = {
@@ -44,7 +73,6 @@
     pending: { t: "待检", c: "badge-gray" },
     deviation: { t: "让步接收", c: "badge-amber" },
   };
-
 
   function pad(n) { return String(n).padStart(2, "0"); }
   function dateStr(offsetDays) {
@@ -66,14 +94,16 @@
   // 元数据（后端实现 / LLM 可用性）跨重渲染复用
   let metaCache = null;
 
-  function initialState() {
+  function initialState(mode) {
+    const greet = mode === "oa"
+      ? "您好！我是 OA 协同助手，可办办公事务（预订会议室、订餐、查/取消本人预订与订单）"
+        + "与 OA 自助办理（费用报销、请假申请、补考勤打卡）。办理时若关键信息不全，"
+        + "我会弹出表单向您反问补齐；报销/请假/补卡提交后一律先发起人工确认，不会直接放行。"
+      : "您好！我是数据速查助手，可查制造数据（材料库存、成品库存与可发量、来料批次与检验结论、"
+        + "库龄呆滞、缺料缺口、批次追溯，均为只读）。数据走平台统一口径注册查询，受岗位数据权限约束；"
+        + "越权数据我会如实告知无权限，不会绕过。";
     return {
-      messages: [{
-        role: "bot", time: nowHM(), steps: [], hitl: null, gaps: [],
-        content: "您好！我是办公与数据速查助手，既能办办公事务（预订会议室、订餐、查/取消本人预订与订单），"
-          + "也能查制造数据（材料库存、成品库存与可发量、来料批次与检验结论、库龄呆滞、缺料缺口、批次追溯，均为只读）。"
-          + "高影响事项（报告厅/培训室、商务客餐、超 500 元订单）我会先发起人工确认，不会直接放行。",
-      }],
+      messages: [{ role: "bot", time: nowHM(), steps: [], hitl: null, gaps: [], content: greet }],
       sending: false,
       filter: "all",            // 会议室筛选：all | cap8 | cap20 | approval
       avail: null,              // 可用性查询结果
@@ -162,7 +192,7 @@
     const bookings = (S.mine && S.mine.bookings) || [];
     const orders = (S.mine && S.mine.orders) || [];
     if (!bookings.length && !orders.length) {
-      return '<div class="of-note">暂无预订与订单。可以先用左侧快捷示例让助手办理一单。</div>';
+      return '<div class="of-note">暂无预订与订单。可以先用上方对话让助手办理一单。</div>';
     }
     const bk = bookings.map((b) => `<div class="of-item"><div class="of-item-main">`
       + `<div class="of-item-title">${esc(b.room_name)} <span class="of-code">${esc(b.booking_id)}</span></div>`
@@ -177,6 +207,135 @@
       + `<button class="btn btn-danger btn-sm" data-cancel="order" data-id="${esc(o.order_id)}">取消</button></div>`).join("");
     return `<div class="of-mine-label">会议室预订（${bookings.length}）</div>${bk || '<div class="of-note">无</div>'}`
       + `<div class="of-mine-label">订餐订单（${orders.length}）</div>${od || '<div class="of-note">无</div>'}`;
+  }
+
+  /** OA 申请单据（报销 / 请假 / 补卡 + 假期余额；只读展示，提交动作在对话里完成） */
+  function myFormsHtml(S, esc) {
+    const mine = (S && S.mine) || {};
+    const exps = mine.expenses || [];
+    const leaves = mine.leaves || [];
+    const fixes = mine.attendance_fixes || [];
+    const bal = mine.leave_balance || null;
+    if (!exps.length && !leaves.length && !fixes.length && !bal) {
+      return '<div class="of-note">暂无 OA 申请单据。可用上方「OA 自助办理」或对话发起报销/请假/补卡。</div>';
+    }
+    const balHtml = bal
+      ? `<div class="of-bal">年假余额 <b>${esc(bal.annual_remaining)}</b> 天 · 调休余额 `
+        + `<b>${esc(bal.comp_remaining)}</b> 天 · 本年已休 <b>${esc(bal.used_this_year)}</b> 天</div>`
+      : "";
+    const ex = exps.map((e) => `<div class="of-item"><div class="of-item-main">`
+      + `<div class="of-item-title">${esc(e.category)}报销 <span class="of-code">${esc(e.expense_id)}</span></div>`
+      + `<div class="of-item-sub">¥${esc(e.amount)} · ${esc(e.expense_date)} · ${esc(e.note || "-")}`
+      + `${e.high_value ? ' <span class="badge badge-amber">大额</span>' : ""}`
+      + ` <span class="badge ${formStatusCls(e.status)}">${esc(formStatusText(e.status))}</span></div></div></div>`).join("");
+    const lv = leaves.map((l) => `<div class="of-item"><div class="of-item-main">`
+      + `<div class="of-item-title">${esc(l.leave_type)} <span class="of-code">${esc(l.leave_id)}</span></div>`
+      + `<div class="of-item-sub">${esc(l.start_date)} ~ ${esc(l.end_date)} · ${esc(l.days)} 天`
+      + `${l.reason ? " · " + esc(l.reason) : ""}`
+      + `${l.long_leave ? ' <span class="badge badge-amber">长假</span>' : ""}`
+      + ` <span class="badge ${formStatusCls(l.status)}">${esc(formStatusText(l.status))}</span></div></div></div>`).join("");
+    const kb = fixes.map((a) => `<div class="of-item"><div class="of-item-main">`
+      + `<div class="of-item-title">${esc(a.fix_type)} <span class="of-code">${esc(a.fix_id)}</span></div>`
+      + `<div class="of-item-sub">${esc(a.work_date)} ${esc(a.time)}`
+      + `${a.reason ? " · " + esc(a.reason) : ""}`
+      + ` <span class="badge ${formStatusCls(a.status)}">${esc(formStatusText(a.status))}</span></div></div></div>`).join("");
+    return balHtml
+      + `<div class="of-mine-label">费用报销（${exps.length}）</div>${ex || '<div class="of-note">无</div>'}`
+      + `<div class="of-mine-label">请假申请（${leaves.length}）</div>${lv || '<div class="of-note">无</div>'}`
+      + `<div class="of-mine-label">补考勤打卡（${fixes.length}）</div>${kb || '<div class="of-note">无</div>'}`;
+  }
+
+  /**
+   * 反问弹窗：按后端 clarify.fields 渲染「多选 chips / 输入框」，用户补齐后组装文本回给助手。
+   * type: select→单选 chips；multiselect→可切换 chips；date/时间/number/text→对应输入框。
+   * @param {object} clarify  {question, fields:[{key,label,type,options?,required?}]}
+   * @param {object} ctx      渲染上下文（取 UI.toast / UI.esc）
+   * @param {string} base     原始请求（补全文本的前缀，保证多轮反问不丢上下文）
+   * @param {function} onSubmit 提交回调（收到组装后的完整文本）
+   */
+  function openClarify(clarify, ctx, base, onSubmit) {
+    if (!clarify || !clarify.fields || !clarify.fields.length) return;
+    const esc = ctx.UI.esc;
+    const fieldHtml = (f, i) => {
+      const key = f.key || ("f" + i);
+      const label = String(f.label || key);
+      const t = String(f.type || "text");
+      // 已知值预填：助手从原话解析出的值随 clarify 下发，弹窗打开即"半填"
+      const pre = f.value == null ? "" : String(f.value);
+      let body;
+      if (t === "select") {
+        const opts = (f.options || []).map((o) =>
+          `<option value="${esc(o)}"${String(o) === pre ? " selected" : ""}>${esc(o)}</option>`).join("");
+        body = opts
+          ? `<select class="of-clarify-select"><option value=""${pre ? "" : " selected"}>请选择…</option>${opts}</select>`
+          : `<input class="of-clarify-input" type="text" placeholder="请输入" value="${esc(pre)}" />`;
+      } else if (t === "multiselect") {
+        const chosen = pre ? pre.split(/[、,，;；\s]+/) : [];
+        const opts = (f.options || []).map((o) =>
+          `<button type="button" class="of-clarify-chip${chosen.indexOf(String(o)) >= 0 ? " active" : ""}" data-val="${esc(o)}">${esc(o)}</button>`).join("");
+        body = `<div class="of-clarify-chips" data-type="multiselect">${opts || '<span class="of-note">暂无可选项，请直接在对话里说明</span>'}</div>`;
+      } else {
+        const itype = t === "date" ? "date"
+          : (t === "time" || t === "时间") ? "time"
+            : t === "number" ? "number" : "text";
+        body = `<input class="of-clarify-input" type="${itype}"${t === "number" ? ' step="any" min="0"' : ""} value="${esc(pre)}" />`;
+      }
+      return `<div class="of-clarify-field" data-key="${esc(key)}" data-label="${esc(label)}"`
+        + ` data-type="${esc(t)}" data-required="${f.required ? "1" : "0"}">`
+        + `<div class="of-clarify-label">${esc(label)}${f.required ? ' <span class="of-req">*</span>' : ""}</div>`
+        + body + "</div>";
+    };
+    const mask = document.createElement("div");
+    mask.className = "of-clarify-mask";
+    mask.innerHTML = `<div class="of-clarify" role="dialog" aria-modal="true">
+      <div class="of-clarify-head">
+        <div class="of-clarify-title">请补充办理信息</div>
+        <button type="button" class="of-clarify-close" data-close="1" aria-label="关闭">×</button>
+      </div>
+      <div class="of-clarify-q">${esc(clarify.question || "")}</div>
+      <div class="of-clarify-body">${(clarify.fields || []).map(fieldHtml).join("")}</div>
+      <div class="of-clarify-foot">
+        <button type="button" class="btn btn-outline btn-sm" data-close="1">取消</button>
+        <button type="button" class="btn btn-primary btn-sm" data-submit="1">提交</button>
+      </div></div>`;
+    document.body.appendChild(mask);
+    const close = () => { if (mask.parentNode) mask.parentNode.removeChild(mask); };
+
+    mask.addEventListener("click", (e) => {
+      if (e.target === mask || e.target.closest("[data-close]")) { close(); return; }
+      const chip = e.target.closest(".of-clarify-chip");
+      if (!chip) return;
+      const box = chip.parentNode;
+      if (box.dataset.type === "multiselect") chip.classList.toggle("active");
+      else box.querySelectorAll(".of-clarify-chip").forEach(
+        (c) => c.classList.toggle("active", c === chip));
+    });
+
+    mask.querySelector("[data-submit]").addEventListener("click", () => {
+      const parts = [];
+      for (const field of mask.querySelectorAll(".of-clarify-field")) {
+        const type = field.dataset.type;
+        let val = "";
+        if (type === "select") {
+          const sel = field.querySelector(".of-clarify-select");
+          if (sel) val = (sel.value || "").trim();
+          else { const inp = field.querySelector(".of-clarify-input"); val = ((inp && inp.value) || "").trim(); }
+        } else if (type === "multiselect") {
+          val = Array.from(field.querySelectorAll(".of-clarify-chip.active"))
+            .map((c) => c.dataset.val).join("、");
+        } else {
+          const inp = field.querySelector(".of-clarify-input");
+          val = ((inp && inp.value) || "").trim();
+        }
+        if (field.dataset.required === "1" && !val) {
+          ctx.UI.toast(`请填写：${field.dataset.label}`, "err");
+          return;
+        }
+        if (val) parts.push(`${field.dataset.label}=${val}`);
+      }
+      close();
+      onSubmit(`${base}${parts.length ? "；补充信息：" + parts.join("；") : ""}`);
+    });
   }
 
   // ---------- 制造数据速查（只读；口径=后端注册查询，前端只做同构渲染） ----------
@@ -322,34 +481,44 @@
     return hitLine + `<div class="of-snap-grid">${cards}</div>` + foot;
   }
 
-  // ---------- 主渲染 ----------
+  // ---------- 主渲染（两屏共用；按 ctx.state.screen 决定内容） ----------
 
   function render(root, ctx) {
     const { UI, api, state } = ctx;
     const esc = UI.esc;
+    const isOa = state.screen === "oa";
+    const mode = isOa ? "oa" : "data";
+    const LABEL = isOa ? "OA 协同" : "数据速查";
     state.screenState = state.screenState || {};
-    const S = state.screenState.office || (state.screenState.office = initialState());
+    const S = state.screenState[mode] || (state.screenState[mode] = initialState(mode));
     const actor = actorOf(ctx);
     const online = api.online();
+    const QUICK = isOa ? OA_QUICK : DATA_QUICK;
+
+    const desc = isOa
+      ? `办公事务办理入口：<b>会议室日程与预订</b>、<b>餐厅与菜单</b>（园区食堂 / 商务餐厅）、`
+        + `<b>我的预订与订单</b>；以及 <b>OA 自助办理</b>——<b>费用报销</b> / <b>请假申请</b> / `
+        + `<b>补考勤打卡</b>，对话式提单、关键信息缺失时弹窗反问补齐。报告厅 / 培训室 / 商务客餐 / `
+        + `超 500 元订单，以及报销 / 请假 / 补卡均先发起人工确认；办理动作由后端 Agent 执行并全程留痕可审计。`
+      : `制造数据只读速查：<b>材料库存</b>、<b>成品库存与可发量</b>、<b>来料批次与检验结论</b>、`
+        + `<b>库龄呆滞</b>、<b>缺料缺口</b>、<b>批次追溯</b>。数据走平台统一口径注册查询，`
+        + `受岗位数据权限约束；<b>只读</b>，不办理任何写操作。`;
 
     root.innerHTML = `
       <div class="content-inner content-wide">
-        <div class="page-title">办公与数据速查
+        <div class="page-title">${LABEL}
           <span class="badge badge-outline" id="of-backend">后端检测中…</span>
           <span class="badge badge-outline" id="of-llm">LLM 检测中…</span>
         </div>
-        <div class="page-desc of-desc">一个 Agentic Agent 同时管两件事：<b>办公事务</b>（会议室预订/订餐/我的预订与订单，
-          报告厅·培训室·商务客餐·超 500 元订单一律先发起人工确认）与<b>制造数据速查</b>（材料库存、成品库存与可发量、
-          来料批次与检验结论、库龄呆滞、缺料缺口、批次追溯）。数据查询为<b>只读</b>，走平台统一口径注册查询，
-          受岗位数据权限约束；全程工具调用留痕可审计。</div>
+        <div class="page-desc of-desc">${desc}</div>
 
         <div class="of-grid">
-          <!-- 一、办公与数据速查对话：置顶（问答即入口） -->
+          <!-- 一、对话：置顶（问答即入口） -->
           <section class="of-a of-a-chat">
             <div class="card of-chat-card">
-              <div class="card-head of-chat-head"><div class="card-title">办公与数据速查对话</div>
+              <div class="card-head of-chat-head"><div class="card-title">${LABEL}对话</div>
                 <div class="card-extra"><span class="badge badge-purple">Agentic Agent</span>
-                  <span class="badge badge-gray">办公 + 数据速查（只读）</span></div></div>
+                  <span class="badge badge-gray">${isOa ? "办公办理 · 写操作留痕" : "数据速查 · 只读"}</span></div></div>
               <div class="of-chat"><div class="chat-scroll" id="of-chat"></div></div>
               <div class="of-quick" id="of-quick">
                 ${QUICK.map((q) => `<button class="chip chip-hist" data-quick="${esc(q)}">${esc(q.length > 26 ? q.slice(0, 26) + "…" : q)}</button>`).join("")}
@@ -357,14 +526,19 @@
               <div class="chat-inputbar of-inputbar">
                 <div class="chat-input-row">
                   <input id="of-input" class="chat-input" autocomplete="off"
-                    placeholder="例如：M8 螺栓还有多少库存 / A 型号成品能发多少 / 订明天 14 点的 8 人会议室"/>
+                    placeholder="${isOa
+                      ? "例如：订明天 14 点的 8 人会议室 / 中午订两份狮子头套餐 / 查我的预订与订单"
+                      : "例如：M8 螺栓还有多少库存 / A 型号成品能发多少 / 哪些料库龄超 90 天"}" />
                   <button class="chat-send" id="of-send">${SEND_ICON}</button>
                 </div>
-                <div class="chat-hint">工具调用由后端 Agent 自主决策并全程留痕；写操作与高影响事项先人工确认；数据查询只读、受岗位权限约束</div>
+                <div class="chat-hint">${isOa
+                  ? "工具调用由后端 Agent 自主决策并全程留痕；写操作与高影响事项先人工确认"
+                  : "数据查询只读、受岗位权限约束；口径=统一注册查询（可用量=在库−预留）"}</div>
               </div>
             </div>
           </section>
 
+          ${isOa ? "" : `
           <!-- 二、制造数据速查：输入料号/型号/批号定位到行 → 点行即交给助手问答 -->
           <section class="of-a of-a-snap">
             <div class="card card-pad">
@@ -379,9 +553,36 @@
               </div>
               <div id="of-snap">${snapHtml(S, esc)}</div>
             </div>
+          </section>`}
+
+          ${isOa ? `
+          <!-- 三、OA 自助办理：报销 / 请假 / 补考勤（对话式提单，缺失项弹窗反问） -->
+          <section class="of-a of-a-entry">
+            <div class="card card-pad">
+              <div class="card-head"><div class="card-title">OA 自助办理</div>
+                <div class="card-extra"><span class="badge badge-purple">对话式提单</span>
+                  <span class="badge badge-gray">关键信息弹窗反问 · 提交后人工确认</span></div></div>
+              <div class="of-entry">
+                <div class="of-entry-item">
+                  <div class="of-entry-title">费用报销</div>
+                  <div class="of-entry-sub">差旅 / 招待 / 办公用品 / 交通 · 按票据报销，财务专员审批</div>
+                  <button class="btn btn-primary btn-sm" data-entry="expense">我要报销</button>
+                </div>
+                <div class="of-entry-item">
+                  <div class="of-entry-title">请假申请</div>
+                  <div class="of-entry-sub">年假 / 事假 / 病假 / 调休 / 婚假 / 产假 · 部门主管审批</div>
+                  <button class="btn btn-primary btn-sm" data-entry="leave">我要请假</button>
+                </div>
+                <div class="of-entry-item">
+                  <div class="of-entry-title">补考勤打卡</div>
+                  <div class="of-entry-sub">上班 / 下班补卡 · 漏打卡补录，HR 专员审批</div>
+                  <button class="btn btn-primary btn-sm" data-entry="attendance">我要补卡</button>
+                </div>
+              </div>
+            </div>
           </section>
 
-          <!-- 三、办公事务：会议室目录 -->
+          <!-- 四、办公事务：会议室目录 -->
           <section class="of-a of-a-rooms">
             <div class="card card-pad">
               <div class="card-head"><div class="card-title">会议室目录</div>
@@ -399,12 +600,14 @@
                 <input id="of-cap" class="of-cap" type="number" min="1" value="${esc(S.form.cap)}" title="最少人数"/>
                 <button class="btn btn-primary btn-sm of-form-submit" id="of-avail">查可用</button>
               </div>
-              <div id="of-avail-result"></div>
-              <div id="of-rooms">${roomListHtml(S, ctx)}</div>
+              <div id="of-rooms-scroll">
+                <div id="of-avail-result"></div>
+                <div id="of-rooms">${roomListHtml(S, ctx)}</div>
+              </div>
             </div>
           </section>
 
-          <!-- 四、餐厅与菜单 -->
+          <!-- 五、餐厅与菜单 -->
           <section class="of-a of-a-rests">
             <div class="card card-pad">
               <div class="card-head"><div class="card-title">餐厅与菜单</div>
@@ -418,7 +621,7 @@
             </div>
           </section>
 
-          <!-- 五、我的预订与订单 -->
+          <!-- 六、我的预订与订单 -->
           <section class="of-a of-a-mine">
             <div class="card card-pad">
               <div class="card-head"><div class="card-title">我的预订与订单</div>
@@ -427,6 +630,16 @@
               <div id="of-mine">${mineHtml(S, esc)}</div>
             </div>
           </section>
+
+          <!-- 七、我的申请单据：报销 / 请假 / 补考勤（提交后状态闭环可见） -->
+          <section class="of-a of-a-myforms">
+            <div class="card card-pad">
+              <div class="card-head"><div class="card-title">我的申请单据</div>
+                <div class="card-extra"><span class="badge badge-gray">报销 · 请假 · 补卡</span>
+                  <button class="btn btn-outline btn-sm" id="of-myform-refresh">刷新</button></div></div>
+              <div id="of-myforms">${myFormsHtml(S, esc)}</div>
+            </div>
+          </section>` : ""}
         </div>
       </div>`;
 
@@ -438,26 +651,38 @@
     };
     paintChat();
 
-    const toast = (msg, kind) => UI.toast(msg, kind || "info");
+    const toast = (msg, kind, ms) => UI.toast(msg, kind || "info", ms);
 
-    // ---------- 对话（办公助手 Agent） ----------
+    // 两屏各自的加载器 / 绘制器（仅对应模式赋值，另一模式保持空实现）
+    let loadMine = async () => {};
+    let loadSnap = async () => {};
+    let paintRooms = () => {};
+    let paintAvail = () => {};
+    let paintMenu = () => {};
+    let loadMenu = async () => {};
+    // 反问补全轮次计数（按原始请求 base 计数）：兜底防止"反问→补充→再反问"无限弹框
+    const clarifyRounds = new Map();
 
-    const send = async (text) => {
+    // ---------- 对话（企业助手 Agent；两屏共用后端能力） ----------
+
+    const send = async (text, base) => {
       const input = $("#of-input");
       const q = (text || input.value || "").trim();
       if (!q || S.sending) return;
-      if (!online) { toast("后端离线：办公办理与数据查询需要连接后端", "err"); return; }
+      // 反问补全的原始请求前缀：首次请求即 base；多轮反问沿用最初的 base，避免上下文丢失
+      const clarifyBase = base || q;
+      if (!online) { toast("后端离线：办理与查询需要连接后端", "err"); return; }
       if (metaCache && metaCache.llm_available === false) {
-        toast("LLM 服务不可用：办公与数据速查暂无法自主办理，请先看左侧速查卡", "err");
+        toast(`LLM 服务不可用：${LABEL}暂无法自主办理，请先用下方卡片`, "err");
         return;
       }
-      if (text) toast(`已交给办公与数据速查：${q}`, "info");
+      if (text) toast(`已交给${LABEL}：${q}`, "info");
       input.value = "";
       S.sending = true;
       S.messages.push({ role: "user", content: q, time: nowHM() });
       S.messages.push({ role: "bot", content: "思考中…", time: nowHM(), pending: true, steps: [] });
       paintChat();
-      // 对话卡置顶、速查/点击行在下方：发问后把对话区带回视野，避免"点了没反应"的错觉
+      // 对话卡置顶、卡片在下方：发问后把对话区带回视野，避免"点了没反应"的错觉
       const chatCard = root.querySelector(".of-chat-card");
       if (chatCard && chatCard.scrollIntoView) {
         chatCard.scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -481,14 +706,26 @@
           hitl: data.hitl_task || null,
           gaps: data.data_gaps || [],
         });
-        // 办理完成后刷新"我的预订与订单"，让留痕与状态闭环可见
-        await loadMine();
+        // 反问态：助手需关键信息 → 弹出表单（下拉/多选/输入）收集，补齐后携带 base 再提交
+        if (data.clarify) {
+          paintChat();
+          const n = (clarifyRounds.get(clarifyBase) || 0) + 1;
+          clarifyRounds.set(clarifyBase, n);
+          if (n > 2) {
+            // 兜底：同一请求反复要求补充 → 不再弹窗，提示用户一次说清（后端已断环）
+            toast("信息已补充但仍不完整，请直接在对话中一次性说明需求", "err", 5000);
+          } else {
+            openClarify(data.clarify, ctx, clarifyBase, (t) => send(t, clarifyBase));
+          }
+        }
+        // 办公办理完成后刷新"我的预订与订单 / 我的申请单据"，让留痕与状态闭环可见（数据屏无此面板）
+        if (isOa) await loadMine();
       } catch (err) {
         replaceLastBot({
           role: "bot", time: nowHM(),
           content: `⚠️ ${(err && err.message) || err}`, steps: [], hitl: null, gaps: [],
         });
-        toast(`办理失败：${(err && err.message) || err}`, "err");
+        toast(`办理失败：${UI.friendlyError(err).text}`, "err", 5000);
       } finally {
         S.sending = false;
         paintChat();
@@ -504,191 +741,205 @@
       if (q) send(q.dataset.quick);
     });
 
-    // ---------- 会议室面板 ----------
+    // ---------- OA 协同：会议室 / 餐厅 / 我的预订与订单 ----------
 
-    const paintRooms = () => {
-      const box = $("#of-rooms");
-      if (box) box.innerHTML = roomListHtml(S, ctx);
-      const cnt = $("#of-room-count");
-      if (cnt) cnt.textContent = `共 ${(S.rooms || []).length} 间`;
-    };
-    paintRooms();
-
-    $("#of-room-filter").addEventListener("click", (e) => {
-      const chip = e.target.closest("[data-filter]");
-      if (!chip) return;
-      S.filter = chip.dataset.filter;
-      root.querySelectorAll("#of-room-filter .chip").forEach((c) => {
-        c.classList.toggle("active", c.dataset.filter === S.filter);
-      });
-      paintRooms();
-    });
-
-    const paintAvail = () => {
-      const box = $("#of-avail-result");
-      if (!box) return;
-      if (!S.avail) { box.innerHTML = ""; return; }
-      const rooms = S.avail.available_rooms || [];
-      const head = `<div class="of-mine-label">${esc(S.avail.date)} ${esc(S.avail.start)}-${esc(S.avail.end)}`
-        + ` 可用 ${rooms.length} 间</div>`;
-      box.innerHTML = head + (rooms.length
-        ? rooms.map((r) => roomLineHtml(r, esc)).join("")
-        : '<div class="of-note">该时段没有可用会议室，换个时间或减少人数再试。</div>');
-      box.querySelectorAll("[data-ask]").forEach((btn) => {
-        btn.addEventListener("click", () => send(
-          `帮我订 ${S.avail.date} ${S.avail.start}-${S.avail.end} 的「${btn.dataset.ask}」，主题项目讨论`));
-      });
-    };
-
-    $("#of-avail").addEventListener("click", async () => {
-      if (!online) { toast("后端离线：无法查询可用会议室", "err"); return; }
-      S.form = {
-        date: $("#of-date").value, start: $("#of-start").value,
-        end: $("#of-end").value, cap: $("#of-cap").value,
+    if (isOa) {
+      paintRooms = () => {
+        const box = $("#of-rooms");
+        if (box) box.innerHTML = roomListHtml(S, ctx);
+        const cnt = $("#of-room-count");
+        if (cnt) cnt.textContent = `共 ${(S.rooms || []).length} 间`;
       };
-      try {
-        S.avail = await api.officeAvailable(S.form.date, S.form.start, S.form.end,
-          S.form.cap || null);
-        paintAvail();
-      } catch (err) {
-        S.avail = null;
-        paintAvail();
-        toast(`查询失败：${(err && err.message) || err}`, "err");
-      }
-    });
+      paintRooms();
 
-    root.querySelectorAll("#of-rooms [data-ask]").forEach((btn) => {
-      btn.addEventListener("click", () => send(
-        `帮我订 ${S.form.date} ${S.form.start}-${S.form.end} 的「${btn.dataset.ask}」，主题项目讨论`));
-    });
-
-    // ---------- 餐厅 / 菜单 ----------
-
-    const paintMenu = () => {
-      const box = $("#of-menu");
-      if (box) box.innerHTML = menuHtml(S, ctx);
-      box.querySelectorAll("[data-ask]").forEach((btn) => {
-        btn.addEventListener("click", () => send(`中午订个餐，来两份${btn.dataset.ask}`));
-      });
-    };
-
-    const loadMenu = async (rid) => {
-      if (!online) { toast("后端离线：无法加载菜单", "err"); return; }
-      try {
-        S.menuId = rid;
-        S.menu = await api.officeMenu(rid);
-        root.querySelectorAll("#of-rests .chip").forEach((c) => {
-          c.classList.toggle("active", c.dataset.menu === rid);
+      $("#of-room-filter").addEventListener("click", (e) => {
+        const chip = e.target.closest("[data-filter]");
+        if (!chip) return;
+        S.filter = chip.dataset.filter;
+        root.querySelectorAll("#of-room-filter .chip").forEach((c) => {
+          c.classList.toggle("active", c.dataset.filter === S.filter);
         });
-        paintMenu();
-      } catch (err) {
-        toast(`菜单加载失败：${(err && err.message) || err}`, "err");
-      }
-    };
-    $("#of-rests").addEventListener("click", (e) => {
-      const chip = e.target.closest("[data-menu]");
-      if (chip) loadMenu(chip.dataset.menu);
-    });
+        paintRooms();
+      });
 
-    // ---------- 我的预订与订单 ----------
+      paintAvail = () => {
+        const box = $("#of-avail-result");
+        if (!box) return;
+        if (!S.avail) { box.innerHTML = ""; return; }
+        const rooms = S.avail.available_rooms || [];
+        const head = `<div class="of-mine-label">${esc(S.avail.date)} ${esc(S.avail.start)}-${esc(S.avail.end)}`
+          + ` 可用 ${rooms.length} 间</div>`;
+        box.innerHTML = head + (rooms.length
+          ? rooms.map((r) => roomLineHtml(r, esc)).join("")
+          : '<div class="of-note">该时段没有可用会议室，换个时间或减少人数再试。</div>');
+        box.querySelectorAll("[data-ask]").forEach((btn) => {
+          btn.addEventListener("click", () => send(
+            `帮我订 ${S.avail.date} ${S.avail.start}-${S.avail.end} 的「${btn.dataset.ask}」，主题项目讨论`));
+        });
+      };
 
-    async function loadMine() {
-      if (!online) return;
-      try {
-        S.mine = await api.officeMine(actor.name);
+      $("#of-avail").addEventListener("click", async () => {
+        if (!online) { toast("后端离线：无法查询可用会议室", "err"); return; }
+        S.form = {
+          date: $("#of-date").value, start: $("#of-start").value,
+          end: $("#of-end").value, cap: $("#of-cap").value,
+        };
+        try {
+          S.avail = await api.officeAvailable(S.form.date, S.form.start, S.form.end,
+            S.form.cap || null);
+          paintAvail();
+        } catch (err) {
+          S.avail = null;
+          paintAvail();
+          toast(`查询失败：${UI.friendlyError(err).text}`, "err", 5000);
+        }
+      });
+
+      root.querySelectorAll("#of-rooms [data-ask]").forEach((btn) => {
+        btn.addEventListener("click", () => send(
+          `帮我订 ${S.form.date} ${S.form.start}-${S.form.end} 的「${btn.dataset.ask}」，主题项目讨论`));
+      });
+
+      paintMenu = () => {
+        const box = $("#of-menu");
+        if (box) box.innerHTML = menuHtml(S, ctx);
+        box.querySelectorAll("[data-ask]").forEach((btn) => {
+          btn.addEventListener("click", () => send(`中午订个餐，来两份${btn.dataset.ask}`));
+        });
+      };
+
+      loadMenu = async (rid) => {
+        if (!online) { toast("后端离线：无法加载菜单", "err"); return; }
+        try {
+          S.menuId = rid;
+          S.menu = await api.officeMenu(rid);
+          root.querySelectorAll("#of-rests .chip").forEach((c) => {
+            c.classList.toggle("active", c.dataset.menu === rid);
+          });
+          paintMenu();
+        } catch (err) {
+          toast(`菜单加载失败：${UI.friendlyError(err).text}`, "err", 5000);
+        }
+      };
+      $("#of-rests").addEventListener("click", (e) => {
+        const chip = e.target.closest("[data-menu]");
+        if (chip) loadMenu(chip.dataset.menu);
+      });
+
+      const bindCancels = () => {
         const box = $("#of-mine");
-        if (box) box.innerHTML = mineHtml(S, esc);
-        bindCancels();
-      } catch (err) { /* 静默：列表刷新失败不影响主流程 */ }
-    }
-
-    function bindCancels() {
-      const box = $("#of-mine");
-      if (!box) return;
-      box.querySelectorAll("[data-cancel]").forEach((btn) => {
-        btn.addEventListener("click", async () => {
-          const kind = btn.dataset.cancel;
-          try {
-            await api.officeCancel(kind, btn.dataset.id, actor.name);
-            toast(`已取消 ${btn.dataset.id}`, "ok");
-            await loadMine();
-          } catch (err) {
-            toast(`取消失败：${(err && err.message) || err}`, "err");
-          }
+        if (!box) return;
+        box.querySelectorAll("[data-cancel]").forEach((btn) => {
+          btn.addEventListener("click", async () => {
+            const kind = btn.dataset.cancel;
+            try {
+              await api.officeCancel(kind, btn.dataset.id, actor.name);
+              toast(`已取消 ${btn.dataset.id}`, "ok");
+              await loadMine();
+            } catch (err) {
+              toast(`取消失败：${UI.friendlyError(err).text}`, "err", 5000);
+            }
+          });
         });
+      };
+
+      loadMine = async () => {
+        if (!online) return;
+        try {
+          S.mine = await api.officeMine(actor.name);
+          const box = $("#of-mine");
+          if (box) box.innerHTML = mineHtml(S, esc);
+          const fb = $("#of-myforms");
+          if (fb) fb.innerHTML = myFormsHtml(S, esc);
+          bindCancels();
+        } catch (err) { /* 静默：列表刷新失败不影响主流程 */ }
+      };
+      bindCancels();
+
+      $("#of-refresh").addEventListener("click", async () => {
+        await loadMine();
+        toast("已刷新", "info");
       });
+
+      // OA 自助办理三入口：点击即用种子问句发起，缺失项由助手弹窗反问补齐
+      root.querySelectorAll("[data-entry]").forEach((btn) => {
+        btn.addEventListener("click", () => send(ENTRY_SEED[btn.dataset.entry]));
+      });
+      const myformBtn = $("#of-myform-refresh");
+      if (myformBtn) {
+        myformBtn.addEventListener("click", async () => {
+          await loadMine();
+          toast("已刷新申请单据", "info");
+        });
+      }
     }
-    bindCancels();
 
-    $("#of-refresh").addEventListener("click", async () => {
-      await loadMine();
-      toast("已刷新", "info");
-    });
+    // ---------- 数据速查：制造数据只读快照 ----------
 
-    // ---------- 制造数据速查（只读快照） ----------
+    if (!isOa) {
+      const bindSnap = () => {
+        root.querySelectorAll("#of-snap [data-q]").forEach((el) => {
+          el.addEventListener("click", () => send(el.dataset.q));
+        });
+      };
+      const paintSnap = () => {
+        const box = $("#of-snap");
+        if (box) box.innerHTML = snapHtml(S, esc);
+        bindSnap();
+      };
 
-    const bindSnap = () => {
-      root.querySelectorAll("#of-snap [data-q]").forEach((el) => {
-        el.addEventListener("click", () => send(el.dataset.q));
-      });
-    };
-    const paintSnap = () => {
-      const box = $("#of-snap");
-      if (box) box.innerHTML = snapHtml(S, esc);
+      // 关键词速查：料号/型号/批号/名称 → 过滤四块明细；命中后点行即交给助手问答
+      const snapSearch = $("#of-snap-search");
+      const snapClear = $("#of-snap-clear");
+      const syncSnapClear = () => {
+        if (snapClear) snapClear.hidden = !(S.snapQuery || "").trim();
+      };
+      if (snapSearch) {
+        snapSearch.addEventListener("input", () => {
+          S.snapQuery = snapSearch.value;
+          syncSnapClear();
+          paintSnap();
+        });
+      }
+      if (snapClear) {
+        snapClear.addEventListener("click", () => {
+          S.snapQuery = "";
+          if (snapSearch) { snapSearch.value = ""; snapSearch.focus(); }
+          syncSnapClear();
+          paintSnap();
+        });
+      }
+      syncSnapClear();
       bindSnap();
-    };
 
-    // 关键词速查：料号/型号/批号/名称 → 过滤四块明细；命中后点行即交给助手问答
-    const snapSearch = $("#of-snap-search");
-    const snapClear = $("#of-snap-clear");
-    const syncSnapClear = () => {
-      if (snapClear) snapClear.hidden = !(S.snapQuery || "").trim();
-    };
-    if (snapSearch) {
-      snapSearch.addEventListener("input", () => {
-        S.snapQuery = snapSearch.value;
-        syncSnapClear();
+      loadSnap = async () => {
+        if (!online) {
+          S.snap = (window.DEMO && window.DEMO.OFFICE_SNAPSHOT) || null;
+          paintSnap();
+          return;
+        }
+        try {
+          const data = await api.officeSnapshot(actor.roles);
+          S.snap = data.blocks ? data : (window.DEMO && window.DEMO.OFFICE_SNAPSHOT);
+        } catch (err) {
+          S.snap = (window.DEMO && window.DEMO.OFFICE_SNAPSHOT) || null;
+        }
         paintSnap();
-      });
-    }
-    if (snapClear) {
-      snapClear.addEventListener("click", () => {
-        S.snapQuery = "";
-        if (snapSearch) { snapSearch.value = ""; snapSearch.focus(); }
-        syncSnapClear();
-        paintSnap();
-      });
-    }
-    syncSnapClear();
-    bindSnap();
+      };
 
-    const loadSnap = async () => {
-      if (!online) {
-        S.snap = (window.DEMO && window.DEMO.OFFICE_SNAPSHOT) || null;
-        paintSnap();
-        return;
+      const snapBtn = $("#of-snap-refresh");
+      if (snapBtn) {
+        snapBtn.addEventListener("click", async () => {
+          await loadSnap();
+          toast("已刷新制造数据速查", "info");
+        });
       }
-      try {
-        const data = await api.officeSnapshot(actor.roles);
-        S.snap = data.blocks ? data : (window.DEMO && window.DEMO.OFFICE_SNAPSHOT);
-      } catch (err) {
-        S.snap = (window.DEMO && window.DEMO.OFFICE_SNAPSHOT) || null;
-      }
-      paintSnap();
-    };
-
-    const snapBtn = $("#of-snap-refresh");
-    if (snapBtn) {
-      snapBtn.addEventListener("click", async () => {
-        await loadSnap();
-        toast("已刷新制造数据速查", "info");
-      });
     }
 
     // ---------- 首屏数据 ----------
 
     if (online) {
-      Promise.allSettled([
+      const jobs = [
         api.officeMeta().then((meta) => {
           metaCache = meta;
           const be = $("#of-backend");
@@ -704,39 +955,50 @@
             llm.classList.toggle("badge-red", !meta.llm_available);
           }
         }),
-        api.officeRooms().then((data) => {
-          S.rooms = data.rooms || [];
-          paintRooms();
-          root.querySelectorAll("#of-rooms [data-ask]").forEach((btn) => {
-            btn.addEventListener("click", () => send(
-              `帮我订 ${S.form.date} ${S.form.start}-${S.form.end} 的「${btn.dataset.ask}」，主题项目讨论`));
-          });
-        }),
-        api.officeRestaurants().then((data) => {
-          S.restaurants = data.restaurants || [];
-          const box = $("#of-rests");
-          if (box) {
-            box.innerHTML = S.restaurants.map((r) => `<button class="chip${S.menuId === r.restaurant_id ? " active" : ""}"
-              data-menu="${esc(r.restaurant_id)}">${esc(r.name)}${r.need_approval ? "（客餐）" : ""}</button>`).join("");
-            if (S.restaurants.length) loadMenu(S.restaurants[0].restaurant_id);
-          }
-        }),
-        loadMine(),
-        loadSnap(),
-        api.officeAvailable(S.form.date, S.form.start, S.form.end, S.form.cap)
-          .then((res) => { S.avail = res; paintAvail(); })
-          .catch(() => { /* 首屏可用性查询失败不打扰 */ }),
-      ]);
+      ];
+      if (isOa) {
+        jobs.push(
+          api.officeRooms().then((data) => {
+            S.rooms = data.rooms || [];
+            paintRooms();
+            root.querySelectorAll("#of-rooms [data-ask]").forEach((btn) => {
+              btn.addEventListener("click", () => send(
+                `帮我订 ${S.form.date} ${S.form.start}-${S.form.end} 的「${btn.dataset.ask}」，主题项目讨论`));
+            });
+          }),
+          api.officeRestaurants().then((data) => {
+            S.restaurants = data.restaurants || [];
+            const box = $("#of-rests");
+            if (box) {
+              box.innerHTML = S.restaurants.map((r) => `<button class="chip${S.menuId === r.restaurant_id ? " active" : ""}"
+                data-menu="${esc(r.restaurant_id)}">${esc(r.name)}${r.need_approval ? "（客餐）" : ""}</button>`).join("");
+              if (S.restaurants.length) loadMenu(S.restaurants[0].restaurant_id);
+            }
+          }),
+          loadMine(),
+          api.officeAvailable(S.form.date, S.form.start, S.form.end, S.form.cap)
+            .then((res) => { S.avail = res; paintAvail(); })
+            .catch(() => { /* 首屏可用性查询失败不打扰 */ })
+        );
+      } else {
+        jobs.push(loadSnap());
+      }
+      Promise.allSettled(jobs);
     } else {
       const be = $("#of-backend");
       if (be) { be.textContent = "后端：离线（演示模式）"; be.classList.add("badge-amber"); }
       const llm = $("#of-llm");
       if (llm) llm.textContent = "LLM：未连接";
-      loadSnap();
-      toast("后端离线：办公办理需连后端；制造数据速查显示演示数据", "info", 4000);
+      if (!isOa) {
+        loadSnap();
+        toast("后端离线：数据速查显示演示数据", "info", 4000);
+      } else {
+        toast("后端离线：办公办理需连后端", "info", 4000);
+      }
     }
   }
 
   window.Screens = window.Screens || {};
-  window.Screens.render_office = render;
+  window.Screens.render_data = render;
+  window.Screens.render_oa = render;
 })();

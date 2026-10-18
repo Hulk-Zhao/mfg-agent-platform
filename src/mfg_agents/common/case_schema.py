@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+import threading
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional, Union
 
@@ -184,6 +186,46 @@ def resolve_case_db(path: Optional[Union[str, Path]] = None) -> Path:
     return Path(raw)
 
 
+#: 进程级"批量导入"开关。为真时 :func:`connect` 关闭 fsync 与回滚日志。
+#: **只允许在种子导入这种"崩了重跑即可"的路径里打开**——审计链写入依赖
+#: 持久性，绝不能在那种路径上关。
+_BULK_LOAD = threading.local()
+
+
+def bulk_load(enabled: bool = True):
+    """上下文管理器：临时关闭 fsync（仅用于可重放的批量导入）。
+
+    为什么需要：``seed_from_json`` 对每个案例要做 purge / create / set_visibility
+    / add_evidence 四次写入，每次一个独立事务。99 例 = 数百次 fsync，实测
+    62ms/例（QA 在 ``ensure_seeded`` 上量到 9.30s，其中 6.16s 在这里），
+    而 demo 首次启动要等它跑完。
+
+    关闭 ``synchronous`` 后单次写入快一到两个数量级。**代价是进程崩溃时这批
+    写入可能丢失**——种子是可重放的，丢了下次启动重导即可，所以这个代价只在
+    种子路径上可接受。上下文退出即恢复默认值，不影响后续任何写入。
+
+    用法::
+
+        with bulk_load():
+            store.seed_from_json(path)
+    """
+
+    @contextmanager
+    def _cm():
+        previous = getattr(_BULK_LOAD, "on", False)
+        _BULK_LOAD.on = enabled
+        try:
+            yield
+        finally:
+            _BULK_LOAD.on = previous
+
+    return _cm()
+
+
+def _bulk_load_active() -> bool:
+    return bool(getattr(_BULK_LOAD, "on", False))
+
+
 def connect(db_path: Optional[Union[str, Path]] = None) -> sqlite3.Connection:
     """打开案例库连接（``check_same_thread=False``：供 FastAPI 线程池复用）。"""
     target = resolve_case_db(db_path)
@@ -193,6 +235,10 @@ def connect(db_path: Optional[Union[str, Path]] = None) -> sqlite3.Connection:
     conn = sqlite3.connect(text, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    if _bulk_load_active():
+        # 仅批量导入期间：关 fsync + 用内存日志。崩溃可重放，所以可接受。
+        conn.execute("PRAGMA synchronous = OFF")
+        conn.execute("PRAGMA journal_mode = MEMORY")
     return conn
 
 

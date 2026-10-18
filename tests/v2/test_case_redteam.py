@@ -35,23 +35,26 @@ _FORBIDDEN_KEYS = {
 
 #: 权限真值表：case_id → {主体标签: 是否可读}
 #: 主体标签见 ``_SUBJECTS``。这张表就是产品口径，改它需要评审。
+#: 2026-10-19 产品裁定：总经理（gm）跨部门/跨厂/跨客户域全通
+#: （case_policy.yaml ``cross_dept_roles: [gm]``，语义与红线见
+#: ``test_case_cross_dept.py``——涉密/未结案/显式 deny 仍不可见）。
 _VISIBILITY: dict[str, dict[str, bool]] = {
     # 全员开放的质量案例
     "QC-CC-2026-0087": {"qa": True, "equipment": True, "gm": True,
                         "qa_p2": True, "qd": True, "outsource": True},
     # 部门域案例：只有 dept=quality 能看到（跨工厂仍可见——各维度独立判定）
-    "QC-PD-2026-0055": {"qa": True, "equipment": False, "gm": False,
+    "QC-PD-2026-0055": {"qa": True, "equipment": False, "gm": True,
                         "qa_p2": True, "qd": True, "outsource": False},
-    # 工厂域案例：只有 plant=P2 能看到
-    "QC-MD-2026-0021": {"qa": False, "equipment": False, "gm": False,
+    # 工厂域案例：只有 plant=P2 能看到（gm 跨厂通行）
+    "QC-MD-2026-0021": {"qa": False, "equipment": False, "gm": True,
                         "qa_p2": True, "qd": False, "outsource": False},
     # 岗位经验案例（质量域）
-    "RC-QA-2026-0009": {"qa": True, "equipment": False, "gm": False,
+    "RC-QA-2026-0009": {"qa": True, "equipment": False, "gm": True,
                         "qa_p2": True, "qd": True, "outsource": False},
-    # 审核中：不进共享池（BR-06）
+    # 审核中：不进共享池（BR-06）——总经理也不可见（硬门禁不豁免）
     "QC-CC-2026-0115": {"qa": False, "equipment": False, "gm": False,
                         "qa_p2": False, "qd": False, "outsource": False},
-    # 密级=secret：任何人不可见，需专门通道（E1）
+    # 密级=secret：任何人不可见，需专门通道（E1）——总经理也不可见
     "QC-PD-2026-0099": {"qa": False, "equipment": False, "gm": False,
                         "qa_p2": False, "qd": False, "outsource": False},
     # 待复核：可见但降权（状态权重 .4）
@@ -502,7 +505,8 @@ def _assert_invisible(client, token: str, case_id: str, *, query: str) -> None:
 
 @pytest.mark.parametrize("role,dept,case_id", [
     ("equipment", "equipment", "QC-PD-2026-0055"),      # dept:quality
-    ("gm", "management", "QC-PD-2026-0055"),            # 职级高也不穿透部门域
+    # gm 行已移除（2026-10-19 裁定：总经理跨部门通行，不再属"应不可见"组），
+    # 新口径的正反两见 test_case_cross_dept.py（全通 + 涉密/未结案仍拦）
     ("manufacturing", "production", "RC-QA-2026-0009"),  # 岗位经验（质量域）
 ])
 def test_cross_department_cases_are_invisible(case_client, role, dept, case_id):
@@ -512,7 +516,7 @@ def test_cross_department_cases_are_invisible(case_client, role, dept, case_id):
 
 @pytest.mark.parametrize("role,dept,case_id", [
     ("qa", "quality", "QC-MD-2026-0021"),
-    ("gm", "management", "QC-MD-2026-0021"),
+    # gm 行已移除（跨厂对总经理放开，同上）
     ("quality_director", "quality", "QC-MD-2026-0021"),
 ])
 def test_cross_plant_cases_are_invisible(case_client, role, dept, case_id):
@@ -532,7 +536,8 @@ def test_secret_classification_is_invisible_to_everyone(case_client, case_id, ro
 
 
 @pytest.mark.parametrize("index", [0, 1, 2])
-@pytest.mark.parametrize("role,dept", [("qa", "quality"), ("equipment", "equipment"), ("gm", "management")])
+# gm 行已移除（2026-10-19 裁定：客户维等业务维对总经理全通；红线用例见 test_case_cross_dept.py）
+@pytest.mark.parametrize("role,dept", [("qa", "quality"), ("equipment", "equipment")])
 def test_customer_dimension_cases_are_invisible_without_token(case_client, extra_cases, index, role, dept):
     """客户维：没有 customer:<id> 令牌就等于查不到（不是"查到了再过滤"）。"""
     case_id = extra_cases["customer"][index]
@@ -658,11 +663,12 @@ def test_k_larger_than_visible_returns_all_without_backfill(case_client):
 
     token = _session(case_client, "manufacturing", dept="production",
                      employment_type="outsource", user_id="u-k50")
-    resp = _search(case_client, token, query="锡膏印刷偏移 虚焊 连锡", k=50)
+    resp = _search(case_client, token, query="锡膏印刷偏移 虚焊 连锡", k=200)
     assert resp.status_code == 200, resp.text
     data = resp.json()["data"]
 
-    assert len(data["hits"]) < 50, "外协人员不可能有 50 条可见案例（否则此用例失效）"
+    # 外协可见 chunk 已 >120：k 必须放大到超过它，才能验证"不补齐"。
+    assert len(data["hits"]) < 200, "外协人员不可能有 200 条可见 chunk（否则此用例失效）"
     assert len(data["hits"]) <= int(getattr(settings, "CASE_K_MAX", 20))
     assert "不放宽过滤补齐" in data["notice"]
     assert data["hidden_count"] > 0

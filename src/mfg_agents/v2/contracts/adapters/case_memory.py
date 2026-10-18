@@ -156,6 +156,29 @@ class MemoryCaseIndex(CaseVectorIndex):
                     for _chunk, row, _v, _g in self._store.values()
                     if predicate(row)})
 
+    def filtered_case_ids(self, filter: FilterNode, cap: int = 0) -> list[str]:
+        """只做过滤、**不打分**的案例 id 扫描（受限清单用）。
+
+        为什么必须单独一条路径：``search()`` 会给每个 chunk 算余弦 + 关键词分，
+        而"受限清单"只关心"哪些案例通过了硬维度"，与相关性毫无关系。
+        语料 ~100 例 / ~400 chunk 时，那点打分开销会让每次检索多出几十毫秒，
+        29 条用例的服务层测试直接跑成 5 分钟。**这条路径不做 embedding、不排序**。
+        """
+        predicate = to_predicate(filter)
+        seen: list[str] = []
+        known: set[str] = set()
+        for _chunk, row, _v, _g in self._store.values():
+            if not predicate(row):
+                continue
+            case_id = str(row.get("case_id") or "")
+            if not case_id or case_id in known:
+                continue
+            known.add(case_id)
+            seen.append(case_id)
+            if cap and len(seen) >= int(cap):
+                break
+        return seen
+
     def health(self) -> IndexHealth:
         return IndexHealth(backend=self.backend, ready=True,
                            chunk_count=len(self._store), detail="in-process")

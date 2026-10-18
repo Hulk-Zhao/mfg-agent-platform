@@ -14,6 +14,10 @@
    前者是保密红线，后者是内容还不该被引用，都不能靠"谁批一下"解决。
 4. 授权带有效期（``CASE_ACCESS_GRANT_TTL_DAYS``，默认 30 天），
    到期由 :meth:`CaseAccessService.reap_expired` 惰性回收（移除 ACL 行 + 重建索引）。
+5. **演示专用自动审批**（``decide(..., demo=True``，见 ``case_auto_approve.py``）：
+   审批人身份换成"归属职能部门管理岗"的演示身份，链路与真人审批完全同一条
+   （同一个 ``_grant``、同一份审计），只在审计 action 上打 ``.demo`` 后缀。
+   默认关闭语义见 ``AccessApprover``；Agent 依旧不持 approve。
 """
 from __future__ import annotations
 
@@ -38,6 +42,7 @@ __all__ = [
     "AccessAlreadyVisible",
     "AccessNotRequestable",
     "AccessNotApprover",
+    "AccessSelfApproval",
     "AccessTransitionError",
     "AccessRequest",
     "CaseAccessService",
@@ -81,7 +86,11 @@ class AccessNotRequestable(AccessRequestError):
 
 
 class AccessNotApprover(AccessRequestError):
-    """无权审批（不持有该案例的职能部门权限）。"""
+    """无权审批（不持有 ``case.access.approve`` 或不是归属职能部门）。"""
+
+
+class AccessSelfApproval(AccessNotApprover):
+    """自己审批自己的申请（职责分离禁令，B9）。"""
 
 
 class AccessTransitionError(AccessRequestError):
@@ -141,6 +150,24 @@ def _iso(value: datetime) -> str:
     return value.isoformat()
 
 
+def case_departments(store: CaseStore, case: Mapping[str, Any]) -> set[str]:
+    """案例的职能部门集合：``owner_dept`` + ``case_acl`` 里 dept 维度的 allow 行。
+
+    ``_assert_functional_dept``（人工审批）与演示自动审批的审批人解析
+    （``case_auto_approve.DemoAgentApprover``）**共用这一个口径**。两处各写
+    一遍必然漂移，而漂移的方向一定是"审批人判定变松"——那是 B9 最怕的事。
+    """
+    case_id = str(case.get("case_id") or "")
+    departments = {
+        str(row["value"]) for row in store.acl_entries(case_id)
+        if str(row["dim"]) == "dept" and str(row["effect"]) == "allow"
+    }
+    owner_dept = str(case.get("owner_dept") or "").strip()
+    if owner_dept:
+        departments.add(owner_dept)
+    return departments
+
+
 class CaseAccessService:
     """跨部门访问申请：提交 / 待办 / 裁决 / 回收。"""
 
@@ -149,6 +176,11 @@ class CaseAccessService:
         self._store = store
         self._index_service = index_service
         self._audit = audit or CaseAuditLog(store.db_path)
+
+    @property
+    def store(self) -> CaseStore:
+        """只读暴露存储（供审批人解析等协作方使用；写入口仍在本服务内）。"""
+        return self._store
 
     # ---------- 提交 ----------
 
@@ -232,14 +264,41 @@ class CaseAccessService:
         return [dict(row) for row in rows]
 
     def decide(self, principal: Principal, request_id: str, *,
-               approve: bool, reason: str = "") -> dict[str, Any]:
-        """审批：批准 → 写入 ``case_acl`` 的 user 维度授权（带有效期）。"""
+               approve: bool, reason: str = "", demo: bool = False) -> dict[str, Any]:
+        """审批：批准 → 写入 ``case_acl`` 的 user 维度授权（带有效期）。
+
+        Args:
+            demo: ``True`` 表示本次裁决由**演示自动审批**代劳（审批人身份是
+                演示用的职能管理岗，不是登录中的真人）。此时审计 action 追加
+                ``.demo`` 后缀、detail 里写 ``simulated_approver``——链路照旧
+                完整，但**一眼能看出这不是真人点的同意**。默认 ``False``：
+                人工审批路径一个字节都不变。
+        """
         row = self.get(request_id)
         if row is None:
             raise AccessNotFound(f"申请不存在: {request_id}")
         if str(row.get("status")) != "pending":
             raise AccessTransitionError(
                 f"申请 {request_id} 已是 {row.get('status')}，不能再裁决")
+
+        # ★ B9-1 职责分离：**按 user_id 比**，不按角色。
+        # 同一个人可以同时挂 qa / qa_manager 两个角色，比角色等于没比。
+        # 少了这一条，任何"同部门但被其它维度挡住"的员工都能自己批自己的申请，
+        # 拿到跨产线全文（QA 探针 step4_self_approve.ok=true 的成因）。
+        if str(row.get("requester_id") or "") == str(principal.user_id or ""):
+            raise AccessSelfApproval(
+                f"不能审批自己的访问申请（申请人 {principal.user_id}）："
+                "跨部门授权必须由另一位持有审批权的负责人裁决")
+
+        # ★ B9-2 审批权收进 RBAC：没有 case.access.approve 直接 403。
+        # 这条在"是不是归属部门"之前判——身份不合格的人连门都进不去，
+        # 也就无从探测"这条案例归哪个部门"。
+        from ..security.case_rbac import get_case_rbac
+
+        if not get_case_rbac().has_any(principal.roles, "case.access.approve"):
+            raise AccessNotApprover(
+                f"角色 {list(principal.roles)} 不持有 case.access.approve"
+                "（审批跨部门访问申请仅限职能部门负责人）")
 
         case = self._store.get_case(str(row.get("case_id") or ""))
         if case is None:
@@ -258,13 +317,24 @@ class CaseAccessService:
         expires_at = ""
         if approve:
             expires_at = self._grant(principal, case, row)
+        # 演示自动审批在审计里**显式标记**（action 后缀 + simulated_approver）：
+        # 链路必须和真人审批一样完整，但评审与事后审计要能立刻分辨
+        # "这条同意是谁点的"。默认路径（demo=False）action 一个字节不变。
+        action = f"case.access.{'approved' if approve else 'rejected'}"
+        detail: dict[str, Any] = {
+            "request_id": request_id,
+            "requester_id": str(row.get("requester_id") or ""),
+            "expires_at": expires_at,
+        }
+        if demo:
+            action += ".demo"
+            detail["demo"] = True
+            detail["simulated_approver"] = str(principal.user_id or "")
         self._audit.append(
             actor=principal.user_id,
-            action=f"case.access.{'approved' if approve else 'rejected'}",
+            action=action,
             case_id=str(row.get("case_id") or ""),
-            detail={"request_id": request_id,
-                    "requester_id": str(row.get("requester_id") or ""),
-                    "expires_at": expires_at})
+            detail=detail)
         logger.info("[case_access] 申请 %s → %s by %s", request_id, target,
                     principal.user_id)
         return self.get(request_id) or {}
@@ -342,23 +412,23 @@ class CaseAccessService:
         判据：``case_roles.yaml`` 里该案例 ``owner_dept`` 对应职能域的职能岗，
         或 ``case_acl`` 里已有该职能部门维度的授权。随便哪个角色都能批是不行的。
         """
-        from ..security.case_rbac import get_case_rbac
-
-        owner_dept = str(case.get("owner_dept") or "")
-        department_ids = {
-            str(row["value"]) for row in self._store.acl_entries(str(case["case_id"]))
-            if str(row["dim"]) == "dept" and str(row["effect"]) == "allow"
-        }
-        if owner_dept:
-            department_ids.add(owner_dept)
+        department_ids = case_departments(self._store, case)
         if not department_ids:
-            # 全员开放的案例：任何持有 case.read 的角色都可裁决（无处可推则不拦）
-            return
+            # ★ fail-closed：案例没有归属部门时**不得放行审批**。
+            #
+            # 早前这里是 `return`（注释："无处可推则不拦"），于是"谁主管都能批
+            # 一条全员开放案例的访问申请"——与本项目一路坚持的默认拒绝相悖。
+            # 前置的 `case.access.approve` RBAC 门禁只保证审批人是**某个**职能
+            # 负责人，并不保证他与这条案例有关；归属不明时缺的那一维正是
+            # "这条案例归谁管"，而它恰恰是唯一不能猜的。
+            #
+            # 处置路径要让调用方知道下一步做什么，所以异常信息里给出两条可操作
+            # 的动作：补 owner_dept，或让建档部门指定。
+            raise AccessNotApprover(
+                f"案例 {case.get('case_id')} 没有归属部门，无法判定审批权限"
+                f"（默认拒绝：请先补 owner_dept，或在 case_acl 里写明 dept 归属）")
+
         if approver.dept and approver.dept in department_ids:
-            return
-        # 职能部门主管（qa_manager / equipment_manager …）按 RBAC 兜底
-        if get_case_rbac().has_any(approver.roles, "case.read") \
-                and str(approver.dept) in department_ids:
             return
         raise AccessNotApprover(
             f"只有 {sorted(department_ids)} 的职能岗可以审批该案例的访问申请"

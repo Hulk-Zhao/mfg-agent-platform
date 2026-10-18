@@ -67,7 +67,9 @@ def test_domain_toolsets_split(orch):
                    "office.book_room", "office.cancel_booking",
                    "office.my_bookings", "office.list_restaurants",
                    "office.menu", "office.place_order", "office.cancel_order",
-                   "office.my_orders"],
+                   "office.my_orders", "office.submit_expense",
+                   "office.apply_leave", "office.submit_attendance_fix",
+                   "office.my_requests"],
     }
     for domain, names in expect.items():
         assert [t.name for t in toolsets[domain]] == names, domain
@@ -76,8 +78,9 @@ def test_domain_toolsets_split(orch):
     flat = {t.name for domain in toolsets.values() for t in domain}
     assert flat == {t.name for t in build_platform_tools(orch)}
     # 既有工具（10）+ P0 增量（6）= 16，+ P1 增量（7）= 23，+ 办公助手域（10）= 33，
-    # + SPC 域（capability/pareto/ingest = 3）+ spc.report（knowledge 域）= 37
-    assert len(flat) == 37 == len(build_platform_tools(orch))
+    # + SPC 域（capability/pareto/ingest = 3）+ spc.report（knowledge 域）= 37，
+    # + OA 自助办理（报销/请假/补卡/我的申请 = 4）= 41
+    assert len(flat) == 41 == len(build_platform_tools(orch))
 
 
 def test_register_domain_toolsets(orch):
@@ -271,4 +274,4 @@ def test_server_default_exposes_all_and_legacy_name(orch):
     assert resps[0]["result"]["serverInfo"]["name"] == "mfg-agent-platform"
     names = {t["name"] for t in resps[1]["result"]["tools"]}
     assert names == {t.name for t in build_platform_tools(orch)}
-    assert len(names) == 37
+    assert len(names) == 41

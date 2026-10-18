@@ -58,7 +58,9 @@
     { id: "chat", label: "协同问数", title: "协同问数", sub: "对话式跨部门协同分析（真实后端链路）", icon: "chat", group: "智能协同", core: true },
     { id: "kbqa", label: "企业制度问答", title: "企业制度问答", sub: "企业制度 / 流程规范知识库问答 · 结论带出处（Milvus + LLM）", icon: "book", group: "智能协同" },
     { id: "cases", label: "制造案例检索", title: "制造案例检索", sub: "历史质量问题案例检索 · 权限前置过滤 · 引用可溯源", icon: "book", group: "智能协同" },
-    { id: "office", label: "办公与数据速查", title: "办公与数据速查", sub: "会议室 / 订餐办理 + 材料 / 成品 / 批次库存速查（只读）", icon: "clock", group: "智能协同" },
+    // 「办公与数据速查」已拆分为两屏：数据速查（只读、受岗位数据权限约束）与 OA 协同（办公办理、走 HITL）。
+    { id: "data", label: "数据速查", title: "数据速查", sub: "材料 / 成品 / 批次库存只读速查（统一口径 · 受岗位权限约束）", icon: "box", group: "智能协同" },
+    { id: "oa", label: "OA 协同", title: "OA 协同", sub: "会议室 / 订餐办理 + 我的预订订单（高影响先人工确认）", icon: "clock", group: "智能协同" },
     // 流程治理 = 唯一需要「签字负责」的动作，单独成组，别和查询混在一起。
     // roles 与 permissions.yaml 的槽位持有者**必须一致**：行政人事不持有任何
     // hitl.* 权限，菜单就不该出现——否则点进去只有一句"本岗位不参与治理审批"，
@@ -90,6 +92,11 @@
     const list = NAV_ITEMS.filter((item) => navVisible(item, role));
     return list.length ? list : NAV_ITEMS;
   }
+
+  /** 旧屏名 → 新屏名。原 #/office（办公与数据速查）已拆为 #/data 与 #/oa，
+   *  统一映射到 OA 协同，避免历史书签与演示脚本断链。 */
+  const SCREEN_ALIAS = { office: "oa" };
+  function canonScreen(id) { return SCREEN_ALIAS[id] || id; }
 
 
   // 后端候选基址：同源优先（http(s) 托管时），随后是本机 8004 端口
@@ -159,6 +166,7 @@
     token: "",       // 岗位访问令牌（F2）：HITL 写接口凭它鉴权；演示模式为空
     backend: { online: false, base: "", checking: true, health: null },
     perms: null,     // 治理权限目录快照（/api/v2/governance/permissions）
+    permsError: "",  // 权限目录加载失败的用户友好提示（成功时清空）
     screenState: {}, // 各屏持久状态（对话记录、审批处理结果等，重渲染不丢）
   };
 
@@ -497,6 +505,41 @@
     return err;
   }
 
+  /* ============================================================
+   * 用户友好错误文案（"加载失败优化"）
+   * 原则：主提示说人话、告诉用户下一步做什么；技术原文进 tech 字段，
+   * 由展示层放 <details> 折叠区，不主动裸露。
+   * 没有这一层时，用户看到的是 "Failed to fetch"、
+   * "throwHoss is not defined"、"HTTP 500" 这类原文——看不懂，
+   * 也不知道该找谁。生产现场一句大白话 + 一个重试入口就够了。
+   * ============================================================ */
+  function friendlyError(err) {
+    const msg = typeof err === "string" ? err
+      : (err && err.message ? String(err.message) : "");
+    const tech = msg;
+    if (!err) return { text: "加载失败，请稍后重试", tech: "" };
+    if (err.name === "AbortError" || /abort|timeout/i.test(msg))
+      return { text: "加载超时：后端响应太慢，请稍后重试", tech };
+    // 403/409/400 的 message 是后端写好的中文可操作文案（如"需要：质量总监"），
+    // 直接透传比再包一层更清楚。
+    if (err.kind === "permission_denied" || err.kind === "signoff_incomplete"
+        || err.kind === "conflict" || err.kind === "bad_request")
+      return { text: msg || "请求未被接受，请检查权限或输入后重试", tech };
+    if (err.status >= 500)
+      return { text: "服务端暂时出错，请稍后重试；若反复出现，请把本提示反馈给管理员", tech };
+    if (err.status === 404)
+      return { text: "请求的内容不存在或已失效，刷新页面可重试", tech };
+    if (err.status === 429)
+      return { text: "操作太频繁，请隔几秒再试", tech };
+    // fetch 网络层失败不经 apiError 包装，message 是浏览器原文
+    if (/failed to fetch|networkerror|load failed|err_internet|err_network|err_connection|econnrefused/i.test(msg))
+      return { text: "网络连接失败：后端服务可能没有启动，请检查服务后重试", tech };
+    // 页面脚本自身出错（引用错误/类型错误/语法错误）——刷新通常能恢复
+    if (/is not defined|is not a function|cannot read|of (undefined|null)|unexpected token|syntaxerror/i.test(msg))
+      return { text: "页面加载异常，请刷新页面重试；若反复出现，请把本提示反馈给管理员", tech };
+    return { text: "操作未完成，请稍后重试；若反复出现，请把本提示反馈给管理员", tech };
+  }
+
   const api = {
     base() { return state.backend.base; },
     online() { return state.backend.online; },
@@ -568,7 +611,7 @@
 
     /** POST 提交（登录 / 工单 / 问答等）。**必须带超时**：
      *
-     *  2026-10-18 事故复盘——kbqa 提问走 _post（无超时）→ 后端冷启动（BGE-M3 预热
+     *  2026-10-18 事故复盘——kbqa 提问走 _post，而后端冷启动（BGE-M3 预热
      *  与请求争用）/ Milvus 无 timeout 悬挂时，无超时的 fetch 会永远等待：
      *  前端「思考中…」转圈 6 分钟不消失，S.sending 锁死后续全部提问，
      *  用户无法区分"慢"与"死"。_get 一直有 AbortController，_post 是漏的。
@@ -915,6 +958,7 @@
   }
 
   function navigate(screenId) {
+    screenId = canonScreen(screenId);
     // 只允许跳到当前岗位可见的屏：URL 里手输 #/spc 而该岗位无权限时，
     // 静默回落到首个可见项（不做错误提示——这属正常收敛，不是异常）。
     const allowed = visibleNav();
@@ -941,13 +985,24 @@
     }
     try {
       fn(root, {
-        state, api, UI: { icon, esc, badge, toast, spinner, fmtClock, fmtDateTime, fmtRemain, demoFlag, realFlag },
+        state, api, UI: { icon, esc, badge, toast, spinner, fmtClock, fmtDateTime, fmtRemain, demoFlag, realFlag, friendlyError },
         DEMO: window.DEMO, perms: state.perms,
         navigate, refreshScreen, setRole, currentRole, visibleNav,
       });
     } catch (err) {
       console.error("[screen] 渲染失败:", err);
-      root.innerHTML = `<div class="empty">页面渲染异常：${esc(err && err.message ? err.message : String(err))}</div>`;
+      // 加载失败优化：render 抛错时绝不把 "xxx is not defined" / "Cannot read…"
+      // 裸扔给用户——看不懂、也没法行动。说人话 + 刷新入口；技术原文进折叠区。
+      const f = friendlyError(err);
+      root.innerHTML = '<div class="empty">'
+        + '<div class="case-load-fail-title">' + icon("warn", 28) + " 页面加载异常</div>"
+        + '<div class="case-load-fail-text">' + esc(f.text) + "</div>"
+        + '<button class="case-btn" onclick="location.reload()">刷新页面</button>'
+        + (f.tech
+          ? '<details class="case-tech"><summary>技术详情（便于反馈）</summary><code>'
+            + esc(f.tech) + "</code></details>"
+          : "")
+        + "</div>";
     }
   }
 
@@ -1100,12 +1155,18 @@
       const menu = document.createElement("div");
       menu.id = "user-menu";
       menu.className = "user-menu";
+      const permsNote = state.permsError
+        ? `<div class="user-menu-perms-err">
+           <b>权限清单加载失败</b>（入口的置灰提示暂不可用；能否执行由服务端把关，不影响数据安全）<br>
+           ${esc(state.permsError)} · 刷新页面可重试</div>`
+        : "";
       menu.innerHTML = `
         <div class="user-menu-head">
           <div class="user-menu-name">${esc(role.user)}</div>
           <div class="user-menu-role">${esc(role.name)} · ${esc(role.dept)}</div>
           <div class="user-menu-scope">${esc(role.scope || "")}</div>
         </div>
+        ${permsNote}
         <button class="user-menu-item" type="button" id="menu-switch">切换岗位身份</button>
         <button class="user-menu-item danger" type="button" id="menu-logout">退出登录</button>`;
       const host = chip.parentElement;
@@ -1150,7 +1211,11 @@
     });
 
     window.addEventListener("hashchange", () => {
-      const hash = location.hash.replace(/^#\/?/, "");
+      const raw = location.hash.replace(/^#\/?/, "");
+      const hash = canonScreen(raw);
+      // 旧屏名（如 #/office）即使已落在同一屏，也要把 URL 归一化到新屏名，
+      // 避免书签 / 演示脚本停留在已废弃的旧屏名上。
+      if (hash !== raw && visibleNav().some((n) => n.id === hash)) { navigate(hash); return; }
       // 可见性判断同样走 visibleNav()：手输无权限屏不应渲染出来
       if (hash && hash !== state.screen && visibleNav().some((n) => n.id === hash)) navigate(hash);
     });
@@ -1162,7 +1227,7 @@
     await loadPermCatalog();
     updateChrome();
 
-    const hash = location.hash.replace(/^#\/?/, "");
+    const hash = canonScreen(location.hash.replace(/^#\/?/, ""));
     // 深链接也要过岗位可见性：直接分享 #/spc 给 HR 岗位时应落到工作台
     navigate(visibleNav().some((n) => n.id === hash) ? hash : "dashboard");
 
@@ -1180,9 +1245,13 @@
     if (!state.backend.online) return null;
     try {
       state.perms = await api.governancePermissions();
+      state.permsError = "";   // 加载成功即清除上次失败提示
     } catch (err) {
       console.warn("[governance] 权限目录加载失败，前端门控退化为后端裁决:", err);
       state.perms = null;
+      // 不能静默：用户要知道"入口门控暂时不准"，但更要明白数据权限
+      // 始终由服务端把关（前端退化不影响安全，只影响提示）。
+      state.permsError = friendlyError(err).text;
     }
     return state.perms;
   }
@@ -1215,7 +1284,7 @@
     currentRole,
     showLogin: renderLogin,
     enterApp,
-    UI: { icon, esc, badge, toast, spinner, fmtClock, fmtDateTime, fmtRemain, demoFlag, realFlag },
+    UI: { icon, esc, badge, toast, spinner, fmtClock, fmtDateTime, fmtRemain, demoFlag, realFlag, friendlyError },
     NAV_ITEMS,
     visibleNav,      // 当前岗位可见导航（帮助中心 / 测试复用同一口径）
   };

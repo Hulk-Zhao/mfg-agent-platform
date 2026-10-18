@@ -19,6 +19,20 @@ __all__ = ["TABLE_ACL", "MetricLibrary", "QueryLibrary"]
 #   gm=总经理（五域全局 · 只读汇总）→ 全域可读；
 #   material_control=物控（物料 · 库存 · 齐套）、sales=业务经理（订单 · 对客 ETA · 出货）
 #   为本岗位核心场景表。
+# 全部演示岗位的治理角色令牌（demo/ui/demo-data.js ROLES）+ 域级/跨域令牌。
+# 供「对所有人开放」的表直接复用：新增岗位时只改这一处，不会漏配。
+_ALL_ROLES: set[str] = {
+    "gm", "manufacturing", "equipment", "sqe", "pqe", "qa",
+    "rd_engineering", "product_engineering", "planning", "material_control",
+    "procurement", "warehouse", "sales", "finance",
+    "quality_director", "equipment_manager", "rd_manager", "supply_chain_manager",
+    "procurement_manager", "warehouse_manager", "finance_manager",
+    "ie_engineer", "npi_engineer", "project_manager", "test_engineer",
+    "me_engineer", "rd_test_engineer", "admin_hr", "ehs", "customer_service",
+    "maintenance_tech",
+    # 域级 / 跨域令牌（沿用既有 ACL 口径）
+    "quality", "qa_manager", "coordinator",
+}
 TABLE_ACL: dict[str, set[str]] = {
     # V3.1：quality 加入产出/停线表——质量分析（FPY/良率）本职需要产出与停线数据
     "production_output": {"manufacturing", "planning", "coordinator", "quality", "gm",
@@ -32,15 +46,13 @@ TABLE_ACL: dict[str, set[str]] = {
                        "supply_chain_manager"},
     "equipment_log": {"manufacturing", "coordinator", "gm", "equipment_manager"},
     "inventory": {"warehouse", "supply_chain", "coordinator", "gm"},
-    # V3.7 库存域（材料库存/成品库存/来料批次综合）：仓储 · 物控 · 采购 · 供应链可读
-    "material_inventory": {"warehouse", "warehouse_manager", "material_control",
-                           "supply_chain", "supply_chain_manager", "procurement",
-                           "coordinator", "gm"},
-    "finished_inventory": {"warehouse", "warehouse_manager", "material_control",
-                           "supply_chain", "supply_chain_manager", "coordinator", "gm"},
-    "incoming_batch": {"warehouse", "warehouse_manager", "material_control",
-                       "supply_chain", "supply_chain_manager", "procurement",
-                       "quality", "coordinator", "gm"},
+    # V3.7 库存域（材料库存/成品库存/来料批次综合）· 数据速查数据源：
+    # **对全部岗位开放只读**（需求变更：数据查询权限对所有岗位开通）。
+    # 口径仍是注册查询（只读、fail-closed 机制不变，仅白名单放宽到全岗位）；
+    # 若后续要恢复岗位隔离，把 _ALL_ROLES 换回具体岗位白名单即可。
+    "material_inventory": set(_ALL_ROLES),
+    "finished_inventory": set(_ALL_ROLES),
+    "incoming_batch": set(_ALL_ROLES),
     # sales=业务经理：对客 ETA / 出货风险 / 客诉响应核心场景
     "shipment": {"business", "warehouse", "coordinator", "sales", "gm",
                  "supply_chain_manager"},

@@ -1392,6 +1392,83 @@ def _h_office_my_orders(orch: V2Orchestrator) -> Callable[..., dict]:
     return handler
 
 
+# ---- OA 自助办理（报销/请假/补考勤；转发同一 OfficeBackend 契约） ----
+
+
+def _h_office_submit_expense(orch: V2Orchestrator) -> Callable[..., dict]:
+    def handler(args: dict, user_ctx: dict) -> dict:
+        from ..services.office import OfficeError
+        be = _runtime(orch).office
+        for key in ("category", "amount", "expense_date"):
+            if args.get(key) in (None, ""):
+                raise ValueError(f"缺少 {key}（category/amount/expense_date 必填）")
+        try:
+            expense = be.submit_expense(
+                str(args["category"]), float(args["amount"]),
+                str(args["expense_date"]), str(args.get("note") or ""),
+                _office_actor(user_ctx), str(args.get("invoice_no") or ""))
+        except OfficeError as exc:
+            return _office_error(exc)
+        return {"ok": True, "expense": expense,
+                "need_approval": expense.get("need_approval", False),
+                "high_value": expense.get("high_value", False)}
+    return handler
+
+
+def _h_office_apply_leave(orch: V2Orchestrator) -> Callable[..., dict]:
+    def handler(args: dict, user_ctx: dict) -> dict:
+        from ..services.office import OfficeError
+        be = _runtime(orch).office
+        for key in ("leave_type", "start_date", "end_date"):
+            if not str(args.get(key) or "").strip():
+                raise ValueError(f"缺少 {key}（leave_type/start_date/end_date 必填）")
+        try:
+            leave = be.apply_leave(
+                str(args["leave_type"]), str(args["start_date"]),
+                str(args["end_date"]), _office_actor(user_ctx),
+                str(args.get("reason") or ""),
+                args.get("days") if args.get("days") is not None else None)
+        except OfficeError as exc:
+            return _office_error(exc)
+        return {"ok": True, "leave": leave,
+                "need_approval": leave.get("need_approval", False),
+                "long_leave": leave.get("long_leave", False)}
+    return handler
+
+
+def _h_office_submit_attendance(orch: V2Orchestrator) -> Callable[..., dict]:
+    def handler(args: dict, user_ctx: dict) -> dict:
+        from ..services.office import OfficeError
+        be = _runtime(orch).office
+        for key in ("fix_type", "work_date", "time"):
+            if not str(args.get(key) or "").strip():
+                raise ValueError(f"缺少 {key}（fix_type/work_date/time 必填）")
+        try:
+            fix = be.submit_attendance_fix(
+                str(args["fix_type"]), str(args["work_date"]),
+                str(args["time"]), _office_actor(user_ctx),
+                str(args.get("reason") or ""))
+        except OfficeError as exc:
+            return _office_error(exc)
+        return {"ok": True, "fix": fix,
+                "need_approval": fix.get("need_approval", False)}
+    return handler
+
+
+def _h_office_my_requests(orch: V2Orchestrator) -> Callable[..., dict]:
+    """本人 OA 申请汇总（报销/请假/补卡 + 假期余额；只读）。"""
+    def handler(args: dict, user_ctx: dict) -> dict:
+        be = _runtime(orch).office
+        actor = _office_actor(user_ctx)
+        expenses = be.list_expenses(actor)
+        leaves = be.list_leaves(actor)
+        fixes = be.list_attendance_fixes(actor)
+        return {"expenses": expenses, "leaves": leaves, "attendance_fixes": fixes,
+                "leave_balance": be.leave_balance(actor),
+                "count": len(expenses) + len(leaves) + len(fixes)}
+    return handler
+
+
 # ---------- 注册 ----------
 
 _USER_SCHEMA = {
@@ -1760,6 +1837,56 @@ def build_platform_tools(orchestrator: V2Orchestrator) -> list[Tool]:
              input_schema={"type": "object", "properties": {"user_ctx": _USER_SCHEMA}},
              handler=_h_office_my_orders(orchestrator), domain="office",
              readonly=True, tier=0),
+        # ---- OA 自助办理（报销/请假/补考勤；写操作需人工确认） ----
+        Tool(name="office.submit_expense",
+             description="提交费用报销单（本人名下，返回报销号）；"
+                         "报销一律需人工确认（财务专员）",
+             input_schema={"type": "object",
+                           "required": ["category", "amount", "expense_date"],
+                           "properties": {
+                 "category": {"type": "string",
+                              "enum": ["差旅", "招待", "办公用品", "交通", "其他"]},
+                 "amount": {"type": "number", "description": "金额（元）"},
+                 "expense_date": {"type": "string", "description": "发生日期 YYYY-MM-DD"},
+                 "note": {"type": "string", "description": "事由"},
+                 "invoice_no": {"type": "string", "description": "发票号（可选）"},
+                 "user_ctx": _USER_SCHEMA}},
+             handler=_h_office_submit_expense(orchestrator), domain="office",
+             readonly=False, tier=2),
+        Tool(name="office.apply_leave",
+             description="提交请假申请（本人名下，返回请假号）；"
+                         "请假一律需人工确认（部门主管）",
+             input_schema={"type": "object",
+                           "required": ["leave_type", "start_date", "end_date"],
+                           "properties": {
+                 "leave_type": {"type": "string",
+                                "enum": ["年假", "事假", "病假", "调休", "婚假", "产假"]},
+                 "start_date": {"type": "string", "description": "开始日期 YYYY-MM-DD"},
+                 "end_date": {"type": "string", "description": "结束日期 YYYY-MM-DD"},
+                 "reason": {"type": "string", "description": "请假事由"},
+                 "days": {"type": "number", "description": "天数（缺省按自然日含端点算）"},
+                 "user_ctx": _USER_SCHEMA}},
+             handler=_h_office_apply_leave(orchestrator), domain="office",
+             readonly=False, tier=2),
+        Tool(name="office.submit_attendance_fix",
+             description="提交补考勤打卡申请（上班/下班补卡，返回补卡号）；"
+                         "补卡一律需人工确认（HR 专员）",
+             input_schema={"type": "object",
+                           "required": ["fix_type", "work_date", "time"],
+                           "properties": {
+                 "fix_type": {"type": "string",
+                              "enum": ["上班补卡", "下班补卡"]},
+                 "work_date": {"type": "string", "description": "补卡日期 YYYY-MM-DD"},
+                 "time": {"type": "string", "description": "补卡时间 HH:MM"},
+                 "reason": {"type": "string", "description": "补卡事由"},
+                 "user_ctx": _USER_SCHEMA}},
+             handler=_h_office_submit_attendance(orchestrator), domain="office",
+             readonly=False, tier=2),
+        Tool(name="office.my_requests",
+             description="查本人的 OA 申请汇总（报销/请假/补卡单据 + 年假余额）",
+             input_schema={"type": "object", "properties": {"user_ctx": _USER_SCHEMA}},
+             handler=_h_office_my_requests(orchestrator), domain="office",
+             readonly=True, tier=0),
     ]
 
 
@@ -1779,7 +1906,10 @@ DOMAIN_TOOLSETS: dict[str, list[str]] = {
     "office": ["office.list_rooms", "office.find_available_rooms",
                "office.book_room", "office.cancel_booking", "office.my_bookings",
                "office.list_restaurants", "office.menu", "office.place_order",
-               "office.cancel_order", "office.my_orders"],
+               "office.cancel_order", "office.my_orders",
+               # OA 自助办理（报销/请假/补考勤）
+               "office.submit_expense", "office.apply_leave",
+               "office.submit_attendance_fix", "office.my_requests"],
 }
 
 

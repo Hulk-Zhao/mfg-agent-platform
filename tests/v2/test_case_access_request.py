@@ -29,7 +29,9 @@ PLANT_CASE = "QC-MD-2026-0021"
 OPEN_CASE = "QC-CC-2026-0087"
 
 REQUESTER = "equipment"
-APPROVER = "qa_manager"
+#: 审批人必须是**归属职能部门的管理岗**（B9 之后只有 quality_director /
+#: equipment_manager 持有 case.access.approve，普通工程师一律不给）。
+APPROVER = "quality_director"
 
 
 @pytest.fixture(autouse=True)
@@ -570,3 +572,250 @@ def test_request_list_requires_auth(case_client, scope):
     """申请列表必须鉴权。"""
     resp = case_client.get(f"/api/v2/cases/access/requests?scope={scope}")
     assert resp.status_code == 401, resp.text
+
+# ---------------------------------------------------------------- B9：职责分离
+
+
+def test_self_approval_is_forbidden(case_client):
+    """申请人不能审批自己的申请（按 user_id 比，不按角色）。
+
+    QA 探针 `_qa/probe_access_request.py` 的原始结论：同部门但被产线挡住的员工
+    可以自己批自己的申请，拿到跨产线全文。这是上线阻塞级的授权绕过。
+    """
+    runtime = _runtime()
+    case_id = "QC-RT-SELF-0001"
+    runtime.store.create_case({
+        "case_id": case_id, "case_code": case_id, "title": "P1 产线专有案例",
+        "summary": "仅 P1 可见", "phenomenon": "连锡", "root_cause_text": "压力",
+        "countermeasure_text": "调整", "category": "quality_case",
+        "subcategory": "process_defect", "cls_rank": 1, "status": "draft",
+        "source_ticket_type": "8d", "source_ticket_id": "8D-RT-SELF-1",
+        "owner_dept": "quality", "plant": "P1",
+    })
+    runtime.store.set_acl(case_id, [{"dim": "plant", "value": "P1"}],
+                          allow_widen=True)
+    runtime.store.transition(case_id, "review")
+    runtime.store.transition(case_id, "active")
+    runtime.index_service.sync_case(case_id)
+
+    # 申请人：quality 部门、P2 工厂（被 plant 挡住）
+    token = _session(case_client, "quality_director", dept="quality", plant="P2")
+    assert _detail(case_client, token, case_id) == 404
+    created = case_client.post(f"/api/v2/cases/{case_id}/request-access",
+                               headers=_auth(token),
+                               json={"reason": "需要引用这条 P1 产线的案例做工艺改善"})
+    assert created.status_code == 200, created.text
+    rid = created.json()["data"]["request"]["request_id"]
+
+    # 同一身份（甚至换成更高角色）再来批 → 必须 403
+    resp = case_client.post(f"/api/v2/cases/access/requests/{rid}/decide",
+                            headers=_auth(token),
+                            json={"approve": True, "reason": "自己批自己"})
+    assert resp.status_code == 403, resp.text
+    assert resp.json()["detail"]["code"] == "CASE_ACCESS_SELF_APPROVAL_FORBIDDEN"
+    assert _detail(case_client, token, case_id) == 404, "自审批被拒后却拿到了访问权"
+
+
+def test_non_manager_same_dept_cannot_approve(case_client):
+    """同部门但**非管理岗**不能审批（`case.access.approve` 只给职能负责人）。"""
+    token = _session(case_client, "equipment", dept="equipment")
+    created = case_client.post(f"/api/v2/cases/{QUALITY_CASE}/request-access",
+                               headers=_auth(token),
+                               json={"reason": "需要引用该案例做设备异常分析"})
+    rid = created.json()["data"]["request"]["request_id"]
+    # qa_manager 是"同部门管理岗"，但本条用 equipment_manager（他部门管理岗）
+    other_mgr = _session(case_client, "equipment_manager", dept="equipment")
+    resp = case_client.post(f"/api/v2/cases/access/requests/{rid}/decide",
+                            headers=_auth(other_mgr),
+                            json={"approve": True, "reason": "我们部门同意了"})
+    assert resp.status_code == 403, resp.text
+    assert resp.json()["detail"]["code"] in (
+        "CASE_ACCESS_NOT_APPROVER", "CASE_ACCESS_SELF_APPROVAL_FORBIDDEN")
+
+
+def test_manager_of_other_dept_cannot_approve_either(case_client):
+    """他部门管理岗也不能批（管理岗 ≠ 归属部门）。"""
+    token = _session(case_client, "equipment", dept="equipment")
+    created = case_client.post(f"/api/v2/cases/{QUALITY_CASE}/request-access",
+                               headers=_auth(token),
+                               json={"reason": "需要引用该案例做设备异常分析"})
+    rid = created.json()["data"]["request"]["request_id"]
+    resp = case_client.post(f"/api/v2/cases/access/requests/{rid}/decide",
+                            headers=_auth(_session(case_client, "equipment_manager",
+                                                   dept="equipment")),
+                            json={"approve": True, "reason": "同意"})
+    assert resp.status_code == 403, resp.text
+
+
+def test_functional_manager_can_approve(case_client):
+    """归属职能部门的管理岗 → 200（职责分离 + RBAC 两道门都过）。"""
+    token = _session(case_client, "equipment", dept="equipment")
+    created = case_client.post(f"/api/v2/cases/{QUALITY_CASE}/request-access",
+                               headers=_auth(token),
+                               json={"reason": "需要引用该案例做设备异常分析"})
+    rid = created.json()["data"]["request"]["request_id"]
+    # quality_director 是 quality 的负责人，持有 case.access.approve
+    approver = _session(case_client, "quality_director", dept="quality")
+    resp = case_client.post(f"/api/v2/cases/access/requests/{rid}/decide",
+                            headers=_auth(approver),
+                            json={"approve": True, "reason": "同意本岗位引用"})
+    assert resp.status_code == 200, resp.text
+    assert _detail(case_client, token, QUALITY_CASE) == 200
+
+
+def test_plain_engineer_has_no_approve_action(case_client):
+    """普通工程师一律不持有 ``case.access.approve``（注册表层断言）。"""
+    from mfg_agents.v2.security.case_rbac import get_case_rbac
+
+    rbac = get_case_rbac()
+    holders = set(rbac.roles_with("case.access.approve"))
+    assert "qa" not in holders and "equipment" not in holders
+    assert "pqe" not in holders and "sqe" not in holders
+    assert holders, "没有任何角色持有审批权：审批通道将完全不可用"
+    for manager in ("quality_director", "equipment_manager"):
+        assert manager in holders, f"{manager} 应持有审批权"
+
+
+# ---------------------------------------------------------------- B10：涉密不披露
+
+
+def test_secret_case_never_appears_in_restricted(case_client):
+    """涉密案例**连标题都不许**出现在受限清单里（B10）。
+
+    QA 探针原始结论：`quality_director`（rank 3）的 restricted 里出现了
+    「制程（机密）：客户定制工艺窗口异常」，`requestable=false`——
+    标记不构成过滤，标题照样泄漏。而同一条在检索链路是被
+    `deny-secret-classification` 丢弃的，只有 restricted 这条旁路漏了。
+    """
+    runtime = _runtime()
+    case_id = "QC-RT-SECRET-0002"
+    title = "制程（机密）：客户定制工艺窗口异常"
+    runtime.store.create_case({
+        "case_id": case_id, "case_code": case_id, "title": title,
+        "summary": "机密摘要", "phenomenon": "机密", "root_cause_text": "机密",
+        "countermeasure_text": "机密", "category": "quality_case",
+        "subcategory": "process_defect", "cls_rank": 3, "status": "draft",
+        "source_ticket_type": "8d", "source_ticket_id": "8D-RT-SECRET-2",
+        "owner_dept": "quality", "plant": "P2",
+    })
+    runtime.store.set_visibility(case_id, 1, ["dept:quality"])
+    runtime.store.transition(case_id, "review")
+    runtime.store.transition(case_id, "active")
+    runtime.index_service.sync_case(case_id)
+
+    token = _session(case_client, "quality_director", dept="quality", plant="P1",
+                     max_classification_rank=3)
+    resp = case_client.post("/api/v2/cases/search", headers=_auth(token),
+                            json={"query": "机密 工艺窗口", "action": "query", "k": 50})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()["data"]
+
+    ids = {item["case_id"] for item in body["restricted"]}
+    assert case_id not in ids, "涉密案例出现在受限清单里"
+    assert case_id not in {h["case_id"] for h in body["hits"]}, "涉密案例出现在命中里"
+    assert "机密" not in resp.text, "响应文本里出现了涉密标题字样"
+    assert case_id not in resp.text and title not in resp.text
+
+
+def test_unpublished_case_not_in_restricted(case_client):
+    """未结案 / 已撤权案例同样不可披露存在。"""
+    runtime = _runtime()
+    for case_id, target in (("QC-RT-REV-0001", "review"),
+                            ("QC-RT-WD-0002", "withdrawn")):
+        runtime.store.create_case({
+            "case_id": case_id, "case_code": case_id, "title": f"未结案案例 {case_id}",
+            "summary": "还没结案", "phenomenon": "连锡", "root_cause_text": "压力",
+            "countermeasure_text": "调整", "category": "quality_case",
+            "subcategory": "process_defect", "cls_rank": 1, "status": "draft",
+            "source_ticket_type": "8d", "source_ticket_id": f"8D-RT-{case_id}",
+            "owner_dept": "quality", "plant": "P2",
+        })
+        runtime.store.set_visibility(case_id, 1, ["dept:quality"])
+        runtime.store.transition(case_id, "review")
+        if target == "withdrawn":
+            runtime.store.transition(case_id, "active")
+            runtime.store.transition(case_id, "withdrawn")
+        runtime.index_service.sync_case(case_id)
+
+    token = _session(case_client, "quality_director", dept="quality", plant="P1",
+                     max_classification_rank=3)
+    resp = case_client.post("/api/v2/cases/search", headers=_auth(token),
+                            json={"query": "连锡 未结案", "action": "query", "k": 50})
+    assert resp.status_code == 200, resp.text
+    ids = {item["case_id"] for item in resp.json()["data"]["restricted"]}
+    assert "QC-RT-REV-0001" not in ids, "未结案案例出现在受限清单"
+    assert "QC-RT-WD-0002" not in ids, "已撤权案例出现在受限清单"
+
+
+def test_restricted_titles_never_leak_secret_wording(case_client):
+    """受限清单的标题里不得出现"机密/涉密/秘密"字样（B10 的不变量固化）。
+
+    ``requestable=true`` 只保证"这条可申请"，不保证**标题本身**可以被看到。
+    涉密案例一旦带着标题进清单，即便打了"不可申请"的标记，也已经是泄漏——
+    所以这里直接扫字样，把边界钉成不变量，防止将来有人改回去。
+    """
+    token = _session(case_client, "quality_director", dept="quality",
+                     max_classification_rank=3)
+    data = _search(case_client, token, query="案例")
+    items = data["restricted"]
+    assert items, "受限清单为空，用例失效"
+    banned = ("机密", "涉密", "秘密", "绝密")
+    for item in items:
+        assert item.get("requestable") is True, \
+            f"受限清单出现不可申请条目：{item}"
+        assert not any(word in str(item.get("title") or "") for word in banned), \
+            f"受限清单标题含涉密字样：{item}"
+        # 也不应带正文或密级细节
+        assert set(item) == {"case_id", "title", "category", "reason",
+                             "requestable"}, f"受限清单字段超集：{sorted(item)}"
+
+
+def test_approval_fails_closed_when_case_has_no_owning_department(case_client):
+    """归属部门不明时**不得放行审批**（默认拒绝，不是"无处可推则不拦"）。
+
+    早前实现是一条 `return`：案例既无 ``owner_dept``、ACL 里也没有 dept 维度时，
+    任何持有 ``case.access.approve`` 的职能负责人都能批——而前置 RBAC 门禁只保证
+    他是**某个**职能负责人，并不保证他与这条案例有关。归属不明时缺的那一维
+    恰恰是"这条案例归谁管"，它是唯一不能猜的。
+
+    这里造一条**无归属**的案例（owner_dept 为空、ACL 只有 plant 维度），
+    用一个跟它毫无关系的部门主管去批，断言 403 且请求仍是 pending。
+    """
+    runtime = _runtime()
+    case_id = "QC-RT-NODEPT-0001"
+    runtime.store.create_case({
+        "case_id": case_id, "case_code": case_id, "title": "无归属部门案例",
+        "summary": "未指定归属", "phenomenon": "虚焊", "root_cause_text": "温度",
+        "countermeasure_text": "调参", "category": "quality_case",
+        "subcategory": "process_defect", "cls_rank": 1, "status": "draft",
+        "source_ticket_type": "8d", "source_ticket_id": "8D-RT-NODEPT-1",
+        "plant": "P1",
+    })
+    # ACL 只有产线维度，**没有 dept** → 归属不可推
+    runtime.store.set_acl(case_id, [{"dim": "plant", "value": "P1"}],
+                          allow_widen=True)
+    runtime.store.transition(case_id, "review")
+    runtime.store.transition(case_id, "active")
+    runtime.index_service.sync_case(case_id)
+
+    token = _session(case_client, "quality_director", dept="quality", plant="P2")
+    created = case_client.post(f"/api/v2/cases/{case_id}/request-access",
+                               headers=_auth(token),
+                               json={"reason": "需要引用这条案例做工艺改善验证"})
+    assert created.status_code == 200, created.text
+    rid = created.json()["data"]["request"]["request_id"]
+
+    # 换一个与该案例毫无关系的部门主管来批（必须换 user_id：
+    # 同 user_id 会先被"禁止自审批"门禁拦下，那条另有用例覆盖，
+    # 这里要验的是"归属不明 → 无人可批"这一层）
+    other = _session(case_client, "quality_director", dept="equipment",
+                     plant="P1", user_id="u-equipment-director")
+    decided = case_client.post(
+        f"/api/v2/cases/access/requests/{rid}/decide",
+        headers=_auth(other), json={"approve": True, "reason": "同意"})
+    assert decided.status_code == 403, decided.text
+    assert decided.json()["detail"]["code"] == "CASE_ACCESS_NOT_APPROVER"
+
+    # 归属不明 → 任何人都不放行；申请必须仍停在 pending，授权不得落库
+    assert _detail(case_client, token, case_id) == 404
+    assert runtime.store.get_case(case_id) is not None

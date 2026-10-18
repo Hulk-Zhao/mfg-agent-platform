@@ -306,6 +306,20 @@ class CasePolicySet:
                 return rule
         return None
 
+    def cross_dept_pass(self, principal: Optional[Principal]) -> bool:
+        """主体是否持有「跨职能域通行」角色（settings.cross_dept_roles，如总经理）。
+
+        通行 = 免做"主体令牌 × 案例 ACL 行"的业务维交集匹配；**不是**跳过权限：
+        密级 / 状态 / 证据层 / 租户 / 显式 deny 照常独立否决（fail-closed 语义
+        不因豁免放宽）。编译器与 AclEvaluator 各自调用本判定，保持同一语义。
+        """
+        exempt = {str(v).strip().lower() for v in
+                  (self.setting("cross_dept_roles") or [])}
+        if not exempt:
+            return False
+        roles = {str(r).strip().lower() for r in (getattr(principal, "roles", None) or ())}
+        return bool(roles & exempt)
+
     def fast_path_only(self, principal: Optional[Principal]) -> bool:
         """是否只走 ``visibility_class == 0`` 快路径。
 
@@ -421,10 +435,18 @@ class AclCompiler:
         if not active_policy.visible_status(act):
             return FALSE_FILTER, f"动作 {act} 无可见状态白名单"
 
-        # ── 阶段 4：软维度（快路径 / 慢路径）───────────────────────
+        # ── 阶段 4：软维度（快路径 / 跨部门通行 / 慢路径）─────────────
+        cross_dept = active_policy.cross_dept_pass(principal)
         if active_policy.fast_path_only(principal):
-            soft = FilterNode(Op.EQ, "visibility_class", 0)
+            soft: Optional[FilterNode] = FilterNode(Op.EQ, "visibility_class", 0)
             path = "fast"
+        elif cross_dept:
+            # 跨部门通行角色（如总经理）：不按 ACL 行做"令牌交集"——业务维
+            # （role/dept/plant 等）全通；硬维度已在 ``hard`` 里照常独立否决。
+            # 与 AclEvaluator 的 cross-dept 豁免是**同一语义的两套实现**，
+            # 改这里必须同步改那边（否则检索召回会被二次授权整批丢弃）。
+            soft = None
+            path = "cross-dept"
         else:
             tokens = list(principal.principal_tokens)[:MAX_PRINCIPAL_TOKENS]
             soft = FilterNode(Op.ANY, children=(
@@ -433,7 +455,8 @@ class AclCompiler:
             ))
             path = "fast+slow"
 
-        node = FilterNode(Op.ALL, children=tuple([*hard, soft]))
+        children = hard if soft is None else [*hard, soft]
+        node = FilterNode(Op.ALL, children=tuple(children))
 
         # ── 阶段 5：三重自检 ───────────────────────────────────────
         assert_no_cross_dimension_or(node)

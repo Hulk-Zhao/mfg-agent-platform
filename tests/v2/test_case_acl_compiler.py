@@ -331,3 +331,38 @@ def test_case_rbac_rejects_unknown_action() -> None:
 
     with pytest.raises(CaseRbacError):
         CaseRbacRegistry({"pqe": ("publish_everything",)})
+
+
+# ---------------------------------------------------------------- Agent 治理纪律
+
+
+def test_agent_roles_cannot_hold_approval_action():
+    """Agent 身份角色**不得**持有 ``case.access.approve``（B9 的注册表层护栏）。
+
+    为什么在注册表层堵：服务层已经有"审批人 ≠ 申请人"和"必须持有审批权"两道门，
+    但如果某个 agent 角色真的拿到了审批动作，程序化自审批就通了。
+    与 ``ingest / export / share`` 同一套 fail-fast 纪律——配置写错直接**加载失败**，
+    不会静默生效。
+
+    两层断言：
+    1. ``AGENT_FORBIDDEN_ACTIONS`` 里必须含 ``access.approve``（这是**加载期**护栏，
+       真正生效的地方：将来有人给 agent 角色加这个动作，构造期就炸）；
+    2. 当前注册表里已存在的 agent 角色**一个都不能**持有它。
+       （当前平台的 32 个治理角色里没有 agent 身份角色，所以第 2 条今天是空集——
+       这正是为什么第 1 条更重要：护栏要能在"将来有人加 agent 角色"时生效。）
+    """
+    from mfg_agents.v2.contracts.permissions import get_permission_registry
+    from mfg_agents.v2.security.case_rbac import (
+        AGENT_FORBIDDEN_ACTIONS,
+        get_case_rbac,
+    )
+
+    assert "access.approve" in AGENT_FORBIDDEN_ACTIONS, \
+        "审批动作未列入 Agent 禁用清单：将来给 agent 角色加这个动作就会静默生效"
+
+    registry = get_permission_registry()
+    agents = {r["key"] for r in registry.describe()["roles"]
+              if (role := registry.role(r["key"])) is not None and role.is_agent}
+    holders = set(get_case_rbac().roles_with("case.access.approve"))
+    leaked = agents & holders
+    assert not leaked, f"Agent 角色持有审批权：{sorted(leaked)}"

@@ -901,7 +901,7 @@
                        document.getElementById(cfg.flag));
           return;
         }
-        reason = "后端请求失败：" + (err && err.message ? err.message : "未知错误");
+        reason = UI.friendlyError(err).text;
         UI.toast("看板数据请求失败，已切换演示数据", "warn", 3600);
       }
     } else {
@@ -3862,7 +3862,7 @@
           scopedDenied(UI, err, "该下钻明细", box, document.getElementById(cfg.flag));
           return;
         }
-        reason = "后端请求失败：" + (err && err.message ? err.message : "未知错误");
+        reason = UI.friendlyError(err).text;
         UI.toast("下钻数据请求失败，已切换演示数据", "warn", 3600);
       }
     } else {
@@ -3973,7 +3973,7 @@
                        document.getElementById("mfg-flag"));
           return;
         }
-        reason = "后端请求失败：" + (err && err.message ? err.message : "未知错误");
+        reason = UI.friendlyError(err).text;
         UI.toast("看板数据请求失败，已切换演示数据", "warn", 3600);
       }
     } else {
@@ -4153,7 +4153,7 @@
                        document.getElementById(cfg.flag));
           return;
         }
-        reason = "后端请求失败：" + (err && err.message ? err.message : "未知错误");
+        reason = UI.friendlyError(err).text;
         UI.toast("看板数据请求失败，已切换演示数据", "warn", 3600);
       }
     } else {

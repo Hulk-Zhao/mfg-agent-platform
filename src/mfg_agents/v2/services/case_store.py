@@ -19,7 +19,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterable, Iterator, Mapping, Optional, Sequence, Union
 
-from ...common.case_schema import connect, ensure_case_schema, resolve_case_db
+from ...common.case_schema import (bulk_load, connect, ensure_case_schema,
+                                  resolve_case_db)
 from ...common.config import settings
 from ..contracts.case_acl import TOKEN_DIMS
 
@@ -344,7 +345,13 @@ class CaseStore:
         rows = self.acl_entries(case_id)      # 不存在时自然返回空集，但查询确实发生
         if case is None:
             return rows
-        rows.extend([
+        rows.extend(self._system_rows(case_id, case))
+        return rows
+
+    @staticmethod
+    def _system_rows(case_id: str, case: Mapping[str, Any]) -> list[dict[str, Any]]:
+        """案例的标量维度 → 统一形态的"行"（供二次授权消费）。"""
+        return [
             {"case_id": case_id, "dim": "tenant",
              "value": str(case.get("tenant") or ""), "effect": "system"},
             {"case_id": case_id, "dim": "status",
@@ -356,8 +363,55 @@ class CaseStore:
              "effect": "system"},
             {"case_id": case_id, "dim": "visibility_class",
              "value": str(case.get("visibility_class") or 0), "effect": "system"},
-        ])
-        return rows
+        ]
+
+    def eval_rows_many(self, case_ids: Iterable[str]) -> dict[str, list[dict[str, Any]]]:
+        """批量版 :meth:`eval_rows`：**一次连接、两条查询**，返回 ``{case_id: rows}``。
+
+        为什么需要它：受限清单（``search`` 里的"有但你看不透"）要对每个候选案例
+        做一次二次授权。按 :meth:`eval_rows` 逐个调 = 每个案例各开一次 SQLite 连接
+        （``get_case`` 一次 + ``acl_entries`` 一次），演示库 15 个案例就把
+        ``test_case_search_e2e`` 从 55s 拖到 213s——不是算法慢，是**连接开销**。
+
+        行内容与逐个调用**完全一致**（同一套系统行 + 同一套业务条目），
+        因此不改变任何授权判定结果，只是把 N×2 次建连压成 1 次。
+        """
+        wanted = [str(cid) for cid in (case_ids or ()) if str(cid)]
+        if not wanted:
+            return {}
+        unique = list(dict.fromkeys(wanted))
+        placeholders = ", ".join("?" for _ in unique)
+        out: dict[str, list[dict[str, Any]]] = {cid: [] for cid in unique}
+        with self._conn() as conn:
+            case_rows = conn.execute(
+                f'SELECT * FROM "case" WHERE case_id IN ({placeholders})',
+                unique).fetchall()
+            acl_rows = conn.execute(
+                "SELECT case_id, dim, value, effect, origin FROM case_acl "
+                f"WHERE case_id IN ({placeholders}) ORDER BY dim, value",
+                unique).fetchall()
+        cases = {str(row["case_id"]): dict(row) for row in case_rows}
+        for row in acl_rows:
+            out[str(row["case_id"])].append(dict(row))
+        for case_id, case in cases.items():
+            out[case_id].extend(self._system_rows(case_id, case))
+        return out
+
+    def cases_by_ids(self, case_ids: Iterable[str]) -> dict[str, dict[str, Any]]:
+        """批量取案例（``{case_id: case}``，不存在的直接不出现）。
+
+        与 :meth:`get_case` 单条版同义，只是把 N 次建连压成 1 次。
+        """
+        wanted = [str(cid) for cid in (case_ids or ()) if str(cid)]
+        if not wanted:
+            return {}
+        unique = list(dict.fromkeys(wanted))
+        placeholders = ", ".join("?" for _ in unique)
+        with self._conn() as conn:
+            rows = conn.execute(
+                f'SELECT * FROM "case" WHERE case_id IN ({placeholders})',
+                unique).fetchall()
+        return {str(row["case_id"]): dict(row) for row in rows}
 
     def set_visibility(self, case_id: str, visibility_class: int,
                        tokens: Sequence[str]) -> None:
@@ -503,34 +557,39 @@ class CaseStore:
             except Exception:  # noqa: BLE001 - 不引入硬依赖，但下面会校验
                 redactor = None
         imported = 0
-        for item in cases:
-            if not isinstance(item, dict):
-                raise CaseStoreError(f"种子案例格式非法: {item!r}")
-            record = dict(item)
-            record.setdefault("tenant", default_tenant)
-            record.setdefault("created_at", str(record.get("published_at") or ""))
-            acl = list(record.get("acl") or [])
-            case_id = str(record.get("case_id") or "")
-            # 步 0（B3）：种子文本先过脱敏 + 复检，再落库——种子不是豁免通道
-            for field in SEED_TEXT_FIELDS:
-                if field in record and record.get(field) is not None:
-                    record[field] = self._redact_seed_field(
-                        case_id, field, str(record.get(field) or ""), redactor)
-            self._purge(case_id)
-            self.create_case(record, allow_widen_acl=True)
-            tokens = [f"{e['dim']}:{e['value']}" for e in acl
-                      if str(e.get("effect", "allow")) == "allow"]
-            self.set_visibility(case_id, 0 if not tokens else 1, tokens)
-            for evidence in (record.get("evidence") or []):
-                self.add_evidence(
-                    case_id,
-                    evidence_id=str(evidence.get("evidence_id") or ""),
-                    kind=str(evidence.get("kind") or ""),
-                    uri=str(evidence.get("uri") or ""),
-                    cls_rank=int(evidence.get("cls_rank") or 3),
-                    retain_until=str(evidence.get("retain_until") or ""),
-                )
-            imported += 1
+        # ★ 批量导入：临时关闭 fsync（99 例 × 4 次写入 = 数百次 fsync，
+        #   实测 62ms/例，是 demo 首次启动的主要耗时）。种子可重放，
+        #   崩了下次重导即可，所以这个代价只在种子路径上可接受。
+        #   退出上下文立即恢复默认持久性，审计链写入不受影响。
+        with bulk_load():
+          for item in cases:
+              if not isinstance(item, dict):
+                  raise CaseStoreError(f"种子案例格式非法: {item!r}")
+              record = dict(item)
+              record.setdefault("tenant", default_tenant)
+              record.setdefault("created_at", str(record.get("published_at") or ""))
+              acl = list(record.get("acl") or [])
+              case_id = str(record.get("case_id") or "")
+              # 步 0（B3）：种子文本先过脱敏 + 复检，再落库——种子不是豁免通道
+              for field in SEED_TEXT_FIELDS:
+                  if field in record and record.get(field) is not None:
+                      record[field] = self._redact_seed_field(
+                          case_id, field, str(record.get(field) or ""), redactor)
+              self._purge(case_id)
+              self.create_case(record, allow_widen_acl=True)
+              tokens = [f"{e['dim']}:{e['value']}" for e in acl
+                        if str(e.get("effect", "allow")) == "allow"]
+              self.set_visibility(case_id, 0 if not tokens else 1, tokens)
+              for evidence in (record.get("evidence") or []):
+                  self.add_evidence(
+                      case_id,
+                      evidence_id=str(evidence.get("evidence_id") or ""),
+                      kind=str(evidence.get("kind") or ""),
+                      uri=str(evidence.get("uri") or ""),
+                      cls_rank=int(evidence.get("cls_rank") or 3),
+                      retain_until=str(evidence.get("retain_until") or ""),
+                  )
+              imported += 1
         logger.info("[case_store] 种子导入完成: %s（%d 条）", target, imported)
         return imported
 

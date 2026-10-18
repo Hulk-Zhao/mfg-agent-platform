@@ -65,8 +65,15 @@ DEFAULT_K = 5
 
 #: 受限清单最多回多少条（标题级信息也不能变成批量导出）。
 RESTRICTED_MAX = 20
-#: 计算受限清单时最多扫描多少候选 chunk。
+#: 计算受限清单时最多扫描多少候选 chunk（上限保护：全量扫描在百例库上是 O(库大小)）。
 MAX_RESTRICTED_SCAN = 10000
+#: 受限清单的扫描上限（**按案例计**）。命中上限即停止——宁可少列几条，
+#: 也不让每次检索都扫全库；清单本身只是"申请入口提示"，不是完备列表。
+RESTRICTED_SCAN_CAP = 200
+#: 顶部统计卡片（``/cases/stats``）的扫描上限。比受限清单宽得多：卡片上的
+#: 数字要能和检索结果对上，不能被扫描上限截断成"少了几个"；万一大库触顶，
+#: 响应里带 ``truncated=true``，前端标注"统计不完整"而不是假装精确。
+STATS_SCAN_CAP = 5000
 
 #: 可走访问申请的状态（与 services/case_access.REQUESTABLE_STATUS 对齐）。
 _REQUESTABLE_STATUS: frozenset[str] = frozenset({"active", "deprecated"})
@@ -74,11 +81,28 @@ _REQUESTABLE_STATUS: frozenset[str] = frozenset({"active", "deprecated"})
 
 def _is_requestable(case: Mapping[str, Any]) -> bool:
     """这条案例能不能走"申请访问"（涉密与未结案不走）。"""
+    return _is_disclosable(case)
+
+
+def _is_disclosable(case: Mapping[str, Any]) -> bool:
+    """这条案例**是否允许被披露"存在"**（B10）。
+
+    为什么必须单独一个函数、而不是复用 ``_is_requestable`` 的语义：
+    **"可申请"与"可披露存在"是两件事**。涉密（L3）案例由
+    ``acl_evaluator`` 的显式 DENY 规则排除出共享池（E1 / PRD §7.4），
+    检索链路也确实会丢弃它；但它**同样不该出现在"有但你看不透"的清单里**——
+    标题本身就是信息。``requestable=false`` 只是个标记，
+    **标记不构成过滤**：条目照样会带着标题进响应，等于绕过 DENY 规则泄漏。
+
+    规则：涉密 / 未结案 / 已撤权 / 未知状态 → **一律不可披露**，连 case_id 都不给。
+    """
     try:
         rank = int(case.get("cls_rank") or 0)
     except (TypeError, ValueError):
         return False
-    return rank < 3 and str(case.get("status") or "") in _REQUESTABLE_STATUS
+    if rank >= 3:
+        return False
+    return str(case.get("status") or "") in _REQUESTABLE_STATUS
 
 
 def source_ticket_ref(source_ticket_id: str) -> str:
@@ -370,11 +394,16 @@ class CaseSearchService:
         passed: list[SearchHit] = []
         dropped: list[str] = []
         cache: dict[str, bool] = {}
+        # ★ 批量取 ACL 行：逐条 eval_rows 是「每案例 2 次 SQLite 建连」，
+        #   候选几十条时一次检索要多开近百个连接（实测占单次检索耗时的大头）。
+        #   行内容与逐条调用完全一致，只是把 N×2 次建连压成 1 次。
+        case_ids = sorted({str(hit.case_id) for hit in hits})
+        rows_by_case = self._store.eval_rows_many(case_ids) if case_ids else {}
         for hit in hits:
             allowed = cache.get(hit.case_id)
             if allowed is None:
                 decision = self._evaluator.authorize(
-                    principal, self._store.eval_rows(hit.case_id), action, env)
+                    principal, rows_by_case.get(str(hit.case_id), []), action, env)
                 allowed = decision.allow
                 cache[hit.case_id] = allowed
                 if not allowed:
@@ -534,6 +563,75 @@ class CaseSearchService:
 
     # ---------- 受限案例（可见存在、可申请） ----------
 
+    def _scan_visible_restricted(
+            self, principal: Optional[Principal], action: str,
+            cap: int = STATS_SCAN_CAP,
+            visible_ids: Optional[set[str]] = None
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """可见案例与受限案例的**权威清单**（受限清单 / 顶部统计卡共用一次扫描）。
+
+        为什么抽出来：受限清单和统计卡片必须报同一套数字——现场最怕的就是
+        "卡片上说 12 个受限、清单里只有 8 条"，一被追问就穿。两边各自过滤
+        必然漂移，所以扫描只有这一份实现。
+
+        判定口径与 search 第 8-9 步 + ``_second_stage`` 完全一致：
+        候选 = ``compile_hard_only``（仅硬维度）命中的案例；其中
+        ``compile`` 完整过滤器命中**且** ``AclEvaluator.authorize`` 放行 →
+        可见；其余中 ``_is_disclosable`` 为真 → 受限（可申请）。
+        编译器与评估器是两套独立实现（刻意不互相复用，见 ``_second_stage``），
+        **同时满足才计入可见**；任何一边存疑都不计入——宁可少算，不可把
+        不可见的算成可见。
+
+        Args:
+            visible_ids: 调用方（search）已确认的可见集。传入时受限判定加一层
+                ``not in visible_ids``；统计卡不传（``None``），只用过滤器口径。
+        """
+        visible: list[dict[str, Any]] = []
+        restricted: list[dict[str, Any]] = []
+        try:
+            filter_node, _reason = self._compiler.compile_explained(
+                principal, action, policy=self._policy)
+            if not filter_node.children:
+                # FALSE_FILTER：动作被拒或主体不可用——什么都不可见（fail-closed）
+                return visible, restricted
+            hard_only = self._compiler.compile_hard_only(
+                principal, action, policy=self._policy)
+            # 只过滤不打分（见 MemoryCaseIndex.filtered_case_ids 的说明）
+            filter_ids = set(self._index_service.hard_visible_case_ids(
+                filter_node, cap))
+            candidate_ids = self._index_service.hard_visible_case_ids(
+                hard_only, cap)
+        except Exception as exc:  # noqa: BLE001 - 受限清单/统计是增强项，绝不影响主流程
+            logger.warning("[case_search] 可见/受限扫描失败: %s", exc)
+            return visible, restricted
+        if not candidate_ids:
+            return visible, restricted
+        # ★ 批量取行：逐条 get_case + eval_rows 会为每个候选各开一次 SQLite
+        #   连接（演示库 15 个案例就把 search_e2e 从 55s 拖到 213s）。
+        #   行内容与逐条调用完全一致，只是把 N×2 次建连压成 1 次。
+        cases = self._store.cases_by_ids(candidate_ids)
+        rows_by_case = self._store.eval_rows_many(candidate_ids)
+        seen: set[str] = set()
+        for case_id in candidate_ids:
+            if case_id in seen:
+                continue
+            seen.add(case_id)
+            case = cases.get(case_id)
+            if not case:
+                continue
+            allowed = self._evaluator.authorize(
+                principal, rows_by_case.get(case_id, []), action).allow
+            if allowed and case_id in filter_ids:
+                if visible_ids is None or case_id in visible_ids:
+                    visible.append(case)
+            elif (not allowed and case_id not in filter_ids
+                  and (visible_ids is None or case_id not in visible_ids)
+                  and _is_disclosable(case)):
+                # ★ B10：先判"能不能披露存在"，再谈"能不能申请"。
+                # 涉密 / 未结案 / 已撤权：连 case_id 都不进清单。
+                restricted.append(case)
+        return visible, restricted
+
     def _restricted(self, principal: Principal, action: str,
                     filter_node: FilterNode,
                     visible_ids: set[str]) -> list[dict[str, Any]]:
@@ -547,37 +645,56 @@ class CaseSearchService:
         requestable）。给了标题 + 可申请性，用户就能走审批；给了正文、密级细节
         或 ACL 明细，这条通道立刻变成绕过过滤的读接口——那才是真泄漏。
         """
-        out: list[dict[str, Any]] = []
-        try:
-            hard_only = self._compiler.compile_hard_only(
-                principal, action, policy=self._policy)
-            candidates = self._index_service.index.search(
-                "", hard_only, MAX_RESTRICTED_SCAN)
-        except Exception as exc:  # noqa: BLE001 - 受限清单是增强项，绝不影响主流程
-            logger.warning("[case_search] 受限清单计算失败: %s", exc)
-            return out
-        seen: set[str] = set()
-        for hit in candidates:
-            case_id = str(hit.case_id)
-            if case_id in visible_ids or case_id in seen:
-                continue
-            seen.add(case_id)
-            case = self._store.get_case(case_id)
-            if not case:
-                continue
-            if self._evaluator.authorize(
-                    principal, self._store.eval_rows(case_id), action).allow:
-                continue
-            out.append({
-                "case_id": case_id,
-                "title": str(case.get("title") or case_id),
-                "category": str(case.get("category") or ""),
-                "reason": "该案例属于其他职能域，可申请访问",
-                "requestable": _is_requestable(case),
-            })
-            if len(out) >= RESTRICTED_MAX:
-                break
-        return out
+        _visible, restricted = self._scan_visible_restricted(
+            principal, action, cap=RESTRICTED_SCAN_CAP, visible_ids=visible_ids)
+        return [{
+            "case_id": str(case.get("case_id") or ""),
+            "title": str(case.get("title") or case.get("case_id") or ""),
+            "category": str(case.get("category") or ""),
+            "reason": "该案例属于其他职能域，可申请访问",
+            "requestable": True,
+        } for case in restricted[:RESTRICTED_MAX]]
+
+    def stats(self, principal: Optional[Principal], action: str = "query",
+              scan_cap: int = STATS_SCAN_CAP) -> dict[str, Any]:
+        """案例域统计（顶部数字卡片）：口径与检索**完全同源**。
+
+        复用 ``_scan_visible_restricted``（= search 的 filter + 二次授权 +
+        披露判定），不引入任何新过滤逻辑；分类/密级/状态分布都从**可见案例**
+        的行里聚合，因此卡片数字、受限清单、检索结果三者永远对得上。
+
+        受限数可能被 ``scan_cap`` 截断（大库），此时 ``restricted_truncated``
+        为真——前端标注"统计不完整"，不假装精确。
+        """
+        visible, restricted = self._scan_visible_restricted(
+            principal, action, cap=scan_cap)
+        by_category: dict[str, int] = {}
+        by_subcategory: dict[str, int] = {}
+        by_rank: dict[str, int] = {}
+        by_status: dict[str, int] = {}
+        def rank_key(case: Mapping[str, Any]) -> str:
+            # ★ 不能写 ``case.get("cls_rank") or "?"``：``cls_rank == 0``（公开级，
+            # 演示库里占六成）是 falsy，会被当成"未知"落进 "L?"，前端固定序里
+            # 没有这一档 → 密级分布只剩 L1 几条，加起来对不上可见总数。
+            raw = case.get("cls_rank")
+            return "L" + str(raw) if raw is not None and raw != "" else "L?"
+
+        for case in visible:
+            for bucket, key in ((by_category, str(case.get("category") or "uncategorized")),
+                                (by_subcategory, str(case.get("subcategory") or "")),
+                                (by_rank, rank_key(case)),
+                                (by_status, str(case.get("status") or "unknown"))):
+                if key:
+                    bucket[key] = bucket.get(key, 0) + 1
+        return {
+            "visible_total": len(visible),
+            "restricted_total": len(restricted),
+            "restricted_truncated": len(restricted) >= int(scan_cap),
+            "by_category": by_category,
+            "by_subcategory": by_subcategory,
+            "by_rank": by_rank,
+            "by_status": by_status,
+        }
 
     # ---------- hidden_count / notice ----------
 

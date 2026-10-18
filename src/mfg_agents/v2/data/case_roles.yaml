@@ -22,6 +22,9 @@ actions:
   - {key: case.export,  label: 导出（默认拒绝，需申请审批）}
   - {key: case.share,   label: 外发分享（恒定拒绝）}
   - {key: case.ingest,  label: 案例入库}
+  # 治理动作（非检索动词）：审批跨部门访问申请。
+  # 只授予**案例归属职能部门的负责人**；普通工程师一律不给——这是 B9 的职责分离门禁。
+  - {key: case.access.approve, label: 审批跨部门访问申请}
 
 roles:
   # ---------- 管理 ----------
@@ -33,7 +36,7 @@ roles:
 
   # ---------- 质量 ----------
   - key: quality_director
-    actions: [query, preview, read, cite, export, ingest]
+    actions: [query, preview, read, cite, export, ingest, access.approve]
   - key: qa_manager
     actions: [query, preview, read, cite, ingest]
   - key: qa
@@ -63,7 +66,7 @@ roles:
 
   # ---------- 设备 ----------
   - key: equipment_manager
-    actions: [query, preview, read, cite]
+    actions: [query, preview, read, cite, access.approve]
   - key: equipment
     actions: [query, preview, read, cite]
   - key: maintenance_tech

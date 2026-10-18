@@ -1832,6 +1832,12 @@ a:hover { text-decoration: underline; }
 .user-menu-item:hover { background: var(--primary-light-2); }
 .user-menu-item.danger { color: var(--danger); border-top: 1px solid var(--border); }
 .user-menu-item.danger:hover { background: var(--danger-bg); }
+/* 权限目录加载失败的用户可见提示（不能静默：用户要知道门控提示暂时不准） */
+.user-menu-perms-err {
+  padding: 9px 15px; font-size: 11.5px; line-height: 1.65;
+  color: var(--warn); background: var(--warn-bg);
+  border-bottom: 1px solid var(--border);
+}
 
 @media (max-width: 980px) {
   .login-shell { grid-template-columns: 1fr; }
@@ -2660,26 +2666,45 @@ a:hover { text-decoration: underline; }
   grid-template-areas:
     "chat chat chat"
     "snap snap snap"
-    "rooms rests mine";
+    "entry entry entry"
+    "rooms rests mine"
+    "myforms myforms myforms";
 }
 .of-a { min-width: 0; }
 .of-a-chat { grid-area: chat; }
 .of-a-snap { grid-area: snap; }
+.of-a-entry { grid-area: entry; }
 .of-a-rooms { grid-area: rooms; }
 .of-a-rests { grid-area: rests; }
 .of-a-mine { grid-area: mine; }
-.of-a-rooms > .card, .of-a-rests > .card, .of-a-mine > .card { height: 100%; }
+.of-a-myforms { grid-area: myforms; }
+/* OA 列表卡定高：三张主卡（会议室/餐厅/我的预订）450px；"我的申请单据"整行卡 320px。
+   用**确定高度**（而非 height:100% 依赖栅格行）保证 flex 列有确定高度 → 内容区
+   flex:1 吃剩余空间并内部下拉滚动（卡头/筛选条常驻可见）。 */
+.of-a-rooms > .card, .of-a-rests > .card, .of-a-mine > .card {
+  height: 450px;
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.of-a-myforms > .card {
+  height: 320px;
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.of-a-rooms #of-rooms-scroll, .of-a-rests #of-menu,
+.of-a-mine #of-mine, .of-a-myforms #of-myforms {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto; padding-right: 4px;
+}
 .of-desc { max-width: 1080px; }
 @media (max-width: 1200px) {
   .of-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    grid-template-areas: "chat chat" "snap snap" "rooms rests" "mine mine";
+    grid-template-areas: "chat chat" "snap snap" "entry entry"
+      "rooms rests" "mine mine" "myforms myforms";
   }
 }
 @media (max-width: 860px) {
   .of-grid {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: "chat" "snap" "rooms" "rests" "mine";
+    grid-template-areas: "chat" "snap" "entry" "rooms" "rests" "mine" "myforms";
   }
 }
 
@@ -2800,6 +2825,77 @@ a:hover { text-decoration: underline; }
 .of-form .of-cap { text-align: center; padding: 0 4px; }
 .of-form .of-form-submit { grid-column: 1 / -1; }
 
+/* OA 自助办理入口卡：三入口一行铺满，窄屏回落单列 */
+.of-entry { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 6px; }
+@media (max-width: 860px) { .of-entry { grid-template-columns: minmax(0, 1fr); } }
+.of-entry-item {
+  display: flex; flex-direction: column; gap: 6px; align-items: flex-start;
+  padding: 12px; border: 1px solid var(--border); border-radius: 10px;
+  background: linear-gradient(180deg, #FBFCFE 0%, #F6F8FC 100%);
+}
+.of-entry-title { font-size: 13.5px; font-weight: 650; color: var(--text); }
+.of-entry-sub { flex: 1; font-size: 11.5px; line-height: 1.65; color: var(--text-3); }
+
+/* 我的申请单据：假期余额横幅 */
+.of-bal {
+  margin: 2px 0 8px; padding: 8px 10px; font-size: 12px; color: var(--text-2);
+  background: var(--primary-light); border-radius: 8px; line-height: 1.7;
+}
+.of-bal b { color: var(--primary-deep); font-variant-numeric: tabular-nums; }
+
+/* 反问弹窗（ask_user）：遮罩 + 卡片；select/multiselect→chips，其余→输入框 */
+.of-clarify-mask {
+  position: fixed; inset: 0; z-index: 9999; background: rgba(15, 23, 42, .38);
+  display: flex; align-items: center; justify-content: center; padding: 24px;
+  animation: ofMaskIn .16s ease-out;
+}
+@keyframes ofMaskIn { from { opacity: 0; } to { opacity: 1; } }
+.of-clarify {
+  width: 100%; max-width: 520px; max-height: 86vh; overflow-y: auto;
+  background: var(--card); border-radius: var(--radius); box-shadow: 0 18px 48px rgba(15, 23, 42, .24);
+  animation: ofPopIn .18s ease-out;
+}
+@keyframes ofPopIn { from { opacity: 0; transform: translateY(8px) scale(.98); } to { opacity: 1; transform: none; } }
+.of-clarify-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 18px 8px;
+}
+.of-clarify-title { font-size: 15px; font-weight: 650; color: var(--text); }
+.of-clarify-close {
+  border: none; background: none; cursor: pointer; font-size: 20px; line-height: 1;
+  color: var(--text-3); padding: 0 4px; font-family: inherit;
+}
+.of-clarify-close:hover { color: var(--text); }
+.of-clarify-q { padding: 0 18px 6px; font-size: 12.8px; line-height: 1.75; color: var(--text-2); }
+.of-clarify-body { padding: 6px 18px 4px; display: flex; flex-direction: column; gap: 12px; }
+.of-clarify-field { min-width: 0; }
+.of-clarify-label { margin-bottom: 6px; font-size: 12.4px; font-weight: 600; color: var(--text-2); }
+.of-req { color: var(--danger); font-weight: 700; }
+.of-clarify-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.of-clarify-chip {
+  padding: 5px 11px; border: 1px solid var(--border-strong); border-radius: 999px;
+  background: #fff; color: var(--text-2); font-size: 12px; cursor: pointer; font-family: inherit;
+  transition: all .14s;
+}
+.of-clarify-chip:hover { border-color: var(--primary); color: var(--primary); }
+.of-clarify-chip.active { border-color: var(--primary); background: var(--primary); color: #fff; }
+.of-clarify-input {
+  width: 100%; min-width: 0; height: 34px; border: 1px solid var(--border-strong); border-radius: 8px;
+  padding: 0 10px; font-size: 12.6px; font-family: inherit; color: var(--text);
+  background: #fff; outline: none;
+}
+.of-clarify-input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(24, 95, 165, .1); }
+.of-clarify-select {
+  width: 100%; min-width: 0; height: 34px; border: 1px solid var(--border-strong); border-radius: 8px;
+  padding: 0 8px; font-size: 12.6px; font-family: inherit; color: var(--text);
+  background: #fff; outline: none; cursor: pointer;
+}
+.of-clarify-select:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(24, 95, 165, .1); }
+.of-clarify-foot {
+  display: flex; justify-content: flex-end; gap: 8px;
+  padding: 12px 18px 16px; border-top: 1px solid var(--border); margin-top: 12px;
+}
+
 /* ============================================================
    案例助手（cases）· case-screen.js
    命名空间 `.case-` 前缀，避免与看板/知识库样式互相覆盖。
@@ -2870,6 +2966,14 @@ a:hover { text-decoration: underline; }
   padding: 14px; box-shadow: var(--shadow-sm);
 }
 .case-side-empty { font-size: 12.5px; color: var(--text-2); line-height: 1.8; }
+/* 加载失败优化：友好文案 + 重试入口 + 技术详情折叠（不再裸露原始报错） */
+.case-load-fail-title {
+  display: flex; align-items: center; gap: 7px;
+  font-size: 13.5px; font-weight: 650; color: var(--text); margin-bottom: 6px;
+}
+.case-load-fail-title svg { color: var(--warn); flex: none; }
+.case-load-fail-text { margin-bottom: 10px; }
+.case-side-empty .case-btn-wide { margin-bottom: 8px; }
 .case-side-title {
   font-size: 11px; font-weight: 600; color: var(--text-3);
   letter-spacing: .04em; margin: 14px 0 7px;
@@ -3017,6 +3121,45 @@ a:hover { text-decoration: underline; }
   padding-bottom: 10px; border-bottom: 1px solid var(--border); margin-bottom: 10px;
 }
 .case-modal-head b { flex: 1; font-size: 14px; color: var(--text); line-height: 1.5; }
+
+/* ---------- 演示专用：自动审批执行弹层 ---------- */
+.case-auto-card { width: min(560px, 100%); }
+.case-auto-steps { margin-top: 2px; }
+.case-auto-step {
+  display: flex; gap: 10px; align-items: flex-start; padding: 6px 0;
+  font-size: 12.8px; color: var(--text-3); line-height: 1.6;
+}
+.case-auto-ico {
+  flex-shrink: 0; width: 17px; height: 17px; margin-top: 1px;
+  border-radius: 50%; border: 1px solid var(--border-strong); background: #fff;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 10px; font-weight: 700; color: var(--text-3);
+}
+.case-auto-step.is-done { color: var(--text-2); }
+.case-auto-step.is-done .case-auto-ico { background: var(--ok); border-color: var(--ok); color: #fff; }
+.case-auto-step.is-run { color: var(--text); font-weight: 600; }
+.case-auto-step.is-run .case-auto-ico {
+  border-color: var(--primary); color: var(--primary);
+  animation: case-auto-pulse 1.1s ease-in-out infinite;
+}
+.case-auto-step.is-fail { color: var(--danger); }
+.case-auto-step.is-fail .case-auto-ico { background: var(--danger); border-color: var(--danger); color: #fff; }
+@keyframes case-auto-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 var(--primary-light); }
+  50% { box-shadow: 0 0 0 5px var(--primary-light); }
+}
+.case-auto-result {
+  margin-top: 12px; padding: 10px 12px; border-radius: var(--radius-sm);
+  font-size: 12.3px; color: var(--text-2); line-height: 1.85;
+}
+.case-auto-result b { color: var(--text); }
+.case-auto-result.is-ok { background: var(--ok-bg); border: 1px solid var(--ok); }
+.case-auto-result.is-err { background: var(--warn-bg); border: 1px dashed var(--warn); }
+.case-auto-bar {
+  margin-top: 14px; display: flex; justify-content: flex-end; gap: 8px; align-items: center;
+}
+.case-auto-note { margin-top: 10px; font-size: 11.3px; color: var(--text-3); line-height: 1.75; }
+.case-chip-done { background: var(--ok); color: #fff; }
 .case-detail-meta { font-size: 11.5px; color: var(--text-3); margin-bottom: 8px; line-height: 1.8; }
 .case-detail-sec { margin-top: 12px; }
 .case-detail-sec h5 {
@@ -3176,6 +3319,69 @@ a:hover { text-decoration: underline; }
 .case-warn-line { font-size: 11.5px; color: var(--warn); line-height: 1.6; }
 .case-warn-line b { margin-right: 6px; font-weight: 600; }
 
+/* 演示说明黄条：可收起（信息不丢，噪音可控） */
+.case-warn-bar { position: relative; }
+.case-warn-bar.is-collapsed { padding: 4px 10px; }
+.case-warn-bar:not(.is-collapsed) .case-warn-line { padding-right: 46px; }
+.case-warn-toggle {
+  position: absolute; top: 4px; right: 6px; padding: 2px 7px;
+  border: 1px solid var(--border-strong); border-radius: 6px;
+  background: var(--card); color: var(--text-3);
+  font-size: 11px; cursor: pointer; font-family: inherit;
+}
+.case-warn-toggle:hover { color: var(--warn); border-color: var(--warn); }
+.case-warn-bar.is-collapsed .case-warn-toggle {
+  position: static; border: none; background: none; color: var(--warn); padding: 0;
+}
+
+/* ---------- 顶部统计卡片 ---------- */
+.case-stats {
+  position: relative; margin: 10px 0 2px; padding: 10px 12px;
+  border: 1px solid var(--border); border-radius: 10px; background: var(--card);
+  display: flex; flex-direction: column; gap: 8px;
+}
+.case-stats.is-loading {
+  flex-direction: row; align-items: center; gap: 6px;
+  font-size: 12px; color: var(--text-2);
+}
+.case-stats-fail { font-size: 11.5px; color: var(--text-3); line-height: 1.6; }
+.case-stats-cards {
+  display: grid; gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+}
+.case-stat {
+  padding: 9px 12px; border-radius: 9px; border: 1px solid var(--border);
+  background: var(--primary-light-2);
+  display: flex; flex-direction: column; gap: 2px;
+}
+.case-stat b { font-size: 22px; font-weight: 600; line-height: 1.15; color: var(--text); }
+.case-stat span { font-size: 11.5px; color: var(--text-2); }
+.case-stat[data-stats-jump] { cursor: pointer; }
+.case-stat[data-stats-jump]:hover {
+  border-color: var(--primary); background: var(--primary-light);
+}
+.case-stat.is-warn b { color: var(--warn); }
+.case-stats-dist { display: flex; flex-direction: column; gap: 4px; }
+.case-dist-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.case-dist-row em {
+  font-style: normal; font-size: 11.5px; color: var(--text-3); margin-right: 2px;
+}
+.case-dist-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 9px; border-radius: 10px; font-size: 11.5px;
+  background: var(--bg); color: var(--text-2);
+  white-space: nowrap;   /* 芯片内不折行："制程不良案例 18" 必须一行 */
+}
+.case-dist-chip i { font-style: normal; color: var(--text-3); margin-right: 4px; }
+.case-dist-chip.is-rest { color: var(--text-3); }
+.case-dist-note { font-size: 11px; color: var(--text-3); }
+.case-stats-refresh {
+  position: absolute; top: 7px; right: 7px; padding: 3px;
+  border: none; border-radius: 6px; background: none; color: var(--text-3);
+  cursor: pointer; display: flex; align-items: center;
+}
+.case-stats-refresh:hover { color: var(--primary); background: var(--primary-light-2); }
+
 /* ---------- 同案例多片段折叠 ---------- */
 .case-chunk-count {
   margin-left: 8px; padding: 1px 7px; border-radius: 10px;
@@ -3295,6 +3501,8 @@ a:hover { text-decoration: underline; }
   background: var(--primary-light-2); border-left: 3px solid var(--primary);
 }
 .case-dist-row b { flex: none; color: var(--text-3); font-weight: 500; }
+.case-foot-cn { font-size: 11px; color: var(--text-3); }
+.case-cite-cn { font-size: 11px; color: var(--ok); }
 
 /* ---------- 帮助中心：技术 / 目的 卡片 ---------- */
 .help-line {

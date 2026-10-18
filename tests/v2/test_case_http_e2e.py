@@ -107,8 +107,15 @@ def test_meta_exposes_action_matrix_and_vocabulary(case_client):
     data = case_client.get("/api/v2/cases/meta", headers=_auth(token)).json()["data"]
 
     codes = {item["key"] for item in data["rbac"]["actions"]}
+    # 六个检索动词 + 一个治理动作（case.access.approve，跨部门访问申请审批）。
+    # 两者语义不同：检索动词进 AclCompiler 的动作门禁，治理动作只进 RBAC。
     assert codes == {"case.query", "case.preview", "case.read", "case.cite",
-                     "case.export", "case.share", "case.ingest"}
+                     "case.export", "case.share", "case.ingest",
+                     "case.access.approve"}
+    approve_holders = {r["key"] for r in data["rbac"]["roles"]
+                       if "case.access.approve" in (r.get("actions") or [])}
+    assert approve_holders, "没有任何岗位持有审批权：访问申请通道将不可用"
+    assert "qa" not in approve_holders, "普通工程师不得持有审批权（B9 职责分离）"
 
     qa_grant = [r for r in data["rbac"]["roles"] if r["key"] == "qa"]
     assert qa_grant
@@ -143,9 +150,11 @@ def test_same_query_different_roles_get_different_sets(case_client):
 def test_hidden_count_and_notice_when_result_is_short(case_client):
     """候选不足：如实返回 + 明确说明不放宽 + 给出不可见条数。"""
     token = _session(case_client, "equipment", dept="equipment")
-    data = _search(case_client, token, "锡膏印刷偏移 虚焊 连锡", k=20).json()["data"]
+    # k 取足够大（种子扩到 70 例后设备工程师可见 chunk 已 >120），
+    # 否则 k 会被候选填满，"候选不足"分支根本走不到。
+    data = _search(case_client, token, "锡膏印刷偏移 虚焊 连锡", k=200).json()["data"]
 
-    assert len(data["hits"]) < 20, "设备工程师不应拿满 20 条（否则此用例失去意义）"
+    assert len(data["hits"]) < 200, "设备工程师可见量应少于 k（否则此用例失去意义）"
     assert data["hidden_count"] > 0
     assert "另有" in data["notice"] and "不可见" in data["notice"]
     assert "不放宽过滤补齐" in data["notice"]
@@ -155,7 +164,8 @@ def test_hidden_count_and_notice_when_result_is_short(case_client):
 def test_deprecated_case_is_visible_with_status_badge(case_client):
     """待复核案例仍可见（不是删除），但状态徽标必须是"待复核"。"""
     token = _session(case_client, "qa", dept="quality")
-    data = _search(case_client, token, "助焊剂残留 焊点发黑", k=10).json()["data"]
+    # k 取足够大：待复核案例被降权，扩种后需放宽 k 才能出现在结果里。
+    data = _search(case_client, token, "助焊剂残留 焊点发黑", k=200).json()["data"]
     hit = next((h for h in data["hits"] if h["case_id"] == DEPRECATED_CASE), None)
     assert hit is not None, "待复核案例应仍可被检索到（降权而非下线）"
     assert hit["status"] == "deprecated"
@@ -201,7 +211,7 @@ def test_ask_refuses_when_nothing_is_relevant(case_client):
     """无关问题必须拒答——引用合法 ≠ 答的是这个问题。"""
     token = _session(case_client, "qa", dept="quality")
     resp = case_client.post("/api/v2/cases/ask", headers=_auth(token),
-                            json={"question": "食堂几点开饭", "k": 3, "action": "read"})
+                            json={"question": "今天天气怎么样", "k": 3, "action": "read"})
     assert resp.status_code == 200, resp.text
     data = resp.json()["data"]
     assert data["answered"] is False

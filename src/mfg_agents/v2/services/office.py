@@ -76,6 +76,39 @@ class OfficeBackend(ABC):
     @abstractmethod
     def list_orders(self, orderer: Optional[str] = None) -> list[dict[str, Any]]: ...
 
+    # OA 自助办理：报销
+    @abstractmethod
+    def submit_expense(self, category: str, amount: float, expense_date: str,
+                       note: str, applicant: str, invoice_no: str = ""
+                       ) -> dict[str, Any]: ...
+
+    @abstractmethod
+    def list_expenses(self, applicant: Optional[str] = None
+                      ) -> list[dict[str, Any]]: ...
+
+    # OA 自助办理：请假
+    @abstractmethod
+    def apply_leave(self, leave_type: str, start_date: str, end_date: str,
+                    applicant: str, reason: str = "",
+                    days: Optional[float] = None) -> dict[str, Any]: ...
+
+    @abstractmethod
+    def list_leaves(self, applicant: Optional[str] = None
+                    ) -> list[dict[str, Any]]: ...
+
+    @abstractmethod
+    def leave_balance(self, applicant: str) -> dict[str, Any]: ...
+
+    # OA 自助办理：补考勤
+    @abstractmethod
+    def submit_attendance_fix(self, fix_type: str, work_date: str, time: str,
+                              applicant: str, reason: str = ""
+                              ) -> dict[str, Any]: ...
+
+    @abstractmethod
+    def list_attendance_fixes(self, applicant: Optional[str] = None
+                              ) -> list[dict[str, Any]]: ...
+
 
 # ---------- demo 实现（内存种子数据） ----------
 
@@ -123,6 +156,16 @@ _RESTAURANTS: list[dict[str, Any]] = [
 # 单笔餐费（元）达到该额度 → 视为高影响，建议人工确认
 ORDER_APPROVAL_AMOUNT: float = 500.0
 
+# ---------- OA 自助办理（报销 / 请假 / 补考勤） ----------
+# 单笔报销（元）达到该额度 → 视为高影响，需人工确认
+EXPENSE_APPROVAL_AMOUNT: float = 5000.0
+# 请假天数达到该阈值 → 视为长假，需人工确认（部门主管）
+LEAVE_LONG_DAYS: float = 3.0
+# 合法枚举（与前端弹窗选项、工具 schema 保持一致）
+_LEAVE_TYPES: list[str] = ["年假", "事假", "病假", "调休", "婚假", "产假"]
+_EXPENSE_CATEGORIES: list[str] = ["差旅", "招待", "办公用品", "交通", "其他"]
+_ATTENDANCE_FIX_TYPES: list[str] = ["上班补卡", "下班补卡"]
+
 
 def _to_minutes(hhmm: str) -> int:
     """'HH:MM' → 当日分钟数（用于时段冲突判定）。"""
@@ -145,6 +188,22 @@ def _now_iso() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _parse_date(text: str) -> datetime:
+    """'YYYY-MM-DD' → datetime（用于请假天数计算）；非法即报错。"""
+    try:
+        return datetime.strptime(str(text or "").strip(), "%Y-%m-%d")
+    except (ValueError, TypeError):
+        raise OfficeError(f"日期格式非法: {text!r}（应为 YYYY-MM-DD）") from None
+
+
+def _natural_days(start_date: str, end_date: str) -> float:
+    """按自然日含端点计算天数（2026-10-20 ~ 2026-10-20 = 1 天）。"""
+    delta = (_parse_date(end_date) - _parse_date(start_date)).days
+    if delta < 0:
+        raise OfficeError(f"结束日期不能早于开始日期（{start_date} ~ {end_date}）")
+    return float(delta + 1)
+
+
 class DemoOfficeBackend(OfficeBackend):
     """内存实现：种子会议室/餐厅 + 预订/订单记录（线程安全，进程级）。"""
 
@@ -154,6 +213,9 @@ class DemoOfficeBackend(OfficeBackend):
         self._restaurants = [dict(r) for r in _RESTAURANTS]
         self._bookings: dict[str, dict[str, Any]] = {}
         self._orders: dict[str, dict[str, Any]] = {}
+        self._expenses: dict[str, dict[str, Any]] = {}
+        self._leaves: dict[str, dict[str, Any]] = {}
+        self._attendance_fixes: dict[str, dict[str, Any]] = {}
         self._seq = 0
 
     def _next_id(self, prefix: str) -> str:
@@ -320,6 +382,131 @@ class DemoOfficeBackend(OfficeBackend):
         if orderer:
             items = [o for o in items if o["orderer"] == orderer]
         return sorted(items, key=lambda o: o["created_at"])
+
+    # ---------- OA 自助办理：报销 ----------
+
+    def submit_expense(self, category: str, amount: float, expense_date: str,
+                       note: str, applicant: str, invoice_no: str = ""
+                       ) -> dict[str, Any]:
+        cat = str(category or "").strip()
+        if cat not in _EXPENSE_CATEGORIES:
+            raise OfficeError(
+                f"报销类别非法: {category!r}（可选: {_EXPENSE_CATEGORIES}）")
+        try:
+            amt = float(amount)
+        except (ValueError, TypeError):
+            raise OfficeError(f"报销金额非法: {amount!r}") from None
+        if amt <= 0:
+            raise OfficeError(f"报销金额必须为正数（当前 {amt}）")
+        if not str(applicant or "").strip():
+            raise OfficeError("报销申请人缺失")
+        expense = {
+            "expense_id": self._next_id("BX"),
+            "category": cat, "amount": round(amt, 2),
+            "expense_date": str(expense_date or ""), "note": note or "",
+            "invoice_no": invoice_no or "",
+            "applicant": applicant, "status": "pending_approval",
+            "need_approval": True,
+            "high_value": amt >= EXPENSE_APPROVAL_AMOUNT,
+            "created_at": _now_iso(),
+        }
+        with self._lock:
+            self._expenses[expense["expense_id"]] = expense
+        return dict(expense)
+
+    def list_expenses(self, applicant: Optional[str] = None
+                      ) -> list[dict[str, Any]]:
+        with self._lock:
+            items = [dict(e) for e in self._expenses.values()
+                     if e["status"] != "cancelled"]
+        if applicant:
+            items = [e for e in items if e["applicant"] == applicant]
+        return sorted(items, key=lambda e: e["created_at"], reverse=True)
+
+    # ---------- OA 自助办理：请假 ----------
+
+    def apply_leave(self, leave_type: str, start_date: str, end_date: str,
+                    applicant: str, reason: str = "",
+                    days: Optional[float] = None) -> dict[str, Any]:
+        lt = str(leave_type or "").strip()
+        if lt not in _LEAVE_TYPES:
+            raise OfficeError(
+                f"请假类型非法: {leave_type!r}（可选: {_LEAVE_TYPES}）")
+        if not str(applicant or "").strip():
+            raise OfficeError("请假申请人缺失")
+        span = _natural_days(start_date, end_date)
+        if days is None:
+            use_days = span
+        else:
+            try:
+                use_days = float(days)
+            except (ValueError, TypeError):
+                raise OfficeError(f"请假天数非法: {days!r}") from None
+            if use_days <= 0:
+                raise OfficeError(f"请假天数必须为正数（当前 {use_days}）")
+        leave = {
+            "leave_id": self._next_id("QJ"),
+            "leave_type": lt, "start_date": str(start_date or ""),
+            "end_date": str(end_date or ""), "days": round(use_days, 2),
+            "reason": reason or "", "applicant": applicant,
+            "status": "pending_approval", "need_approval": True,
+            "long_leave": use_days >= LEAVE_LONG_DAYS,
+            "created_at": _now_iso(),
+        }
+        with self._lock:
+            self._leaves[leave["leave_id"]] = leave
+        return dict(leave)
+
+    def list_leaves(self, applicant: Optional[str] = None
+                    ) -> list[dict[str, Any]]:
+        with self._lock:
+            items = [dict(l) for l in self._leaves.values()
+                     if l["status"] != "cancelled"]
+        if applicant:
+            items = [l for l in items if l["applicant"] == applicant]
+        return sorted(items, key=lambda l: l["created_at"], reverse=True)
+
+    def leave_balance(self, applicant: str) -> dict[str, Any]:
+        """年假/调休余额（demo 固定额度；真实实现查 HR 系统）。"""
+        return {"applicant": applicant, "annual_remaining": 8.5,
+                "comp_remaining": 2.0, "used_this_year": 3.5}
+
+    # ---------- OA 自助办理：补考勤 ----------
+
+    def submit_attendance_fix(self, fix_type: str, work_date: str, time: str,
+                              applicant: str, reason: str = ""
+                              ) -> dict[str, Any]:
+        ft = str(fix_type or "").strip()
+        if ft not in _ATTENDANCE_FIX_TYPES:
+            raise OfficeError(
+                f"补卡类型非法: {fix_type!r}（可选: {_ATTENDANCE_FIX_TYPES}）")
+        if not str(applicant or "").strip():
+            raise OfficeError("补卡申请人缺失")
+        if not str(work_date or "").strip():
+            raise OfficeError("补卡日期缺失（work_date=YYYY-MM-DD）")
+        try:
+            _to_minutes(time)
+        except OfficeError:
+            raise OfficeError(f"补卡时间非法: {time!r}（应为 HH:MM）") from None
+        fix = {
+            "fix_id": self._next_id("KB"),
+            "fix_type": ft, "work_date": str(work_date), "time": str(time),
+            "reason": reason or "", "applicant": applicant,
+            "status": "pending_approval", "need_approval": True,
+            "created_at": _now_iso(),
+        }
+        with self._lock:
+            self._attendance_fixes[fix["fix_id"]] = fix
+        return dict(fix)
+
+    def list_attendance_fixes(self, applicant: Optional[str] = None
+                              ) -> list[dict[str, Any]]:
+        with self._lock:
+            items = [dict(a) for a in self._attendance_fixes.values()
+                     if a["status"] != "cancelled"]
+        if applicant:
+            items = [a for a in items if a["applicant"] == applicant]
+        return sorted(items, key=lambda a: a["created_at"], reverse=True)
 
 
 # ---------- 进程级单例（默认 demo 实现；测试/生产可 set 替换） ----------

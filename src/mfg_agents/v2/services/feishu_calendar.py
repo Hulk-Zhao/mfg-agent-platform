@@ -515,6 +515,43 @@ class FeishuCalendarBackend(OfficeBackend):
     def list_orders(self, orderer: Optional[str] = None) -> list[dict[str, Any]]:
         return self.meal.list_orders(orderer)
 
+    # ---------- OA 自助办理（报销/请假/补考勤；待接入飞书审批 API；当前委托 demo 后端） ----------
+    # 真实实现应转发飞书审批（create_approval_instance）或 HR/考勤系统；在适配层落地前，
+    # 与订餐一样委托 demo 后端，保证 Agent 与工具层接口先行、契约不变。
+
+    def submit_expense(self, category: str, amount: float, expense_date: str,
+                       note: str, applicant: str, invoice_no: str = ""
+                       ) -> dict[str, Any]:
+        return self.meal.submit_expense(category, amount, expense_date, note,
+                                        applicant, invoice_no)
+
+    def list_expenses(self, applicant: Optional[str] = None
+                      ) -> list[dict[str, Any]]:
+        return self.meal.list_expenses(applicant)
+
+    def apply_leave(self, leave_type: str, start_date: str, end_date: str,
+                    applicant: str, reason: str = "",
+                    days: Optional[float] = None) -> dict[str, Any]:
+        return self.meal.apply_leave(leave_type, start_date, end_date,
+                                     applicant, reason, days)
+
+    def list_leaves(self, applicant: Optional[str] = None
+                    ) -> list[dict[str, Any]]:
+        return self.meal.list_leaves(applicant)
+
+    def leave_balance(self, applicant: str) -> dict[str, Any]:
+        return self.meal.leave_balance(applicant)
+
+    def submit_attendance_fix(self, fix_type: str, work_date: str, time: str,
+                              applicant: str, reason: str = ""
+                              ) -> dict[str, Any]:
+        return self.meal.submit_attendance_fix(fix_type, work_date, time,
+                                               applicant, reason)
+
+    def list_attendance_fixes(self, applicant: Optional[str] = None
+                              ) -> list[dict[str, Any]]:
+        return self.meal.list_attendance_fixes(applicant)
+
 
 # ---------- 装配入口 ----------
 

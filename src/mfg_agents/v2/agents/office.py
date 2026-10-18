@@ -22,11 +22,19 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass
 from typing import Any, Optional
 
-from ..services.office import OfficeBackend, OfficeError, get_office_backend
+from ..services.office import (
+    _ATTENDANCE_FIX_TYPES,
+    _EXPENSE_CATEGORIES,
+    _LEAVE_TYPES,
+    OfficeBackend,
+    OfficeError,
+    get_office_backend,
+)
 from .agentic import AgenticStep, AgenticDomainAgent
 from .hitl import single_tool_flow
 
@@ -43,10 +51,165 @@ _OFFICE_FLOW: dict[str, list[tuple[str, str, int]]] = {
     "meal": [("office_intent", "办公助手 · 意图识别", 5_000),
              ("office_catering_check", "后勤 · 餐厅与时段核验", 14_000),
              ("office_order", "办公助手 · 下单办理", 21_000)],
+    "expense": [("office_intent", "办公助手 · 意图识别", 5_000),
+                ("office_expense_fill", "办公助手 · 报销单据整理", 15_000),
+                ("office_expense_approve", "财务 · 票据与额度核验", 24_000)],
+    "leave": [("office_intent", "办公助手 · 意图识别", 5_000),
+              ("office_leave_fill", "办公助手 · 请假单整理", 14_000),
+              ("office_leave_approve", "部门主管 · 假期与排班核验", 23_000)],
+    "attendance": [("office_intent", "办公助手 · 意图识别", 5_000),
+                   ("office_att_fill", "办公助手 · 补卡单整理", 13_000),
+                   ("office_att_approve", "HR · 考勤核验", 22_000)],
     "default": [("office_intent", "办公助手 · 意图识别", 5_000),
                 ("office_handle", "办公助手 · 事务办理", 18_000)],
 }
-_OFFICE_CATEGORY_CN = {"room": "会议室预订", "meal": "订餐"}
+_OFFICE_CATEGORY_CN = {"room": "会议室预订", "meal": "订餐",
+                       "expense": "费用报销", "leave": "请假申请",
+                       "attendance": "补考勤打卡"}
+
+# 各类事项的审批归口（按事项性质分派，而非一律行政专员）
+_OFFICE_ASSIGNEE = {"room": "行政专员", "meal": "行政专员",
+                    "expense": "财务专员", "leave": "部门主管",
+                    "attendance": "HR 专员"}
+
+
+def _clarify_options(key: str, label: str) -> list[str]:
+    """按字段 key/label 关键词补全反问字段的规范选项（仅在 options 为空时兜底）。
+
+    背景：ask_user 的字段定义由 LLM 生成，类型/类别类字段常漏填 options，
+    前端弹窗就会"没有下拉选项"。此处对已知枚举字段补上权威选项。
+    """
+    text = f"{key} {label}"
+    if "补卡" in text or key in ("fix_type", "attendance_type"):
+        return list(_ATTENDANCE_FIX_TYPES)
+    if ("报销" in text or "费用" in text
+            or key in ("category", "expense_category", "category_name")):
+        return list(_EXPENSE_CATEGORIES)
+    if "假" in text and ("类型" in text or "类别" in text
+                        or key in ("leave_type", "leave_kind")):
+        return list(_LEAVE_TYPES)
+    return []
+
+
+# 反问弹窗的规范字段模板（按事项类别）：把"已从原话解析出的已知值"并入弹窗预填，
+# 保证用户打开弹窗即"半填"状态，只需人工补真正缺失项。
+_CLARIFY_SLOTS: dict[str, list[dict]] = {
+    "leave": [
+        {"key": "leave_type", "label": "请假类型", "type": "select",
+         "options": list(_LEAVE_TYPES), "required": True},
+        {"key": "start_date", "label": "开始日期", "type": "date", "required": True},
+        {"key": "end_date", "label": "结束日期", "type": "date", "required": True},
+    ],
+    "expense": [
+        {"key": "category", "label": "报销类别", "type": "select",
+         "options": list(_EXPENSE_CATEGORIES), "required": True},
+        {"key": "amount", "label": "报销金额（元）", "type": "number", "required": True},
+        {"key": "expense_date", "label": "费用发生日期", "type": "date", "required": True},
+    ],
+    "attendance": [
+        {"key": "fix_type", "label": "补卡类型", "type": "select",
+         "options": list(_ATTENDANCE_FIX_TYPES), "required": True},
+        {"key": "work_date", "label": "补卡日期", "type": "date", "required": True},
+        {"key": "time", "label": "补卡时间", "type": "time", "required": True},
+    ],
+}
+_LEAVE_HINTS = ("请假", "休假", "年假", "事假", "病假", "调休", "婚假", "产假")
+
+
+def _detect_flow(text: str) -> str:
+    if "报销" in text:
+        return "expense"
+    if "补卡" in text or "补考勤" in text:
+        return "attendance"
+    if any(h in text for h in _LEAVE_HINTS):
+        return "leave"
+    return ""
+
+
+def _find_enum(text: str, options: list[str]) -> str:
+    for o in options:
+        if o in text:
+            return o
+    return ""
+
+
+def _find_dates(text: str) -> list[str]:
+    """抽取 YYYY-MM-DD / YYYY/MM/DD / YYYY.MM.DD，规范化为 YYYY-MM-DD。"""
+    found = re.findall(r"(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})", text)
+    return [f"{y}-{int(m):02d}-{int(d):02d}" for y, m, d in found]
+
+
+def _find_amount(text: str) -> str:
+    m = re.search(r"(\d+(?:\.\d+)?)\s*元", text)
+    if not m:
+        m = re.search(r"(?:金额|报销|费用|花费|共计?)\D{0,4}(\d+(?:\.\d+)?)", text)
+    return m.group(1) if m else ""
+
+
+def _find_time(text: str) -> str:
+    m = re.search(r"(\d{1,2}):(\d{2})", text)
+    return f"{int(m.group(1)):02d}:{m.group(2)}" if m else ""
+
+
+def _known_values(flow: str, text: str) -> dict[str, str]:
+    """按事项类别从用户原话抽取已知字段值（仅抽确定可识别的）。"""
+    known: dict[str, str] = {}
+    dates = _find_dates(text)
+    if flow == "leave":
+        t = _find_enum(text, _LEAVE_TYPES)
+        if t:
+            known["leave_type"] = t
+        if dates:
+            known["start_date"] = dates[0]
+        if len(dates) > 1:
+            known["end_date"] = dates[1]
+    elif flow == "expense":
+        cat = _find_enum(text, _EXPENSE_CATEGORIES)
+        if cat:
+            known["category"] = cat
+        amt = _find_amount(text)
+        if amt:
+            known["amount"] = amt
+        if dates:
+            known["expense_date"] = dates[0]
+    elif flow == "attendance":
+        if "上班补卡" in text or "上班" in text:
+            known["fix_type"] = "上班补卡"
+        elif "下班补卡" in text or "下班" in text:
+            known["fix_type"] = "下班补卡"
+        if dates:
+            known["work_date"] = dates[0]
+        tm = _find_time(text)
+        if tm:
+            known["time"] = tm
+    return known
+
+
+def _enrich_clarify_fields(text: str, fields: list[dict]) -> list[dict]:
+    """把原话中解析到的已知值并入弹窗字段：已有的补 value，缺的补字段（带 value）。
+
+    保证互通：LLM 只列"要问的缺失项"时，已知项也会作为预填字段出现在弹窗里，
+    用户打开即看到已解析的类型/日期/金额，只需补空着的部分。
+    """
+    base = text.split("；补充信息：")[0]
+    flow = _detect_flow(base)
+    if not flow:
+        return fields
+    known = _known_values(flow, base)
+    if not known:
+        return fields
+    out = [dict(f) for f in fields]
+    by_key = {f.get("key"): f for f in out}
+    for slot in _CLARIFY_SLOTS[flow]:
+        k = slot["key"]
+        if k in by_key:
+            f = by_key[k]
+            if not str(f.get("value") or "").strip() and k in known:
+                f["value"] = known[k]
+        elif k in known:
+            out.append({**slot, "value": known[k]})
+    return out
+
 
 # 企业综合助手可用工具元数据（帮助界面 / MCP / 前端展示共用；与 _tools() 保持同步）
 OFFICE_TOOLS_META: list[dict[str, str]] = [
@@ -61,7 +224,16 @@ OFFICE_TOOLS_META: list[dict[str, str]] = [
     {"name": "cancel_booking", "desc": "取消本人会议室预订", "kind": "写/留痕"},
     {"name": "place_order", "desc": "下单订餐（按菜单计价，返回订单号与金额）", "kind": "写/留痕"},
     {"name": "cancel_order", "desc": "取消本人订餐订单", "kind": "写/留痕"},
-    {"name": "request_approval", "desc": "发起人工确认（高影响事项：报告厅/客餐/超预算）", "kind": "写/HITL"},
+    # ---- OA 自助办理（报销/请假/补考勤；三类均走人工确认） ----
+    {"name": "submit_expense", "desc": "提交费用报销单（类别/金额/日期/事由，返回报销号）", "kind": "写/HITL"},
+    {"name": "list_my_expenses", "desc": "查我的报销单与状态", "kind": "只读"},
+    {"name": "apply_leave", "desc": "提交请假申请（类型/起止日期/事由，返回请假单号）", "kind": "写/HITL"},
+    {"name": "list_my_leaves", "desc": "查我的请假申请与状态", "kind": "只读"},
+    {"name": "get_leave_balance", "desc": "查我的年假/调休余额", "kind": "只读"},
+    {"name": "submit_attendance_fix", "desc": "提交补考勤打卡申请（上班/下班补卡 + 日期时间）", "kind": "写/HITL"},
+    {"name": "list_my_attendance_fixes", "desc": "查我的补卡申请与状态", "kind": "只读"},
+    {"name": "ask_user", "desc": "关键信息缺失时向用户反问（弹窗式多选/输入），补齐后再提交", "kind": "只读·澄清"},
+    {"name": "request_approval", "desc": "发起人工确认（高影响事项：报告厅/客餐/超预算；报销/请假/补卡一律发起）", "kind": "写/HITL"},
     # ---- 制造数据只读速查（V3.7；转发统一注册查询，受岗位数据权限约束） ----
     {"name": "query_material_stock", "desc": "查材料库存（料号↔在库/预留/冻结/可用/安全库存/库龄）", "kind": "只读·数据"},
     {"name": "query_finished_stock", "desc": "查成品库存与可发量 ATP（型号/仓库）", "kind": "只读·数据"},
@@ -81,20 +253,24 @@ OFFICE_AGENT_CONFIG: dict[str, str] = {
     "role": ("你是企业的综合事务助手智能体，服务全体员工与管理人员。"
              "意图有两类：① 办公事务——帮员工预订会议室、查询会议室可用情况、"
              "订餐（食堂/商务餐厅）、查询自己的预订与订单、取消本人预订/订单，"
-             "以及高影响办公事项的人工确认；② 制造数据速查（只读）——查询材料"
-             "库存、成品库存与可发量、来料批次与检验结论、库龄呆滞、缺料缺口、"
-             "批次追溯。"),
+             "以及 **OA 自助办理**（费用报销、请假申请、补考勤打卡）与高影响办公"
+             "事项的人工确认；② 制造数据速查（只读）——查询材料库存、成品库存与"
+             "可发量、来料批次与检验结论、库龄呆滞、缺料缺口、批次追溯。"),
     "boundary": ("边界：制造数据查询一律**只读**——不得改动任何库存/批次数据，"
                  "不得承诺出入库/调拨/盘点等写操作；若用户要求这类操作，如实说明"
                  "本助手不办理并引导走对应系统。只读查询受岗位数据权限约束，越权"
-                 "数据如实告知无权限。办公写操作你只能在**本人**名下预订/取消；"
-                 "不得代他人下单或取消他人订单。会议室时段冲突时不得静默覆盖，"
-                 "必须改选并如实告知冲突原因。"),
+                 "数据如实告知无权限。办公写操作你只能在**本人**名下预订/取消/申请；"
+                 "不得代他人下单、取消、报销或请假。会议室时段冲突时不得静默覆盖，"
+                 "必须改选并如实告知冲突原因。报销/请假/补卡单**禁止臆造**金额、"
+                 "日期、事由或类型——关键字段缺失时先用 ask_user 反问补齐，再提交。"),
     "hitl_rule": ("HITL 准则：当预订的是**需授权资源**（报告厅/培训室等 capacity≥20 "
                   "或后端标记 need_approval）、或下单的是**商务客餐/宴请**、或订单"
                   "金额达到或超过 500 元时，你必须停下调 request_approval 发起人工"
                   "确认工单，并在回答里说明「已提交待确认」；普通会议室与员工工作餐"
-                  "可直接办理，无需 HITL。制造数据为只读查询，不触发 HITL。"),
+                  "可直接办理，无需 HITL。**报销/请假/补考勤三类申请提交后一律**停下"
+                  "调 request_approval 发起人工确认（报销 category=expense、请假 "
+                  "category=leave、补卡 category=attendance），不得直接放行。"
+                  "制造数据为只读查询，不触发 HITL。"),
 }
 
 
@@ -113,7 +289,17 @@ _SYSTEM_TEMPLATE = """{role}
 - place_order(restaurant_id, items, meal_time, note?)：下单订餐（items=[{{"item_id","qty"}}]）
 - cancel_order(order_id)：取消本人订单
 - list_my_orders()：查我的订单
-- request_approval(title, prompt, category)：发起人工确认（高影响事项；你只发起，绝不放行）
+
+### OA 自助办理（报销/请假/补考勤；提交后一律走人工确认）
+- submit_expense(category, amount, expense_date, note, invoice_no?)：提交报销单（category∈{{差旅/招待/办公用品/交通/其他}}，返回报销号）
+- list_my_expenses()：查我的报销单与状态
+- apply_leave(leave_type, start_date, end_date, reason, days?)：提交请假单（leave_type∈{{年假/事假/病假/调休/婚假/产假}}；days 缺省按自然日含端点，返回请假号）
+- list_my_leaves()：查我的请假申请
+- get_leave_balance()：查我的年假/调休余额
+- submit_attendance_fix(fix_type, work_date, time, reason)：提交补卡申请（fix_type∈{{上班补卡/下班补卡}}，返回补卡号）
+- list_my_attendance_fixes()：查我的补卡申请
+- ask_user(question, fields)：关键信息缺失时向用户反问（弹窗式多选/输入）；fields=[{{"key","label","type"(select/multiselect/date/时间/number/text),"options"?,"required"?}}]
+- request_approval(title, prompt, category)：发起人工确认（category∈{{room/meal/expense/leave/attendance}}；你只发起，绝不放行）
 
 ### 制造数据速查（只读；转发统一口径注册查询，受岗位数据权限约束）
 - query_material_stock(part_no?, keyword?)：查材料库存——不传参给全量；传料号给该料号各仓在库/预留/冻结/可用/安全库存/库龄；用户给的是口语名称/规格（如"螺栓""TYPE-C"）时用 keyword 模糊搜索
@@ -124,21 +310,29 @@ _SYSTEM_TEMPLATE = """{role}
 - query_batch_trace(batch_no)：按批号做批次追溯（来料综合→传统检验结论→不良记录）
 
 ## 工作方式（ReAct）
-1. 先判断需要什么：订会议室先查可用（find_available_rooms），订餐先看菜单（get_menu）；查数据先选对工具（材料/成品/来料/库龄/缺料/追溯）；
-2. 日期/时间缺失时先向用户澄清（可在最终回答里追问），不要臆造日期或时段；料号/型号/批号缺失且用户未指明时，可用不传参的全量速查工具给出概览；
+1. 先判断需要什么：订会议室先查可用（find_available_rooms），订餐先看菜单（get_menu）；查数据先选对工具（材料/成品/来料/库龄/缺料/追溯）；报销/请假/补卡先确认关键字段是否齐全；
+2. **关键信息缺失时必须先用 ask_user 反问**（弹窗式补齐），不要臆造日期、金额、类型或事由，也不要直接把缺失项写进最终回答——反问是一次独立工具调用，调用后即结束本轮，等用户补齐再继续；
+   - 报销缺什么就问什么：类别、金额、发生日期、事由；
+   - 请假缺什么就问什么：假期类型、开始日期、结束日期、事由；
+   - 补卡缺什么就问什么：补卡类型（上班/下班）、补卡日期、补卡时间、事由；
+   - 会议室的日期/时段缺失、订餐日期缺失同样可用 ask_user 反问；
+   - **一次反问必须把该事项的全部缺失字段一次列全**（禁止挤牙膏式多轮追问）；类型/类别类字段一律用 type="select" 并给出 options（请假类型 options=["年假","事假","病假","调休","婚假","产假"]、报销类别 options=["差旅","招待","办公用品","交通","其他"]、补卡类型 options=["上班补卡","下班补卡"]）；
+   - **能解析出的字段必须预填**：调用 ask_user 时，凡能从用户原话中解析出的字段值，一律写进该 field 的 `value`（弹窗据此自动填入，用户只补真正缺失项）；例：用户说"我要请年假 3 天"→ leave_type.value="年假"，并从已有日期/默认近日推算 start_date/end_date 的 value，只让用户补事由；
+   - **若用户原话已给出全部关键字段，就直接调用对应工具办理，不要弹窗**（自然语言一步到位）；
+   - **若用户回复中已含"补充信息："**，说明反问已补齐：严禁再次调用 ask_user，必须直接用已有信息调用对应工具办理（确仍不足时在回答里说明，而不是再弹窗）；
 3. 写操作前想清楚参数；冲突/失败时读工具返回的原因并换时段或换房间再试；
 4. 制造数据为只读：只陈述查询结果并标注口径（可用量=在库-预留，库龄按天），不得编造、不得承诺写操作；工具返回"无权限"时如实转述，不得绕过；
 5. {hitl_rule}
 6. 完成或达到边界时，输出最终 JSON（不要输出其他文字）：
-{{"answer": "面向员工的完整中文回答（含预订号/订单号、时间、地点、金额等关键信息；数据查询含关键数值与口径）",
+{{"answer": "面向员工的完整中文回答（含预订号/订单号/报销号/请假号/补卡号、时间、地点、金额等关键信息；数据查询含关键数值与口径）",
   "data_used": ["用到的工具与关键数据，如 query_shortage() 5 项低于安全库存"],
   "needs_hitl": true/false,
   "hitl_title": "需人工确认事项标题（needs_hitl=true 时必填）",
   "hitl_prompt": "给审批人的说明（needs_hitl=true 时必填）",
-  "hitl_category": "room|meal 之一（needs_hitl=true 时必填）",
+  "hitl_category": "room|meal|expense|leave|attendance 之一（needs_hitl=true 时必填）",
   "data_gaps": ["未能办理/获取的信息及原因"]}}
 
-注意：只输出一个 JSON 对象；预订号/订单号必须来自工具返回；不得编造会议室、菜品、价格或库存数值。"""
+注意：只输出一个 JSON 对象；预订号/订单号/报销号/请假号/补卡号必须来自工具返回；不得编造会议室、菜品、价格、库存数值、报销金额、假期日期或补卡时间。"""
 
 
 @dataclass
@@ -160,16 +354,27 @@ class OfficeAssistantAgent:
         self.cfg = OFFICE_AGENT_CONFIG
         self._llm = None
         self.user_ctx: dict[str, Any] = {}
+        self._active_query: str = ""     # 本轮用户原话（供 ask_user 解析已知值预填）
 
     # ---------- LLM（懒加载；工具循环不需要深度思考） ----------
 
-    def _get_llm(self) -> Any:
+    def _get_llm(self, exclude: Optional[set[str]] = None) -> Any:
+        """取（绑定工具的）LLM；``exclude`` 用于本轮禁用个别工具。
+
+        关键用途：用户已通过弹窗补充信息（消息含"补充信息："）时，本轮禁用
+        ask_user，从根上断开"反问→补充→再反问"的无限弹框循环。
+        """
         if self._llm is None:
             from ...common.llm_factory import get_llm
             self._llm = get_llm(temperature=0.0, tier="L1", max_tokens=900,
                                 timeout=45, thinking="disabled")
-            self._llm = self._llm.bind_tools(self._tool_schemas())
-        return self._llm
+        # 测试注入的脚本化 LLM 无 bind_tools：原样返回（不绑定工具）
+        if not hasattr(self._llm, "bind_tools"):
+            return self._llm
+        skip = exclude or set()
+        schemas = [s for s in self._tool_schemas()
+                   if s["function"]["name"] not in skip]
+        return self._llm.bind_tools(schemas)
 
     # ---------- 身份 ----------
 
@@ -287,6 +492,90 @@ class OfficeAssistantAgent:
             items = be.list_orders(self._actor())
             return {"orders": items, "count": len(items)}
 
+        # ---- OA 自助办理：报销 / 请假 / 补考勤（写/留痕/HITL） ----
+
+        def submit_expense(category: str, amount: float, expense_date: str,
+                           note: str = "", invoice_no: str = "") -> dict:
+            try:
+                expense = be.submit_expense(category, amount, expense_date, note,
+                                            self._actor(), invoice_no)
+            except OfficeError as exc:
+                return self._fail(exc)
+            return {"ok": True, "expense": expense,
+                    "need_approval": expense.get("need_approval", False),
+                    "high_value": expense.get("high_value", False)}
+
+        def list_my_expenses() -> dict:
+            items = be.list_expenses(self._actor())
+            return {"expenses": items, "count": len(items)}
+
+        def apply_leave(leave_type: str, start_date: str, end_date: str,
+                        reason: str = "", days: Optional[float] = None) -> dict:
+            try:
+                leave = be.apply_leave(leave_type, start_date, end_date,
+                                       self._actor(), reason, days)
+            except OfficeError as exc:
+                return self._fail(exc)
+            return {"ok": True, "leave": leave,
+                    "need_approval": leave.get("need_approval", False),
+                    "long_leave": leave.get("long_leave", False)}
+
+        def list_my_leaves() -> dict:
+            items = be.list_leaves(self._actor())
+            return {"leaves": items, "count": len(items)}
+
+        def get_leave_balance() -> dict:
+            return {"ok": True, "balance": be.leave_balance(self._actor())}
+
+        def submit_attendance_fix(fix_type: str, work_date: str, time: str,
+                                  reason: str = "") -> dict:
+            try:
+                fix = be.submit_attendance_fix(fix_type, work_date, time,
+                                               self._actor(), reason)
+            except OfficeError as exc:
+                return self._fail(exc)
+            return {"ok": True, "fix": fix,
+                    "need_approval": fix.get("need_approval", False)}
+
+        def list_my_attendance_fixes() -> dict:
+            items = be.list_attendance_fixes(self._actor())
+            return {"fixes": items, "count": len(items)}
+
+        def ask_user(question: str, fields: list[dict]) -> dict:
+            """关键信息缺失时反问：返回弹窗所需字段定义（前端渲染下拉/多选/输入）。
+
+            语义：Agent 调用后即结束本轮循环，把问题交给用户；前端据 clarify.fields
+            渲染弹窗（select→下拉选项；multiselect→可切换 chips；date/时间/number/
+            text→输入框），用户补齐后再提交，参数即齐备。
+
+            兜底：LLM 常漏填 select/multiselect 的 options，前端就会"没有下拉选项"；
+            此处按 key/label 命中规范枚举自动补全，保证类型/类别类字段一定有选项可选。
+            """
+            norm: list[dict] = []
+            for f in (fields or []):
+                if not (isinstance(f, dict) and f.get("key")):
+                    continue
+                g = dict(f)
+                opts = [str(o) for o in (g.get("options") or []) if str(o).strip()]
+                if str(g.get("type") or "text") in ("select", "multiselect") and not opts:
+                    opts = _clarify_options(str(g.get("key")),
+                                           str(g.get("label") or ""))
+                if opts:
+                    g["options"] = opts
+                # 已知值预填：把 LLM 从原话解析出的值透传给前端，弹窗打开即"半填"
+                pre = str(g.get("value") or "").strip()
+                if pre:
+                    g["value"] = pre
+                else:
+                    g.pop("value", None)
+                norm.append(g)
+            # 已知值预填：把原话里已能解析出的字段并入弹窗（已有的补 value、
+            # 缺的补字段），用户打开即"半填"，只需人工补真正缺失的项
+            norm = _enrich_clarify_fields(getattr(self, "_active_query", ""), norm)
+            return {"ok": True, "clarify": {
+                "question": str(question or "请补充以下信息"),
+                "fields": norm}}
+
         # ---- 制造数据只读速查（转发统一注册查询；只读、受权限约束） ----
 
         def query_material_stock(part_no: Optional[str] = None,
@@ -371,12 +660,14 @@ class OfficeAssistantAgent:
                 "flow": single_tool_flow(steps, f"office_{category}", prompt,
                                          seed=f"{title}|{prompt}"),
             }
+            assignee = _OFFICE_ASSIGNEE.get(category, "行政专员")
             task = wf.create_task(
                 wf_id=f"office_{category}", title=title[:80], context=context,
-                assignees=["行政专员"], priority="P2", hitl=True,
+                assignees=[assignee], priority="P2", hitl=True,
                 hitl_prompt=prompt[:300])
             return {"task_uid": task.task_uid, "status": task.status,
-                    "note": "已创建人工确认工单，等待行政专员处理"}
+                    "assignee": assignee,
+                    "note": f"已创建人工确认工单，等待{assignee}处理"}
 
         return {
             "list_rooms": (list_rooms, {
@@ -425,6 +716,57 @@ class OfficeAssistantAgent:
                 "type": "object", "properties": {"order_id": {"type": "string"}},
                 "required": ["order_id"]}),
             "list_my_orders": (list_my_orders, {"type": "object", "properties": {}}),
+            "submit_expense": (submit_expense, {
+                "type": "object",
+                "properties": {"category": {"type": "string",
+                                            "enum": ["差旅", "招待", "办公用品", "交通", "其他"]},
+                               "amount": {"type": "number", "description": "金额（元）"},
+                               "expense_date": {"type": "string", "description": "发生日期 YYYY-MM-DD"},
+                               "note": {"type": "string", "description": "事由"},
+                               "invoice_no": {"type": "string", "description": "发票号（可选）"}},
+                "required": ["category", "amount", "expense_date", "note"]}),
+            "list_my_expenses": (list_my_expenses, {"type": "object", "properties": {}}),
+            "apply_leave": (apply_leave, {
+                "type": "object",
+                "properties": {"leave_type": {"type": "string",
+                                              "enum": ["年假", "事假", "病假", "调休", "婚假", "产假"]},
+                               "start_date": {"type": "string", "description": "开始日期 YYYY-MM-DD"},
+                               "end_date": {"type": "string", "description": "结束日期 YYYY-MM-DD"},
+                               "reason": {"type": "string", "description": "请假事由"},
+                               "days": {"type": "number", "description": "天数（缺省按自然日含端点计算）"}},
+                "required": ["leave_type", "start_date", "end_date", "reason"]}),
+            "list_my_leaves": (list_my_leaves, {"type": "object", "properties": {}}),
+            "get_leave_balance": (get_leave_balance, {"type": "object", "properties": {}}),
+            "submit_attendance_fix": (submit_attendance_fix, {
+                "type": "object",
+                "properties": {"fix_type": {"type": "string",
+                                            "enum": ["上班补卡", "下班补卡"]},
+                               "work_date": {"type": "string", "description": "补卡日期 YYYY-MM-DD"},
+                               "time": {"type": "string", "description": "补卡时间 HH:MM"},
+                               "reason": {"type": "string", "description": "补卡事由"}},
+                "required": ["fix_type", "work_date", "time", "reason"]}),
+            "list_my_attendance_fixes": (list_my_attendance_fixes,
+                                         {"type": "object", "properties": {}}),
+            "ask_user": (ask_user, {
+                "type": "object",
+                "properties": {
+                    "question": {"type": "string", "description": "向用户提出的问题"},
+                    "fields": {"type": "array", "items": {
+                        "type": "object",
+                        "properties": {
+                            "key": {"type": "string"},
+                            "label": {"type": "string"},
+                            "type": {"type": "string",
+                                     "enum": ["select", "multiselect", "date",
+                                              "time", "number", "text"]},
+                            "options": {"type": "array", "items": {"type": "string"}},
+                            "value": {"type": "string",
+                                      "description": "已从用户原话中解析出的字段值（有则预填弹窗，"
+                                                     "无则留空由用户补）"},
+                            "required": {"type": "boolean"}},
+                        "required": ["key", "label", "type"]}},
+                },
+                "required": ["question", "fields"]}),
             "query_material_stock": (query_material_stock, {
                 "type": "object",
                 "properties": {"part_no": {"type": "string",
@@ -454,8 +796,13 @@ class OfficeAssistantAgent:
                 "type": "object",
                 "properties": {"title": {"type": "string"},
                                "prompt": {"type": "string"},
-                               "category": {"type": "string", "enum": ["room", "meal"]}},
-                "required": ["title", "prompt"]}),
+                               "category": {"type": "string",
+                                            "description": "事项类别（决定审批归口：room→行政专员、"
+                                                           "meal→行政专员、expense→财务专员、"
+                                                           "leave→部门主管、attendance→HR 专员）",
+                                            "enum": ["room", "meal", "expense",
+                                                     "leave", "attendance"]}},
+                "required": ["title", "prompt", "category"]}),
         }
 
     # 工具描述（给 Agent 的能力说明；与系统提示词的工具清单一致）
@@ -472,17 +819,26 @@ class OfficeAssistantAgent:
     def run(self, query: str, user_ctx: Optional[dict] = None) -> dict[str, Any]:
         """执行一次办公任务；返回 {answer, report, steps, hitl_task, data_gaps, ...}。"""
         self.user_ctx = dict(user_ctx or {})
+        self._active_query = query
         t0 = time.perf_counter()
         steps: list[AgenticStep] = []
         hitl_task: Optional[dict] = None
+        clarify: Optional[dict] = None
         final: Optional[dict] = None
-        llm = self._get_llm()
+        # 用户已通过弹窗补充信息 ⇒ 本轮禁用 ask_user：从根上断开
+        # "反问 → 补充 → 再反问" 的无限弹框循环（信息够则提交，不够则在回答里说明）。
+        answered = "补充信息：" in query
+        llm = self._get_llm(exclude={"ask_user"} if answered else None)
 
         from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 
+        user_line = f"员工问题：{query}"
+        if answered:
+            user_line += ("\n（该问题已附用户通过表单补充的信息：视为反问已补齐，"
+                          "请勿再调用 ask_user，直接用已有信息调用相应工具办理。）")
         messages: list[Any] = [
             SystemMessage(content=_SYSTEM_TEMPLATE.format(**self.cfg)),
-            ("user", f"员工问题：{query}"),
+            ("user", user_line),
         ]
 
         for step_no in range(1, self.max_steps + 1):
@@ -494,6 +850,7 @@ class OfficeAssistantAgent:
                 break
             messages.append(AIMessage(content=resp.content or "",
                                       tool_calls=resp.tool_calls))
+            paused = False
             for tc in tool_calls:
                 name = tc["name"]
                 args = dict(tc.get("args") or {})
@@ -520,7 +877,22 @@ class OfficeAssistantAgent:
                 messages.append(ToolMessage(
                     content=json.dumps(payload, ensure_ascii=False)[:1500],
                     tool_call_id=tc["id"]))
+                # 反问即结束本轮：把问题与字段定义交给用户，等补齐后再继续；
+                # 已补充过信息（answered）时忽略反问，兜底杜绝无限弹框
+                if (name == "ask_user" and not answered
+                        and isinstance(payload, dict)):
+                    cl = payload.get("clarify")
+                    if cl:
+                        clarify = cl
+                        paused = True
+                        break
+            if paused:
+                break
 
+        if clarify is not None:
+            # 反问态：助手把问题作为回答抛出，前端据 clarify.fields 弹窗收集
+            final = {"answer": str(clarify.get("question") or "请补充以下信息"),
+                     "data_used": [], "needs_hitl": False, "data_gaps": []}
         if final is None:
             final = {"answer": "已在最大步数内完成部分办理，未能形成完整结论——"
                                "已把已完成的操作列在下方，请人工确认或换一种说法。",
@@ -538,6 +910,7 @@ class OfficeAssistantAgent:
             "report": report,
             "steps": [s.to_dict() for s in steps],
             "hitl_task": hitl_task,
+            "clarify": clarify,
             "needs_hitl": bool(final.get("needs_hitl")) or hitl_task is not None,
             "data_gaps": list(final.get("data_gaps") or []),
             "data_used": list(final.get("data_used") or []),

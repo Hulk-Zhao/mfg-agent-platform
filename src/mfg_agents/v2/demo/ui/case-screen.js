@@ -11,6 +11,14 @@
  *   GET  /api/v2/cases/audit/verify  审计哈希链校验
  *   POST /api/v2/cases/ingest        入库（需 case.ingest；落 review，不自动发布）
  *
+ * 跨部门访问申请（授权链路）：
+ *   POST /api/v2/cases/{id}/request-access          提交申请（不直接授权）
+ *   GET  /api/v2/cases/access/requests              申请列表（mine / dept）
+ *   POST /api/v2/cases/access/requests/{id}/decide  人工审批（职能部门负责人）
+ *   POST /api/v2/cases/access/requests/{id}/demo-approve
+ *                                                     演示专用：模拟职能部门审批回调
+ *                                                     （预留接口，仅演示；审计打 .demo 标记）
+ *
  * ── 五条展示纪律（改这个文件之前先读）──────────────────────────────
  * 1. **不放任何自定义过滤入口**：检索请求模型里没有 filter 字段。页面只展示
  *    服务端编译出的 `filter_hash` 与 `filter_explain`（人类可读描述），
@@ -65,6 +73,7 @@
       "case.cite": "引用到工单", "case.ingest": "案例入库",
       "case.answer": "问答", "case.answer.refused": "问答·已拒答",
       "case.access.requested": "访问申请", "case.access.approved": "访问申请·已批准",
+      "case.access.approved.demo": "访问申请·已批准（演示代批）",
       "case.access.rejected": "访问申请·已驳回", "case.access.cancelled": "访问申请·已撤回",
       "case.access.expired": "访问申请·已过期", "case.access.pushed": "访问申请·已推送",
       "case.access.push.denied": "访问申请·推送失败",
@@ -329,6 +338,12 @@
       // 跨部门访问申请
       myRequests: null, deptRequests: null, accessLoading: false,
       accessForm: null, accessResult: null,
+      // 顶部统计卡片（/cases/stats）：与检索同源；失败安静降级，不刷黄条
+      stats: null, statsLoading: false, statsError: "",
+      // 演示说明黄条是否收起（收起后保留一行入口，信息不丢）
+      warnCollapsed: false,
+      // 演示专用自动审批：执行弹窗状态 + 每个案例的路由信息（供"再演一次"）
+      autoFlow: null, autoRoutes: {},
     };
   }
 
@@ -340,7 +355,6 @@
     const state = ctx.state;
     state.screenState = state.screenState || {};
     const S = state.screenState.cases || (state.screenState.cases = initialState());
-    window.__caseState = S;
 
     if (!api.online()) {
       root.innerHTML = '<div class="case-offline">'
@@ -359,12 +373,14 @@
       + '<div class="case-root">'
       + identityBar(UI, S)
       + (S.authError ? authErrorBar(UI, S) : "")
+      + statsBar(UI, S)
       + '  <div class="case-body">'
       + '    <aside class="case-side">' + sidePanel(UI, S) + "</aside>"
       + '    <section class="case-main">' + mainPanel(UI, S) + "</section>"
       + "  </div>"
       + (S.detail ? detailOverlay(UI, S) : "")
       + (S.ingestForm ? ingestOverlay(UI, S) : "")
+      + (S.autoFlow ? accessAutoOverlay(UI, S) : "")
       + "</div>";
 
     bind(root, ctx, S, base);
@@ -397,22 +413,35 @@
       + (S.token ? "重建案例会话" : "建立案例会话") + "</button>"
       + (S.token ? '<button class="case-btn case-btn-ghost" id="case-logout">退出</button>' : "")
       + "</div>"
-      + '<div class="case-id-note">演示态：生产由 SSO/IdP 注入身份，此处的选岗接口'
-      + '（<code>POST /cases/session</code>）在生产由 <code>CASE_DEMO_MODE=false</code> 关闭。'
-      + "前端无法自造角色：服务端会用权限注册表归一化，未识别直接 400。</div>"
+      + '<div class="case-id-note">演示态：在这里选择岗位即可建立会话；'
+      + '生产环境由公司统一登录系统注入身份，此选岗接口会关闭。'
+      + "岗位名称写错不会被放过——服务端按权限注册表逐个校验，未识别直接拒绝。</div>"
       + demoWarnings(UI, S)
       + "</div>"
       + principalPanel(UI, S)
       + "</header>";
   }
 
-  /** 演示态风险（AUTH_SECRET 未配置 / 演示开关）——必须"显式且刺眼"，不能只写日志。 */
+  /**
+   * 演示态说明（演示模式 / 未配置密钥等）——必须"显式"，但**可以收起**。
+   *
+   * 优化点：原来每次开屏都顶着两三行黄条，现场截图与讲解都碍事，且文案里
+   * 全是环境变量名，外行看不懂。现在：文案由后端说人话（变量名退到括号里
+   * 只给运维看）；整块可收起成一行"演示说明（N 条）"，需要细看再展开——
+   * 信息一条不丢，噪音可控。
+   */
   function demoWarnings(UI, S) {
     const list = (S.meta && S.meta.demo_warnings) || [];
     if (!list.length) return "";
-    return '<div class="case-warn-bar">'
+    const toggle = '<button class="case-warn-toggle" id="case-warn-toggle" type="button">'
+      + (S.warnCollapsed ? "演示说明（" + list.length + " 条）· 展开" : "收起")
+      + "</button>";
+    if (S.warnCollapsed) {
+      return '<div class="case-warn-bar is-collapsed">' + toggle + "</div>";
+    }
+    return '<div class="case-warn-bar">' + toggle
       + list.map(function (w) {
-        return '<div class="case-warn-line"><b>演示风险</b>' + UI.esc(w) + "</div>";
+        return '<div class="case-warn-line"><b>演示说明</b>' + UI.esc(w) + "</div>";
       }).join("")
       + "</div>";
   }
@@ -454,6 +483,133 @@
       + '<b>' + UI.esc(S.authError) + "</b></div>";
   }
 
+  /* ================= 顶部统计卡片 ================= */
+
+  /** 子类兜底中文名：种子数据里有 10 类子类，meta 受控词表只登记了 8 类——
+      没登记的（equipment_fault / design_defect / supplier_quality）不能让中文
+      界面里冒出英文 key。词表补了这里的映射即以词表为准。 */
+  const SUBCATEGORY_LABEL = {
+    equipment_fault: "设备异常",
+    design_defect: "设计缺陷",
+    supplier_quality: "供应商质量",
+  };
+
+  /** 分类/子类的展示名：优先取 meta 受控词表，其次兜底映射，最后退回 key 本身。 */
+  function catLabel(meta, key) {
+    const cats = (meta && meta.categories) || [];
+    for (let i = 0; i < cats.length; i++) {
+      if (cats[i].key === key) return cats[i].label || key;
+      const subs = cats[i].subcategories || [];
+      for (let j = 0; j < subs.length; j++) {
+        if (subs[j].key === key) return subs[j].label || key;
+      }
+    }
+    return SUBCATEGORY_LABEL[key] || key;
+  }
+
+  /**
+   * 顶部统计卡片：可见案例 / 受限可申请 / 我的申请·待审 / 待我审批 + 三类分布。
+   *
+   * 纪律（"加载失败优化"的落地处）：
+   * - 统计失败**安静降级**（一行小字 + 说明不影响检索审批），不弹 toast、不刷
+   *   黄条——它不是关键路径，没资格让整页变红；
+   * - 数字全部来自服务端 /cases/stats（与检索同一套过滤 + 二次授权），
+   *   前端不做任何本地估算——"卡片数字 vs 检索结果"现场必须对得上；
+   * - 卡片可点击直达能处理的区域（受限 → 侧栏清单；申请 → 申请页），
+   *   让"看到数字"变成"一步到位"。
+   */
+  function statsBar(UI, S) {
+    if (!S.token) return "";
+    if (S.statsLoading) {
+      return '<div class="case-stats is-loading">' + UI.spinner() + " 统计计算中…</div>";
+    }
+    if (!S.stats) {
+      return S.statsError
+        ? '<div class="case-stats case-stats-fail">统计暂时没算出来（'
+          + UI.esc(S.statsError) + "），不影响检索与审批功能，可点右上角刷新重试。</div>"
+        : "";
+    }
+    const st = S.stats;
+    const pendingMine = (st.my_requests && st.my_requests.pending) || 0;
+    const cards = [
+      { n: st.visible_total, label: "可见案例", jump: "" },
+      { n: st.restricted_total, label: "受限可申请", jump: "restricted", warn: true },
+      { n: pendingMine, label: "我的申请·待审", jump: "mine" },
+      { n: st.pending_for_me || 0, label: "待我审批", jump: "dept" },
+    ];
+    const cardHtml = cards.map(function (c) {
+      const jump = c.jump
+        ? ' data-stats-jump="' + c.jump + '" role="button" tabindex="0"'
+        : "";
+      return '<div class="case-stat' + (c.warn && c.n ? " is-warn" : "") + '"' + jump + ">"
+        + "<b>" + c.n + "</b><span>" + UI.esc(c.label) + "</span></div>";
+    }).join("");
+    // 分布行：子类（按数量 top 6 + 其他）/ 密级（固定序）/ 状态（固定序）
+    const distRow = function (title, counts, order, labelOf) {
+      const lf = labelOf || function (k) { return catLabel(S.meta, k); };
+      const keys = order
+        || Object.keys(counts).sort(function (a, b) { return counts[b] - counts[a]; });
+      const shown = keys.filter(function (k) { return counts[k]; });
+      if (!shown.length) return "";
+      // 固定序之外的 key（新密级档 / 新状态 / 词表未登记的子类）补在后面：
+      // 宁可多显示一档，也不能让"各档加起来 ≠ 可见总数"。
+      const extra = order
+        ? Object.keys(counts).filter(function (k) {
+            return counts[k] && order.indexOf(k) < 0;
+          }).sort(function (a, b) { return counts[b] - counts[a]; })
+        : [];
+      const all = shown.concat(extra);
+      const parts = all.slice(0, 6).map(function (k) {
+        return '<span class="case-dist-chip"><i>' + UI.esc(lf(k)) + "</i>"
+          + UI.esc(counts[k]) + "</span>";
+      });
+      const rest = all.length - parts.length;
+      if (rest > 0) {
+        parts.push('<span class="case-dist-chip is-rest"><i>其他</i>' + rest + " 类</span>");
+      }
+      return '<div class="case-dist-row"><em>' + UI.esc(title) + "</em>" + parts.join("") + "</div>";
+    };
+    const trunc = st.restricted_truncated
+      ? '<span class="case-dist-note">（数据量较大，受限数未逐个点清）</span>' : "";
+    return '<div class="case-stats">'
+      + '<button class="case-stats-refresh" id="case-stats-refresh" type="button" '
+      + ' title="重新统计">' + UI.icon("refresh") + "</button>"
+      + '<div class="case-stats-cards">' + cardHtml + "</div>"
+      + '<div class="case-stats-dist">'
+      + distRow("按类型", st.by_subcategory || {}, null)
+      + distRow("按密级", st.by_rank || {}, ["L0", "L1", "L2", "L3"])
+      + distRow("按状态", st.by_status || {},
+                ["active", "review", "deprecated", "withdrawn", "archived"],
+                function (k) { return (STATUS_META[k] && STATUS_META[k].label) || k; })
+      + trunc
+      + "</div></div>";
+  }
+
+  /**
+   * 加载统计卡片。失败**不打扰用户**：只记 statsError，卡片区一行小字带过。
+   * （对比 meta：它失败要拦路 + 重试按钮，因为挡着所有功能；统计失败只少
+   * 一块信息，检索、申请、审批照常能用。）
+   */
+  async function loadStats(root, ctx, S, base) {
+    if (!S.token || S.statsLoading) return;
+    S.statsLoading = true;
+    render(root, ctx);
+    try {
+      S.stats = await caseFetch(base, "/api/v2/cases/stats", { token: S.token });
+      S.statsError = "";
+    } catch (err) {
+      S.stats = null;
+      if (err && err.status === 401) {
+        S.statsError = "案例会话已失效";
+      } else {
+        const f = ctx.UI.friendlyError(err);
+        S.statsError = f.text;
+      }
+    }
+    S.statsLoading = false;
+    render(root, ctx);
+  }
+
   /* ================= 左栏 ================= */
 
   function sidePanel(UI, S) {
@@ -462,12 +618,41 @@
         + '<span class="case-hint">同一句话，换个岗位结果不同——这就是本屏要证明的事。</span></div>';
     }
     if (S.metaError) {
-      return '<div class="case-side-empty">元信息加载失败：<br>' + UI.esc(S.metaError) + "</div>";
+      // 加载失败优化：主提示说人话 + 给重试入口；原始错误进折叠区，
+      // 不再把 "Failed to fetch" / "xxx is not defined" 直接甩给用户。
+      const f = UI.friendlyError(S.metaError);
+      return '<div class="case-side-empty">'
+        + '<div class="case-load-fail-title">' + UI.icon("warn", 28) + " 页面信息加载失败</div>"
+        + '<div class="case-load-fail-text">' + UI.esc(f.text) + "</div>"
+        + '<button class="case-btn case-btn-wide" id="case-meta-retry">重新加载</button>'
+        + (f.tech
+          ? '<details class="case-tech"><summary>技术详情（便于反馈）</summary><code>'
+            + UI.esc(f.tech) + "</code></details>"
+          : "")
+        + "</div>";
     }
     if (!S.meta) return '<div class="case-side-empty">' + UI.spinner() + " 加载元信息…</div>";
 
     // 本体增强收益由问答结果携带（后端 case_qa._ontology_gain），检索态无此数据。
     const gain = (S.result && S.result.ontology_gain) || null;
+
+    // 本次结果分类分布：按 hits 的 category 聚合（无检索结果时不渲染该块）。
+    // 注意：此变量曾被引用但漏定义，侧栏整块 render 抛 ReferenceError，
+    // 页面停在旧 HTML——这类"引用未定义变量"的崩溃必须 fail-safe，
+    // 因为 render 一次失败 = 整屏不再刷新（2026-10-18 实测修复）。
+    const distRows = (function () {
+      const hits = (S.result && S.result.hits) || [];
+      if (!hits.length) return "";
+      const counts = {};
+      hits.forEach(function (h) {
+        const key = h.category || "未分类";
+        counts[key] = (counts[key] || 0) + 1;
+      });
+      return Object.keys(counts).map(function (key) {
+        return '<div class="case-act-row"><span>' + UI.esc(key)
+          + "</span><b>" + counts[key] + " 条</b></div>";
+      }).join("");
+    })();
 
     const p = S.meta.principal || {};
     const mine = ((S.meta.rbac && S.meta.rbac.roles) || []).filter(function (r) {
@@ -565,6 +750,10 @@
     const mine = S.myRequests || [];
     const todo = S.deptRequests || [];
     const row = function (r, approver) {
+      // 我提交的申请：pending 且服务端预检过自动审批可用 → 给"再演一次"入口
+      // （弹窗被中途关掉/没看清时，演示现场不用重新申请）。
+      const canReplay = !approver && r.status === "pending"
+        && S.autoRoutes && S.autoRoutes[r.case_id];
       return '<tr><td>' + UI.esc(r.case_id || "") + "</td>"
         + "<td>" + UI.esc((r.reason || "").slice(0, 24)) + "</td>"
         + "<td>" + UI.esc(ZH.requestStatus[r.status] || r.status || "") + "</td>"
@@ -574,7 +763,11 @@
             + UI.esc(r.request_id) + '">批准</button>'
           + '<button class="case-mini" data-act="access-reject" data-rid="'
             + UI.esc(r.request_id) + '">驳回</button>'
-          : '<span class="case-hint">-</span>') + "</td></tr>";
+          : (canReplay
+            ? '<button class="case-mini case-mini-key" data-act="auto-run" data-rid="'
+              + UI.esc(r.request_id) + '" data-id="' + UI.esc(r.case_id)
+              + '">模拟审批（演示）</button>'
+            : '<span class="case-hint">-</span>')) + "</td></tr>";
     };
     const table = function (title, rows, approver) {
       return "<h4>" + title + "</h4>"
@@ -587,7 +780,9 @@
     };
     return '<div class="case-pad">'
       + '<div class="case-hint">跨部门案例可发起访问申请；批准后由服务端写入授权'
-      + "（带有效期，到期自动回收）。Agent 只负责推送与留痕，不代替人审批。</div>"
+      + "（带有效期，到期自动回收）。<b>演示模式</b>：提交后弹窗自动模拟职能部门审批通过"
+      + "（仅演示，审计链以 .demo 后缀标记）；正式环境由职能部门负责人在本页「待我审批」中"
+      + "裁决，Agent 只负责推送与留痕，不代替人审批。</div>"
       + table("我提交的申请", mine, false)
       + table("待我审批（本部门收到的申请）", todo, true)
       + "</div>";
@@ -598,28 +793,40 @@
     const list = (r && r.restricted) || [];
     if (!list.length) return "";
     const applied = S.myRequests || [];
+    /** 该案例的**最近一条**申请（同一条案例可能先撤回再申请）。 */
     const statusOf = function (caseId) {
+      let latest = null;
       for (let i = 0; i < applied.length; i++) {
-        if (applied[i].case_id === caseId && applied[i].status === "pending") {
-          return applied[i];
+        const item = applied[i];
+        if (item.case_id !== caseId) continue;
+        if (!latest || String(item.created_at || "") > String(latest.created_at || "")) {
+          latest = item;
         }
       }
-      return null;
+      return latest;
     };
     const rows = list.map(function (item) {
       const req = statusOf(item.case_id);
-      const btn = req
-        ? '<span class="case-chip case-chip-on">已推送，等待审批</span>'
-        : (item.requestable
-          ? '<button class="case-mini case-mini-key" data-act="access-open" data-id="'
-            + UI.esc(item.case_id) + '">申请访问</button>'
-          : '<span class="case-hint">不可申请</span>');
+      const applyBtn = item.requestable
+        ? '<button class="case-mini case-mini-key" data-act="access-open" data-id="'
+          + UI.esc(item.case_id) + '">申请访问</button>'
+        : '<span class="case-hint">不可申请</span>';
+      let btn;
+      if (req && req.status === "pending") {
+        btn = '<span class="case-chip case-chip-on">已推送，等待审批</span>';
+      } else if (req && req.status === "approved") {
+        btn = '<span class="case-chip case-chip-done">已批准，授权已生效</span>';
+      } else if (req && req.status === "expired") {
+        btn = applyBtn;   // 到期已回收 → 可以重新申请
+      } else {
+        btn = applyBtn;   // 无记录 / 已驳回 / 已撤回 → 都可重新申请
+      }
       return "<tr><td>" + UI.esc(item.title || item.case_id) + "</td>"
         + '<td>' + UI.esc(item.reason || "") + "</td><td>" + btn + "</td></tr>";
     }).join("");
     return '<div class="case-block case-restricted"><h4>其他职能域的案例（可见但不可读）</h4>'
       + '<div class="case-hint">这些案例确实存在，但不在你的权限范围内。需要时可发起访问申请，'
-      + "由职能部门审批后授权。</div>"
+      + "由职能部门审批后授权（演示模式下提交后将自动弹窗模拟审批通过）。</div>"
       + '<table class="case-table"><thead><tr><th>案例</th><th>说明</th><th>操作</th></tr></thead>'
       + "<tbody>" + rows + "</tbody></table>"
       + (S.accessForm ? accessForm(UI, S) : "")
@@ -637,6 +844,77 @@
       + '<button class="case-btn" data-act="access-submit" data-id="'
       + UI.esc(S.accessForm.case_id) + '">提交申请并推送</button>'
       + '<button class="case-btn case-btn-ghost" data-act="access-close">取消</button>'
+      + "</div></div>";
+  }
+
+  /* ================= 演示专用：自动审批执行弹窗 ================= */
+
+  /** 执行步骤（固定五步；前四步演示节奏，第五步对应服务端 demo-approve 调用）。 */
+  function autoFlowSteps(flow) {
+    const dept = flow.dept || "职能部门";
+    return [
+      "智能 Agent 已受理访问申请（" + (flow.case_title || flow.case_id || "") + "）",
+      "解析申请理由与案例归属…",
+      "推断职能部门：" + dept + "（依据：" + (flow.basis || "案例归属信息") + "）",
+      "已推送至 " + dept + " 审批通道，职能部门审批中…",
+      dept + "审批通过，正在写入授权…",
+    ];
+  }
+
+  /**
+   * 自动审批弹窗（**仅演示**，见 services/case_auto_approve.py）。
+   *
+   * 展示纪律：弹窗里的每一行都对应服务端真实发生的一步（受理/路由在
+   * request-access 时已落审计）；最后一步的"审批通过"是 demo-approve 的返回，
+   * 授权写入与人工审批走同一条 decide()。失败时**不遮掩**：原文展示错误码与
+   * 原因，并说明已转为人工待审批。
+   */
+  function accessAutoOverlay(UI, S) {
+    const flow = S.autoFlow;
+    if (!flow) return "";
+    const steps = autoFlowSteps(flow);
+    const rows = steps.map(function (label, i) {
+      let state = "wait";
+      if (flow.status === "failed" && i === 4) state = "fail";
+      else if (flow.status === "approved" || i < flow.step) state = "done";
+      else if (i === flow.step && flow.status === "running") state = "run";
+      const ico = state === "done" ? "✓" : state === "fail" ? "✕" : state === "run" ? "•" : "";
+      return '<div class="case-auto-step is-' + state + '">'
+        + '<span class="case-auto-ico">' + ico + "</span>"
+        + "<span>" + UI.esc(label) + "</span></div>";
+    }).join("");
+
+    let result = "";
+    if (flow.status === "approved") {
+      const expiry = String(flow.expires || "").slice(0, 10);
+      result = '<div class="case-auto-result is-ok">'
+        + "<b>" + UI.esc(flow.dept) + "已审批通过</b>"
+        + "<div>授权已写入服务端（个人特批：仅你本人可见"
+        + (expiry ? "，有效期至 " + UI.esc(expiry) + "，到期自动回收" : "") + "）。</div>"
+        + "<div>关闭后重新检索即可看到该案例——过滤条件没有变，变的是候选集。</div></div>";
+    } else if (flow.status === "failed") {
+      result = '<div class="case-auto-result is-err">'
+        + "<b>演示审批未能完成</b>"
+        + "<div>" + UI.esc(flow.error || "未知原因") + "</div>"
+        + "<div>已转为人工待审批：请到「访问申请待办」由职能部门负责人处理。</div></div>";
+    }
+
+    const bar = flow.status === "approved"
+      ? '<button class="case-btn" data-act="auto-close">完成</button>'
+      : (flow.status === "failed"
+        ? '<button class="case-btn case-btn-ghost" data-act="auto-close">知道了</button>'
+        : '<span class="case-hint">执行中，请稍候…</span>');
+
+    return '<div class="case-modal"><div class="case-modal-card case-auto-card">'
+      + '<div class="case-modal-head"><b>智能 Agent · 跨部门访问审批</b>'
+      + UI.badge("演示", "badge-amber", true) + "</div>"
+      + '<div class="case-auto-steps">' + rows + "</div>"
+      + result
+      + '<div class="case-auto-bar">' + bar + "</div>"
+      + '<div class="case-auto-note">此弹窗为<b>演示专用</b>：模拟职能部门审批回调，'
+      + "审批动作由演示代批身份完成，审计链以 .demo 后缀显式标记，"
+      + "授权写入与人工审批走同一条服务端路径。生产环境由真实审批流实现同一个 "
+      + "AccessApprover 接口回调，服务端零改动。</div>"
       + "</div></div>";
   }
 
@@ -680,9 +958,18 @@
 
   /** hidden_count 与 notice：产品差异化证据，必须显著、不折叠。 */
   function noticeBar(UI, data) {
-    if (!data || (!data.notice && !data.hidden_count)) return "";
-    const tone = data.hidden_count > 0 ? "warn" : "info";
+    // 「有但看不到」有两个来源，都要在同一条提示里讲清楚：
+    //   1. restricted —— 其他职能域的案例（总是算，可发起访问申请）；
+    //   2. hidden_count —— 候选不足时额外被过滤掉的条数（受"只在不足时计数"保护）。
+    // 语料上百例后内部岗位几乎总能取满 k，只靠 hidden_count 演示会"什么都看不到"。
+    const restricted = (data && data.restricted) || [];
+    if (!data || (!data.notice && !data.hidden_count && !restricted.length)) return "";
+    const tone = (data.hidden_count > 0 || restricted.length) ? "warn" : "info";
     const lines = [];
+    if (restricted.length) {
+      lines.push("<b>" + restricted.length + "</b> 条案例属于其他职能域，"
+        + "可见但不可读，可发起访问申请");
+    }
     if (data.hidden_count > 0) {
       // 单位是**案例数**（服务端按 case_id 去重）。写成"条"会让人以为是 chunk 数，
       // 现场一问"到底藏了几个案例"就答不上来。
@@ -713,7 +1000,7 @@
       return "<li>" + UI.esc(line) + "</li>";
     }).join("");
     return '<details class="case-why"' + (S.showWhy ? " open" : "") + ">"
-      + "<summary>为什么是这些结果？（服务端编译出的过滤条件）</summary>"
+      + "<summary>为什么是这些结果？（技术详情：服务端编译出的过滤条件）</summary>"
       + rows
       + (explain ? '<div class="case-side-title">编译结果（人类可读，不是原始表达式）</div>'
         + '<ul class="case-why-list">' + explain + "</ul>" : "")
@@ -819,17 +1106,22 @@
         + chunks.map(function (c) { return chunkRow(UI, S, c); }).join("")
         + "</ul></details>" : "")
       + '<div class="case-hit-foot">'
-      + "<code>" + UI.esc(hit.case_id) + "</code>"
-      + (hit.chunk_id ? '<span class="case-chunk">' + UI.esc(hit.chunk_id) + "</span>" : "")
+      + '<span class="case-foot-cn">案例编号与片段编号见「技术详情」</span>'
+      + '<details class="case-tech"><summary>技术详情</summary><code>'
+      + UI.esc([hit.case_id, hit.chunk_id || "", "content_version="
+                + String(hit.content_version || 1),
+                "filter_hash=" + String((S.result && S.result.filter_hash) || "").slice(0, 16)]
+               .filter(Boolean).join("\n")) + "</code></details>"
       + '<span class="case-hit-actions">'
       + '<button class="case-mini" data-act="detail" data-id="' + UI.esc(hit.case_id) + '">看全文</button>'
       + '<button class="case-mini" data-act="cite" data-id="' + UI.esc(hit.case_id) + '"'
       + ' data-chunk="' + UI.esc(hit.chunk_type || "summary") + '"'
       + ' data-ver="' + UI.esc(String(hit.content_version || 1)) + '">引用</button>'
       + "</span></div>"
-      + (citedChunks.length ? '<div class="case-cite-inline">已引用 <code>'
-        + UI.esc(S.cite.citation.case_id) + "#" + UI.esc(S.cite.citation.chunk_id)
-        + "@v" + UI.esc(String(S.cite.citation.content_version)) + "</code>"
+      + (citedChunks.length ? '<div class="case-cite-inline">已引用（引用凭据）'
+        + '<details class="case-tech"><summary>技术详情</summary><code>'
+        + UI.esc(S.cite.citation.case_id + "#" + S.cite.citation.chunk_id
+                + "@v" + String(S.cite.citation.content_version)) + "</code></details>"
         + '<span class="case-hint">（三元组已落审计；这就是"可溯源"的凭据）</span></div>' : "")
       + "</div></article>";
   }
@@ -868,8 +1160,10 @@
     else if (a) {
       const claims = (a.claims || []).map(function (c, i) {
         const cites = (c.citations || []).map(function (x) {
-          return '<code class="case-cite">' + UI.esc(x.case_id) + "#" + UI.esc(x.chunk_id)
-            + "@v" + UI.esc(String(x.content_version)) + "</code>";
+          return '<span class="case-cite-cn">案例引用</span>'
+            + '<details class="case-tech"><summary>技术详情</summary><code>'
+            + UI.esc(x.case_id + "#" + x.chunk_id + "@v" + String(x.content_version))
+            + "</code></details>";
         }).join("");
         return "<li><em>[" + (i + 1) + "]</em><span>" + UI.esc(c.text) + "</span>"
           + (cites || '<i class="case-warn-inline">无引用</i>') + "</li>";
@@ -1076,6 +1370,31 @@
       if (el) el.addEventListener(event, handler);
     };
 
+    /* ---- 统计卡片：刷新 + 点击直达 ---- */
+    on("#case-stats-refresh", "click", function () { loadStats(root, ctx, S, base); });
+    // 演示说明黄条：收起/展开（信息不丢，噪音可控）
+    on("#case-warn-toggle", "click", function () {
+      S.warnCollapsed = !S.warnCollapsed;
+      repaint();
+    });    Array.prototype.forEach.call(root.querySelectorAll("[data-stats-jump]"), function (el) {
+      const go = function () {
+        const where = el.getAttribute("data-stats-jump");
+        if (where === "restricted") {
+          // 受限清单常驻左栏：滚到它，比切 tab 更近
+          const side = root.querySelector(".case-side");
+          if (side) side.scrollIntoView({ behavior: "smooth", block: "start" });
+          return;
+        }
+        S.tab = "access";
+        render(root, ctx);
+        doAccessList();
+      };
+      el.addEventListener("click", go);
+      el.addEventListener("keydown", function (e) {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); }
+      });
+    });
+
     /** 统一处理本屏错误：401 清令牌 + 专门文案；403 展示拒绝码；其余原样。 */
     const handle = function (err, prefix) {
       if (err.status === 401) {
@@ -1084,9 +1403,11 @@
         S.authError = "案例会话已失效（" + (err.code || "401") + "）：请重新选择身份并建立会话";
         S.meta = null;
       } else if (err.status === 403) {
-        S.authError = "请求被拒绝：" + (err.code || "403") + " —— " + err.message;
+        S.authError = "请求被拒绝：" + UI.friendlyError(err).text;
       } else {
-        UI.toast((prefix || "请求失败") + "：" + err.message, "err");
+        // 加载失败优化：裸 err.message（"Failed to fetch" / "xxx is not defined"）
+        // 对用户不可读也不可操作，统一走友好化转译；多给 1.8s 阅读时间。
+        UI.toast(UI.friendlyError(err).text, "err", 5000);
       }
     };
 
@@ -1125,6 +1446,11 @@
       S.audit = null;
       S.detail = null;
       S.tab = "search";
+      // 换身份 = 换可见范围：旧统计必须作废，否则卡片会短暂显示上一岗位的数字
+      S.stats = null;
+      S.statsError = "";
+      stopAutoTimers();
+      S.autoFlow = null;
 
       caseFetch(base, "/api/v2/cases/session", {
         body: {
@@ -1140,8 +1466,10 @@
         UI.toast("已建立案例会话：" + identity.role + " · tv="
           + data.principal.token_version + " pv=" + data.principal.principal_version, "ok");
         repaint();
+        // 新身份 = 新可见范围 → 统计卡片立即重算（旧数字不能停留）
+        loadStats(root, ctx, S, base);
       }).catch(function (err) {
-        S.authError = "建立会话失败：" + (err.code ? err.code + " " : "") + err.message;
+        S.authError = "建立会话失败：" + ctx.UI.friendlyError(err).text;
         repaint();
       });
     });
@@ -1163,6 +1491,11 @@
       S.audit = null;
       S.compare = null;
       S.authError = "";
+      // 退出即无可见范围：统计卡片一起清掉（旧数字留着等于误导）
+      S.stats = null;
+      S.statsError = "";
+      stopAutoTimers();
+      S.autoFlow = null;
       repaint();
     });
 
@@ -1181,6 +1514,12 @@
     on("#case-compare", "click", doCompare);
     on("#case-audit", "click", function () { S.tab = "audit"; repaint(); doAudit(); });
     on("#case-audit-run", "click", doAudit);
+    // 页面信息加载失败后的重试入口（清错误态重新拉 meta）
+    on("#case-meta-retry", "click", function () {
+      S.metaError = "";
+      S.metaLoading = false;
+      loadMeta(root, ctx, S, base);
+    });
     on("#case-ingest-open", "click", function () {
       S.ingestForm = {}; S.ingestResult = null; repaint();
     });
@@ -1226,6 +1565,12 @@
         else if (act === "access-submit") {
           doAccessSubmit(id, (root.querySelector("#case-access-reason") || {}).value || "");
         }
+        else if (act === "auto-run") {
+          // 「再演一次」：对一条 pending 申请重放演示审批弹窗
+          const replay = requestRowOf(el.getAttribute("data-rid"));
+          if (replay) startAutoApprove(replay, caseTitleOf(id));
+        }
+        else if (act === "auto-close") { closeAutoFlow(); }
         else if (act === "access-approve") {
           doAccessDecide(el.getAttribute("data-rid"), true);
         }
@@ -1286,7 +1631,7 @@
         S.asking = false;
         S.answer = {
           answered: false, answer: "", claims: [], citations: [],
-          reason: (err.code || "") + " " + err.message,
+          reason: UI.friendlyError(err).text,
         };
         handle(err, "问答失败");
         repaint();
@@ -1321,7 +1666,8 @@
             token: sess.token, body: { query: q, k: S.k || 20, action: "query" },
           }).then(function (data) { return data; })
             .catch(function (err) {
-              return { hits: [], hidden_count: 0, candidates: 0, error: err.code || err.message };
+              return { hits: [], hidden_count: 0, candidates: 0,
+                       error: UI.friendlyError(err).text };
             });
         });
       };
@@ -1340,7 +1686,7 @@
         repaint();
       }).catch(function (err) {
         S.comparing = false;
-        UI.toast("对比失败：" + err.message, "err");
+        UI.toast("对比失败：" + UI.friendlyError(err).text, "err");
         repaint();
       });
     }
@@ -1411,11 +1757,120 @@
         .then(function (data) {
           S.accessForm = null;
           S.accessResult = data;
-          UI.toast(data.message || "申请已提交", "ok");
           doAccessList();
+          // 申请数变了 → 统计卡片同步刷新（数字与申请列表必须对得上）
+          loadStats(root, ctx, S, base);
+          // 服务端预检可用 → 弹窗走一遍"智能 Agent 执行 → 职能部门审批通过"；
+          // 不可用（无审批岗 / 开关关闭）→ 保持原行为：只提示已提交、等待人工审批。
+          const demo = (data && data.demo_approval) || {};
+          if (demo.available) {
+            startAutoApprove(data, caseTitleOf(caseId));
+          } else {
+            UI.toast(data.message || "申请已提交", "ok");
+          }
         }).catch(function (err) {
-          UI.toast("申请提交失败：" + (err.message || err.code || ""), "err");
+          UI.toast("申请提交失败：" + ctx.UI.friendlyError(err).text, "err");
         });
+    }
+
+    /** 从最近一次检索的受限清单里找案例标题（弹窗第一行要显示人话）。 */
+    function caseTitleOf(caseId) {
+      const list = (S.result && S.result.restricted) || [];
+      for (let i = 0; i < list.length; i++) {
+        if (list[i].case_id === caseId) return list[i].title || "";
+      }
+      return "";
+    }
+
+    /** 我提交的申请里按 request_id 找行（「再演一次」入口用）。 */
+    function requestRowOf(requestId) {
+      const rows = S.myRequests || [];
+      for (let i = 0; i < rows.length; i++) {
+        if (rows[i].request_id === requestId) {
+          return { request: rows[i],
+                   route: (S.autoRoutes || {})[rows[i].case_id] || {} };
+        }
+      }
+      return null;
+    }
+
+    /* ---------- 演示自动审批（仅演示；服务端见 case_auto_approve.py） ---------- */
+
+    function startAutoApprove(data, title) {
+      const request = (data && data.request) || {};
+      const route = (data && data.route) || {};
+      if (!request.request_id) {
+        UI.toast("申请信息不完整，无法开始演示审批", "err");
+        return;
+      }
+      if (request.case_id) S.autoRoutes[request.case_id] = route;
+      stopAutoTimers();
+      const flow = {
+        request_id: request.request_id,
+        case_id: request.case_id || "",
+        case_title: title || "",
+        dept: route.pushed_to_label || route.pushed_to || "职能部门",
+        basis: route.basis || "案例归属信息",
+        step: 0, status: "running", error: "", expires: "", timers: [],
+      };
+      S.autoFlow = flow;
+      repaint();
+      const alive = function () {
+        return !!S.autoFlow && S.autoFlow === flow && flow.status === "running";
+      };
+      const tick = function (next) { if (alive()) { flow.step = next; repaint(); } };
+      flow.timers.push(setTimeout(function () { tick(1); }, 420));
+      flow.timers.push(setTimeout(function () { tick(2); }, 920));
+      flow.timers.push(setTimeout(function () { tick(3); }, 1480));
+      flow.timers.push(setTimeout(function () {
+        if (!alive()) return;
+        flow.step = 4;
+        repaint();
+        callDemoApprove(flow);
+      }, 1980));
+    }
+
+    function callDemoApprove(flow) {
+      // 注意：caseFetch 只在有 body 时才发 POST——演示审批是动作型调用，
+      // 必须显式带一个空 body，否则会退化成 GET（405）。
+      caseFetch(base, "/api/v2/cases/access/requests/"
+        + encodeURIComponent(flow.request_id) + "/demo-approve",
+        { token: S.token, body: {} })
+        .then(function (data) {
+          if (!S.autoFlow || S.autoFlow !== flow) return;
+          flow.status = "approved";
+          flow.step = autoFlowSteps(flow).length;
+          flow.expires = ((data && data.request) || {}).expires_at || "";
+          repaint();
+        }).catch(function (err) {
+          if (!S.autoFlow || S.autoFlow !== flow) return;
+          flow.status = "failed";
+          flow.error = UI.friendlyError(err).text;
+          repaint();
+        });
+    }
+
+    function closeAutoFlow() {
+      const flow = S.autoFlow;
+      if (!flow) return;
+      const approved = flow.status === "approved";
+      stopAutoTimers();
+      S.autoFlow = null;
+      repaint();
+      doAccessList();
+      // 授权生效后重新检索：受限清单与命中集即时反映"现在能看到了"
+      if (S.result && S.query) doSearch();
+      // 演示代批通过 → 我的申请·待审 -1、受限 -1、可见 +1：卡片必须同步
+      loadStats(root, ctx, S, base);
+      if (approved) UI.toast("授权已生效：该案例已进入你的检索范围", "ok", 3600);
+    }
+
+    function stopAutoTimers() {
+      const flow = S.autoFlow;
+      if (flow && flow.timers) {
+        flow.timers.forEach(function (t) { clearTimeout(t); });
+        flow.timers = [];
+      }
     }
 
     function doAccessDecide(requestId, approve) {
@@ -1427,8 +1882,10 @@
         .then(function () {
           UI.toast(approve ? "已批准：授权已生效（带有效期）" : "已驳回", "ok");
           doAccessList();
+          // 裁决改变待审数与授权范围 → 统计卡片同步刷新
+          loadStats(root, ctx, S, base);
         }).catch(function (err) {
-          UI.toast("审批失败：" + (err.message || err.code || ""), "err");
+          UI.toast("审批失败：" + ctx.UI.friendlyError(err).text, "err");
         });
     }
 
@@ -1470,10 +1927,10 @@
           UI.toast("已入库（待审）", "ok");
         })
         .catch(function (err) {
-          UI.toast("入库失败：" + (err.code || err.message), "err");
+          UI.toast("入库失败：" + UI.friendlyError(err).text, "err");
           S.ingestResult = {
             case_id: "-", status: "-", redaction_kinds: [], acl_tokens: [],
-            next_step: (err.code || "") + " " + err.message,
+            next_step: UI.friendlyError(err).text,
           };
           repaint();
         });
@@ -1487,7 +1944,11 @@
         S.meta = data;
         S.metaError = "";
         S.metaLoading = false;
-        render(root, ctx);
+        // render 抛错不能进 .catch——那会把"渲染 bug"误记成"meta 加载失败"，
+        // 用户看到的重试按钮根本治不好（2026-10-18 distRows 事教训）。
+        try { render(root, ctx); } catch (e) { console.error("[cases] meta 渲染失败:", e); }
+        // 统计卡片跟随 meta 加载（数字口径与检索同源，晚一步无妨）
+        loadStats(root, ctx, S, base);
       })
       .catch(function (err) {
         S.metaLoading = false;
@@ -1496,7 +1957,10 @@
           writeStore(TOKEN_KEY, null);
           S.authError = "案例会话已失效（" + (err.code || "401") + "）：请重新选择身份并建立会话";
         } else {
-          S.metaError = (err.code ? err.code + "：" : "") + err.message;
+          // 存错误对象而非拼好的字符串：展示层统一走 UI.friendlyError 做
+          // 友好化转译（kind/status 决定说人话还是透传后端业务文案），
+          // 技术原文进 <details>，不直接裸露给用户。
+          S.metaError = err;
         }
         render(root, ctx);
       });

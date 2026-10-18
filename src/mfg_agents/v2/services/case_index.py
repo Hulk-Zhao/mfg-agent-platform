@@ -294,6 +294,9 @@ class CaseIndexService:
         就穿。后端能高效去重就用后端能力，不能就用检索回退后按 ``case_id`` 去重，
         **两种情况语义一致**。
         """
+        scanner = getattr(self._index, "filtered_case_ids", None)
+        if callable(scanner):
+            return len(scanner(filter_node))
         counter = getattr(self._index, "count_cases", None)
         if callable(counter):
             return int(counter(filter_node))
@@ -349,6 +352,22 @@ class CaseIndexService:
                 "（版本一致但文本被改，拒绝该引用）", chunk_id)
             return False
         return True
+
+    def hard_visible_case_ids(self, filter_node: FilterNode,
+                              cap: int = 0) -> list[str]:
+        """通过该过滤条件的案例 id（**不打分**；受限清单与计数的共用路径）。"""
+        scanner = getattr(self._index, "filtered_case_ids", None)
+        if callable(scanner):
+            return list(scanner(filter_node, cap))
+        hits = self._index.search("", filter_node, MAX_CASE_SCAN if not cap else cap)
+        out: list[str] = []
+        seen: set[str] = set()
+        for hit in hits:
+            case_id = str(hit.case_id)
+            if case_id not in seen:
+                seen.add(case_id)
+                out.append(case_id)
+        return out
 
     def chunk_text(self, case_id: str, chunk_type: str) -> str:
         """回查某 chunk 的知识层文本（引用校验/组装上下文用）。"""

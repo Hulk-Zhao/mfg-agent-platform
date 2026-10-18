@@ -95,6 +95,12 @@ subject_deny_rules:
 
 # ---------- 运行时参数 ----------
 settings:
+  # 跨职能域通行角色（2026-10-19 产品裁定：总经理应全部门可见）。
+  # 只豁免「令牌交集」这一步（role/dept/plant 等业务维 ACL 行不再要求匹配），
+  # **硬门禁一概照常**：密级上限、状态白名单、证据层、租户、显式 deny——
+  # 豁免是"业务范围"的放宽，不是越权通行证。编译器（cross-dept 路径）与
+  # AclEvaluator（二次授权）两处独立实现必须保持同一语义（各 有 用 例 钉）。
+  cross_dept_roles: [gm]
   # 只有正式员工享受"质量案例全员共享"默认值（PRD §15 P5 建议默认）。
   # 非正式员工（外包/临时/供应商/客户账号）只走 vc=0 快路径：拿不到任何
   # 带 dept/plant 约束的案例（含岗位经验案例），这是本 demo 的确定性差异点。
@@ -102,7 +108,21 @@ settings:
   max_principal_tokens: 64
   expose_hidden_count: true
   hidden_count_only_when_short: true
+  # 拒答闸门（标定值见 tools/calibrate_answer_thresholds.py）
+  #  ⚠️ 这两个值与**检索后端的分数分布强绑定**：
+  #     demo 后端是 blake2b 1-2gram 字符重合度，分数分布随语料规模漂移；
+  #     换成真实 embedding（BGE-M3 等）后**必须重跑标定脚本**，否则闸门形同虚设。
   low_confidence_threshold: 0.18
+  # 绝对下限：top1 低于它 → 拒答（99 例语料下无关问句的 p95 ≈ 0.173，最高 0.192）
+  answer_min_score: 0.20
+  # 相对余量：top1 - 中位分 低于它 → 拒答（防"全库都不相关但分数均匀平庸"）
+  answer_margin: 0.05
+  # **术语闸门**：问题里一个受控词条都没命中时，要求更高的分数才允许作答。
+  # 为什么需要第三条：实测两组分数分布**重叠**（无关组最高 0.192 vs 相关组最低 0.155），
+  # 单靠绝对/相对阈值分不开——"食堂几点开饭"比"螺钉滑牙"分数还高。
+  # "有没有制造术语"才是真正的判别信号；这一条只对"零术语"问题抬高门槛，
+  # 不影响命中术语的真问题。标定值 0.27 与无关组最高分 0.192 之间留了 0.078 的间隔。
+  answer_score_without_terms: 0.27
   max_chunks_per_case: 2
   rerank_candidates: 12
   # 排序权重（PRD §6.3 状态权重 × 新鲜度 × 有效性验证）
