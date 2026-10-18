@@ -3295,3 +3295,32 @@ a:hover { text-decoration: underline; }
   background: var(--primary-light-2); border-left: 3px solid var(--primary);
 }
 .case-dist-row b { flex: none; color: var(--text-3); font-weight: 500; }
+
+/* ---------- 帮助中心：技术 / 目的 卡片 ---------- */
+.help-line {
+  margin-top: 7px; font-size: 12.2px; line-height: 1.8; color: var(--text-2);
+}
+.help-tag {
+  display: inline-block; font-size: 10.5px; font-weight: 700; padding: 1px 7px;
+  border-radius: 4px; margin-right: 7px; vertical-align: 1px; flex: none;
+}
+.help-tag-tech { background: var(--primary-light-2); color: var(--primary); }
+.help-tag-goal { background: var(--ok-bg); color: var(--ok); }
+
+/* ---------- 帮助中心：技术栈对照表 ---------- */
+.help-table { width: 100%; border-collapse: collapse; font-size: 12.2px; }
+.help-table th {
+  text-align: left; padding: 8px 10px; background: var(--primary-light-2);
+  color: var(--primary); font-weight: 700; font-size: 11.5px;
+  border-bottom: 1px solid var(--border);
+}
+.help-table td {
+  padding: 8px 10px; border-top: 1px solid var(--border);
+  color: var(--text-2); vertical-align: top; line-height: 1.75;
+}
+.help-table td b { color: var(--text); }
+.help-table code, .help-line code {
+  font-family: ui-monospace, Consolas, Menlo, monospace; font-size: 11.3px;
+  padding: 1px 5px; border-radius: 4px; background: var(--bg-2, #F2F5F8);
+  color: var(--text); border: 1px solid var(--border);
+}

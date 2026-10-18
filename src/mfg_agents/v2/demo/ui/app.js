@@ -269,19 +269,19 @@
             </div>
           </div>
           <div class="login-brand-body">
-            <h1>17 个智能体协同<br/>16 个部门一个入口<br/>一个入口完成协同</h1>
+            <h1>18 个智能体协同<br/>16 个部门一个入口<br/>一个入口完成协同</h1>
             <p>跨部门并行取证 · 跨域工单闭环 · 数据权限随岗位隔离</p>
             <ul class="login-points">
-              <li><span>01</span><div><b>5 大协同场景</b>停线应急 / 来料异常 / 客诉 8D / 出货 ATP / 设备维保</div></li>
-              <li><span>02</span><div><b>关键决策人在环</b>复线、对客 ETA、退换货、8D 关闭均需人工确认</div></li>
-              <li><span>03</span><div><b>结论可审计</b>SQL 溯源 + 敏感字段按岗位脱敏 + 降级明示</div></li>
+              <li><span>01</span><div><b>7 大协同场景（YAML 声明式）</b>停线应急 / 来料异常 / 客诉 8D / 出货风险 / 设备维保 / 订单变更 / SPC 异常 · 新场景 = 新 YAML + 复用节点</div></li>
+              <li><span>02</span><div><b>关键决策人在环（8 个 HITL 槽位）</b>复线 / 对客 ETA / 来料处置 / 8D 关闭 / 对客回复 / 交期承诺 / 停机窗口 / SPC 处置 · Agent 只发起、不放行</div></li>
+              <li><span>03</span><div><b>结论可审计（权限同源 + 全链路留痕）</b>业务数据 / 治理待办 / 案例访问三套权限分域 · SQL 溯源 + 敏感字段脱敏 + 失败明示降级</div></li>
             </ul>
           </div>
           <div class="login-stats">
-            <div class="login-stat"><b>17</b><span>智能体角色</span></div>
-            <div class="login-stat"><b>5</b><span>协同场景</span></div>
-            <div class="login-stat"><b>10</b><span>MCP 工具</span></div>
-            <div class="login-stat"><b>390</b><span>自动化测试</span></div>
+            <div class="login-stat"><b>18</b><span>智能体角色</span></div>
+            <div class="login-stat"><b>7</b><span>协同场景</span></div>
+            <div class="login-stat"><b>41</b><span>平台工具</span></div>
+            <div class="login-stat"><b>1157</b><span>自动化测试</span></div>
           </div>
           <div class="login-brand-foot">演示环境 · 免密码 · 选择岗位身份进入对应数据视图</div>
         </section>

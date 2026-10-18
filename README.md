@@ -1,11 +1,11 @@
 # mfg-agent-platform
 
-制造业多智能体协同平台。17 个领域智能体、7 个协同场景，LangGraph 子图编排、人工在环会签、Text2SQL 只读治理、本地增强 Agentic RAG 案例检索、A2A / MCP 双协议接入。
+制造业多智能体协同平台。18 个智能体（17 个领域智能体 + 1 个办公智能体）、7 大协同场景，LangGraph 子图编排、人工在环会签、Text2SQL 只读治理、本地增强 Agentic RAG 案例检索、A2A / MCP 双协议接入。
 
 [![tests](https://github.com/Hulk-Zhao/mfg-agent-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/Hulk-Zhao/mfg-agent-platform/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![tests](https://img.shields.io/badge/tests-1004%20offline-brightgreen)
+![tests](https://img.shields.io/badge/tests-1157%20offline-brightgreen)
 
 <p float="left">
   <img src="docs/images/screen-dashboard.png" width="24.5%" />
@@ -58,7 +58,7 @@
 | 契约 | 方法 | 内置实现 |
 |---|---|---|
 | `DataSource` | list_tables / run_query / execute_readonly_sql | SQLite（只读连接 `mode=ro`，写操作在驱动层即被拒绝） |
-| `VectorStore` | upsert / query | ChromaDB；Milvus 接 Milvus standalone |
+| `VectorStore` | upsert / query | Milvus standalone（当前部署：BGE-M3 稠密+稀疏混合召回 + BGE-Reranker-v2-M3）；代码默认 ChromaDB（零依赖本地持久化），`VECTOR_BACKEND` 一键切换 |
 | `IMGateway` | 消息收发 + 回调验签 | 企业微信自建应用（AES-CBC + 签名验证） |
 
 新数据源实现三个方法、注册进 `DataSourceRegistry`，即刻出现在 `/api/v2/datasources` 就绪度总览——健康状态、表清单、注册查询数。
@@ -86,7 +86,7 @@
 - **MCP Server**：stdio JSON-RPC 2.0，MCP 2024-11-05 规范工具子集，`ToolRegistry` 单一事实源，按域分治（data / asset / quality / workflow / knowledge，单 server ≤ 15 工具），任何 MCP 客户端可挂载。
 - **A2A**（Agent-to-Agent，Linux 基金会规范）：`GET /.well-known/agent.json` Agent Card + `POST /a2a` 的 `message/send` / `tasks/get`。外部智能体消费平台能力拿到的是结构化 Task + Artifact，且治理链（ACL / 脱敏 / 会签）与 HTTP 端点同一套——A2A 不是绕过治理的后门。
 
-**数据与缓存**。SQLAlchemy 2.0 抽象：本地开发默认 SQLite（零依赖），生产通过 `DB_URL` 切 MySQL 8.0。向量检索双路召回 + 重排：BGE-M3（dense + sparse）加 BGE-Reranker-v2-M3，后端可换 Milvus standalone。Redis 承担会话上下文缓存、查询结果缓存与单 IP 限流，连接失败自动降级为无缓存。
+**数据与缓存**。SQLAlchemy 2.0 抽象：本地开发默认 SQLite（零依赖），生产通过 `DB_URL` 切 MySQL 8.0。向量检索双路召回 + 重排：BGE-M3（dense + sparse）加 BGE-Reranker-v2-M3，后端可换 Milvus standalone（当前部署）/ ChromaDB（默认零依赖）。Redis 承担会话上下文缓存、查询结果缓存与单 IP 限流，连接失败自动降级为无缓存。
 
 **认证与岗位分层**。演示门户 31 个岗位免密选择登录，写接口凭 HMAC 签名的岗位访问令牌（8 小时 TTL）；`AUTH_SECRET` 未配置时生成进程级随机密钥并告警。
 
@@ -108,11 +108,11 @@
 
 ## 部署形态
 
-SQLite + 本地 ChromaDB 是**本地开发的零依赖默认值**，不是平台的边界——**业务读路径**（DataSource / VectorStore 契约）按部署形态切换，应用代码零改动；**治理写路径**（工单 / 会签 / SLA）当前仍固定 SQLite，见下表说明：
+SQLite + 本地向量库（ChromaDB 默认 / 可接 Milvus）是**本地开发的零依赖默认值**，不是平台的边界——**业务读路径**（DataSource / VectorStore 契约）按部署形态切换，应用代码零改动；**治理写路径**（工单 / 会签 / SLA）当前仍固定 SQLite，见下表说明：
 
 | 形态 | 业务库 | 治理库（工单/会签/SLA） | 向量库 | 缓存 | 适用 |
 |---|---|---|---|---|---|
-| 本地开发 | SQLite（默认） | 同一 SQLite 文件 | ChromaDB 本地持久化 | 无（自动降级） | 跑通全链路、跑测试 |
+| 本地开发 | SQLite（默认） | 同一 SQLite 文件 | ChromaDB（默认）/ 可接 Milvus | 无（自动降级） | 跑通全链路、跑测试 |
 | Docker 单容器 | 同上（`app_data` 卷） | 同上 | 同上 | 同上 | 快速演示 |
 | 中间件栈 | MySQL 8.0 | **仍为 SQLite（`WORKFLOW_DB`，单文件单实例）** | Milvus standalone + BGE-M3/Reranker | Redis 7 | 单实例生产 |
 
@@ -202,7 +202,7 @@ uv run uvicorn mfg_agents.v2.demo.api:app --port 8004
 
 ## 测试
 
-1004 条离线确定性测试（探针恒 False、不发外网请求），CI 在 Python 3.11 / 3.12 / 3.13 三个版本执行：
+1157 条离线确定性测试（探针恒 False、不发外网请求），CI 在 Python 3.11 / 3.12 / 3.13 三个版本执行：
 
 ```bash
 uv run pytest tests/ -q
@@ -229,7 +229,7 @@ mfg-agent-platform/
 │   └── demo/                     #   FastAPI 入口 / CLI / 演示门户（纯静态零构建）
 ├── data/                         # 演示数据种子 SQL + 知识库 JSONL + 案例种子
 ├── deploy/                       # Milvus standalone 内嵌 etcd 配置
-├── tests/                        # 1004 条离线测试（治理 / 红队 / 端到端 / 协议 / 架构守卫 / 数据范围 / 待办可见性 / 案例域）
+├── tests/                        # 1157 条离线测试（治理 / 红队 / 端到端 / 协议 / 架构守卫 / 数据范围 / 待办可见性 / 案例域）
 ├── docs/                         # 架构 / 接口 / HITL 设计 / 部署指南
 └── scripts/                      # Windows 一键启动脚本（本地 / Docker / 公网隧道）
 ```
