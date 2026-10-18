@@ -222,9 +222,11 @@ def test_quality_8d_draft_schema_and_signoff_task(registry, orch):
     assert st["wf_id"] == "hitl_d8_close" and st["slot"] == "d8_close"
     assert st["is_governed"] is True
 
-    # 工单可被 workflow.pending 查到
+    # 工单可被 workflow.pending 查到（按 d8_close 槽位权限裁决）。
+    # 注意 roles=[] 在旧实现里等于"查全量"，新语义下等于"无治理职责"，
+    # 所以这里必须带真实治理角色——这正是本次要收紧的行为。
     pending = registry.call("workflow.pending", {},
-                            user_ctx={"user_id": "u-qd", "roles": []})
+                            user_ctx={"user_id": "u-qd", "roles": ["质量总监"]})
     assert st["task_uid"] in {t["task_uid"] for t in pending["tasks"]}
 
     # ⚠️ 事实说明（不掩盖）：按既有设计，`required_signoffs` 在建单时为空，

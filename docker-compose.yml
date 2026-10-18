@@ -19,6 +19,13 @@ services:
         HTTPS_PROXY: ${DOCKER_BUILD_PROXY:-}
     image: mfg-agent-platform:latest
     container_name: mfg_app
+    # 关键：让容器真的读到 .env。之前只列了几个 LLM 变量，
+    # .env 里的 DB_URL / VECTOR_BACKEND / MILVUS_URI / REDIS_URL / WORKFLOW_DB
+    # 全部落空——"设了环境变量就能切中间件"这句话是假的。
+    # 切 SQLite 演示栈还是 MySQL+Milvus 生产栈，只改 .env，不改编排。
+    env_file:
+      - path: .env
+        required: false
     environment:
       PYTHONUNBUFFERED: 1
       # LLM 提供方：ollama（本地）/ deepseek / openai；留空自动识别
@@ -32,6 +39,22 @@ services:
       OPENAI_MODEL: ${OPENAI_MODEL:-deepseek-chat}
       DS_URL: ${DS_URL:-}
       DS_KEY: ${DS_KEY:-}
+      # ---- 容器视角覆盖（必须在 env_file 之后，否则会盖掉 .env 的宿主机视角）----
+      # .env 是**宿主机视角**写的：MILVUS_URI=localhost:19531 在容器里指向容器自己，
+      # 连不到中间件容器。这里显式给出容器能用的默认值（与 OLLAMA_BASE_URL 同一套路）：
+      # 默认经 host.docker.internal 访问宿主机已映射的端口。
+      #
+      # 若用组合启动 `docker compose -f docker-compose.yml -f docker-compose.infra.yml up`，
+      # app 与中间件在同一网络（`mfg_infra`），应改用服务名，更快也更干净：
+      #   CONTAINER_MILVUS_URI=http://milvus:19530
+      #   CONTAINER_REDIS_URL=redis://redis:6379/0
+      #   CONTAINER_DB_URL=mysql+pymysql://root:demo123@mysql:3306/mfg_agent
+      #
+      # DB_URL 留空 = 回落默认 SQLite（单容器演示形态）；治理库 WORKFLOW_DB 恒为 SQLite，
+      # 见 services/workflow.py::assert_sqlite_backed。
+      MILVUS_URI: ${CONTAINER_MILVUS_URI:-http://host.docker.internal:19531}
+      REDIS_URL: ${CONTAINER_REDIS_URL:-redis://host.docker.internal:6380/0}
+      DB_URL: ${CONTAINER_DB_URL:-}
     ports:
       - "8004:8004"
     volumes:

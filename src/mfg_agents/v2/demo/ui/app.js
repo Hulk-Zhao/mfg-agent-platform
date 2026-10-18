@@ -16,19 +16,81 @@
    * 一、常量：导航 / 图标 / 角色
    * ============================================================ */
 
+  /* ============================================================
+   * 一、导航
+   *
+   * `roles` 声明"哪些岗位可以看到本屏"，**省略 = 全员可见**。
+   * 为什么必须有这层过滤：31 个岗位 × 11 屏平铺，一线岗位（MT / WH / EHS）
+   * 与总经理看到完全相同的菜单——V3-UX 方案里已诊断过"操作工只需 3 个功能
+   * 却面对几十个菜单 = 信息过载"，此前只做了简报/下钻，导航收敛一直未落地。
+   *
+   * 收敛原则（按岗位职责，不按部门）：
+   *   - 与本人职责无关的**运营看板**隐藏（HR 不看 SPC，业务不看稼动率）；
+   *   - **协同问数 / 咨询助手 / 预警 / 审批 / 办公 / 帮助**保持全员可见——
+   *     异常可能来自任何岗位，会签也可能落到任何角色头上；
+   *   - 每个岗位至少保留 7 项，不存在"菜单空了"的岗位。
+   *
+   * ⚠ 这属于**展示层收敛**，不是权限控制：真实数据权限由后端
+   * /dashboard/* 的声明式数据范围目录裁决（见 docs 架构体检报告 P0-2）。
+   * ============================================================ */
+  /**
+   * 侧边栏导航。**按使用场景排序，不按技术模块**：
+   *
+   *   运营视图（看现状）→ 智能协同（问原因/找办法）→ 流程治理（做决策）→ 复盘沉淀（出成果）
+   *
+   * 顺序即演示脚本：客户跟着从上往下点，走完就是「发现异常 → 追问根因 → 审批处置 → 产出报告」
+   * 一个闭环，而不是逐屏介绍 12 个功能。分组必须相邻（renderNav 遇到 group 变化就输出
+   * 组标题），跨组调 item 时务必同时挪位置。
+   *
+   * `roles` 省略 = 全员可见；声明则只有列出的岗位能看到（`visibleNav()` 过滤）。
+   */
   const NAV_ITEMS = [
     { id: "dashboard", label: "工作台", title: "工作台", sub: "制造运营协同门户", icon: "grid", group: "运营视图" },
-    { id: "orders", label: "订单履约看板", title: "订单履约看板", sub: "订单全链路管道 · 风险订单 · 部门协同", icon: "orders", group: "运营视图" },
-    { id: "mfgboard", label: "制造综合看板", title: "制造综合看板", sub: "制造 + 品质双看板 · 稼动率/报废率/报工完成率/直通率/标准三率", icon: "activity", group: "运营视图" },
-    { id: "spc", label: "SPC 过程能力看板", title: "SPC 过程能力看板", sub: "过程能力指数 Cpk/Pp/Ppk · 判定与越限预警 · 不良柏拉图", icon: "spc", group: "运营视图" },
+    { id: "orders", label: "订单履约看板", title: "订单履约看板", sub: "订单全链路管道 · 风险订单 · 部门协同", icon: "orders", group: "运营视图",
+      roles: ["gm", "mfg", "biz", "cs", "pm", "pln", "mc", "scm", "procm", "proc", "whm", "wh", "finm", "fin"] },
+    { id: "mfgboard", label: "制造综合看板", title: "制造综合看板", sub: "制造 + 品质双看板 · 稼动率/报废率/报工完成率/直通率/标准三率", icon: "activity", group: "运营视图",
+      roles: ["gm", "mfg", "eq", "eqm", "mt", "qd", "pqe", "pe", "ie", "te", "rdm", "rd", "me", "rdt", "npi", "pm", "ehs"] },
+    { id: "spc", label: "SPC 过程能力看板", title: "SPC 过程能力看板", sub: "过程能力指数 Cpk/Pp/Ppk · 判定与越限预警 · 不良柏拉图", icon: "spc", group: "运营视图",
+      roles: ["gm", "mfg", "qd", "pqe", "sqe", "qa", "pe", "te", "ie"] },
+    // 预警是「看见异常」，属于运营视图；放在看板之后，形成「指标 → 异常」的自然下探。
+    { id: "alerts", label: "预警中心", title: "预警中心", sub: "多域预警与联动处置", icon: "alert", group: "运营视图" },
+    // 智能协同 = 拿到异常之后，问原因、找依据、找先例、办琐事。
     { id: "chat", label: "协同问数", title: "协同问数", sub: "对话式跨部门协同分析（真实后端链路）", icon: "chat", group: "智能协同", core: true },
-    { id: "kbqa", label: "企业咨询助手", title: "企业咨询助手", sub: "制度知识库咨询 · 结论带出处（Milvus + LLM）", icon: "book", group: "智能协同" },
-    { id: "alerts", label: "预警中心", title: "预警中心", sub: "多域预警与联动处置", icon: "alert", group: "智能协同" },
-    { id: "reports", label: "报告中心", title: "报告中心", sub: "内部简报与对客脱敏报告", icon: "report", group: "智能协同" },
-    { id: "office", label: "企业助手", title: "企业综合助手", sub: "办公事务（会议室/订餐）+ 制造数据速查（材料库存/成品库存/来料批次，只读）", icon: "clock", group: "智能协同" },
-    { id: "hitl", label: "审批确认中心", title: "审批确认中心", sub: "人工在环 · 关键决策审批（真实工单）", icon: "approve", group: "流程治理" },
-    { id: "help", label: "帮助中心", title: "帮助中心", sub: "智能体协同架构 · 各智能体职责与边界 · 使用指引", icon: "info", group: "流程治理" },
+    { id: "kbqa", label: "企业制度问答", title: "企业制度问答", sub: "企业制度 / 流程规范知识库问答 · 结论带出处（Milvus + LLM）", icon: "book", group: "智能协同" },
+    { id: "cases", label: "制造案例检索", title: "制造案例检索", sub: "历史质量问题案例检索 · 权限前置过滤 · 引用可溯源", icon: "book", group: "智能协同" },
+    { id: "office", label: "办公与数据速查", title: "办公与数据速查", sub: "会议室 / 订餐办理 + 材料 / 成品 / 批次库存速查（只读）", icon: "clock", group: "智能协同" },
+    // 流程治理 = 唯一需要「签字负责」的动作，单独成组，别和查询混在一起。
+    // roles 与 permissions.yaml 的槽位持有者**必须一致**：行政人事不持有任何
+    // hitl.* 权限，菜单就不该出现——否则点进去只有一句"本岗位不参与治理审批"，
+    // 是让人白跑一趟。`test_待办可见性.py` 会交叉校验这两份数据。
+    { id: "hitl", label: "审批确认中心", title: "审批确认中心", sub: "人工在环 · 关键决策审批（真实工单）", icon: "approve", group: "流程治理",
+      roles: ["gm", "mfg", "eq", "sqe", "pqe", "qa", "rd", "pe", "pln", "mc", "proc",
+              "wh", "biz", "fin", "qd", "eqm", "rdm", "scm", "procm", "whm", "finm",
+              "ie", "npi", "pm", "te", "me", "rdt", "ehs", "cs", "mt"] },
+    // 复盘沉淀 = 事情办完之后的产出与沉淀。
+    { id: "reports", label: "报告中心", title: "报告中心", sub: "内部简报与对客脱敏报告", icon: "report", group: "复盘沉淀",
+      roles: ["gm", "mfg", "qd", "sqe", "pqe", "qa", "cs", "biz", "pm"] },
+    { id: "help", label: "帮助中心", title: "帮助中心", sub: "智能体协同架构 · 各智能体职责与边界 · 使用指引", icon: "info", group: "复盘沉淀" },
   ];
+
+  /** 岗位是否可见某屏。`roles` 省略 / 空数组 = 全员可见。
+   *  同时匹配岗位 id 与其治理角色列表（demo-data 的 ROLES[].roles），
+   *  避免两处角色口径不一致时菜单消失。 */
+  function navVisible(item, role) {
+    if (!item.roles || !item.roles.length) return true;
+    if (!role) return true;
+    const own = [role.id].concat(Array.isArray(role.roles) ? role.roles : []);
+    return item.roles.some((r) => own.indexOf(r) !== -1);
+  }
+
+  /** 当前岗位可见的导航项（保持 NAV_ITEMS 原有顺序）。
+   *  不在 state 里缓存：岗位切换时天然重算，不需要失效逻辑。 */
+  function visibleNav() {
+    const role = currentRole();
+    const list = NAV_ITEMS.filter((item) => navVisible(item, role));
+    return list.length ? list : NAV_ITEMS;
+  }
+
 
   // 后端候选基址：同源优先（http(s) 托管时），随后是本机 8004 端口
   const API_PORT_CANDIDATES = ["http://127.0.0.1:8004", "http://localhost:8004"];
@@ -95,7 +157,7 @@
     screen: "dashboard",
     role: "gm",
     token: "",       // 岗位访问令牌（F2）：HITL 写接口凭它鉴权；演示模式为空
-    backend: { online: false, base: "", checking: true },
+    backend: { online: false, base: "", checking: true, health: null },
     perms: null,     // 治理权限目录快照（/api/v2/governance/permissions）
     screenState: {}, // 各屏持久状态（对话记录、审批处理结果等，重渲染不丢）
   };
@@ -440,7 +502,12 @@
     online() { return state.backend.online; },
 
     /** 探测后端：同源优先，随后本机 8004；全部失败 → 演示模式。
-     *  候选基址并行探测（任一成功即用），总耗时 ≤ 单次超时，避免串行等待。
+     *
+     *  **竞速而非集合**：候选基址并行探测，**第一个成功立即采用并取消其余**。
+     *  旧实现用 `Promise.all` 等全部完成，总耗时由最慢的候选决定——页面从
+     *  `http://127.0.0.1:8004` 打开时，同源 100ms 就通了，却要陪着
+     *  `localhost:8004`（可能解析到未监听的 IPv6）一起等满 9s 才判定在线，
+     *  登录后盯着"检测中"是这段时间。演示现场这就是"卡住了"。
      *
      *  并发守卫：boot()（已登录用户）与 enterApp()（登录页点岗位）都可能触发
      *  startApp() → probe()。公网隧道下探测耗时 1-2s，两次并发时后返回的
@@ -452,26 +519,48 @@
         const candidates = [];
         if (/^https?:$/.test(location.protocol)) candidates.push(location.origin);
         API_PORT_CANDIDATES.forEach((c) => { if (!candidates.includes(c)) candidates.push(c); });
+
+        const controllers = [];
         const probeOne = async (base) => {
+          const ctrl = new AbortController();
+          controllers.push(ctrl);
+          const timer = setTimeout(() => ctrl.abort(), PROBE_TIMEOUT_MS);
           try {
-            const ctrl = new AbortController();
-            const timer = setTimeout(() => ctrl.abort(), PROBE_TIMEOUT_MS);
             const resp = await fetch(`${base}/api/v2/health`, { signal: ctrl.signal });
-            clearTimeout(timer);
             if (resp.ok) {
               const data = await resp.json();
-              if (data && data.status === "ok") return base;
+              // status 只看"后端是否可达"：ok 与 degraded 都算在线。
+              // degraded 表示部分依赖（向量库 / LLM / 治理库）降级，链路仍可跑，
+              // 绝不能据此退回演示数据——那会掩盖真实故障。细分见 health.checks。
+              if (data && (data.status === "ok" || data.status === "degraded")) {
+                return { base, health: data };
+              }
             }
-          } catch (err) { /* 候选失败 */ }
+          } catch (err) { /* 候选失败，或已被更快的候选取消 */ }
+          finally { clearTimeout(timer); }
           return null;
         };
-        const results = await Promise.all(candidates.map(probeOne));
-        const base = results.find((r) => r !== null) || null;
-        if (base) {
-          state.backend = { online: true, base, checking: false };
+
+        const attempts = candidates.map(probeOne);
+        const hit = await new Promise((resolve) => {
+          let pending = attempts.length;
+          let settled = false;
+          attempts.forEach((p) => p.then((h) => {
+            if (h && !settled) {
+              settled = true;
+              controllers.forEach((c) => c.abort());   // 其余探测立刻放弃，不再等
+              resolve(h);
+              return;
+            }
+            if (--pending === 0 && !settled) resolve(null);
+          }));
+        });
+
+        if (hit) {
+          state.backend = { online: true, base: hit.base, checking: false, health: hit.health || null };
           return true;
         }
-        state.backend = { online: false, base: "", checking: false };
+        state.backend = { online: false, base: "", checking: false, health: null };
         return false;
       })().finally(() => { probeInFlight = null; });
       return probeInFlight;
@@ -510,7 +599,14 @@
       if (!resp.ok || data.code !== 0) {
         throw apiError(resp.status, data);
       }
-      return data.data;
+      // 信封里的 scope（数据范围裁决凭据：谁看的 / 脱敏了哪些字段）挂到返回体上。
+      // 放在信封而不是 data 里，是为了让 data 严格保持"看板载荷"语义；
+      // 但调用方拿到的必须是同一个对象，否则"脱敏了没"这件事前端就无从呈现。
+      const payload = data.data;
+      if (data.scope && payload && typeof payload === "object") {
+        payload.scope = data.scope;
+      }
+      return payload;
     },
 
     /** 岗位登录（F2）：用岗位身份换访问令牌 */
@@ -593,34 +689,59 @@
       return es;
     },
 
-    /** 人工确认 待办队列（审批即待办：传 roles 则只返回我的待办） */
+    /**
+     * 人工确认 待办队列——**只能拿到「我的活」与「我治理域内的活」**。
+     *
+     * 后端以令牌角色为准（fail-closed）：无令牌 401、越权扩宽 role 403、
+     * 无治理职责的岗位返回空队列。`roles` 只能收窄，不能借别人的眼睛。
+     * 每项带 `visibility`：`mine` 可动作 / `domain` 域内只读。
+     */
     workflowPending(roles) {
       const list = (roles || []).filter(Boolean);
       const qs = list.length
         ? "?" + list.map((r) => `role=${encodeURIComponent(r)}`).join("&")
         : "";
-      return this._get(`/api/v2/workflow/pending${qs}`);
+      return this._getScoped(`/api/v2/workflow/pending${qs}`);
     },
 
-    /** 单工单详情（会签后局部刷新卡片） */
+    /** 单工单详情（会签后局部刷新卡片）——可见性与队列同源，跨域取不到（404） */
     workflowTask(taskId) {
-      return this._get(`/api/v2/workflow/${encodeURIComponent(taskId)}`);
+      return this._getScoped(`/api/v2/workflow/${encodeURIComponent(taskId)}`);
     },
 
     /** 治理权限目录（角色×权限矩阵 + 8 个 HITL 槽位；前端门控提示用） */
     governancePermissions() { return this._get("/api/v2/governance/permissions"); },
 
-    /** 制造看板（稼动率/报废率/报工完成率/测试直通率；全员可见） */
-    manufacturingDashboard() { return this._get("/api/v2/dashboard/manufacturing", 8000); },
+    /**
+     * 受控读接口（看板 / 下钻）：令牌失效时**静默补签一次并重试**。
+     *
+     * 为什么单独一层：后端重启会让 AUTH_SECRET 重签、所有 8 小时令牌一起失效，
+     * 开发期几乎每改一次代码就会遇上。若把 401 当普通失败，看板的降级策略会
+     * 回落演示数据 —— 界面看着正常、数据其实是编的，属于最坏的一类「假阳性」。
+     * 补签失败（后端真挂了）才把 401 抛出去。
+     */
+    async _getScoped(path, timeoutMs) {
+      try {
+        return await this._get(path, timeoutMs);
+      } catch (err) {
+        if (!err || err.status !== 401 || !state.role) throw err;
+        const signed = await loginAs(state.role);
+        if (!signed) throw err;
+        return this._get(path, timeoutMs);
+      }
+    },
 
-    /** 品质看板（不良率/直通率 FPY/标准三率；全员可见） */
-    qualityDashboard() { return this._get("/api/v2/dashboard/quality", 8000); },
+    /** 制造看板（稼动率/报废率/报工完成率/测试直通率；按岗位数据范围裁决） */
+    manufacturingDashboard() { return this._getScoped("/api/v2/dashboard/manufacturing", 8000); },
 
-    /** 订单履约看板（OTD 准时交付率/OTIF 准时足额率/延期订单率/齐套率；全员可见） */
-    ordersDashboard() { return this._get("/api/v2/dashboard/orders", 8000); },
+    /** 品质看板（不良率/直通率 FPY/标准三率；按岗位数据范围裁决） */
+    qualityDashboard() { return this._getScoped("/api/v2/dashboard/quality", 8000); },
 
-    /** SPC 过程能力看板（逐特性 Cpk/Pp/Ppk 判定 + 子组越限预警 + 不良柏拉图；全员可见） */
-    spcDashboard() { return this._get("/api/v2/dashboard/spc", 8000); },
+    /** 订单履约看板（OTD/OTIF/延期订单率/齐套率；客户身份按岗位脱敏） */
+    ordersDashboard() { return this._getScoped("/api/v2/dashboard/orders", 8000); },
+
+    /** SPC 过程能力看板（逐特性 Cpk/Pp/Ppk 判定 + 子组越限预警 + 不良柏拉图；按岗位裁决） */
+    spcDashboard() { return this._getScoped("/api/v2/dashboard/spc", 8000); },
 
     /** 看板下钻：无 entity = L2（按维度分解）；带 entity = L3（单实体）；
      *  再带 step = L4（该工序逐日+工位）；再带 station = L5（该工位逐日+过站记录）；
@@ -634,7 +755,7 @@
       if (step) extra += `&step=${encodeURIComponent(step)}`;
       if (station) extra += `&station=${encodeURIComponent(station)}`;
       if (defectType) extra += `&defect_type=${encodeURIComponent(defectType)}`;
-      return this._get(`/api/v2/dashboard/drill?${qs}${extra}`, 8000);
+      return this._getScoped(`/api/v2/dashboard/drill?${qs}${extra}`, 8000);
     },
 
     /** 选定处置动作（按该动作 propose/cosign 生成会签要求）。
@@ -672,7 +793,9 @@
     if (!nav) return;
     let html = "";
     let lastGroup = "";
-    NAV_ITEMS.forEach((item) => {
+    // 只渲染当前岗位可见项；分组标题按"可见项里出现过的分组"生成，
+    // 避免出现"标题有、下面没内容"的空组。
+    visibleNav().forEach((item) => {
       if (item.group !== lastGroup) {
         html += `<div class="nav-group-label">${esc(item.group)}</div>`;
         lastGroup = item.group;
@@ -688,7 +811,16 @@
   }
 
   function updateChrome() {
-    const item = NAV_ITEMS.find((n) => n.id === state.screen) || NAV_ITEMS[0];
+    // 当前屏若对新岗位不可见（切换身份后），先回落到首个可见项，
+    // 否则标题栏会显示一个菜单里根本不存在的页面。
+    const allowed = visibleNav();
+    let item = allowed.find((n) => n.id === state.screen);
+    if (!item) {
+      state.screen = allowed[0].id;
+      item = allowed[0];
+      // 同步地址栏，避免"URL 说在 SPC、实际显示工作台"的错位
+      if (location.hash !== `#/${state.screen}`) location.hash = `#/${state.screen}`;
+    }
     const title = document.getElementById("topbar-title");
     const sub = document.getElementById("topbar-sub");
     if (title) title.textContent = item.title;
@@ -706,29 +838,63 @@
     if (name) name.textContent = role.user;
     if (roleEl) roleEl.textContent = role.name;
 
-    // 后端状态
+    // 后端状态（四态）：检测中 / 完整 / 降级 / 离线。
+    // 之前只有"在线=绿、离线=黄"两态，"在线"仅代表 uvicorn 进程活着——
+    // 依赖全挂也显示绿灯，与实际体验背离。现按 health.checks 细分：
+    //   绿 = 全依赖就绪；黄 = 可达但部分降级（点开 title 看清单）；红 = 不可达。
     const dot = document.getElementById("backend-dot");
     const text = document.getElementById("backend-text");
     const envMode = document.getElementById("env-mode");
+    const chip = document.getElementById("backend-status");
+    const health = state.backend.health;
+    const degraded = (health && Array.isArray(health.degraded_components))
+      ? health.degraded_components : [];
+    const LABELS = {
+      business_db: "业务库", workflow_db: "治理库", redis: "缓存",
+      vector: "向量库", llm: "大模型",
+    };
+
     if (state.backend.checking) {
       if (dot) dot.className = "dot dot-checking";
       if (text) text.textContent = "连接检测中";
-    } else if (state.backend.online) {
+      if (chip) chip.title = "正在探测后端 /api/v2/health";
+    } else if (!state.backend.online) {
+      if (dot) dot.className = "dot dot-err";
+      if (text) text.textContent = "后端离线 · 演示模式";
+      if (envMode) { envMode.textContent = "演示模式"; envMode.className = "env-value err"; }
+      if (chip) chip.title = "无法连接后端（进程未启动或网络不通），当前展示演示数据";
+    } else if (degraded.length) {
+      if (dot) dot.className = "dot dot-warn";
+      if (text) text.textContent = "后端在线 · 部分降级";
+      if (envMode) { envMode.textContent = "降级模式"; envMode.className = "env-value warn"; }
+      if (chip) {
+        const detail = degraded
+          .map((k) => `${LABELS[k] || k}：${(health.checks[k] || {}).detail || "不可用"}`)
+          .join("\n");
+        chip.title = `以下依赖不可用（链路仍可跑，相关能力降级）：\n${detail}`;
+      }
+    } else if (health && health.mode === "offline") {
+      // 未配置 LLM：README 明确支持的离线降级形态（规则路由 + 模板结论）
+      if (dot) dot.className = "dot dot-ok";
+      if (text) text.textContent = "后端在线 · 离线降级";
+      if (envMode) { envMode.textContent = "离线模式"; envMode.className = "env-value warn"; }
+      if (chip) chip.title = "未配置 LLM 提供方：路由走规则、结论走模板，数字仍取自 SQL";
+    } else {
       if (dot) dot.className = "dot dot-ok";
       if (text) text.textContent = "后端在线 · 真实链路";
       if (envMode) { envMode.textContent = "完整模式"; envMode.className = "env-value online"; }
-    } else {
-      if (dot) dot.className = "dot dot-off";
-      if (text) text.textContent = "后端离线 · 演示模式";
-      if (envMode) { envMode.textContent = "演示模式"; envMode.className = "env-value offline"; }
+      if (chip) chip.title = "全部依赖就绪";
     }
   }
 
   function navigate(screenId) {
-    const target = NAV_ITEMS.find((n) => n.id === screenId);
+    // 只允许跳到当前岗位可见的屏：URL 里手输 #/spc 而该岗位无权限时，
+    // 静默回落到首个可见项（不做错误提示——这属正常收敛，不是异常）。
+    const allowed = visibleNav();
+    const target = allowed.find((n) => n.id === screenId) || allowed[0];
     if (!target) return;
-    state.screen = screenId;
-    if (location.hash !== `#/${screenId}`) location.hash = `#/${screenId}`;
+    state.screen = target.id;
+    if (location.hash !== `#/${target.id}`) location.hash = `#/${target.id}`;
     updateChrome();
     renderScreen();
   }
@@ -750,7 +916,7 @@
       fn(root, {
         state, api, UI: { icon, esc, badge, toast, spinner, fmtClock, fmtDateTime, fmtRemain, demoFlag, realFlag },
         DEMO: window.DEMO, perms: state.perms,
-        navigate, refreshScreen, setRole, currentRole,
+        navigate, refreshScreen, setRole, currentRole, visibleNav,
       });
     } catch (err) {
       console.error("[screen] 渲染失败:", err);
@@ -759,13 +925,35 @@
   }
 
   /** 快捷切换岗位（看板内一键换身份）：岗位变 → 令牌必须重签，否则写接口仍代表旧岗位。 */
-  function setRole(roleId) {
+  /**
+   * 切换岗位（演示门户的「换个人看」）。
+   *
+   * 两处顺序不能省：
+   * 1. **先纠正屏**——换岗位后当前屏可能已不在可见范围内（总经理在 SPC 上
+   *    切成 HR），不纠正就会停在一个无权屏上，看到 403 面板像是坏了；
+   * 2. **先补签令牌再渲染**——`state.token` 刚被清空，立刻 refreshScreen 会
+   *    让首屏请求撞上 401，而看板的降级策略会把它当普通失败回落演示数据，
+   *    于是"刚换岗位"这一下看到的是编造的数据。令牌就绪后再拉。
+   */
+  async function setRole(roleId) {
+    // 岗位 id 必须是前端 ROLES 的 id（gm / mfg / wh …），不是权限目录的 key
+    // （manufacturing / warehouse …）。传错时静默换岗会得到"没有令牌 + 菜单错乱"，
+    // 排查成本极高——直接拒绝并说清原因。
+    if (!window.DEMO || !(window.DEMO.ROLES || []).some((r) => r.id === roleId)) {
+      console.warn("[role] 未知岗位 id:", roleId, "（应为 DEMO.ROLES 的 id）");
+      return;
+    }
     state.role = roleId;
     state.token = "";
     saveUser(roleId, "");
+    const allowed = visibleNav();
+    if (allowed.length && !allowed.some((n) => n.id === state.screen)) {
+      state.screen = allowed[0].id;
+      if (location.hash !== `#/${state.screen}`) location.hash = `#/${state.screen}`;
+    }
     updateChrome();
+    await ensureSession();   // 静默按新岗位补签令牌
     refreshScreen();
-    ensureSession();   // 静默按新岗位补签令牌（异步，不阻塞渲染）
   }
 
   /* ============================================================
@@ -936,7 +1124,8 @@
 
     window.addEventListener("hashchange", () => {
       const hash = location.hash.replace(/^#\/?/, "");
-      if (hash && hash !== state.screen && NAV_ITEMS.some((n) => n.id === hash)) navigate(hash);
+      // 可见性判断同样走 visibleNav()：手输无权限屏不应渲染出来
+      if (hash && hash !== state.screen && visibleNav().some((n) => n.id === hash)) navigate(hash);
     });
   }
 
@@ -947,7 +1136,8 @@
     updateChrome();
 
     const hash = location.hash.replace(/^#\/?/, "");
-    navigate(NAV_ITEMS.some((n) => n.id === hash) ? hash : "dashboard");
+    // 深链接也要过岗位可见性：直接分享 #/spc 给 HR 岗位时应落到工作台
+    navigate(visibleNav().some((n) => n.id === hash) ? hash : "dashboard");
 
     if (!state.backend.online) {
       toast("后端离线：当前为演示模式（问数回放 / 看板演示数据）", "info", 5000);
@@ -1000,6 +1190,7 @@
     enterApp,
     UI: { icon, esc, badge, toast, spinner, fmtClock, fmtDateTime, fmtRemain, demoFlag, realFlag },
     NAV_ITEMS,
+    visibleNav,      // 当前岗位可见导航（帮助中心 / 测试复用同一口径）
   };
 
   if (document.readyState === "loading") {

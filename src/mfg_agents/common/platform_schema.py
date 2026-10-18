@@ -134,6 +134,25 @@ def sqlite_path_from_url(db_url: str) -> str:
     return db_url
 
 
+def is_sqlite_target(db_url: str) -> bool:
+    """判断目标是否为 SQLite：``sqlite://`` 协议头，或裸文件路径 / ``:memory:``。
+
+    这是全域**唯一的方言判定入口**，供 ``ensure_platform_schema`` 与
+    ``WorkflowEngine.assert_sqlite_backed`` 共用，避免两处规则漂移。
+
+    为什么不能写 ``"sqlite" in db_url``（历史写法，已修复）：
+    该子串判定会把裸路径 ``/tmp/platform.db`` 误判为非 SQLite，转而交给
+    SQLAlchemy 的 ``create_engine()``，得到
+    ``ArgumentError: Could not parse SQLAlchemy URL``——一个纯本地路径却报
+    "URL 解析失败"，排查方向完全跑偏。反之，路径里恰好含 "sqlite" 字样
+    （如 ``/opt/sqlite-data/x.db``）又会被误判为 SQLite。子串匹配两边都错。
+    """
+    if "://" not in db_url:
+        return True  # 裸文件路径 / :memory:
+    scheme = db_url.split("://", 1)[0].split("+", 1)[0].strip().lower()
+    return scheme == "sqlite"
+
+
 def _load_metric_rows() -> list[tuple]:
     """从 v2/data/metrics/*.yaml 加载指标种子行（与 MetricLibrary 同源）。"""
     from ..v2.services.text2sql import MetricLibrary  # 延迟导入避免环
@@ -156,10 +175,10 @@ def _load_metric_rows() -> list[tuple]:
 def ensure_platform_schema(db_url: str) -> None:
     """建平台表（幂等）+ 播种指标库。
 
-    SQLite（含 :memory:）：原生 sqlite3，保证与 WorkflowEngine 同一库；
+    SQLite（含 :memory:、裸文件路径）：原生 sqlite3，保证与 WorkflowEngine 同一库；
     其他（MySQL 等）：SQLAlchemy。
     """
-    if "sqlite" in db_url:
+    if is_sqlite_target(db_url):
         ensure_platform_schema_sqlite(db_url)
         return
     engine = create_engine(db_url)
@@ -193,10 +212,19 @@ def ensure_platform_schema_sqlite(db_url_or_conn) -> None:
     """在原生 sqlite3 连接（或 sqlite URL）上建表 + 播种指标库。
 
     接受 sqlite3.Connection（:memory: 持久连接场景）或 sqlite URL（文件库）。
+
+    父目录不存在时自动创建：``sqlite3.connect`` 不会建目录，而
+    ``WorkflowEngine._connect`` 会。历史实现只在前者缺失这一步，导致
+    ``WORKFLOW_DB=sqlite:////var/lib/mfg/platform.db``（目录尚未创建）在
+    **建表阶段**就抛 ``unable to open database file``，与连接阶段行为不一致。
+    此处补齐，让"路径合法即可用"成为统一语义。
     """
     owns_conn = isinstance(db_url_or_conn, str)
     if owns_conn:
-        conn = sqlite3.connect(sqlite_path_from_url(db_url_or_conn))
+        path = sqlite_path_from_url(db_url_or_conn)
+        if path and path != ":memory:":
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(path)
     else:
         conn = db_url_or_conn
     try:

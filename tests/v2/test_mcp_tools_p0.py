@@ -187,8 +187,10 @@ def test_workflow_create_then_pending_visible(registry):
     assert created["task_uid"].startswith("wf-")
     assert created["wf_id"] == "hitl_disposition"
 
+    # 待办按治理槽位裁决，必须带真实角色：
+    # 旧写法 roles=[] 等于「查全量」，新语义下 = 无治理职责 = 空队列。
     pending = registry.call("workflow.pending", {},
-                            user_ctx={"user_id": "u-mfg", "roles": []})
+                            user_ctx={"user_id": "u-mfg", "roles": ["manufacturing"]})
     uids = {t["task_uid"] for t in pending["tasks"]}
     assert created["task_uid"] in uids
 

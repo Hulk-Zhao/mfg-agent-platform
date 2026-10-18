@@ -1,0 +1,125 @@
+# 根因受控词表（root_cause）——词条来源：data/knowledge/cases_history.jsonl 与
+# fa_rules.jsonl 的 root_cause 字段（真实 12 条）+ 语料中出现的组别归并。
+#
+# 治理纪律同 defect_modes.yaml：人工归并、不自动新增、深度 ≤ 2 跳。
+version: 1
+vocabulary: root_cause
+terms:
+  # ---------- 组别（父级 = 失效机理层） ----------
+  - code: RC-GRP-PARAM
+    name: 参数类根因
+    synonyms: [参数漂移, 参数类, 工艺参数异常]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-18"
+  - code: RC-GRP-TOOL
+    name: 工装治具类根因
+    synonyms: [工装类根因, 治具类根因, 网板类根因]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-18"
+  - code: RC-GRP-MAT
+    name: 来料类根因
+    synonyms: [物料类根因, 材料类根因]
+    status: active
+    approved_by: SQE
+    approved_at: "2026-10-18"
+  - code: RC-GRP-PROC
+    name: 过程管理类根因
+    synonyms: [管理类根因, 过程管控不足]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-18"
+  - code: RC-GRP-EQ
+    name: 设备损耗类根因
+    synonyms: [设备类根因, 磨损类根因]
+    status: active
+    approved_by: 设备工程
+    approved_at: "2026-10-18"
+
+  # ---------- 参数（语料真实出现） ----------
+  - code: RC-PARAM-PRESSURE-001
+    name: 刮刀压力漂移
+    parent: RC-GRP-PARAM
+    synonyms: [刮刀压力异常, 压力漂移, 刮刀压力不足]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-18"
+  - code: RC-PARAM-TEMP-002
+    name: 回流温区3偏高
+    parent: RC-GRP-PARAM
+    synonyms: [温区3偏高, 回流温度偏高, 温区温度异常]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-18"
+  - code: RC-PARAM-MOUNT-003
+    name: 贴装压力过大
+    parent: RC-GRP-PARAM
+    synonyms: [贴装压力超限, 贴片压力过大]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-18"
+
+  # ---------- 工装 ----------
+  - code: RC-TOOL-TENSION-004
+    name: 钢网张力不足
+    parent: RC-GRP-TOOL
+    synonyms: [网板张力不足, 网板松弛]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-18"
+  - code: RC-TOOL-CLEAN-005
+    name: 钢网清洁不及时
+    parent: RC-GRP-TOOL
+    synonyms: [钢网清洁周期过长, 钢网清洁不良, 网板未清洁]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-18"
+
+  # ---------- 来料 ----------
+  - code: RC-MAT-SUPPLIER-006
+    name: 供应商来料不良
+    parent: RC-GRP-MAT
+    synonyms: [来料不良, 供应商批次不良, 来料批次异常]
+    status: active
+    approved_by: SQE
+    approved_at: "2026-10-18"
+  - code: RC-MAT-OXIDE-007
+    name: 来料焊盘氧化
+    parent: RC-GRP-MAT
+    synonyms: [焊盘氧化, 引脚氧化, 可焊性差]
+    status: active
+    approved_by: SQE
+    approved_at: "2026-10-18"
+
+  # ---------- 过程管理 ----------
+  - code: RC-PROC-PASTE-008
+    name: 锡膏回温不足
+    parent: RC-GRP-PROC
+    synonyms: [回温时长不足, 锡膏未回温]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-18"
+  - code: RC-PROC-FLUX-009
+    name: 助焊剂残留
+    parent: RC-GRP-PROC
+    synonyms: [残留过多, 助焊剂未清洗]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-18"
+
+  # ---------- 设备损耗 ----------
+  - code: RC-EQ-NOZZLE-010
+    name: 吸嘴磨损
+    parent: RC-GRP-EQ
+    synonyms: [吸嘴磨损超限, 吸嘴损耗]
+    status: active
+    approved_by: 设备工程
+    approved_at: "2026-10-18"
+  - code: RC-EQ-HEATER-011
+    name: 加热管老化
+    parent: RC-GRP-EQ
+    synonyms: [加热管衰减, 加热元件老化]
+    status: active
+    approved_by: 设备工程
+    approved_at: "2026-10-18"

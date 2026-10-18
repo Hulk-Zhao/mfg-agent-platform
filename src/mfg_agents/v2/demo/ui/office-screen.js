@@ -70,7 +70,7 @@
     return {
       messages: [{
         role: "bot", time: nowHM(), steps: [], hitl: null, gaps: [],
-        content: "您好！我是企业综合助手，既能办办公事务（预订会议室、订餐、查/取消本人预订与订单），"
+        content: "您好！我是办公与数据速查助手，既能办办公事务（预订会议室、订餐、查/取消本人预订与订单），"
           + "也能查制造数据（材料库存、成品库存与可发量、来料批次与检验结论、库龄呆滞、缺料缺口、批次追溯，均为只读）。"
           + "高影响事项（报告厅/培训室、商务客餐、超 500 元订单）我会先发起人工确认，不会直接放行。",
       }],
@@ -334,7 +334,7 @@
 
     root.innerHTML = `
       <div class="content-inner content-wide">
-        <div class="page-title">企业综合助手
+        <div class="page-title">办公与数据速查
           <span class="badge badge-outline" id="of-backend">后端检测中…</span>
           <span class="badge badge-outline" id="of-llm">LLM 检测中…</span>
         </div>
@@ -344,10 +344,10 @@
           受岗位数据权限约束；全程工具调用留痕可审计。</div>
 
         <div class="of-grid">
-          <!-- 一、企业助手对话：置顶（问答即入口） -->
+          <!-- 一、办公与数据速查对话：置顶（问答即入口） -->
           <section class="of-a of-a-chat">
             <div class="card of-chat-card">
-              <div class="card-head of-chat-head"><div class="card-title">企业助手对话</div>
+              <div class="card-head of-chat-head"><div class="card-title">办公与数据速查对话</div>
                 <div class="card-extra"><span class="badge badge-purple">Agentic Agent</span>
                   <span class="badge badge-gray">办公 + 数据速查（只读）</span></div></div>
               <div class="of-chat"><div class="chat-scroll" id="of-chat"></div></div>
@@ -448,10 +448,10 @@
       if (!q || S.sending) return;
       if (!online) { toast("后端离线：办公办理与数据查询需要连接后端", "err"); return; }
       if (metaCache && metaCache.llm_available === false) {
-        toast("LLM 服务不可用：企业助手暂无法自主办理，请先看左侧速查卡", "err");
+        toast("LLM 服务不可用：办公与数据速查暂无法自主办理，请先看左侧速查卡", "err");
         return;
       }
-      if (text) toast(`已交给企业助手：${q}`, "info");
+      if (text) toast(`已交给办公与数据速查：${q}`, "info");
       input.value = "";
       S.sending = true;
       S.messages.push({ role: "user", content: q, time: nowHM() });

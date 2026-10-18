@@ -260,8 +260,11 @@
 
   /** 我的看板 KPI 卡：配置了 drill 映射（k.drill）→ 点卡片就地下钻分解；
    *  未映射 → 点卡片跳协同问数。卡内「问数」按钮始终跳协同问数（携带该卡预置问题）。 */
-  function dashKpiCard(UI, k) {
-    const mapped = k.drill && k.drill.screen && k.drill.kpi;
+  function dashKpiCard(ctx, k) {
+    const UI = ctx.UI;
+    // 有 drill 还要「当前岗位能到达那个屏」，否则渲染出一个必然 403 的入口。
+    const mapped = k.drill && k.drill.screen && k.drill.kpi
+      && kpiDrillVisible(ctx, k.drill.screen);
     const ask = k.ask || "";
     const attrs = mapped
       ? `data-dash-drill="1" data-screen="${UI.esc(k.drill.screen)}" data-kpi="${UI.esc(k.drill.kpi)}"
@@ -283,10 +286,61 @@
     </div>`;
   }
 
+  /** 下钻 screen 名 → 侧边栏屏 id（manufacturing / quality 是 mfgboard 的两个 Tab）。 */
+  const SCREEN_TO_NAV = {
+    orders: "orders",
+    spc: "spc",
+    manufacturing: "mfgboard",
+    quality: "mfgboard",
+  };
+
+  /**
+   * 某个下钻目标在当前岗位是否可达。
+   *
+   * KPI 卡写死带 `drill`，但卡是按岗位配置的、屏是按权限收敛的，两者不联动：
+   * 行政人事的首张卡就带「下钻分解」，而 orders 屏它根本看不到——点下去只会
+   * 吃一个 403 再跳到「无权查看」。明知不可点还摆一个可点的样子，比不给更糟。
+   *
+   * 返回 false 时调用方把卡片降级为"点此问数"。
+   */
+  function kpiDrillVisible(ctx, screen) {
+    const navId = SCREEN_TO_NAV[screen];
+    if (!navId) return true;                       // 未知 screen 交给后端裁决，不在前端猜
+    const allowed = (ctx.visibleNav ? ctx.visibleNav() : []).map((n) => n.id);
+    return !allowed.length || allowed.includes(navId);
+  }
+
+  /** 首页快捷入口候选（按岗位可见性过滤后再渲染）。 */
+  const QUICK_ENTRIES = [
+    { id: "chat", icon: "chat", bg: "primary-light", fg: "primary",
+      label: "协同问数", sub: "对话式跨部门协同分析" },
+    { id: "orders", icon: "orders", bg: "warn-bg", fg: "warn",
+      label: "订单履约看板", sub: "订单管道 · 风险订单 · 部门协同" },
+    { id: "hitl", icon: "approve", bg: "ok-bg", fg: "ok",
+      label: "审批确认中心", sub: "复线决策 / 对客 ETA 审批" },
+  ];
+
+  /**
+   * 快捷入口必须跟侧边栏用同一套可见性，否则会出现「菜单里没有、首页却能点进去」的矛盾
+   * ——行政人事首页曾同时挂着「订单履约看板」和「审批确认中心」两个入口，
+   * 点下去不是 403 就是被静默回落到别的屏。
+   */
+  function quickEntries(ctx) {
+    const allowed = (ctx.visibleNav ? ctx.visibleNav() : []).map((n) => n.id);
+    const list = allowed.length
+      ? QUICK_ENTRIES.filter((q) => allowed.includes(q.id))
+      : QUICK_ENTRIES;
+    return list;
+  }
+
   function render_dashboard(root, ctx) {
     const UI = ctx.UI, DEMO = ctx.DEMO;
     const st = ctx.state.screenState;
     const role = ctx.currentRole();
+    // 首页里所有指向别的屏的入口都必须先过可见性，否则会出现
+    // 「侧边栏里没有、首页却能点」的矛盾入口。
+    const hitlVisible = (ctx.visibleNav ? ctx.visibleNav() : [])
+      .some((n) => n.id === "hitl");
     // 我的看板内联下钻状态（host=dashboard）；其它看板残留下钻状态在此复位
     let drill = st.boardDrill;
     if (drill && drill.host !== "dashboard") { drill = null; st.boardDrill = null; }
@@ -310,13 +364,16 @@
           </div>
         </div>
 
-        <div class="section-title">我的看板 <span class="section-extra">统计范围：${UI.esc(role.name)}视角 · ${drill ? "下钻明细分解 · 面包屑逐级返回" : "点卡片下钻分解 / 问数"}</span></div>
+        <div class="section-title">我的看板
+          <span class="section-extra">统计范围：${UI.esc(role.name)}视角 · ${drill ? "下钻明细分解 · 面包屑逐级返回" : "点卡片下钻分解 / 问数"}</span>
+          ${drill ? "" : UI.demoFlag("指标卡为岗位视角演示配置 · 下钻与看板屏走真实链路")}
+        </div>
         <div id="dash-crumb"></div>
         <div id="dash-body">
           ${drill
             ? `<div class="empty">${UI.spinner("lg")}<div style="margin-top:10px">正在加载下钻明细…</div></div>`
             : `<div class="grid grid-4">
-            ${(DEMO.ROLE_KPIS[role.id] || []).map((k) => dashKpiCard(UI, k)).join("")}
+            ${(DEMO.ROLE_KPIS[role.id] || []).map((k) => dashKpiCard(ctx, k)).join("")}
             <div class="card stat-card">
               <div class="stat-icon blue">${UI.icon("approve", 19)}</div>
               <div><div class="stat-num" id="dash-hitl-count">—</div><div class="stat-label">待人工确认</div>
@@ -330,7 +387,9 @@
           <div class="card-head">
             <div class="card-title">${UI.icon("approve", 16)}人工在环待确认</div>
             <div class="card-extra">
-              <button class="link-btn" data-goto="hitl">前往审批中心 ${UI.icon("arrow", 12)}</button>
+              ${hitlVisible
+                ? `<button class="link-btn" data-goto="hitl">前往审批中心 ${UI.icon("arrow", 12)}</button>`
+                : ""}
             </div>
           </div>
           <div id="todo-list"><div class="empty">${UI.spinner("lg")}<div style="margin-top:10px">正在加载待办…</div></div></div>
@@ -338,18 +397,11 @@
 
         <div class="section-title">快捷入口</div>
         <div class="grid grid-3">
-          <button class="quick-entry" data-goto="chat">
-            <span class="qe-ico" style="background:var(--primary-light);color:var(--primary)">${UI.icon("chat", 20)}</span>
-            协同问数<span style="font-size:11.5px;color:var(--text-3);font-weight:400">对话式跨部门协同分析</span>
-          </button>
-          <button class="quick-entry" data-goto="orders">
-            <span class="qe-ico" style="background:var(--warn-bg);color:var(--warn)">${UI.icon("orders", 20)}</span>
-            订单履约看板<span style="font-size:11.5px;color:var(--text-3);font-weight:400">订单管道 · 风险订单 · 部门协同</span>
-          </button>
-          <button class="quick-entry" data-goto="hitl">
-            <span class="qe-ico" style="background:var(--ok-bg);color:var(--ok)">${UI.icon("approve", 20)}</span>
-            审批确认中心<span style="font-size:11.5px;color:var(--text-3);font-weight:400">复线决策 / 对客 ETA 审批</span>
-          </button>
+          ${quickEntries(ctx).map((q) => `
+          <button class="quick-entry" data-goto="${UI.esc(q.id)}">
+            <span class="qe-ico" style="background:var(--${q.bg});color:var(--${q.fg})">${UI.icon(q.icon, 20)}</span>
+            ${UI.esc(q.label)}<span style="font-size:11.5px;color:var(--text-3);font-weight:400">${UI.esc(q.sub)}</span>
+          </button>`).join("")}
         </div>
       </div>`;
 
@@ -402,19 +454,30 @@
     const items = [];
     try {
       if (ctx.api.online()) {
-        const resp = await ctx.api.workflowPending(role.roles || []);
-        const all = resp.data || [];
-        const mine = all.filter((t) => t.my_action);
-        // to_dict 不含 sla_status（property），按 sla_due_at 自行计算超时
-        const overdue = all.filter((t) =>
+        const resp = await ctx.api.workflowPending(govRoles(ctx));
+        // _get 返回的是载荷本身（数组），不是 {data} 信封——原实现取 resp.data
+        // 永远拿到 undefined，简报里的「N 项待办」因此恒为 0（静默失效）。
+        const all = Array.isArray(resp) ? resp : (resp.data || []);
+        const scope = (resp && resp.scope) || {};
+        const mine = all.filter((t) => t.visibility === "mine" && t.my_action);
+        const hold = all.filter((t) => t.visibility !== "mine").length;
+        // 超时只算「该我办但没办」的；域内待观察项超时责任不在本岗位。
+        const overdue = mine.filter((t) =>
           t.sla_due_at && new Date(t.sla_due_at) < new Date()
           && !["done", "closed"].includes(t.status));
-        if (mine.length) {
+        if ((scope.slots || []).length === 0) {
+          items.push(`<span class="briefing-item">${UI.icon("info", 13)}
+            本岗位不参与治理审批</span>`);
+        } else if (mine.length) {
           const byAct = {};
           mine.forEach((t) => { byAct[t.my_action] = (byAct[t.my_action] || 0) + 1; });
           const label = { select_action: "待我发起", cosign: "待我会签", approve: "待我终批" };
           items.push(`<button class="briefing-item hot" data-goto="hitl">${UI.icon("approve", 13)}
             <b>${mine.length} 项待办</b>：${Object.entries(byAct).map(([k, v]) => `${label[k] || k} ${v}`).join(" · ")}</button>`);
+        } else if (hold) {
+          // 没轮到我不是「没事」。不把域内积压说出来，简报给出的就是虚假的轻松感。
+          items.push(`<button class="briefing-item" data-goto="hitl">${UI.icon("approve", 13)}
+            <b>0 项待我办</b>：域内 ${hold} 条待观察（会签未到我 / 待终批）</button>`);
         }
         if (overdue.length) {
           items.push(`<button class="briefing-item danger" data-goto="hitl">${UI.icon("warn", 13)}
@@ -422,15 +485,27 @@
         }
       }
     } catch (e) { /* 离线降级：下方演示数据兜底 */ }
-    const sum = ctx.DEMO.ALERT_SUMMARY[role.id] || ctx.DEMO.ALERT_SUMMARY.gm;
-    if (sum.spc) items.push(`<button class="briefing-item" data-goto="alerts">${UI.icon("activity", 13)}
+
+    // 以下三条来自 DEMO.ALERT_SUMMARY——**演示数据，文案是写死的**
+    // （"华为终端 S 级订单临期" 与真实系统状态无关）。因此只在后端离线时展示。
+    //
+    // 在线时继续拼，等于把编造信息混进真实链路：HR 岗位因 ALERT_SUMMARY 里
+    // 预留的 order 计数，会凭空看到一条根本不存在的订单风险，而人事岗根本
+    // 不承担订单职责。这类"看起来正常的假消息"比直接报错更难被发现。
+    const sum = ctx.api.online() ? null
+      : (ctx.DEMO.ALERT_SUMMARY[role.id] || ctx.DEMO.ALERT_SUMMARY.gm);
+    if (sum && sum.spc) items.push(`<button class="briefing-item" data-goto="alerts">${UI.icon("activity", 13)}
       <b>SPC 越限 ${sum.spc} 项</b>：锡膏印刷 CPK 0.89 &lt; 1.33</button>`);
-    if (sum.shortage) items.push(`<button class="briefing-item" data-goto="alerts">${UI.icon("box", 13)}
+    if (sum && sum.shortage) items.push(`<button class="briefing-item" data-goto="alerts">${UI.icon("box", 13)}
       <b>缺料预警 ${sum.shortage} 项</b>：锡膏 M7020 到货延迟 36h</button>`);
-    if (sum.order) items.push(`<button class="briefing-item" data-goto="orders">${UI.icon("orders", 13)}
+    if (sum && sum.order) items.push(`<button class="briefing-item" data-goto="orders">${UI.icon("orders", 13)}
       <b>订单履约风险 ${sum.order} 单</b>：华为终端 S 级订单临期</button>`);
     if (!items.length) {
-      box.innerHTML = `<span class="empty-inline">${UI.icon("check", 13)} 当前无待办与预警，一切正常</span>`;
+      // 在线时不能写"一切正常"——预警通道还没接真实数据源，
+      // "没显示"只说明"没接入"，不说明"没异常"。
+      box.innerHTML = ctx.api.online()
+        ? `<span class="empty-inline">${UI.icon("info", 13)} 暂无待办 · 实时预警尚未接入</span>`
+        : `<span class="empty-inline">${UI.icon("check", 13)} 当前无待办与预警（演示数据）</span>`;
       return;
     }
     box.innerHTML = items.join("");
@@ -454,13 +529,41 @@
       return;
     }
     try {
-      const raw = await ctx.api.workflowPending();
+      // 带角色：后端以令牌为准，只能拿到「我治理域内」的工单。
+      // 不带角色就变成「全厂队列」——HR 会看到品质 8D 与停机窗口，这正是要堵的。
+      const raw = await ctx.api.workflowPending(govRoles(ctx));
       if (ctx.state.screen !== "dashboard") return;
-      if (source) source.innerHTML = `待确认事项 · ${UI.realFlag("工作流引擎待办队列")}`;
-      if (count) count.textContent = String(raw.length);
-      const tasks = mergeProcessedTasks(ctx, raw);
+      const scope = raw.scope || {};
+      const slots = scope.slots || [];
+      const mine = raw.filter((t) => t.visibility === "mine");
+
+      if (!slots.length) {
+        // 无治理职责。措辞必须与「处理完了」区分开：
+        // HR 看到「所有关键决策均已处理」会以为是自己办的，是误导。
+        if (source) source.innerHTML = `待确认事项 · ${UI.realFlag("治理队列")}`;
+        if (count) count.textContent = "—";
+        list.innerHTML = `<div class="empty">${UI.icon("info", 28)}`
+          + `<div style="margin-top:8px">本岗位不参与治理审批</div>`
+          + `<div class="muted" style="margin-top:4px;font-size:12px">`
+          + `复线 / 特采 / 8D 关闭 / 对客承诺等决策由对应治理岗位确认</div></div>`;
+        return;
+      }
+
+      if (source) source.innerHTML = `待确认事项 · ${UI.realFlag("我的治理待办")}`;
+      if (count) count.textContent = String(mine.length);
+      const tasks = mergeProcessedTasks(ctx, mine);
       if (!tasks.length) {
-        list.innerHTML = `<div class="empty">${UI.icon("check", 30)}<div style="margin-top:8px">当前无 待确认事项——所有关键决策均已处理</div></div>`;
+        const hold = raw.length - mine.length;
+        list.innerHTML = `<div class="empty">${UI.icon("check", 30)}`
+          + `<div style="margin-top:8px">当前无待办——关键决策都已轮到别人</div>`
+          + (hold > 0
+            ? `<div class="muted" style="margin-top:4px;font-size:12px">`
+              + `域内另有 ${hold} 条待观察（会签未到我 / 已签完待终批）
+                 <button class="link-btn" data-goto="hitl">去审批中心</button></div>`
+            : "")
+          + `</div>`;
+        list.querySelectorAll("[data-goto]").forEach((b) =>
+          b.addEventListener("click", () => ctx.navigate(b.dataset.goto)));
         return;
       }
       list.innerHTML = tasks.slice(0, 4).map((t) => realTodoHtml(ctx, t)).join("");
@@ -743,6 +846,36 @@
   }
 
   /**
+   * 无权限占位：**明确说"当前岗位无权查看"，绝不回落演示数据**。
+   *
+   * 这是本屏最容易做错的地方——把 403 当普通失败、切演示数据，界面上看起来
+   * "一切正常"，等于用编造的数据掩盖越权，比直接报错严重得多（与健康检查
+   * 那个假阳性是同一类问题）。数据范围由服务端裁决，前端只负责如实呈现。
+   */
+  function scopedDenied(UI, err, label, box, flagEl) {
+    const msg = (err && err.message) ? err.message : "当前岗位无权查看该看板";
+    if (flagEl) {
+      flagEl.innerHTML = UI.badge("无权限", "badge-red", true);
+    }
+    box.innerHTML = `<div class="empty">
+      ${UI.icon("shield", 30)}
+      <div style="margin-top:10px;font-weight:600">${UI.esc(label)} · 当前岗位无权查看</div>
+      <div style="margin-top:6px;color:var(--text-2);font-size:13px">${UI.esc(msg)}</div>
+      <div style="margin-top:8px;color:var(--text-3);font-size:12px">
+        数据范围由服务端裁决（<span class="mono">v2/data/data_scope.yaml</span>），
+        需要访问请联系对应责任岗位或管理员。
+      </div>
+    </div>`;
+  }
+
+  /** 脱敏角标：让"已按岗位脱敏"这件事在界面上可见，而不是只写在文档里。 */
+  function maskedFlag(UI, masked) {
+    if (!masked || !masked.length) return "";
+    return `<span class="badge badge-amber" title="以下字段已按当前岗位脱敏：${UI.esc(masked.join("、"))}">`
+      + `${UI.icon("shield", 11)} 已脱敏 ${UI.esc(masked.length)} 项</span>`;
+  }
+
+  /**
    * 订单履约看板 L1 数据加载（真实优先 + 演示降级，全程不抛）：
    * 在线且未降级 → /api/v2/dashboard/orders；否则 → DEMO.ORDERS_DASHBOARD（与接口同构）。
    */
@@ -751,17 +884,23 @@
     const cfg = BOARD_CFG.orders;
     const box = document.getElementById(cfg.body);
     if (!box) return;
-    let payload = null, source = "real", reason = "";
+    let payload = null, source = "real", reason = "", scopeMeta = null;
 
     if (ctx.api.online()) {
       try {
         const d = await ctx.api.ordersDashboard();
         if (d && !d.degraded && (d.kpis || []).length) {
           payload = d;
+          scopeMeta = d.scope || null;
         } else {
           reason = (d && d.degraded_reason) || "后端数据降级";
         }
       } catch (err) {
+        if (err && err.kind === "permission_denied") {
+          scopedDenied(UI, err, cfg.label || "订单履约看板", box,
+                       document.getElementById(cfg.flag));
+          return;
+        }
         reason = "后端请求失败：" + (err && err.message ? err.message : "未知错误");
         UI.toast("看板数据请求失败，已切换演示数据", "warn", 3600);
       }
@@ -783,7 +922,11 @@
       winEl.textContent = `${payload.window.label}（${payload.window.start} ~ ${payload.window.end}）`;
     }
     const flagEl = document.getElementById(cfg.flag);
-    if (flagEl) flagEl.innerHTML = source === "demo" ? UI.demoFlag(reason || "演示数据") : UI.realFlag("真实链路");
+    if (flagEl) {
+      flagEl.innerHTML = (source === "demo"
+        ? UI.demoFlag(reason || "演示数据")
+        : UI.realFlag("真实链路")) + maskedFlag(UI, scopeMeta && scopeMeta.masked);
+    }
     const genEl = document.getElementById(cfg.gen);
     if (genEl && payload.generated_at) genEl.textContent = " · 生成于 " + payload.generated_at;
 
@@ -2406,28 +2549,32 @@
     let tasks = [];
     let demo = false;
     let readonlyMode = false;
+    let noGovernance = false;   // 岗位不具备任何 HITL 槽位权限（不参与治理审批）
+    let mineCount = 0;          // 我要动作的
+    let holdCount = 0;          // 我域内待观察的
 
     if (ctx.api.online()) {
       try {
-        // 「审批即待办」：只拉当前岗位可动作的工单（后端按 my_action 过滤）
+        // 一次请求拿到「我的活」+「我域内待观察」，由后端按 HITL 槽位裁决。
+        // 旧实现拉两次：先按角色，无待办时再拉全量兜底——第二次等于把全厂
+        // 工单（含客户名 / 批次号）塞给 HR 这种无治理职责的岗位。
         const raw = await ctx.api.workflowPending(govRoles(ctx));
-        tasks = mergeProcessedTasks(ctx, raw);
-        tasks.forEach((t) => { if (t.task_uid && t.governance) _hitlGov[t.task_uid] = t; });
-        if (!tasks.length) {
-          // 兜底：当前岗位无待办时，只读展示队列中「待其他岗位处理」的工单，
-          // 避免审批中心出现"看起来没活"的误导（可动作工单仍只有我的待办）。
-          //
-          // 性能：这里曾串行发第二次 workflowPending()。公网隧道下单次往返
-          // 1-2s，串行两次会让审批中心白等 2-4s。改为并行预取全量队列
-          // （后端无过滤参数成本很低），只在真的需要兜底时才消费结果。
-          const allP = ctx.api.workflowPending();
-          const others = mergeProcessedTasks(ctx, await allP)
-            .filter((t) => t.task_uid && !processedMap(ctx)[t.task_uid]);
-          if (others.length) {
-            tasks = others.map((t) => ({ ...t, _readonly: true }));
-            readonlyMode = true;
-          }
+        const scope = raw.scope || {};
+        noGovernance = !(scope.slots || []).length;
+        if (!noGovernance) {
+          const mineRaw = raw.filter((t) => t.visibility === "mine");
+          const domainRaw = raw.filter((t) => t.visibility !== "mine");
+          const mine = mergeProcessedTasks(ctx, mineRaw);
+          // 域内但暂不轮到我：降级为只读（.readonly 行不可点发起动作），
+          // 但仍然展示——否则审批中心看起来"没活"，其实是活还没到我这。
+          const domain = mergeProcessedTasks(ctx, domainRaw)
+            .map((t) => ({ ...t, _readonly: true }));
+          tasks = mine.concat(domain);
+          mineCount = mine.length;
+          holdCount = tasks.length - mineCount;
+          readonlyMode = mineCount === 0 && holdCount > 0;
         }
+        tasks.forEach((t) => { if (t.task_uid && t.governance) _hitlGov[t.task_uid] = t; });
       } catch (err) {
         demo = true;
       }
@@ -2453,9 +2600,15 @@
     if (sourceEl) {
       sourceEl.innerHTML = demo
         ? UI.demoFlag("后端离线 · 演示数据")
-        : readonlyMode
-          ? UI.badge("当前岗位无待办 · 只读展示他人待办", "badge-amber")
-          : UI.realFlag("我的待办（" + roleLabels(govRoles(ctx)).join("/") + "）");
+        : noGovernance
+          // 不是「没待办」，是「这个岗位不在这条链上」。两者措辞必须区分，
+          // 否则 HR 会以为全厂的关键决策都已处理完毕。
+          ? UI.badge("本岗位不参与治理审批", "badge-amber")
+          : readonlyMode
+            ? UI.badge("当前岗位无待办 · 只读展示域内待观察", "badge-amber")
+            : UI.realFlag("我的待办 " + mineCount
+                + (holdCount ? " · 域内待观察 " + holdCount : "")
+                + "（" + roleLabels(govRoles(ctx)).join("/") + "）");
     }
 
     // 排序：需要「我」动作的待办永远置顶（醒目样式），其后按 SLA 剩余时间紧迫度；
@@ -2467,8 +2620,16 @@
       || String(a.task_uid).localeCompare(String(b.task_uid)));
 
     if (!tasks.length) {
-      listEl.innerHTML = `<div class="empty">${UI.icon("check", 30)}<div style="margin-top:8px">当前无待审批工单</div>
-        <div style="font-size:11.5px;margin-top:6px">可在「协同问数」发起停线问数，人工确认 节点将生成真实待办</div></div>`;
+      listEl.innerHTML = noGovernance
+        // 空态措辞是产品决策：说"当前无待审批工单"会让 HR 以为活干完了；
+        // 真相是这个岗位压根不在这条治理链上。
+        ? `<div class="empty">${UI.icon("info", 30)}
+            <div style="margin-top:8px">本岗位不参与治理审批</div>
+            <div style="font-size:11.5px;margin-top:6px">
+              复线 / 特采 / 8D 关闭 / 对客承诺 / 停机窗口等决策由对应治理岗位确认，
+              本岗位无权也不需要处理</div></div>`
+        : `<div class="empty">${UI.icon("check", 30)}<div style="margin-top:8px">当前无待审批工单</div>
+            <div style="font-size:11.5px;margin-top:6px">可在「协同问数」发起停线问数，人工确认 节点将生成真实待办</div></div>`;
       document.getElementById("hitl-detail").innerHTML = "";
       return;
     }
@@ -2994,11 +3155,16 @@
     const ask = `最近7天${ranking.label}${hb ? "最低" : "最高"}的 5 项分别是哪些？`;
     const rows = (ranking.items || []).map((it) => {
       const worst = it.status === "danger";
-      const ent = drillEntity(it);
-      return `<div class="rank-row${worst ? " worst" : ""}" role="button" tabindex="0"
-              data-drill-entity="${UI.esc(ent)}" data-kpi="${UI.esc(ranking.key)}"
+      // 后端已按岗位脱敏并移除下钻键（masked:true）→ 行不再可点击。
+      // 只剩「客户 A」这种代号还允许下钻，点一下就按代号查回真实客户，等于白脱敏。
+      const locked = !!it.masked;
+      const ent = locked ? "" : drillEntity(it);
+      const drillAttrs = locked
+        ? ` title="该行已按当前岗位脱敏，不支持下钻"`
+        : ` role="button" tabindex="0" data-drill-entity="${UI.esc(ent)}" data-kpi="${UI.esc(ranking.key)}"
               data-screen="${UI.esc(screen)}"
-              title="点击查看「${UI.esc(it.name)}」逐日明细">
+              title="点击查看「${UI.esc(it.name)}」逐日明细"`;
+      return `<div class="rank-row${worst ? " worst" : ""}${locked ? " locked" : ""}"${drillAttrs}>
         <span class="rank-no">${UI.esc(it.rank)}</span>
         <span class="rank-name">${worst ? UI.icon("warn", 12) : ""}${UI.esc(it.name)}</span>
         <span class="rank-val ${UI.esc(it.status)}">${UI.esc(it.value)}${UI.esc(ranking.unit)}</span>
@@ -3378,9 +3544,11 @@
     const rows = (d.rows || []).map((r) => {
       const tone = MFG_TONE[r.status] || "blue";
       const ent = drillEntity(r);
-      const rowAttrs = term
+      // ``masked`` = 后端已脱敏并移除了该行的下钻实体：与 terminal 同待遇，不再下钻
+      const rowAttrs = (term || r.masked)
         ? ` title="${UI.esc(r.name)}：${UI.esc(r.value)}${UI.esc(d.unit)}`
           + ` · ${UI.esc(r.numerator)} ÷ ${UI.esc(r.denominator)}"`
+          + (r.masked ? ` · 已按岗位脱敏，不支持下钻` : "")
         : ` role="button" tabindex="0" data-drill-entity="${UI.esc(ent)}"`
           + ` data-kpi="${UI.esc(d.kpi)}" data-screen="${UI.esc(d.screen)}"`
           + ` title="点击查看「${UI.esc(r.name)}」逐日明细"`;
@@ -3688,6 +3856,12 @@
           reason = (d && d.degraded_reason) || "后端数据降级";
         }
       } catch (err) {
+        if (err && err.kind === "permission_denied") {
+          // 岗位在屏上可见、但这条下钻维度不允许（例如脱敏行）→ 如实拒绝，
+          // 不退回演示明细，否则客户看到的是编造的"明细"却以为是真的。
+          scopedDenied(UI, err, "该下钻明细", box, document.getElementById(cfg.flag));
+          return;
+        }
         reason = "后端请求失败：" + (err && err.message ? err.message : "未知错误");
         UI.toast("下钻数据请求失败，已切换演示数据", "warn", 3600);
       }
@@ -3781,17 +3955,24 @@
     const box = document.getElementById("mfg-body");
     if (!box) return;
     const isQ = tab === "quality";
-    let payload = null, source = "real", reason = "";
+    const tabLabel = isQ ? "品质看板" : "制造综合看板";
+    let payload = null, source = "real", reason = "", scopeMeta = null;
 
     if (ctx.api.online()) {
       try {
         const d = isQ ? await ctx.api.qualityDashboard() : await ctx.api.manufacturingDashboard();
         if (d && !d.degraded && (d.kpis || []).length) {
           payload = d;
+          scopeMeta = d.scope || null;
         } else {
           reason = (d && d.degraded_reason) || "后端数据降级";
         }
       } catch (err) {
+        if (err && err.kind === "permission_denied") {
+          scopedDenied(UI, err, tabLabel, box,
+                       document.getElementById("mfg-flag"));
+          return;
+        }
         reason = "后端请求失败：" + (err && err.message ? err.message : "未知错误");
         UI.toast("看板数据请求失败，已切换演示数据", "warn", 3600);
       }
@@ -3814,7 +3995,11 @@
       winEl.textContent = `${payload.window.label}（${payload.window.start} ~ ${payload.window.end}）`;
     }
     const flagEl = document.getElementById("mfg-flag");
-    if (flagEl) flagEl.innerHTML = source === "demo" ? UI.demoFlag(reason || "演示数据") : UI.realFlag("真实链路");
+    if (flagEl) {
+      flagEl.innerHTML = (source === "demo"
+        ? UI.demoFlag(reason || "演示数据")
+        : UI.realFlag("真实链路")) + maskedFlag(UI, scopeMeta && scopeMeta.masked);
+    }
     const genEl = document.getElementById("mfg-gen");
     if (genEl && payload.generated_at) genEl.textContent = " · 生成于 " + payload.generated_at;
 
@@ -3951,17 +4136,23 @@
     const cfg = BOARD_CFG.spc;
     const box = document.getElementById(cfg.body);
     if (!box) return;
-    let payload = null, source = "real", reason = "";
+    let payload = null, source = "real", reason = "", scopeMeta = null;
 
     if (ctx.api.online()) {
       try {
         const d = await ctx.api.spcDashboard();
         if (d && !d.degraded && (d.kpis || []).length) {
           payload = d;
+          scopeMeta = d.scope || null;
         } else {
           reason = (d && d.degraded_reason) || "后端数据降级";
         }
       } catch (err) {
+        if (err && err.kind === "permission_denied") {
+          scopedDenied(UI, err, "SPC 过程能力看板", box,
+                       document.getElementById(cfg.flag));
+          return;
+        }
         reason = "后端请求失败：" + (err && err.message ? err.message : "未知错误");
         UI.toast("看板数据请求失败，已切换演示数据", "warn", 3600);
       }
@@ -3983,7 +4174,11 @@
       winEl.textContent = `${payload.window.label}（${payload.window.start} ~ ${payload.window.end}）`;
     }
     const flagEl = document.getElementById(cfg.flag);
-    if (flagEl) flagEl.innerHTML = source === "demo" ? UI.demoFlag(reason || "演示数据") : UI.realFlag("真实链路");
+    if (flagEl) {
+      flagEl.innerHTML = (source === "demo"
+        ? UI.demoFlag(reason || "演示数据")
+        : UI.realFlag("真实链路")) + maskedFlag(UI, scopeMeta && scopeMeta.masked);
+    }
     const genEl = document.getElementById(cfg.gen);
     if (genEl && payload.generated_at) genEl.textContent = " · 生成于 " + payload.generated_at;
 

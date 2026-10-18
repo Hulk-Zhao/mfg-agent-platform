@@ -38,6 +38,7 @@ from typing import Any, Optional
 from ...common.platform_schema import (
     ensure_platform_schema,
     ensure_platform_schema_sqlite,
+    is_sqlite_target,
     sqlite_path_from_url,
 )
 from ..contracts.permissions import (
@@ -51,12 +52,14 @@ __all__ = [
     "PermissionDenied",
     "SignoffConflict",
     "SignoffIncomplete",
+    "WorkflowBackendError",
     "WorkflowEngine",
     "WorkflowTask",
     "WorkflowTransitionError",
     "TRANSITIONS",
     "TERMINAL_STATUSES",
     "GOVERNANCE_SLOTS",
+    "assert_sqlite_backed",
 ]
 
 
@@ -130,6 +133,41 @@ GOVERNANCE_SLOTS: frozenset[str] = frozenset({
     "restart", "eta", "disposition", "d8_close", "complaint_reply",
     "delivery_commit", "maintenance_window", "spc_action",
 })
+
+
+class WorkflowBackendError(NotImplementedError):
+    """治理写路径不接受非 SQLite 后端——启动即失败，绝不静默降级。"""
+
+
+def assert_sqlite_backed(db_url: str) -> None:
+    """校验 ``db_url`` 可作为 SQLite 文件路径使用，否则 fail-fast。
+
+    背景（这条防线是必须的，别删）：本引擎直连 ``sqlite3``，不走 SQLAlchemy，
+    而 :func:`sqlite_path_from_url` 对无法识别的 URL **原样返回整条字符串**。
+    若把 ``DB_URL=mysql+pymysql://root:pw@host:3306/db`` 直接传进来，会得到：
+
+    - Linux / 容器：``sqlite3.connect("<整条 URL>")`` 在工作目录静默建出一个
+      文件名即该 URL 的空库 → 工单写进错误位置，跨进程重启（CWD 变化）后"消失"；
+    - Windows：文件名含 ``:`` 属非法字符 → 直接抛 ``OSError``，治理链整体不可用。
+
+    两种结局都是事故，且第一种**不报错**，排查成本极高。因此在此显式拒绝，
+    让错误在启动时以清晰信息暴露。方言判定复用
+    :func:`~mfg_agents.common.platform_schema.is_sqlite_target`，与建表路径同源。
+    """
+    if is_sqlite_target(db_url):
+        return
+    raise WorkflowBackendError(
+        f"WorkflowEngine 目前仅支持 SQLite 持久化，收到非 SQLite 地址：{db_url!r}。\n"
+        f"治理写路径（工单 / 会签 / SLA / HITL）直连 sqlite3，未接入 SQLAlchemy 抽象；\n"
+        f"把 MySQL URL 当作文件路径会静默建出错误的库（Windows 直接抛异常）。\n"
+        f"解决方式：\n"
+        f"  1) 单独指定治理库（推荐）——在 .env 设 "
+        f"WORKFLOW_DB=sqlite:////absolute/path/to/platform.db，与 DB_URL 解耦；\n"
+        f"  2) 或把 DB_URL 改回 SQLite；\n"
+        f"  3) 需要治理数据落 MySQL 时，先抽 WorkflowRepository 契约再实现\n"
+        f"     SQLAlchemy 后端（见 README「生产化清单」第 1 条）。"
+    )
+
 
 
 @dataclass
@@ -241,6 +279,8 @@ class WorkflowEngine:
     def __init__(self, db_url: str, default_sla_hours: float = 2.0,
                  permission_registry: Optional[PermissionRegistry] = None) -> None:
         self.db_url = db_url
+        # 先校验后端再解析路径：非 SQLite URL 必须在解析前被拒（详见函数 docstring）
+        assert_sqlite_backed(db_url)
         self.db_path = sqlite_path_from_url(db_url)
         self.default_sla_hours = default_sla_hours
         self.permission_registry = permission_registry or get_permission_registry()

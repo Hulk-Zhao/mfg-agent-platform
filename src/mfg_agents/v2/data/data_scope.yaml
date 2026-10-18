@@ -1,0 +1,139 @@
+# 看板数据范围目录（声明式）——四个 /api/v2/dashboard/* 端点的裁决依据
+#
+# 为什么需要这份文件：
+#   四个看板端点此前「全员可见」（docstring 里也这么写），任何岗位只要持有
+#   有效令牌就能拉取 SPC 过程能力、订单履约、成本相关聚合。菜单层收敛只能
+#   隐藏入口，挡不住直接调接口——「HR 凭什么看 SPC」这个问题必须有服务端口径。
+#
+# 铁律：
+#   1. **未声明的看板 = 拒绝**（fail-closed）。新增看板必须在本文件登记，
+#      否则连总经都拿不到数据；`tests/v2/test_架构守卫.py` 会扫 api.py 兜这条。
+#   2. 角色一律用 permissions.yaml 的 32 个 key，禁止另立命名。
+#      加载期会逐个校验，出现未识别角色即启动失败（与 PermissionRegistry 同款纪律）。
+#   3. 脱敏是**服务端**行为：前端只负责展示，不得据此判断权限。
+#   4. 脱敏必须成对处理「显示名 + 下钻键」：只藏名字、留下钻用的客户键，
+#      点一下就还原了真名，等于没脱敏（见 orders 的 also_drop）。
+#
+# 与前端 NAV_ITEMS[].roles 的关系：
+#   NAV 是**展示归属**（哪些岗位该在菜单里看到这一屏），本文件是**接口裁决**。
+#   两者必须一致——不一致会表现为「菜单有、点进去 403」或「菜单没、接口能拿」。
+#   `tests/v2/test_数据范围.py` 交叉校验两边的角色集合。
+version: 1
+
+# 稳定脱敏口径（按出现值的字典序分配编号，同一批数据多次请求结果一致）
+pseudo:
+  customers: 客户
+
+dashboards:
+  # ---------- 制造综合看板（制造 + 品质双 tab，同一屏两个端点）----------
+  # 两个 tab 属于同一屏，角色集合必须一致，否则切 tab 就会出现 403。
+  manufacturing:
+    name: 制造综合看板
+    screen: mfgboard
+    allow_roles:
+      - gm
+      - manufacturing
+      - equipment
+      - equipment_manager
+      - maintenance_tech
+      - quality_director
+      - pqe
+      - product_engineering
+      - ie_engineer
+      - test_engineer
+      - rd_manager
+      - rd_engineering
+      - me_engineer
+      - rd_test_engineer
+      - npi_engineer
+      - project_manager
+      - ehs
+
+  quality:
+    name: 品质看板
+    screen: mfgboard
+    # 与 manufacturing 同屏（tab 切换），角色集合必须相同
+    allow_roles:
+      - gm
+      - manufacturing
+      - equipment
+      - equipment_manager
+      - maintenance_tech
+      - quality_director
+      - pqe
+      - product_engineering
+      - ie_engineer
+      - test_engineer
+      - rd_manager
+      - rd_engineering
+      - me_engineer
+      - rd_test_engineer
+      - npi_engineer
+      - project_manager
+      - ehs
+
+  # ---------- 订单履约看板 ----------
+  orders:
+    name: 订单履约看板
+    screen: orders
+    allow_roles:
+      - gm
+      - manufacturing
+      - sales
+      - customer_service
+      - project_manager
+      - planning
+      - material_control
+      - supply_chain_manager
+      - procurement_manager
+      - procurement
+      - warehouse_manager
+      - warehouse
+      - finance_manager
+      - finance
+    # 客户身份（客户名 / 客户等级）只在承担对客与收款责任的岗位可见。
+    # 物控、仓库、采购、制造看到的是「客户 A / 客户 B」——够用来排优先级，
+    # 但不足以还原是哪一家客户、更不足以反推合同等级。
+    mask:
+      - path: risk_orders[].customer
+        label: 客户名称
+        keep_roles: [gm, sales, customer_service, project_manager, finance, finance_manager]
+        pseudo: customers
+      - path: risk_orders[].customer_level
+        label: 客户等级
+        keep_roles: [gm, sales, customer_service, project_manager, finance, finance_manager]
+        literal: "—"
+      - path: rankings[key=otd].items[].name
+        label: 客户名称
+        keep_roles: [gm, sales, customer_service, project_manager, finance, finance_manager]
+        pseudo: customers
+        compose_sep: " · "
+        # 排行行同时带着下钻实体 {customer, level}；名字藏了、键还在 = 一钻还原
+        also_drop: [entity]
+      - path: rankings[key=otif].items[].name
+        label: 客户名称
+        keep_roles: [gm, sales, customer_service, project_manager, finance, finance_manager]
+        pseudo: customers
+        compose_sep: " · "
+        also_drop: [entity]
+      - path: rankings[key=delay_rate].items[].name
+        label: 客户名称
+        keep_roles: [gm, sales, customer_service, project_manager, finance, finance_manager]
+        pseudo: customers
+        compose_sep: " · "
+        also_drop: [entity]
+
+  # ---------- SPC 过程能力看板 ----------
+  spc:
+    name: SPC 过程能力看板
+    screen: spc
+    allow_roles:
+      - gm
+      - manufacturing
+      - quality_director
+      - pqe
+      - sqe
+      - qa
+      - product_engineering
+      - test_engineer
+      - ie_engineer

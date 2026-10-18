@@ -1,0 +1,85 @@
+# 脱敏规则（声明式）——**入库前固化**，不是查询时打码（BR-03 / D2）。
+#
+# 五类例外（PRD §7.4）在本文件中的落点：
+#   E2 客户/供应商隐私与商业秘密 → literal 词表 + org 机构名正则（替换为"客户甲/供应商甲/某企业"）
+#   E3 个人信息（PIPL）          → 人名词表（泛化为"责任人甲"）
+#   商务信息                     → 订单号 / 图号 / 联系方式（替换为占位符，等于删除）
+#
+# 纪律：
+#   1. 规则顺序敏感：literal（最长优先）→ 机构名正则 → 订单/图号/电话；
+#   2. 占位符本身**不得**再被任何规则命中（否则 verify_no_leak 永远失败）；
+#   3. 词表是"识别器配置"，不是知识文本；知识层只允许出现占位符。
+version: 1
+
+# 占位符（保持可读语境，同时不含原始敏感值）
+placeholders:
+  customer: 客户甲
+  supplier: 供应商甲
+  person: 责任人甲
+  order_no: "[订单号已脱敏]"
+  drawing_no: "[图号已脱敏]"
+  phone: "[联系方式已脱敏]"
+  org: 某企业
+
+rules:
+  # ---------- E2 客户（literal 词表，最长优先） ----------
+  - id: customer-whitelist
+    kind: customer
+    type: literal
+    replacement: 客户甲
+    values: [华辰电子, 华辰实业, 鼎新通讯, 瑞丰智造, 星辉光电, 华辰]
+  # ---------- E2 供应商（literal 词表） ----------
+  - id: supplier-whitelist
+    kind: supplier
+    type: literal
+    replacement: 供应商甲
+    values: [恒信精工, 天成精密, 金泰五金, 恒信]
+  # ---------- E3 个人信息（literal 词表；姓名一律删除并泛化到岗位） ----------
+  - id: person-whitelist
+    kind: person
+    type: literal
+    replacement: 责任人甲
+    values: [王建国, 李慧敏, 陈志强, 刘志强, 赵鹏, 孙丽华, 周伟]
+  # ---------- E2 通用机构名兜底（未被词表覆盖的"XX有限公司/XX科技"） ----------
+  - id: org-generic
+    kind: customer
+    type: regex
+    pattern: '[\u4e00-\u9fa5]{2,6}(?:股份有限公司|有限公司|集团|电子|科技|精密|实业)'
+    replacement: 某企业
+  # ---------- 商务信息（删除，不保留语境） ----------
+  - id: order-no
+    kind: order_no
+    type: regex
+    pattern: '(?:订单号|订单|PO|SO|WO)[:：\s#-]*[A-Za-z]{0,4}[-]?\d{4,12}'
+    replacement: "[订单号已脱敏]"
+  - id: drawing-no
+    kind: drawing_no
+    type: regex
+    pattern: '(?:图号|图纸编号|DWG)[:：\s#-]*[A-Za-z]{0,3}[-]?\d{3,10}(?:[-.]?[A-Za-z0-9]{1,4})?'
+    replacement: "[图号已脱敏]"
+  # ---------- 联系方式 ----------
+  - id: phone-cn
+    kind: phone
+    type: regex
+    pattern: '(?<!\d)1[3-9]\d{9}(?!\d)'
+    replacement: "[联系方式已脱敏]"
+  - id: phone-tel
+    kind: phone
+    type: regex
+    pattern: '(?<!\d)(?:0\d{2,3}-\d{7,8})(?!\d)'
+    replacement: "[联系方式已脱敏]"
+
+# ---------- 补充黑名单（denylist）----------
+# 词表是"已知敏感值"，denylist 是"已知不能出现、但写不出通配规则的值"。
+# 每次事故复盘后应把新发现的名字/机构名加到这里——这是唯一能兜住
+# "词表外真名"的确定性手段（demo 无 NER）。
+#
+# 纪律：denylist 的占位符用 <PERSON> / <ORG>（尖括号），与上面的中文占位符
+# 视觉上区分开，一眼能看出"这是黑名单命中，需要人工复核"。
+denylist:
+  person:
+    replacement: "<PERSON>"
+    values: []
+  org:
+    replacement: "<ORG>"
+    values: []

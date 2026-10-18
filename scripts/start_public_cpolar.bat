@@ -20,13 +20,15 @@ set PORT=8004
 rem ---------- [1/3] locate cpolar ----------
 set CPEXE=
 if exist "bin\cpolar.exe" set CPEXE=bin\cpolar.exe
+if not defined CPEXE if exist ".tools\cpolar.exe" set CPEXE=.tools\cpolar.exe
 if not defined CPEXE (
     for /f "delims=" %%i in ('where cpolar 2^>nul') do set CPEXE=%%i
 )
 if not defined CPEXE (
-    echo [ERROR] cpolar not found ^(neither bin\cpolar.exe nor PATH^).
+    echo [ERROR] cpolar not found ^(neither bin\.tools\cpolar.exe nor PATH^).
     echo         Download from https://www.cpolar.com/download
-    echo         and unzip cpolar.exe into this project's bin\ folder.
+    echo         and unzip cpolar.exe into this project's bin\ or .tools\ folder.
+    echo         Alternative that works without cpolar: scripts\start_public.bat
     echo.
     pause
     exit /b 1
@@ -52,9 +54,13 @@ if errorlevel 1 (
 rem ---------- [3/3] start cpolar ----------
 echo.
 echo ============================================================
+echo   One-time setup ^(skip if already done^):
+echo     bin\cpolar.exe authtoken ^<your-token^>
+echo     Free token: https://www.cpolar.com/dashboard
+echo.
 echo   Copy the https "Forwarding" URL printed below, e.g.
 echo     https://xxxxxxxx.cpolar.top
-echo   Share  <that-url>/demo-ui/  with external users.
+echo   Share  ^<that-url^>/demo-ui/  with external users.
 echo   Stop with scripts\stop_public.bat
 echo ============================================================
 echo.

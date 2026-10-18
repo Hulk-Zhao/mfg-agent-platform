@@ -1,0 +1,183 @@
+# 缺陷模式受控词表（defect_mode）——词条来源：data/knowledge/*.jsonl 的 defect_type
+# 与 equipment_ledger / process_standards 的真实工序写法，人工归并。
+#
+# 治理纪律（架构 §5.3 / R-A6）：
+#   1. 新增词条走「申请 + 质量体系审批」，**不做自动新增**（防同义词爆炸）；
+#   2. 同义词必须来自语料里真实出现过的写法，不臆造；
+#   3. 关系深度 ≤ 2 跳（父级 → 子级），首期不上图库（裁定 A7）；
+#   4. 编码规则 DM-<域>-<序号>，序号不复用。
+#
+# 词条构成：6 个组别码（父级，本身也可作为兜底归类）+ 16 个具体缺陷码。
+version: 1
+vocabulary: defect_mode
+terms:
+  # ---------- 组别（父级） ----------
+  - code: DM-SMT-010
+    name: SMT 印刷类缺陷
+    synonyms: [印刷类缺陷, 印刷不良, SMT印刷不良]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-18"
+  - code: DM-SMT-020
+    name: 回流焊接类缺陷
+    synonyms: [焊接类缺陷, 回流不良, 焊接不良]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-18"
+  - code: DM-PKG-030
+    name: 贴装类缺陷
+    synonyms: [贴片类缺陷, 贴装不良]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-18"
+  - code: DM-MAT-040
+    name: 材料类缺陷
+    synonyms: [来料类缺陷, 物料不良]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-18"
+  - code: DM-ASM-050
+    name: 装配与注塑类缺陷
+    synonyms: [装配不良, 注塑不良, 结构件不良]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-18"
+  - code: DM-MCH-060
+    name: 机加类缺陷
+    synonyms: [机加工不良, 机械加工缺陷]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-18"
+  - code: DM-EQ-070
+    name: 设备类故障
+    synonyms: [设备故障, 设备异常]
+    status: active
+    approved_by: 设备工程
+    approved_at: "2026-10-18"
+
+  # ---------- 印刷 / 焊接（语料 defect_type 直接来源） ----------
+  - code: DM-SMT-012
+    name: 锡膏印刷偏移
+    parent: DM-SMT-010
+    synonyms: [锡膏偏移, 印刷偏移, 印刷偏位, paste offset]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-18"
+  - code: DM-SMT-013
+    name: 立碑
+    parent: DM-SMT-020
+    synonyms: [墓碑, tombstone, 竖碑, 元件立起]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-18"
+  - code: DM-SMT-014
+    name: 连锡
+    parent: DM-SMT-020
+    synonyms: [桥连, bridging, 焊点桥接]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-18"
+  - code: DM-SMT-015
+    name: 元件偏移
+    parent: DM-PKG-030
+    synonyms: [元件偏位, 贴装偏移, component shift]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-18"
+  - code: DM-SMT-021
+    name: 虚焊
+    parent: DM-SMT-020
+    synonyms: [假焊, 冷焊, cold joint, 焊接不实]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-18"
+  - code: DM-SMT-022
+    name: 焊点空洞
+    parent: DM-SMT-020
+    synonyms: [空洞, 气孔, void, 焊点气泡]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-18"
+  - code: DM-SMT-023
+    name: 焊球不良
+    parent: DM-SMT-020
+    synonyms: [锡珠, 焊球, solder ball, 锡渣]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-18"
+  - code: DM-SMT-099
+    name: 其他 SMT 缺陷
+    parent: DM-SMT-010
+    synonyms: [其他印刷缺陷, 未归类 SMT 缺陷]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-18"
+
+  # ---------- 贴装 ----------
+  - code: DM-PKG-031
+    name: 抛料
+    parent: DM-PKG-030
+    synonyms: [吸嘴抛料, pick miss, 抛件]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-18"
+  - code: DM-PKG-032
+    name: 缺件
+    parent: DM-PKG-030
+    synonyms: [漏贴, 缺件不良, missing part, 漏件]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-18"
+
+  # ---------- 材料 ----------
+  - code: DM-MAT-041
+    name: 引脚氧化
+    parent: DM-MAT-040
+    synonyms: [焊盘氧化, 来料氧化, 氧化不良, oxidation]
+    status: active
+    approved_by: SQE
+    approved_at: "2026-10-18"
+  - code: DM-MAT-042
+    name: 来料尺寸超差
+    parent: DM-MAT-040
+    synonyms: [尺寸超差, 外形超差, dimension out of tolerance]
+    status: active
+    approved_by: SQE
+    approved_at: "2026-10-18"
+
+  # ---------- 装配 / 机加 / 设备 ----------
+  - code: DM-ASM-051
+    name: 注塑件缩水
+    parent: DM-ASM-050
+    synonyms: [缩水, 缩痕, sink mark, 收缩凹陷]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-18"
+  - code: DM-MCH-061
+    name: 机加尺寸超差
+    parent: DM-MCH-060
+    synonyms: [机加超差, 加工尺寸超差]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-18"
+  - code: DM-EQ-071
+    name: 吸嘴磨损
+    parent: DM-EQ-070
+    synonyms: [nozzle wear, 吸嘴损耗]
+    status: active
+    approved_by: 设备工程
+    approved_at: "2026-10-18"
+  - code: DM-EQ-072
+    name: 加热管老化
+    parent: DM-EQ-070
+    synonyms: [加热管衰减, heater aging, 加热元件老化]
+    status: active
+    approved_by: 设备工程
+    approved_at: "2026-10-18"
+  - code: DM-EQ-073
+    name: 刮刀压力漂移
+    parent: DM-EQ-070
+    synonyms: [刮刀压力异常, 压力漂移]
+    status: deprecated
+    approved_by: 设备工程
+    approved_at: "2026-10-18"

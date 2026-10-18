@@ -319,7 +319,9 @@
     te:  { spc: 1, shortage: 0, order: 0, sla: 1 },
     me:  { spc: 1, shortage: 0, order: 1, sla: 1 },
     rdt: { spc: 0, shortage: 0, order: 1, sla: 1 },
-    hr:  { spc: 0, shortage: 0, order: 1, sla: 0 },
+    // 人事不承担订单/SPC/缺料职责，四维全 0：简报此时应显示"本岗位无业务预警"，
+    // 而不是凭空出现一条"华为终端订单临期"（那会让演示者被追问"人事为什么管订单"）。
+    hr:  { spc: 0, shortage: 0, order: 0, sla: 0 },
     ehs: { spc: 1, shortage: 0, order: 0, sla: 1 },
     cs:  { spc: 1, shortage: 0, order: 2, sla: 1 },
     mt:  { spc: 1, shortage: 0, order: 1, sla: 1 },

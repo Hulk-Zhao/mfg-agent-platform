@@ -23,7 +23,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -33,11 +33,14 @@ from ...common.config import settings
 from ...common.rag_tools import kb_count
 from ..contracts.im_gateway import ReplyCard
 from ..contracts.adapters.wecom import WeComAdapter
+from ..contracts.permissions import get_permission_registry
 from ..core import cache
 from ..core.events import EventHub, QueueSink, bind_existing, hub, unbind
 from ..core.orchestrator import V2Orchestrator, create_default_orchestrator
 from ..services import kbqa as kbqa_service
+from ..services import workflow_scope
 from ..services.auth import AuthError, get_codec, resolve_login_roles
+from ..services.data_scope import get_data_scope
 from ..services.workflow import (
     PermissionDenied,
     SignoffIncomplete,
@@ -68,7 +71,7 @@ def demo_ui_index() -> _HTMLResponse:
     保证清单内资源必定带上 ``?v=<mtime>``——文件一改，缓存自动失效。
     """
     html = (_UI_DIR / "index.html").read_text(encoding="utf-8")
-    for f in ("demo-data.js", "terms.js", "app.js", "screens.js", "help-screen.js", "kb-screen.js", "office-screen.js", "app.css"):
+    for f in ("demo-data.js", "terms.js", "app.js", "screens.js", "help-screen.js", "kb-screen.js", "office-screen.js", "case-screen.js", "app.css"):
         fp = _UI_DIR / f
         v = int(fp.stat().st_mtime) if fp.exists() else 0
         # 仅替换引号内的资源引用（允许 ./、子目录等路径前缀），不动 HTML 其余部分；
@@ -133,7 +136,21 @@ class OfficeCancelRequest(BaseModel):
 
 @app.get("/api/v2/health")
 def health() -> dict[str, Any]:
-    return {"status": "ok", "version": "2.0.0"}
+    """健康检查：结构化依赖探针（业务库 / 治理库 / Redis / 向量库 / LLM）。
+
+    ``status``：``ok`` 全部就绪 · ``degraded`` 服务可达但部分能力降级。
+    **不返回 error**——HTTP 200 已证明进程可达，把"依赖挂了"表达成不可达
+    会让前端误判为离线并退回演示数据，反而掩盖真实故障。
+
+    ``mode`` 供前端展示运行形态：``full`` / ``degraded`` / ``offline``（离线降级）。
+
+    注意：本端点**不触发编排器初始化**（不建库、不加载场景、不连向量库），
+    因此可以被 Docker HEALTHCHECK 与前端顶栏高频调用。详见
+    ``v2/services/health.py`` 的设计纪律。
+    """
+    from ..services.health import build_health_report
+
+    return build_health_report()
 
 
 # ---------- 企业咨询助手（独立轻量 RAG：Milvus enterprise_faq + 统一 LLM） ----------
@@ -412,42 +429,106 @@ def _raise_workflow_http(exc: Exception) -> None:
 
 
 @app.get("/api/v2/workflow/pending")
-def api_workflow_pending(role: Optional[list[str]] = Query(None)) -> dict[str, Any]:
-    """HITL 待办队列（waiting_hitl 工单；审批中心/待办卡片数据源）。
+def api_workflow_pending(request: Request,
+                         role: Optional[list[str]] = Query(None)) -> dict[str, Any]:
+    """HITL 待办队列（只能看到「我的活」与「我治理域内的活」）。
 
-    Query:
-        role: 当前岗位（可重复 ``?role=sqe&role=qa`` 或逗号分隔 ``?role=sqe,qa``）。
-            传了则按"审批即待办"过滤——只返回该角色**当前阶段可动作**的工单；
-            不传返回全量（向后兼容既有调用方）。
+    身份一律由 ``Authorization: Bearer`` 令牌裁决（fail-closed，与写接口同一口径）：
 
-    每项含 ``governance``（治理链快照）、``signoff_status``（会签进度）与
-    ``my_action``（``select_action`` / ``cosign`` / ``approve`` / ``null``）。
+    - 无令牌 / 令牌非法 / 过期 → **401**
+    - ``role`` query 只能**收窄**视野（必须 ⊆ 令牌角色），越权扩宽 → **403**
+    - 无治理职责的岗位（如行政人事）→ **空队列且 200**：不是「没资格看」，
+      而是「本来就没有你的活」，两种情况报不同状态码才是诚实的产品行为
+
+    每项带 ``visibility``：
+
+    - ``mine``：当前阶段我能动作（见 ``WorkflowEngine.action_for``）
+    - ``domain``：我治理域内但暂不轮到我，或未纳管的历史存量（只读）
+
+    判据来自 ``permissions.yaml`` 的角色矩阵（我是否持有该 HITL 槽位的权限），
+    不引入第二份配置——详见 ``services/workflow_scope.py``。
     """
+    identity = _require_identity(request)
     engine = _workflow_engine()
-    raw_roles: list[str] = []
+    registry = engine.permission_registry
+
+    token_roles = [str(r) for r in (identity.get("roles") or [])]
+    token_keys = set(registry.normalize_roles(token_roles))
+
+    requested: list[str] = []
     for item in (role or []):
-        raw_roles.extend([seg.strip() for seg in str(item).split(",") if seg.strip()])
-    role_keys = list(engine.permission_registry.normalize_roles(raw_roles))
-    tasks = engine.pending_hitl(raw_roles or None)
+        requested.extend([seg.strip() for seg in str(item).split(",") if seg.strip()])
+
+    if requested:
+        unknown = [r for r in requested
+                   if registry.normalize_role(r) is None]
+        if unknown:
+            raise HTTPException(
+                status_code=400,
+                detail={"message": "岗位未识别", "unknown": unknown,
+                        "hint": "可选岗位见 /api/v2/governance/permissions"})
+        req_keys = set(registry.normalize_roles(requested))
+        if not req_keys.issubset(token_keys):
+            # 令牌只证明「你是谁」，不能用来「借别人的眼睛看」。
+            # 不做这道校验，fail-closed 就退化成「自证式权限」。
+            raise HTTPException(
+                status_code=403,
+                detail={"message": "不能查看本人岗位之外的待办",
+                        "requested": sorted(req_keys),
+                        "granted": sorted(token_keys)})
+        effective, effective_keys = requested, req_keys
+    else:
+        effective, effective_keys = token_roles, token_keys
+
+    # 不能用 engine.pending_hitl()：它按 action_for 过滤，只留 mine，会丢掉 domain。
+    pairs = workflow_scope.visible_tasks(
+        engine, engine.list_tasks(status="waiting_hitl"), effective)
+
     data: list[dict[str, Any]] = []
-    for task in tasks:
+    mine = domain = 0
+    for task, vis in pairs:
         item = task.to_dict()
-        item["my_action"] = engine.action_for(task, raw_roles) if raw_roles else None
+        item["visibility"] = vis
+        item["my_action"] = (engine.action_for(task, effective)
+                             if vis == workflow_scope.VIS_MINE else None)
+        if vis == workflow_scope.VIS_MINE:
+            mine += 1
+        else:
+            domain += 1
         data.append(item)
-    return {"code": 0, "data": data, "message": "ok",
-            "scope": {"roles": role_keys, "filtered": bool(raw_roles),
-                      "unknown": [r for r in raw_roles
-                                  if engine.permission_registry.normalize_role(r) is None]}}
+
+    slots = workflow_scope.slot_keys_for(registry, effective)
+    return {
+        "code": 0, "data": data, "message": "ok",
+        "scope": {
+            "roles": sorted(effective_keys),
+            "slots": sorted(slots),
+            "counts": {"mine": mine, "domain": domain,
+                       "visible": mine + domain},
+            # 是否发生了过滤：无治理职责的岗位拿到的是真空队列，
+            # 前端据此显示「本岗位不参与治理审批」（而非「暂无待办」）。
+            "filtered": True,
+        },
+    }
 
 
 @app.get("/api/v2/workflow/{task_id}")
-def api_workflow_task(task_id: str) -> dict[str, Any]:
-    """单工单详情（会签后局部刷新卡片用）。"""
+def api_workflow_task(task_id: str, request: Request) -> dict[str, Any]:
+    """单工单详情（会签后局部刷新卡片用）。
+
+    可见性与队列同源（``workflow_scope.classify``）。**不可见返回 404 而非 403**：
+    403 等于确认「这个工单存在，只是你看不到」，把 ID 空间变成可探测信息。
+    """
+    identity = _require_identity(request)
+    engine = _workflow_engine()
     try:
-        task = _workflow_engine().get(task_id)
+        task = engine.get(task_id)
     except (KeyError, WorkflowTransitionError, ValueError) as exc:
         _raise_workflow_http(exc)
         raise  # pragma: no cover - _raise_workflow_http 必定抛出
+    if workflow_scope.classify(
+            engine, task, identity.get("roles") or []) == workflow_scope.VIS_HIDDEN:
+        raise HTTPException(status_code=404, detail="工单不存在")
     return {"code": 0, "data": task.to_dict(), "message": "ok"}
 
 
@@ -749,56 +830,91 @@ def api_datasources() -> dict[str, Any]:
             "message": "ok"}
 
 
+# ---------- 看板数据范围：声明式目录 → 服务端裁决 ----------
+
+# 为什么不能只在前端藏菜单：菜单只挡入口，不挡 curl。四个看板端点此前
+# docstring 写着「全员可见」，任何岗位持有效令牌即可拉 SPC / 订单履约聚合，
+# 「HR 凭什么看 SPC」在服务端没有答案。裁决收敛到 v2/data/data_scope.yaml。
+
+
+def _scope_guard(request: Request, dashboard: str) -> dict[str, Any]:
+    """看板接口的数据范围裁决（fail-closed）。
+
+    - 无令牌 / 令牌非法 → 401（业务数据不接受匿名读取）；
+    - 目录未声明该看板 → 403（新增看板必须登记，否则谁也用不了）；
+    - 岗位不在 ``allow_roles`` → 403，detail 写明「你是哪个岗位、谁能看」。
+
+    关键纪律：**绝不降级成 200 空数据**。前端拿到空/异常会切演示数据，
+    那等于把越权访问伪装成正常展示，比直接报错更糟。
+    """
+    ctx = _require_identity(request)
+    roles = list(ctx["roles"])
+    scope = get_data_scope().get(dashboard)
+    if scope is None or not scope.allows(roles):
+        perms = get_permission_registry()
+        raise HTTPException(status_code=403, detail={
+            "message": (f"岗位「{'、'.join(perms.role_names(roles)) or '未识别'}」"
+                        f"无权查看{scope.name if scope else dashboard}"),
+            "dashboard": dashboard,
+            "roles": roles,
+            "allowed_roles": perms.role_names(sorted(scope.allow_roles)) if scope else [],
+        })
+    return ctx
+
+
+def _dashboard_payload(request: Request, dashboard: str, builder) -> dict[str, Any]:
+    """统一编排：裁决 → 聚合 → 脱敏 → 回写 scope 凭据。"""
+    ctx = _scope_guard(request, dashboard)
+    registry = get_orchestrator().runtime.data_registry
+    data = builder(registry)
+    data, masked = get_data_scope().apply(dashboard, data, ctx["roles"])
+    return {"code": 0, "data": data, "message": "ok",
+            "scope": {"dashboard": dashboard, "roles": list(ctx["roles"]),
+                      "masked": masked}}
+
+
 @app.get("/api/v2/dashboard/manufacturing")
-def api_dashboard_manufacturing() -> dict[str, Any]:
-    """制造看板：稼动率 / 报废率 / 报工完成率 / 测试直通率（全员可见）。
+def api_dashboard_manufacturing(request: Request) -> dict[str, Any]:
+    """制造看板：稼动率 / 报废率 / 报工完成率 / 测试直通率（按岗位范围裁决）。
 
     真实链路聚合本地只读数据源；聚合内部全兜底，数据源故障时返回
     ``degraded:true`` 的骨架，**绝不 500**（前端据此降级演示数据）。
     """
     from ..services.dashboard import build_manufacturing_dashboard
 
-    registry = get_orchestrator().runtime.data_registry
-    return {"code": 0, "data": build_manufacturing_dashboard(registry),
-            "message": "ok"}
+    return _dashboard_payload(request, "manufacturing", build_manufacturing_dashboard)
 
 
 @app.get("/api/v2/dashboard/quality")
-def api_dashboard_quality() -> dict[str, Any]:
-    """品质看板：不良率 / 直通率 FPY / 标准三率（全员可见）。"""
+def api_dashboard_quality(request: Request) -> dict[str, Any]:
+    """品质看板：不良率 / 直通率 FPY / 标准三率（按岗位范围裁决）。"""
     from ..services.dashboard import build_quality_dashboard
 
-    registry = get_orchestrator().runtime.data_registry
-    return {"code": 0, "data": build_quality_dashboard(registry),
-            "message": "ok"}
+    return _dashboard_payload(request, "quality", build_quality_dashboard)
 
 
 @app.get("/api/v2/dashboard/orders")
-def api_dashboard_orders() -> dict[str, Any]:
-    """订单履约看板：OTD / OTIF / 延期订单率 / 齐套率（全员可见）。
+def api_dashboard_orders(request: Request) -> dict[str, Any]:
+    """订单履约看板：OTD / OTIF / 延期订单率 / 齐套率（按岗位范围裁决）。
 
-    真实链路聚合本地只读数据源（order_fulfillment）；聚合内部全兜底，
-    数据源故障时返回 ``degraded:true`` 的骨架，**绝不 500**（前端据此降级演示数据）。
+    客户身份字段按岗位脱敏（``data_scope.yaml`` 的 mask）：对客与收款责任的
+    岗位看到客户真名，物控/仓库/采购看到「客户 A / 客户 B」并**失去客户维度下钻键**。
     """
     from ..services.dashboard import build_order_dashboard
 
-    registry = get_orchestrator().runtime.data_registry
-    return {"code": 0, "data": build_order_dashboard(registry),
-            "message": "ok"}
+    return _dashboard_payload(request, "orders", build_order_dashboard)
 
 
 @app.get("/api/v2/dashboard/spc")
-def api_dashboard_spc() -> dict[str, Any]:
-    """SPC 过程能力看板：逐特性 Cp/Cpk/Pp/Ppk 判定 + 超差率 + 不良柏拉图（全员可见）。
+def api_dashboard_spc(request: Request) -> dict[str, Any]:
+    """SPC 过程能力看板：逐特性 Cp/Cpk/Pp/Ppk 判定 + 超差率 + 不良柏拉图（按岗位范围裁决）。
 
     能力指数由确定性内核 ``core/spc``（双西格玛口径）计算；缺测量值时逐特性标
     ``data_gap``，聚合内部全兜底，**绝不 500**（前端据此降级演示数据）。
     """
     from ..services.dashboard import build_spc_dashboard
 
-    registry = get_orchestrator().runtime.data_registry
-    return {"code": 0, "data": build_spc_dashboard(registry),
-            "message": "ok"}
+    return _dashboard_payload(request, "spc", build_spc_dashboard)
 
 
 @app.get("/api/v2/dashboard/drill")
@@ -829,6 +945,10 @@ def api_dashboard_drill(request: Request, screen: str = Query(...),
     if defn is None or defn["screen"] != screen:
         raise HTTPException(status_code=400, detail="未知看板指标")
 
+    # 下钻必须与看板同源裁决：否则「看板进不去、下钻却能拿」就是一条后门。
+    # ``screen`` 与 data_scope.yaml 的看板 key 同名，直接复用。
+    _ctx = _scope_guard(request, screen)
+
     # 实体参数：按指标声明的维度名从 query 通用取用；全部为空表示不锁定实体（L2）
     qp = request.query_params
     vals = {p: (qp.get(p) or "").strip() for p in entity_param_names(kpi)}
@@ -846,9 +966,11 @@ def api_dashboard_drill(request: Request, screen: str = Query(...),
                     status_code=400,
                     detail="不良类型下钻不支持与实体/工序/工位组合")
             registry = get_orchestrator().runtime.data_registry
-            return {"code": 0, "data": build_pareto_drill(registry, screen, kpi,
-                                                          defect_type),
-                    "message": "ok"}
+            data = build_pareto_drill(registry, screen, kpi, defect_type)
+            data, masked = get_data_scope().apply(screen, data, _ctx["roles"], kpi=kpi)
+            return {"code": 0, "data": data, "message": "ok",
+                    "scope": {"dashboard": screen, "roles": list(_ctx["roles"]),
+                              "masked": masked}}
         if dt_kind != "entity":
             raise HTTPException(status_code=400,
                                 detail="该指标不支持不良类型下钻")
@@ -865,7 +987,10 @@ def api_dashboard_drill(request: Request, screen: str = Query(...),
     registry = get_orchestrator().runtime.data_registry
     data = build_drill(registry, screen, kpi, entity, step or None,
                        station or None)
-    return {"code": 0, "data": data, "message": "ok"}
+    data, masked = get_data_scope().apply(screen, data, _ctx["roles"], kpi=kpi)
+    return {"code": 0, "data": data, "message": "ok",
+            "scope": {"dashboard": screen, "roles": list(_ctx["roles"]),
+                      "masked": masked}}
 
 
 # ---------- 企业微信回调 ----------
@@ -941,6 +1066,602 @@ def _build_card(result: Any, msg: Any) -> ReplyCard:
         lines.append("⚠ degraded 模式：LLM 不可用，结论为规则/模板化输出，请人工复核。")
     return ReplyCard(title="停线应急协同 · 分析简报", body="\n".join(lines),
                      actions=actions, level="P1")
+
+
+# ---------- 案例助手（Case Assistant）：/api/v2/cases/* ----------
+# 说明：本段是**追加**的路由，不改动任何既有路由实现。
+# 统一约定：
+#   - 身份只来自 Authorization: Bearer（复用既有 IdentityCodec，载荷扩展 tv/pv/维度）；
+#   - 错误码：401 CASE_TOKEN_*，403 CASE_ACTION_DENIED，404 CASE_NOT_FOUND_OR_NOT_VISIBLE；
+#   - 权限判定全部在服务层（CaseSearchService / AclCompiler / AclEvaluator），路由只做映射。
+
+from ..contracts.case_acl import Principal as _CasePrincipal  # noqa: E402
+from ..security.case_rbac import get_case_rbac as _get_case_rbac  # noqa: E402
+from ..security import case_rate_limit  # noqa: E402
+from ..services.case_ingest import (  # noqa: E402
+    CaseAlreadyActive,
+    IngestError,
+    OntologyCodeUnknown,
+    RedactionFailed,
+    SourceTicketRequired,
+)
+from ..services.case_runtime import get_case_runtime as _get_case_runtime  # noqa: E402
+from ..services.case_search import source_ticket_ref  # noqa: E402
+from ..services.principal_resolver import (  # noqa: E402
+    CaseTokenError,
+    CaseTokenInvalid,
+    get_principal_resolver as _get_principal_resolver,
+)
+
+
+class CaseSessionRequest(BaseModel):
+    """演示身份选择请求（仅 ``CASE_DEMO_MODE=true`` 时可用）。"""
+
+    role: str = ""
+    roles: Optional[list[str]] = None
+    dept: str = ""
+    plant: str = "P1"
+    employment_type: str = "employee"
+    max_classification_rank: int = 1
+    tenant: str = ""
+    user_id: str = ""
+    name: str = ""
+    line_ids: Optional[list[str]] = None
+    customer_ids: Optional[list[str]] = None
+
+
+class CaseSearchRequest(BaseModel):
+    """检索请求（**刻意没有 filter 字段**：调用方无法传自定义过滤条件）。"""
+
+    query: str = ""
+    k: int = 5
+    action: str = "query"
+
+
+class CaseAskRequest(BaseModel):
+    question: str = ""
+    k: int = 5
+    action: str = "read"
+
+
+class CaseCiteRequest(BaseModel):
+    target_ticket_type: str = "8d"
+    target_ticket_id: str = ""
+    note: str = ""
+    # ★ 引用必须指向**用户点的那一条 chunk**，否则"可溯源"是假的：
+    #   前端从命中卡片带回 chunk_type / content_version，后端据此产出精确三元组。
+    chunk_type: str = ""
+    content_version: int = 0
+
+
+class CaseAccessRequestModel(BaseModel):
+    reason: str = ""
+    scope: str = "grant"
+
+
+class CaseAccessDecision(BaseModel):
+    approve: bool = False
+    reason: str = ""
+
+
+class CaseIngestRequest(BaseModel):
+    draft: dict[str, Any] = {}
+
+
+def _mask_user(user_id: str) -> str:
+    """用户 id 脱敏展示（``u-qa`` → ``u-q*``）；审批人不需要看完整 id。"""
+    raw = str(user_id or "")
+    if len(raw) <= 3:
+        return raw
+    return raw[:3] + "*" * min(4, len(raw) - 3)
+
+
+def _demo_warnings() -> list[str]:
+    """演示态风险清单（B5）：必须"显式且刺眼"，不能只躺在日志里。"""
+    warnings: list[str] = []
+    secret = str(getattr(settings, "AUTH_SECRET", "") or "").strip()
+    demo_mode = bool(getattr(settings, "CASE_DEMO_MODE", True))
+    if not secret:
+        if demo_mode:
+            warnings.append(
+                "AUTH_SECRET 未配置：使用进程级随机密钥，重启后所有案例会话失效")
+        else:
+            warnings.append(
+                "AUTH_SECRET 未配置且 CASE_DEMO_MODE=false：本服务不会签发任何令牌")
+    if demo_mode:
+        warnings.append("CASE_DEMO_MODE=true：身份由前端选岗产生，仅限演示环境")
+    return warnings
+
+
+def _case_runtime():
+    """案例运行时（懒加载单例；总开关关闭 → 503）。"""
+    if not bool(getattr(settings, "CASE_ENABLED", True)):
+        raise HTTPException(status_code=503,
+                            detail={"code": "CASE_DISABLED",
+                                    "message": "案例助手已被 CASE_ENABLED=false 关闭"})
+    return _get_case_runtime()
+
+
+def _case_principal(request: Request) -> _CasePrincipal:
+    """令牌 → 权威主体（401 fail-closed：老令牌/pv 失效/身份为空）。"""
+    token = _bearer_token(request)
+    if not token:
+        raise HTTPException(status_code=401, detail={
+            "code": "CASE_TOKEN_MISSING", "message": "缺少访问令牌：请先选择岗位登录"})
+    try:
+        return _case_runtime().resolver.from_token(token)
+    except CaseTokenError as exc:
+        raise HTTPException(status_code=401,
+                            detail={"code": exc.code, "message": str(exc)}) from exc
+    except AuthError as exc:
+        raise HTTPException(status_code=401, detail={
+            "code": "CASE_TOKEN_INVALID", "message": str(exc)}) from exc
+
+
+def _case_guard_rate_limit(request: Request, principal: _CasePrincipal,
+                           action: str) -> None:
+    """B8：案例读取类入口的限流守卫（超限 429）。
+
+    背景：B1 让"不存在"与"存在但无权"两条路径做等价工作，代价是**每个 404
+    都会写一行审计并 commit**。于是外部扫 ``QA-0001..QA-9999`` 能往审计链里
+    灌 1 万行 + 1 万次 fsync。
+
+    治理手段选限流而非审计采样：少写一条审计，B1 消掉的时间差又会回来
+    （采样 = 部分 404 更快），等于治一个病添一个病。限流在入口掐断探测流量，
+    可追溯性不受影响。
+    """
+    if not case_rate_limit.check_case_rate_limit(
+            case_rate_limit.case_rate_limit_bucket(
+                user_id=principal.user_id,
+                client_ip=request.client.host if request.client else "")):
+        return
+    logger.warning("[case-api] 限流拦截：actor=%s action=%s", principal.user_id, action)
+    raise HTTPException(status_code=429, detail={
+        "code": "CASE_RATE_LIMITED",
+        "message": "案例检索/读取过于频繁，请稍后再试"
+                   "（限流用于阻断批量探测，不影响正常作业节奏）"})
+
+
+def _case_error(exc: Exception) -> HTTPException:
+    """案例域异常 → HTTP 映射（保持与架构 §9.2 错误码一致）。"""
+    if isinstance(exc, SourceTicketRequired):
+        return HTTPException(status_code=409, detail={
+            "code": "CASE_SOURCE_TICKET_REQUIRED", "message": str(exc)})
+    if isinstance(exc, CaseAlreadyActive):
+        # B2：已发布案例不得被重复 ingest 覆盖（否则会被静默踢出索引）
+        return HTTPException(status_code=409, detail={
+            "code": "CASE_ALREADY_ACTIVE", "message": str(exc)})
+    if isinstance(exc, RedactionFailed):
+        # B3：脱敏复检失败 → 409 CASE_REDACTION_LEAK（不降级放行）
+        return HTTPException(status_code=409, detail={
+            "code": "CASE_REDACTION_LEAK", "message": str(exc),
+            "problems": sorted(exc.problems)})
+    if isinstance(exc, OntologyCodeUnknown):
+        return HTTPException(status_code=422, detail={
+            "code": "CASE_ONTOLOGY_UNKNOWN_CODE", "message": str(exc)})
+    if isinstance(exc, CaseTokenInvalid):
+        return HTTPException(status_code=401, detail={
+            "code": exc.code, "message": str(exc)})
+    if isinstance(exc, IngestError):
+        return HTTPException(status_code=400, detail={
+            "code": "CASE_INGEST_INVALID", "message": str(exc)})
+    return HTTPException(status_code=400, detail={
+        "code": "CASE_BAD_REQUEST", "message": str(exc)})
+
+
+def _search_or_raise(response) -> dict[str, Any]:
+    """把"权限拒绝"翻译成 401/403；"合法空结果"照常 200 返回。"""
+    if response.denied_code:
+        status = 401 if response.denied_code.startswith("CASE_TOKEN") or \
+            response.denied_code == "CASE_PRINCIPAL_REVOKED" else 403
+        raise HTTPException(status_code=status, detail={
+            "code": response.denied_code, "message": response.denied_reason})
+    return response.to_dict()
+
+
+@app.post("/api/v2/cases/session")
+def api_case_session(req: CaseSessionRequest) -> dict[str, Any]:
+    """演示身份选择 → 签发 ``tv=2`` 令牌（仅 ``CASE_DEMO_MODE=true``）。
+
+    生产环境此端点必须关闭（``CASE_DEMO_MODE=false``），身份由 SSO/IdP 提供；
+    服务端只做"角色归一化 + 载荷组装"，客户端无法自行发明角色或维度。
+
+    B5：关闭时返回 **503 + ``CASE_DEMO_DISABLED``**（不是 403）。
+    理由：403 意味着"这个身份不被允许"，会让人以为是权限配置问题；
+    而事实是"这条通道在部署形态上就不该存在"。503 让运维一眼看出是部署开关。
+    """
+    demo_mode = bool(getattr(settings, "CASE_DEMO_MODE", True))
+    secret = str(getattr(settings, "AUTH_SECRET", "") or "").strip()
+    if not demo_mode:
+        raise HTTPException(status_code=503, detail={
+            "code": "CASE_DEMO_DISABLED",
+            "message": ("演示身份选择已关闭（CASE_DEMO_MODE=false），请走 SSO 登录"
+                        + ("" if secret else "；且 AUTH_SECRET 未配置，本服务不会签发任何令牌"))})
+    resolver = _get_principal_resolver()
+    candidates: list[str] = list(req.roles or [])
+    if not candidates and req.role:
+        candidates = [req.role]
+    try:
+        payload = resolver.build_payload(
+            user_id=req.user_id or "",
+            roles=candidates,
+            dept=req.dept,
+            name=req.name,
+            tenant=req.tenant or str(getattr(settings, "CASE_DEFAULT_TENANT", "T001")),
+            plant=req.plant,
+            line_ids=req.line_ids or (),
+            customer_ids=req.customer_ids or (),
+            max_classification_rank=req.max_classification_rank,
+            employment_type=req.employment_type,
+        )
+    except CaseTokenError as exc:
+        raise HTTPException(status_code=400, detail={
+            "code": exc.code, "message": str(exc)}) from exc
+    if not payload.get("sub"):
+        payload["sub"] = f"u-{payload['roles'][0]}"
+    try:
+        token, issued = get_codec().issue(
+            user_id=payload["sub"], name=payload["name"], dept=payload["dept"],
+            roles=payload["roles"], tenant=payload["tenant"],
+            plant=payload["plant"],
+            line_ids=payload["line_ids"], project_ids=payload["project_ids"],
+            customer_ids=payload["customer_ids"],
+            supplier_ids=payload["supplier_ids"],
+            product_families=payload["product_families"],
+            max_classification_rank=payload["max_classification_rank"],
+            employment_type=payload["employment_type"],
+            token_version=payload["tv"], principal_version=payload["pv"],
+        )
+    except AuthError as exc:  # pragma: no cover - 角色非空时不会触发
+        raise HTTPException(status_code=400, detail={
+            "code": "CASE_TOKEN_INVALID", "message": str(exc)}) from exc
+    principal = _get_case_runtime().resolver.from_payload(issued, verify_pv=False)
+    return {
+        "code": 0,
+        "data": {
+            "token": token,
+            "expires_in": get_codec().ttl_s,
+            "principal": {
+                "user_id": principal.user_id,
+                "tenant": principal.tenant,
+                "dept": principal.dept,
+                "roles": list(principal.roles),
+                "plant": principal.plant,
+                "employment_type": principal.employment_type,
+                "max_classification_rank": principal.max_classification_rank,
+                "token_version": principal.token_version,
+                "principal_version": principal.principal_version,
+                "principal_tokens": list(principal.principal_tokens),
+            },
+            "demo_mode": True,
+        },
+        "message": "ok",
+    }
+
+
+@app.get("/api/v2/cases/meta")
+def api_case_meta(request: Request) -> dict[str, Any]:
+    """案例域元信息：分类、受控词表、动作矩阵、当前主体可见维度。"""
+    principal = _case_principal(request)
+    runtime = _case_runtime()
+    from ..contracts.ontology import get_ontology_registry
+
+    registry = get_ontology_registry()
+    return {
+        "code": 0,
+        "data": {
+            "categories": [
+                {"key": "quality_case", "label": "质量案例",
+                 "subcategories": [
+                     {"key": "customer_complaint", "label": "客诉案例"},
+                     {"key": "material_defect", "label": "材料不良案例"},
+                     {"key": "process_defect", "label": "制程不良案例"},
+                     {"key": "equipment_failure", "label": "设备故障案例"},
+                 ]},
+                {"key": "role_case", "label": "岗位经验案例（本职能域可见）",
+                 "subcategories": [
+                     {"key": "process_experience", "label": "工艺经验"},
+                     {"key": "equipment_experience", "label": "设备经验"},
+                     {"key": "quality_experience", "label": "质量经验"},
+                     {"key": "rd_experience", "label": "研发经验"},
+                 ]},
+            ],
+            "ontology": registry.to_meta(),
+            "ontology_count": registry.count(),
+            "actions": runtime.describe_permissions(),
+            "rbac": _get_case_rbac().matrix(),
+            "principal": {
+                "user_id": principal.user_id,
+                "tenant": principal.tenant,
+                "dept": principal.dept,
+                "plant": principal.plant,
+                "roles": list(principal.roles),
+                "employment_type": principal.employment_type,
+                "max_classification_rank": principal.max_classification_rank,
+                "principal_tokens": list(principal.principal_tokens),
+                # tv/pv 必须可见：演示时要能一眼看出"令牌是 v2、主体版本号是多少"，
+                # 撤权重放（pv 失效）才会 401 这件事才讲得清。
+                "token_version": principal.token_version,
+                "principal_version": principal.principal_version,
+            },
+            "health": runtime.health(),
+            # B5：演示态必须"显式且刺眼"。AUTH_SECRET 未配置时令牌在进程重启后
+            # 全部失效——这不能只写进日志，必须让演示现场看见。
+            "demo_warnings": _demo_warnings(),
+            # R2：hidden_count 的口径写在 meta 里，避免"条"被理解成 chunk 数
+            "hidden_count_unit": "case",
+            "hidden_count_note": "hidden_count 是**案例数**（按 case_id 去重），不是 chunk 数",
+        },
+        "message": "ok",
+    }
+
+
+@app.post("/api/v2/cases/search")
+def api_case_search(req: CaseSearchRequest, request: Request) -> dict[str, Any]:
+    """检索（filter 在召回前生效 + 返回前二次授权；结果含 hidden_count）。"""
+    principal = _case_principal(request)
+    _case_guard_rate_limit(request, principal, "search")
+    runtime = _case_runtime()
+    k = max(1, min(int(req.k or 5), int(getattr(settings, "CASE_K_MAX", 20))))
+    response = runtime.search.search(principal, req.query, action=req.action, k=k)
+    return {"code": 0, "data": _search_or_raise(response), "message": "ok"}
+
+
+@app.post("/api/v2/cases/ask")
+def api_case_ask(req: CaseAskRequest, request: Request) -> dict[str, Any]:
+    """带引用的问答（每条结论必须挂 (case_id, chunk_id, content_version)）。"""
+    principal = _case_principal(request)
+    _case_guard_rate_limit(request, principal, "ask")
+    runtime = _case_runtime()
+    k = max(1, min(int(req.k or 5), int(getattr(settings, "CASE_K_MAX", 20))))
+    result = runtime.qa.answer(principal, req.question, k=k, action=req.action)
+    if result.search is not None and result.search.denied_code:
+        _search_or_raise(result.search)
+    return {"code": 0, "data": result.to_dict(), "message": "ok"}
+
+
+@app.post("/api/v2/cases/ingest")
+def api_case_ingest(req: CaseIngestRequest, request: Request) -> dict[str, Any]:
+    """案例入库（需 ``case.ingest``；落 ``status=review``，**不自动 approve**）。"""
+    principal = _case_principal(request)
+    if not _get_case_rbac().has_any(principal.roles, "case.ingest"):
+        raise HTTPException(status_code=403, detail={
+            "code": "CASE_ACTION_DENIED",
+            "message": f"角色 {list(principal.roles)} 不持有 case.ingest（入库需质量/工艺岗）"})
+    runtime = _case_runtime()
+    try:
+        result = runtime.ingest.ingest(req.draft or {})
+    except Exception as exc:  # noqa: BLE001 - 统一映射为架构 §9.2 错误码
+        raise _case_error(exc) from exc
+    runtime.audit.append(actor=principal.user_id, action="case.ingest",
+                         case_id=result.case_id,
+                         detail={"redaction_kinds": list(result.redaction_kinds)})
+    return {"code": 0, "data": {
+        "case_id": result.case_id, "status": result.status,
+        "chunks": result.chunks, "redaction_kinds": list(result.redaction_kinds),
+        "acl_tokens": list(result.acl_tokens),
+        "visibility_class": result.visibility_class,
+        "notes": list(result.notes),
+        "next_step": "案例已进入 review；发布需人工审核（HITL case_publish），"
+                     "Agent 不得自行 approve",
+    }, "message": "ok"}
+
+
+@app.post("/api/v2/cases/{case_id}/request-access")
+def api_case_request_access(case_id: str, req: CaseAccessRequestModel,
+                            request: Request) -> dict[str, Any]:
+    """提交跨部门访问申请（**不直接授权**；授权只在审批通过那一刻发生）。
+
+    涉密（L3）与未结案案例不走这条通道；已能看到的案例再建申请是 409。
+    """
+    principal = _case_principal(request)
+    runtime = _case_runtime()
+    from ..services.case_access import (
+        AccessAlreadyVisible,
+        AccessDuplicate,
+        AccessNotFound,
+        AccessNotRequestable,
+        AccessRequestError,
+    )
+
+    try:
+        created = runtime.access.request_access(
+            principal, case_id, reason=req.reason, scope=req.scope)
+    except AccessDuplicate as exc:
+        raise HTTPException(status_code=409, detail={
+            "code": "CASE_ACCESS_REQUEST_DUPLICATED", "message": str(exc)}) from exc
+    except AccessAlreadyVisible as exc:
+        raise HTTPException(status_code=409, detail={
+            "code": "CASE_ACCESS_ALREADY_VISIBLE", "message": str(exc)}) from exc
+    except AccessNotRequestable as exc:
+        raise HTTPException(status_code=403, detail={
+            "code": "CASE_ACCESS_NOT_REQUESTABLE", "message": str(exc)}) from exc
+    except AccessNotFound as exc:
+        raise HTTPException(status_code=404, detail={
+            "code": "CASE_NOT_FOUND_OR_NOT_VISIBLE", "message": str(exc)}) from exc
+    except AccessRequestError as exc:
+        raise HTTPException(status_code=400, detail={
+            "code": "CASE_ACCESS_REQUEST_INVALID", "message": str(exc)}) from exc
+
+    # Agent 只做路由与留痕，**不批准**（既有铁律：Agent 不得持 approve）
+    route = runtime.access_agent.push(str(created.get("request_id") or ""))
+    return {"code": 0, "data": {
+        "request": created,
+        "route": dict(route),
+        "message": str(route.get("reason") or "申请已提交"),
+    }, "message": "ok"}
+
+
+@app.get("/api/v2/cases/access/requests")
+def api_case_access_requests(request: Request,
+                             scope: str = Query("mine")) -> dict[str, Any]:
+    """申请列表：``scope=mine`` 我提交的 / ``scope=dept`` 待我审批的。"""
+    principal = _case_principal(request)
+    runtime = _case_runtime()
+    runtime.access.reap_expired()
+    if str(scope or "mine") == "dept":
+        rows = runtime.access.list_pending(dept=principal.dept)
+    else:
+        rows = runtime.access.list_for_requester(principal.user_id)
+    return {"code": 0, "data": {
+        "scope": str(scope or "mine"),
+        "requests": [{k: v for k, v in row.items() if k != "requester_id"}
+                     | {"requester_id": _mask_user(row.get("requester_id"))}
+                     for row in rows],
+    }, "message": "ok"}
+
+
+@app.post("/api/v2/cases/access/requests/{request_id}/decide")
+def api_case_access_decide(request_id: str, req: CaseAccessDecision,
+                           request: Request) -> dict[str, Any]:
+    """审批：批准 → 写入 user 维度授权（带有效期）+ 重建该案例索引。"""
+    principal = _case_principal(request)
+    runtime = _case_runtime()
+    from ..services.case_access import (
+        AccessNotApprover,
+        AccessNotFound,
+        AccessRequestError,
+        AccessTransitionError,
+    )
+
+    try:
+        decided = runtime.access.decide(principal, request_id,
+                                        approve=bool(req.approve),
+                                        reason=req.reason)
+    except AccessNotApprover as exc:
+        raise HTTPException(status_code=403, detail={
+            "code": "CASE_ACCESS_NOT_APPROVER", "message": str(exc)}) from exc
+    except AccessNotFound as exc:
+        raise HTTPException(status_code=404, detail={
+            "code": "CASE_ACCESS_REQUEST_NOT_FOUND", "message": str(exc)}) from exc
+    except AccessTransitionError as exc:
+        raise HTTPException(status_code=409, detail={
+            "code": "CASE_ACCESS_INVALID_TRANSITION", "message": str(exc)}) from exc
+    except AccessRequestError as exc:
+        raise HTTPException(status_code=400, detail={
+            "code": "CASE_ACCESS_DECISION_INVALID", "message": str(exc)}) from exc
+    return {"code": 0, "data": decided, "message": "ok"}
+
+
+@app.get("/api/v2/cases/{case_id}/access-hint")
+def api_case_access_hint(case_id: str, request: Request) -> dict[str, Any]:
+    """这条案例"能不能申请"（前端据此显示申请按钮）。不泄漏任何正文。"""
+    principal = _case_principal(request)
+    runtime = _case_runtime()
+    from ..services.case_access import AccessNotFound
+
+    try:
+        hint = runtime.access.requestable_hint(principal, case_id)
+    except AccessNotFound as exc:
+        raise HTTPException(status_code=404, detail={
+            "code": "CASE_NOT_FOUND_OR_NOT_VISIBLE", "message": str(exc)}) from exc
+    return {"code": 0, "data": hint, "message": "ok"}
+
+
+@app.get("/api/v2/cases/audit/verify")
+def api_case_audit_verify(request: Request, limit: int = 20) -> dict[str, Any]:
+    """审计链校验（hash chain；返回最近 N 条，**不含正文与查询明文**）。"""
+    principal = _case_principal(request)
+    runtime = _case_runtime()
+    chain = runtime.audit.verify_chain()
+    return {"code": 0, "data": {
+        "chain": chain,
+        "recent": runtime.audit.recent(limit=max(1, min(int(limit or 20), 200))),
+        "actor": principal.user_id,
+    }, "message": "ok"}
+
+
+@app.get("/api/v2/cases/{case_id}")
+def api_case_detail(case_id: str, request: Request,
+                    response: Response) -> dict[str, Any]:
+    """单案例详情（**无权时 404 而非 403**，防存在性探测）。
+
+    R1 裁定：原始来源单号只在**这个窄面**返回——调用方已通过 ``case.read``
+    且 ``cls_rank`` 达标（``read_case`` 成功即证明）。响应头 ``X-Case-Trace: full``
+    把这件事实显式化，方便网关/审计按头过滤。
+    """
+    principal = _case_principal(request)
+    _case_guard_rate_limit(request, principal, "read")
+    runtime = _case_runtime()
+    case = runtime.search.read_case(principal, case_id, action="read")
+    if case is None:
+        raise HTTPException(status_code=404, detail={
+            "code": "CASE_NOT_FOUND_OR_NOT_VISIBLE",
+            "message": "案例不存在，或你没有查看权限"})
+    response.headers["X-Case-Trace"] = "full"
+    return {"code": 0, "data": case, "message": "ok"}
+
+
+@app.post("/api/v2/cases/{case_id}/cite")
+def api_case_cite(case_id: str, req: CaseCiteRequest, request: Request) -> dict[str, Any]:
+    """把案例引用到工单（只引用脱敏知识层；返回引用三元组）。
+
+    三元组 ``(case_id, chunk_id, content_version)`` 里的 ``chunk_id`` 是
+    ``f"{case_id}::{chunk_type}"``：它必须与用户实际阅读的那一段一致，
+    否则"可溯源"只是口号。因此：
+
+    * 前端传 ``chunk_type`` / ``content_version``（来自命中卡片）；
+    * 未传时退化为 ``summary``（保守：摘要一定是知识层且最稳定）；
+    * 内容版本已变（``content_version`` 不匹配）→ ``409 CASE_CITATION_STALE``，
+      **不返回一个"看起来对"的旧引用**。
+    """
+    principal = _case_principal(request)
+    _case_guard_rate_limit(request, principal, "cite")
+    runtime = _case_runtime()
+    case = runtime.search.read_case(principal, case_id, action="cite")
+    if case is None:
+        raise HTTPException(status_code=404, detail={
+            "code": "CASE_NOT_FOUND_OR_NOT_VISIBLE",
+            "message": "案例不存在，或你没有引用权限"})
+
+    from ..services.case_index import CHUNK_TYPES
+
+    chunk_type = str(req.chunk_type or "summary").strip() or "summary"
+    if chunk_type not in CHUNK_TYPES:
+        raise HTTPException(status_code=400, detail={
+            "code": "CASE_CITE_INVALID_CHUNK",
+            "message": f"未知的引用片段类型 {chunk_type!r}（允许：{list(CHUNK_TYPES)}）"})
+    current_version = int(case.get("content_version") or 1)
+    requested_version = int(req.content_version or 0)
+    if requested_version and requested_version != current_version:
+        raise HTTPException(status_code=409, detail={
+            "code": "CASE_CITATION_STALE",
+            "message": f"片段内容已更新（v{requested_version} → v{current_version}），"
+                       "请重新检索后再引用"})
+    if not runtime.index_service.verify_citation(case_id, chunk_type, current_version):
+        raise HTTPException(status_code=409, detail={
+            "code": "CASE_CITATION_STALE",
+            "message": "引用校验失败：该片段已不在当前知识层（案例可能已撤权或被更新）"})
+
+    chunk_id = f"{case_id}::{chunk_type}"
+    citation = {"case_id": case_id, "chunk_id": chunk_id,
+                "content_version": current_version}
+    runtime.audit.append(actor=principal.user_id, action="case.cite",
+                         case_id=case_id, chunk_id=chunk_id,
+                         detail={"target_ticket_type": req.target_ticket_type,
+                                 "target_ticket_id": req.target_ticket_id})
+    # R1：引用回执默认只给不可反推的 ref；只有调用方**同时**具备 case.read
+    # （即他本来就能从详情拿到真号）时才回原文单号，避免 cite 成为绕过详情闸门的后门。
+    ticket_id = str(case.get("source_ticket_id") or "")
+    source_ticket: dict[str, str] = {
+        "ticket_type": str(case.get("source_ticket_type") or ""),
+        "ticket_ref": source_ticket_ref(ticket_id),
+    }
+    trace_full = runtime.search.trace_allowed(principal, case_id)
+    if trace_full:
+        source_ticket["ticket_id"] = ticket_id
+    return {"code": 0, "data": {
+        "citation": citation,
+        "case_code": case.get("case_code"),
+        "chunk_type": chunk_type,
+        # 溯源锚点：ref 恒有；原文单号需 case.read（见上）
+        "source_ticket": source_ticket,
+        "trace": "full" if trace_full else "ref",
+        "target": {"ticket_type": req.target_ticket_type,
+                   "ticket_id": req.target_ticket_id},
+        "layer": "knowledge",
+        "note": "引用内容是脱敏知识层；证据层引用需额外授权（case.evidence.read）",
+    }, "message": "ok"}
 
 
 # ---------- 静态前端挂载（/demo-ui → demo/ui 目录） ----------

@@ -77,8 +77,29 @@ class IdentityCodec:
         return _b64e(mac)
 
     def issue(self, *, user_id: str, name: str = "", dept: str = "",
-              roles: Iterable[str] = ()) -> tuple[str, dict[str, Any]]:
-        """签发令牌，返回 ``(token, payload)``。角色为空即拒绝（不给匿名令牌）。"""
+              roles: Iterable[str] = (),
+              tenant: Optional[str] = None,
+              plant: Optional[str] = None,
+              line_ids: Optional[Iterable[str]] = None,
+              project_ids: Optional[Iterable[str]] = None,
+              customer_ids: Optional[Iterable[str]] = None,
+              supplier_ids: Optional[Iterable[str]] = None,
+              product_families: Optional[Iterable[str]] = None,
+              max_classification_rank: Optional[int] = None,
+              employment_type: Optional[str] = None,
+              token_version: Optional[int] = None,
+              principal_version: Optional[int] = None
+              ) -> tuple[str, dict[str, Any]]:
+        """签发令牌，返回 ``(token, payload)``。角色为空即拒绝（不给匿名令牌）。
+
+        扩展维度（案例助手所需的 11 维权属主体，见架构 §4.5 / §8.1）**全部是可选
+        关键字参数**：不传就不写进载荷，因此**既有 ``issue()`` 调用行为逐字节不变**
+        （老令牌仍可签发、仍可验签），既有 625 条测试的行为不受影响。
+
+        新增维度只对显式传参的调用方生效——这也是"渐进式扩展、不做静默兼容放行"
+        的实现方式：案例域的 ``PrincipalResolver`` 会拒绝 ``tv < 2`` 的老令牌，
+        而不是让老令牌"部分可用"。
+        """
         role_list = [str(r) for r in (roles or []) if str(r)]
         if not role_list:
             raise AuthError("岗位未识别：无可签发的角色")
@@ -88,6 +109,24 @@ class IdentityCodec:
             "dept": str(dept or ""), "roles": role_list,
             "iat": now, "exp": now + self.ttl_s,
         }
+        # ---- 案例域扩展载荷（仅在显式传参时写入，保持既有行为不变）----
+        optional_scalars: dict[str, Any] = {
+            "tenant": tenant, "plant": plant,
+            "max_classification_rank": max_classification_rank,
+            "employment_type": employment_type,
+            "tv": token_version, "pv": principal_version,
+        }
+        for key, value in optional_scalars.items():
+            if value is not None:
+                payload[key] = value
+        optional_lists: dict[str, Any] = {
+            "line_ids": line_ids, "project_ids": project_ids,
+            "customer_ids": customer_ids, "supplier_ids": supplier_ids,
+            "product_families": product_families,
+        }
+        for key, value in optional_lists.items():
+            if value is not None:
+                payload[key] = [str(v) for v in value if str(v)]
         body = _b64e(json.dumps(payload, ensure_ascii=False,
                                 separators=(",", ":"), sort_keys=True).encode("utf-8"))
         return f"{body}.{self._sign(body)}", payload
@@ -153,9 +192,15 @@ def resolve_login_roles(names: Optional[Iterable[Any]]) -> tuple[str, ...]:
 
 
 def issue_token(*, user_id: str, name: str = "", dept: str = "",
-                roles: Iterable[str] = ()) -> tuple[str, dict[str, Any]]:
-    """便捷入口：用单例编解码器签发令牌。"""
-    return get_codec().issue(user_id=user_id, name=name, dept=dept, roles=roles)
+                roles: Iterable[str] = (), **extra: Any) -> tuple[str, dict[str, Any]]:
+    """便捷入口：用单例编解码器签发令牌。
+
+    ``**extra`` 透传给 :meth:`IdentityCodec.issue` 的可选维度
+    （``tenant`` / ``plant`` / ``tv`` / ``pv`` / ``max_classification_rank`` …）。
+    不传时行为与历史版本完全一致。
+    """
+    return get_codec().issue(user_id=user_id, name=name, dept=dept,
+                             roles=roles, **extra)
 
 
 def verify_token(token: str) -> dict[str, Any]:

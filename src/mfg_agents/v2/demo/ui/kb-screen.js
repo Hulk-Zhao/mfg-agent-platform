@@ -50,7 +50,7 @@
     return {
       messages: [{
         role: "bot",
-        content: "您好！我是企业咨询助手，请问有什么可以帮您？",
+        content: "您好！我是企业制度问答助手，请问有什么可以帮您？",
         tags: null, time: nowHM(),
       }],
       sending: false,
@@ -111,7 +111,7 @@
           <div class="kbqa-header">
             <div class="kbqa-hcenter">
               <div class="kbqa-logo">${LOGO_ICON}</div>
-              <div class="kbqa-brand-title">企业咨询助手</div>
+              <div class="kbqa-brand-title">企业制度问答</div>
             </div>
             <div class="kbqa-online">在线</div>
           </div>
@@ -146,7 +146,7 @@
         if (i >= 0) S.messages[i] = msg;
       };
       try {
-        if (!api.online()) throw new Error("后端离线：企业咨询助手需要连接后端知识库");
+        if (!api.online()) throw new Error("后端离线：企业制度问答需要连接后端知识库");
         const data = await api.kbqaQuery(q);
         replaceLastBot({ role: "bot", content: data.answer, tags: data.tags, time: nowHM() });
       } catch (err) {

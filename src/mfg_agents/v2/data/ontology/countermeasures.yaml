@@ -1,0 +1,87 @@
+# 对策受控词表（countermeasure）——词条来源：data/knowledge/*.jsonl 的
+# effective_action 字段（校准刮刀压力 / 更换加热管 / 供应商 8D / 网板张紧 等真实写法）。
+#
+# 治理纪律同 defect_modes.yaml：人工归并、不自动新增。
+# 对策是"可复用经验"的核心载体（PRD D2：共享的是经验三元组），因此**必须**是受控 code，
+# 不是自由文本——自由文本会让"上次这么解决"无法被比对与复用。
+version: 1
+vocabulary: countermeasure
+terms:
+  - code: CM-PARAM-CALIB
+    name: 参数校准至基准
+    synonyms: [校准参数, 参数复位, 校准至基准值]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-18"
+  - code: CM-PARAM-RECIPE
+    name: 温区曲线复测
+    synonyms: [复测温区曲线, 炉温曲线复测, 重做温度曲线]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-18"
+  - code: CM-TOOL-REPLACE
+    name: 网板钢网更换
+    synonyms: [更换钢网, 更换网板, 换新网板]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-18"
+  - code: CM-TOOL-TENSION
+    name: 网板重新张紧
+    synonyms: [重新张紧, 网板张力恢复, 张力复紧]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-18"
+  - code: CM-TOOL-CLEAN
+    name: 钢网清洗周期缩短
+    synonyms: [缩短清洗周期, 增加擦拭频次, 钢网清洗加严]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-18"
+  - code: CM-MAT-SUPPLIER-8D
+    name: 供应商 8D 与切换料号
+    synonyms: [供应商8D, 切换料号, 供应商整改]
+    status: active
+    approved_by: SQE
+    approved_at: "2026-10-18"
+  - code: CM-MAT-IQC
+    name: 来料加严检验
+    synonyms: [加严检验, IQC 加严, 来料全检]
+    status: active
+    approved_by: SQE
+    approved_at: "2026-10-18"
+  - code: CM-PROC-PASTE
+    name: 锡膏回温与时限管控
+    synonyms: [回温管控, 锡膏先进先出, 使用时限管控]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-18"
+  - code: CM-PROC-FLUX
+    name: 助焊剂更换与清洗
+    synonyms: [更换助焊剂, 清洗残留, 残留清洗]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-18"
+  - code: CM-EQ-NOZZLE
+    name: 吸嘴更换与点检
+    synonyms: [更换吸嘴, 吸嘴点检, 吸嘴保养]
+    status: active
+    approved_by: 设备工程
+    approved_at: "2026-10-18"
+  - code: CM-EQ-HEATER
+    name: 加热管更换
+    synonyms: [更换加热管, 加热元件更换]
+    status: active
+    approved_by: 设备工程
+    approved_at: "2026-10-18"
+  - code: CM-EQ-PM
+    name: 设备预防性维护
+    synonyms: [预防性维护, PM 保养, 定期保养]
+    status: active
+    approved_by: 设备工程
+    approved_at: "2026-10-18"
+  - code: CM-PROC-SPI
+    name: SPI 全检与首件复检
+    synonyms: [SPI全检, 首件复检, 加严抽检]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-18"

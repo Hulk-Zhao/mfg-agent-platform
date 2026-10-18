@@ -1,0 +1,107 @@
+# 案例域 RBAC：32 个治理角色 → case.* 动作映射（**独立注册表**）
+#
+# 为什么独立：见 docs/case-assistant-demo-readme.md「与架构文档的偏差」。
+# 纪律（构造期自检，见 v2/security/case_rbac.py）：
+#   1. 角色 key 必须能被 PermissionRegistry.normalize_role() 识别，否则加载失败；
+#   2. 动作必须落在 case_acl.ACTIONS 内，否则加载失败；
+#   3. Agent 身份角色不得持有 ingest / export / share（BR-07 的案例域延伸）；
+#   4. share 默认**无任何角色**持有（N6：不对内对外开放外发）。
+#
+# 六个动词的产品含义（PRD §7.5）：
+#   query   出现在检索结果中          preview 看标题+摘要
+#   read    打开脱敏知识层全文        cite    引用到工单/8D
+#   export  导出为文件（默认拒绝）    share   外发分享（恒定拒绝）
+version: 1
+
+# 动作 → 中文名（/meta 展示用）
+actions:
+  - {key: case.query,   label: 检索命中}
+  - {key: case.preview, label: 预览摘要}
+  - {key: case.read,    label: 读知识层全文}
+  - {key: case.cite,    label: 引用到工单}
+  - {key: case.export,  label: 导出（默认拒绝，需申请审批）}
+  - {key: case.share,   label: 外发分享（恒定拒绝）}
+  - {key: case.ingest,  label: 案例入库}
+
+roles:
+  # ---------- 管理 ----------
+  - key: gm
+    actions: [query, preview, read, cite, export]
+    note: 总经理可导出，但导出仍需走申请审批（demo 只做"门禁拒绝"）
+  - key: project_manager
+    actions: [query, preview, read, cite]
+
+  # ---------- 质量 ----------
+  - key: quality_director
+    actions: [query, preview, read, cite, export, ingest]
+  - key: qa_manager
+    actions: [query, preview, read, cite, ingest]
+  - key: qa
+    actions: [query, preview, read, cite]
+  - key: sqe
+    actions: [query, preview, read, cite]
+  - key: pqe
+    actions: [query, preview, read, cite, ingest]
+
+  # ---------- 研发 / 工艺 ----------
+  - key: rd_manager
+    actions: [query, preview, read, cite]
+  - key: rd_engineering
+    actions: [query, preview, read, cite, ingest]
+  - key: product_engineering
+    actions: [query, preview, read, cite, ingest]
+  - key: me_engineer
+    actions: [query, preview, read]
+  - key: test_engineer
+    actions: [query, preview, read]
+  - key: rd_test_engineer
+    actions: [query, preview, read]
+  - key: npi_engineer
+    actions: [query, preview, read, cite]
+  - key: ie_engineer
+    actions: [query, preview, read]
+
+  # ---------- 设备 ----------
+  - key: equipment_manager
+    actions: [query, preview, read, cite]
+  - key: equipment
+    actions: [query, preview, read, cite]
+  - key: maintenance_tech
+    actions: [query, preview, read]
+    note: 一线维保技师只读不可导出（PRD §5.2）
+
+  # ---------- 生产 ----------
+  - key: manufacturing
+    actions: [query, preview, read, cite]
+
+  # ---------- 采购 / 供应链 ----------
+  - key: supply_chain_manager
+    actions: [query, preview, read, cite]
+  - key: procurement_manager
+    actions: [query, preview, read, cite]
+  - key: procurement
+    actions: [query, preview, read, cite]
+  - key: planning
+    actions: [query, preview, read, cite]
+  - key: material_control
+    actions: [query, preview, read]
+
+  # ---------- 客服 / 售后 ----------
+  - key: customer_service
+    actions: [query, preview, read, cite]
+  - key: sales
+    actions: [query, preview, read, cite]
+
+  # ---------- 财务 / 仓储 / 职能 ----------
+  - key: finance_manager
+    actions: [query, preview, read]
+  - key: finance
+    actions: [query, preview, read]
+  - key: warehouse_manager
+    actions: [query, preview, read]
+  - key: warehouse
+    actions: [query, preview, read]
+  - key: admin_hr
+    actions: [query, preview, read]
+  - key: ehs
+    actions: [query, preview, read]

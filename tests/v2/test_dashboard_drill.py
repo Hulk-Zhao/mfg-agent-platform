@@ -542,9 +542,19 @@ def test_build_pareto_drill_decomposes_single_defect_type(registry):
 
 @pytest.fixture(scope="module")
 def api_client():
+    """带**总经理**令牌的客户端。
+
+    看板接口自 P0-2 起按岗位裁决（fail-closed）：裸调用一律 401。本文件的用例
+    验的是下钻**结构**，统一用「全权限岗位」跑；越权与脱敏路径见
+    ``tests/v2/test_数据范围.py``。
+    """
     from fastapi.testclient import TestClient
     from mfg_agents.v2.demo.api import app
-    return TestClient(app)
+    client = TestClient(app)
+    login = client.post("/api/v2/auth/login", json={"roles": ["gm"]})
+    client.headers.update(
+        {"Authorization": f"Bearer {login.json()['data']['token']}"})
+    return client
 
 
 def test_drill_api_rejects_defect_type_on_other_kpi(api_client):

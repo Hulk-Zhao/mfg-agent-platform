@@ -10,13 +10,62 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+#: 本地零依赖默认 SQLite 路径（DB_URL / WORKFLOW_DB 共用，保证单库）
+_DEFAULT_SQLITE_URL = f"sqlite:///{os.path.join(os.getcwd(), 'data', 'mfg_agent.db')}"
+
+
+def _env_or(name: str, default: str) -> str:
+    """读取环境变量，**空白值视同未设置**。
+
+    直接 ``os.getenv(name, default)`` 有个坑：``.env`` 里写了 ``DB_URL=``
+    （留空待填）时返回的是空字符串而不是默认值，而空串会被
+    ``sqlite3.connect("")`` 当成**临时匿名库**——进程能跑，但所有数据写完即丢，
+    且不报任何错。这种"静默连到空库"比启动失败更难排查，故此处统一归一。
+    """
+    return (os.getenv(name) or "").strip() or default
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    """读取布尔环境变量（``1/true/yes/on`` 为真，``0/false/no/off`` 为假）。
+
+    未设置或空白 → 用默认值；**无法识别的写法按默认值处理**——布尔项写错不至于让
+    服务起不来，但会走默认（安全的）分支。
+    """
+    raw = (os.getenv(name) or "").strip().lower()
+    if not raw:
+        return bool(default)
+    if raw in ("1", "true", "yes", "on", "y"):
+        return True
+    if raw in ("0", "false", "no", "off", "n"):
+        return False
+    return bool(default)
+
+
+def _resolve_workflow_db(db_url: str) -> str:
+    """解析 WORKFLOW_DB 的默认值：**绝不继承非 SQLite 的 DB_URL**。
+
+    为什么必须单独解析：治理写路径（WorkflowEngine）直连 sqlite3，不走
+    SQLAlchemy，只认文件路径。历史上 ``WORKFLOW_DB`` 直接默认成 ``DB_URL``，
+    一旦 DB_URL 切成 ``mysql+pymysql://…``，这个 URL 会被当作文件路径交给
+    ``sqlite3.connect()``——Linux 下静默建出一个文件名即整条 URL 的怪库，
+    Windows 下文件名含 ``:`` 直接抛异常。两者都是事故，故在此切断继承。
+
+    - 显式配置 ``WORKFLOW_DB`` → 原样使用（由 WorkflowEngine 再做 scheme 校验）；
+    - ``DB_URL`` 是 SQLite（含裸路径）→ 沿用，保持"本地单库"既有行为；
+    - ``DB_URL`` 是 MySQL 等非 SQLite → 回落默认 SQLite 文件。
+    """
+    explicit = (os.getenv("WORKFLOW_DB") or "").strip()
+    if explicit:
+        return explicit
+    if "://" not in db_url or db_url.split("://", 1)[0].lower().startswith("sqlite"):
+        return db_url
+    return _DEFAULT_SQLITE_URL
+
 
 class Settings:
     # 数据库：本地默认SQLite；Docker部署时设置 DB_URL=mysql+pymysql://...
-    DB_URL: str = os.getenv(
-        "DB_URL",
-        f"sqlite:///{os.path.join(os.getcwd(), 'data', 'mfg_agent.db')}"
-    )
+    # 留空（含 .env 里写 `DB_URL=`）→ 回落本地 SQLite，不会连到匿名临时库
+    DB_URL: str = _env_or("DB_URL", _DEFAULT_SQLITE_URL)
 
     # ChromaDB：本地持久化（见 rag_tools.py）
     CHROMA_HOST: str = os.getenv("CHROMA_HOST", "localhost")
@@ -71,7 +120,11 @@ class Settings:
     )
 
     # 工作流库（SQLite：platform_workflow_task 工单/状态机/SLA/HITL 队列）
-    WORKFLOW_DB: str = os.getenv("WORKFLOW_DB", DB_URL)
+    # ⚠ 治理写路径**当前只支持 SQLite**（WorkflowEngine 直连 sqlite3，不走 SQLAlchemy）。
+    # 因此不复用 DB_URL：切换 MySQL 时治理库必须显式指向本地 SQLite 文件，
+    # 否则会把 MySQL URL 当文件路径交给 sqlite3.connect（静默数据分裂）。
+    # 详见 README「生产化清单」与该函数的 docstring。
+    WORKFLOW_DB: str = _resolve_workflow_db(DB_URL)
 
     # 企业微信回调配置（自建应用：URL+Token+AES；留空时回调端点 fail-fast 报错）
     IM_TOKEN: str = os.getenv("IM_TOKEN", "")
@@ -100,6 +153,45 @@ class Settings:
     AUTH_SECRET: str = os.getenv("AUTH_SECRET", "")
     # 令牌有效期（秒），默认 8 小时（覆盖一个工作日）
     AUTH_TOKEN_TTL_S: int = int(os.getenv("AUTH_TOKEN_TTL_S", str(8 * 3600)))
+
+    # ================= 案例助手（Case Assistant）=================
+    # 说明：以下 CASE_* 均为**新增项**，不改变任何既有字段的语义与默认值。
+    #
+    # 案例库（关系库 = 真相源；向量库是可重建的派生索引）
+    CASE_DB: str = _env_or(
+        "CASE_DB", os.path.join(os.getcwd(), "data", "case.db"))
+    # 案例总开关：false 时案例路由返回 503（架构 §11.6 回滚开关）
+    CASE_ENABLED: bool = _env_bool("CASE_ENABLED", True)
+    # 演示模式：允许 POST /api/v2/cases/session 自选演示身份（生产必须 false）
+    CASE_DEMO_MODE: bool = _env_bool("CASE_DEMO_MODE", True)
+    # 向量后端：memory（默认，纯内存确定性）| chroma（dev/POC）| milvus（生产）
+    CASE_VECTOR_BACKEND: str = os.getenv("CASE_VECTOR_BACKEND", "memory")
+    # Chroma 持久化目录（仅 CASE_VECTOR_BACKEND=chroma 时使用）
+    CASE_CHROMA_DIR: str = os.getenv("CASE_CHROMA_DIR", "data/chroma_case")
+    # 「另有 N 条因权限不可见」是否展示（架构 §7.6 / §15 P3，默认开启）
+    CASE_EXPOSE_HIDDEN_COUNT: bool = _env_bool("CASE_EXPOSE_HIDDEN_COUNT", True)
+    # 重排适配器：deterministic（默认，确定性加权）| bge（生产，需模型）
+    CASE_RERANK: str = os.getenv("CASE_RERANK", "deterministic")
+    # 种子数据（首次启动时幂等导入；置空则不导入）
+    CASE_SEED_PATH: str = os.getenv(
+        "CASE_SEED_PATH", os.path.join(os.getcwd(), "data", "case_seed.json"))
+    # 默认租户（多工厂多法人时由主数据/SSO 提供）
+    CASE_DEFAULT_TENANT: str = os.getenv("CASE_DEFAULT_TENANT", "T001")
+    # 默认返回条数 / 上限
+    CASE_K_DEFAULT: int = int(os.getenv("CASE_K_DEFAULT", "5"))
+    CASE_K_MAX: int = int(os.getenv("CASE_K_MAX", "20"))
+    # 脱敏补充词表（逗号分隔，命中的词替换为 <PERSON>）。
+    # 用途：词表外的人名（客户联系人、现场工程师）在没有 NER 的演示环境里
+    # 只能靠"显式声明"兜住——宁可让运维多填一行，也不要放过一个真名。
+    CASE_REDACTION_EXTRA_TERMS: str = os.getenv("CASE_REDACTION_EXTRA_TERMS", "")
+    # 跨部门访问申请的授权有效期（天；到期惰性回收）
+    CASE_ACCESS_GRANT_TTL_DAYS: int = int(
+        os.getenv("CASE_ACCESS_GRANT_TTL_DAYS", "30"))
+    # B8：单主体（user+IP 组合桶）每分钟可发起的案例检索/读取次数上限。
+    # 超限返回 429 —— 用限流掐断探测流量，而不是削减审计写入：
+    # 少写一条审计就会把 B1 刚消掉的"时间侧信道"请回来。
+    # 配成 0 或负数表示关闭（仅限本地调试）。
+    CASE_RATE_LIMIT_PER_MIN: int = int(os.getenv("CASE_RATE_LIMIT_PER_MIN", "60"))
 
 
 settings = Settings()

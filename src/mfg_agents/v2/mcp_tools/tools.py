@@ -62,13 +62,22 @@ def _to_plain(obj: Any) -> Any:
 
 def _h_platform_describe(orch: V2Orchestrator) -> Callable[..., dict]:
     def handler(args: dict, user_ctx: dict) -> dict:
+        from ..services import workflow_scope
+
         rt = _runtime(orch)
         registry = rt.scenario_registry
+        # 待办计数按调用者角色裁决；无身份 → 0（原实现给全厂总数 621，
+        # 等于一个能力发现接口顺带泄漏了全公司治理负载）。
+        roles = [str(r) for r in ((user_ctx or {}).get("roles") or [])]
+        pending = (workflow_scope.summarize(
+            rt.workflow, rt.workflow.list_tasks(status="waiting_hitl"), roles)
+            if roles else {"mine": 0, "domain": 0, "visible": 0})
         return {
             "scenarios": [{"key": s.key, "name": s.name, "domains": list(s.domains)}
                           for s in registry.list()],
             "datasources": rt.data_registry.describe_all(),
-            "workflow_pending_total": len(rt.workflow.pending_hitl()),
+            "workflow_pending_visible": pending["visible"],
+            "workflow_pending_mine": pending["mine"],
         }
     return handler
 
@@ -148,20 +157,49 @@ def _h_scenario_run(orch: V2Orchestrator) -> Callable[..., dict]:
 
 
 def _h_workflow_pending(orch: V2Orchestrator) -> Callable[..., dict]:
+    """待办查询——与 HTTP 通道同一裁决（只能看「我的活」+「我治理域内的活」）。
+
+    ``args.roles`` **只能收窄** ``user_ctx.roles``，不能扩宽。原实现是
+    ``args.get("roles") or user_ctx.get("roles")``：只要模型在参数里写一个角色，
+    就把真实身份覆盖掉了，等于「自证式权限」——与 README 承诺的
+    「A2A/MCP 不是绕过治理的后门」直接矛盾。
+    """
     def handler(args: dict, user_ctx: dict) -> dict:
+        from ..services import workflow_scope
+        from ..services.workflow import PermissionDenied
+
+        _require_user(user_ctx, "待办查询")
         wf: WorkflowEngine = _runtime(orch).workflow
-        roles = [str(r) for r in (args.get("roles")
-                                  or user_ctx.get("roles") or [])]
-        tasks = wf.pending_hitl(roles or None)
+        registry = wf.permission_registry
+        granted = [str(r) for r in (user_ctx.get("roles") or [])]
+        requested = [str(r) for r in (args.get("roles") or [])]
+        if requested:
+            if not (set(registry.normalize_roles(requested))
+                    <= set(registry.normalize_roles(granted))):
+                raise PermissionDenied("不能查询本人岗位之外的待办")
+            roles = requested
+        else:
+            roles = granted
+
+        pairs = workflow_scope.visible_tasks(
+            wf, wf.list_tasks(status="waiting_hitl"), roles)
         items = []
-        for t in tasks:
+        mine = domain = 0
+        for t, vis in pairs:
             d = t.to_dict()
+            action = wf.action_for(t, roles) if vis == workflow_scope.VIS_MINE else None
+            if vis == workflow_scope.VIS_MINE:
+                mine += 1
+            else:
+                domain += 1
             items.append({"task_uid": d["task_uid"], "title": d["title"],
                           "status": d["status"], "priority": d["priority"],
                           "slot": (d.get("governance") or {}).get("slot", ""),
-                          "my_action": wf.action_for(t, roles or None),
+                          "visibility": vis,
+                          "my_action": action,
                           "signoff_status": t.signoff_status()})
-        return {"tasks": items, "total": len(items)}
+        return {"tasks": items, "total": len(items),
+                "counts": {"mine": mine, "domain": domain}}
     return handler
 
 

@@ -643,7 +643,9 @@ def test_api_select_action_and_pending_payload(api_client, engine):
     assert data["governance"]["selected_action"] == "特采（让步接收）"
     assert data["signoff_status"]["progress"] == "0/3"
 
-    pending = api_client.get("/api/v2/workflow/pending").json()["data"]
+    # 待办读接口已 fail-closed：必须带令牌（原实现无令牌返回全量）
+    pending = api_client.get("/api/v2/workflow/pending",
+                             headers=_auth(SQE_CTX)).json()["data"]
     item = next(t for t in pending if t["task_uid"] == uid)
     assert item["governance"]["action_key"] == "concession"
     assert [r["role"] for r in item["signoff_status"]["required"]] == [
@@ -921,35 +923,58 @@ def test_pending_hitl_filters_by_role_and_my_action(engine):
 
 
 def test_api_pending_role_query(api_client, engine):
-    """GET /workflow/pending?role=... 支持重复与逗号分隔；带 my_action。"""
+    """GET /workflow/pending 的身份口径：**令牌为准**，`role` 只能收窄。
+
+    旧契约是「不传 role = 全量，传 role = 按 my_action 过滤」，等于把
+    「我是谁」交给 query 参数自证，无令牌即可拉走全厂工单。现在的契约：
+
+    - 无令牌 → 401（不再有"向后兼容的全量"）
+    - 令牌角色决定可见范围（mine + domain），每条带 `visibility`
+    - `role` 传自己的角色（相等）→ 允许；传别人的 → 403；不认识 → 400
+    """
     uid = _make_hitl_task(engine)
-    # 不传 role → 全量 + my_action=None（向后兼容）
-    full = api_client.get("/api/v2/workflow/pending").json()
+
+    # 无令牌：直接拒绝，且不返回任何工单
+    assert api_client.get("/api/v2/workflow/pending").status_code == 401
+
+    # 令牌身份：SQE 是 disposition 的 propose 角色 → mine
+    full = api_client.get("/api/v2/workflow/pending",
+                          headers=_auth(SQE_CTX)).json()
     assert [t["task_uid"] for t in full["data"]] == [uid]
-    assert full["data"][0]["my_action"] is None
-    assert full["scope"]["filtered"] is False
+    assert full["data"][0]["my_action"] == "select_action"
+    assert full["data"][0]["visibility"] == "mine"
+    assert full["scope"]["filtered"] is True
 
-    # 重复参数
+    # 重复参数 + 逗号分隔（解析能力不变，但必须是自己的角色子集）
     resp = api_client.get("/api/v2/workflow/pending",
-                          params=[("role", "sqe"), ("role", "qa")]).json()
+                          params=[("role", "quality")],
+                          headers=_auth(SQE_CTX)).json()
     assert {t["my_action"] for t in resp["data"]} == {"select_action"}
-    assert resp["scope"]["roles"] == ["sqe", "qa"]
 
-    # 逗号分隔 + 无权限岗位
-    resp = api_client.get("/api/v2/workflow/pending", params={"role": "仓库"}).json()
+    # 跨域岗位：看不到 disposition 工单（不是 200 空数据，是域不通）
+    resp = api_client.get("/api/v2/workflow/pending", headers=_auth(WH_CTX)).json()
     assert resp["data"] == []
-    assert resp["scope"]["filtered"] is True
+    assert resp["scope"]["slots"] == ["delivery_commit"]
 
-    # 未知角色 → 空（fail-closed），并在 scope.unknown 里回显
-    resp = api_client.get("/api/v2/workflow/pending", params={"role": "随便谁"}).json()
-    assert resp["data"] == []
-    assert resp["scope"]["unknown"] == ["随便谁"]
+    # 拿仓库的令牌去要 PQE 的待办 → 403（不能借别人的眼睛看）
+    r = api_client.get("/api/v2/workflow/pending", params={"role": "pqe"},
+                       headers=_auth(WH_CTX))
+    assert r.status_code == 403
+    assert r.json()["detail"]["requested"] == ["pqe"]
 
-    # 选动作后 PQE 的待办变为 cosign
+    # 未知角色 → 400（旧实现是 200 + scope.unknown，语义上等于静默放过）
+    r = api_client.get("/api/v2/workflow/pending", params={"role": "随便谁"},
+                       headers=_auth(SQE_CTX))
+    assert r.status_code == 400
+    assert r.json()["detail"]["unknown"] == ["随便谁"]
+
+    # 选动作后 PQE 的待办变为 cosign（同一岗位视角的前后变化）
     _hitl(api_client, f"/api/v2/workflow/{uid}/select-action", SQE_CTX,
           action_key="concession", comment="加严检验")
-    resp = api_client.get("/api/v2/workflow/pending", params={"role": "pqe"}).json()
+    resp = api_client.get("/api/v2/workflow/pending",
+                          headers=_auth(PQE_CTX)).json()
     assert resp["data"][0]["my_action"] == "cosign"
+    assert resp["data"][0]["visibility"] == "mine"
 
 
 # ============================================================

@@ -21,6 +21,7 @@ if not exist logs mkdir logs
 rem ---------- [1/4] locate cloudflared ----------
 set CFEXE=
 if exist "bin\cloudflared.exe" set CFEXE=bin\cloudflared.exe
+if not defined CFEXE if exist ".tools\cloudflared.exe" set CFEXE=.tools\cloudflared.exe
 if not defined CFEXE (
     for /f "delims=" %%i in ('where cloudflared 2^>nul') do set CFEXE=%%i
 )
@@ -30,7 +31,7 @@ if not defined CFEXE (
     echo   Fix ^(either one^):
     echo     a^) Download cloudflared-windows-amd64.exe from
     echo        https://github.com/cloudflare/cloudflared/releases/latest
-    echo        and save it as  bin\cloudflared.exe
+    echo        and save it as  bin\cloudflared.exe  or  .tools\cloudflared.exe
     echo     b^) Install cloudflared and make sure it is in PATH
     echo.
     pause
@@ -101,7 +102,8 @@ if not defined REGOK (
 )
 echo %PUBURL%>"%URLLOG%"
 
-rem ---------- [4/4] verify the public URL really serves the app ----------echo [4/4] Verifying public URL ...
+rem ---------- [4/4] verify the public URL really serves the app ----------
+echo [4/4] Verifying public URL ...
 set VOK=
 for /l %%i in (1,1,12) do (
     if not defined VOK (
