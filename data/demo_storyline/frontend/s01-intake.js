@@ -111,7 +111,11 @@
       "highFormula": "报价上限 = 报价下限 × (1 + 毛利缓冲率)"
     },
     "signoff": {
-      "slotOrder": ["biz", "rd", "pln"],
+      "slotOrder": [
+        "biz",
+        "rd",
+        "pln"
+      ],
       "slotLabels": {
         "biz": "接单人 · 业务",
         "rd": "技术 · 研发",
@@ -145,7 +149,11 @@
       },
       "workOrder": {
         "wfId": "hitl_order_review",
-        "slots": ["biz", "rd", "pln"],
+        "slots": [
+          "biz",
+          "rd",
+          "pln"
+        ],
         "blockTitle": "订单评审 · 真实治理工单（order_review）",
         "outsiderNote": "当前岗位不持有 order_review 槽位权限：后端按令牌角色裁决为不可见，队列不返回该工单、详情取不到（404）。本屏不拉全量队列兜底——不借别人的眼睛看。",
         "readonlyNote": "工单为平台真实 HITL 留痕：三槽位会签状态取自工单 signoff_status（会签齐备前不得终批）；会签 / 终批等写操作在「人工确认」治理窗口执行，本演示屏保持只读、不出现写按钮。"
@@ -155,7 +163,14 @@
       "profileField": "quality_profile",
       "gradeField": "credit_grade"
     },
-    "timelineTitle": "S1 接单评审事件流"
+    "timelineTitle": "S1 接单评审事件流",
+    "agent_layer": {
+      "replay": "s01_intake_faq",
+      "kind": "kbqa",
+      "title": "接单制度问答（kbqa 回放）",
+      "source": "faqs.jsonl · DEMO-FAQ-011（L1 命中直答，channel=faq）",
+      "degrade": "制度问答回放未就绪，不展示编造答案"
+    }
   };
 
   window.SCENE_DATA = window.SCENE_DATA || {};

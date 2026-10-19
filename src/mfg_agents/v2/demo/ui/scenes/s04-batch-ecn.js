@@ -51,7 +51,16 @@
     "title": "S4 · 批量监控与 ECN",
     "sub": "30 天 SPC 判异处置会签 · 支线 A 换料影响面四象限",
     "spec_ref": "spec-v1.md §3 节点 #8–#12 · §4 五角色视图（gm/rd/qa/mfg）· §5 界面数字台账",
-    "object_source": ["spc_series", "events", "work_orders", "lots", "boms", "sales_orders", "materials", "equipment"],
+    "object_source": [
+      "spc_series",
+      "events",
+      "work_orders",
+      "lots",
+      "boms",
+      "sales_orders",
+      "materials",
+      "equipment"
+    ],
     "value_anchors": [
       "异常不过夜：判异自动拉群取证，处置方案带着成本影响送到会签人。",
       "变更影响面从几天缩短到小时级，该停的没停、该切的没切不再靠 Excel。"
@@ -65,8 +74,18 @@
       "tolerance": 6.0,
       "source": "DEMO-EV-0013 payload（target / tolerance）；序列点取自 spc_series.jsonl（30 点）"
     },
-    "disposition_chain": ["拉群", "取证", "方案", "会签", "闭环"],
-    "disposition_status_labels": { "done": "已完成", "doing": "进行中", "absent": "未留痕" },
+    "disposition_chain": [
+      "拉群",
+      "取证",
+      "方案",
+      "会签",
+      "闭环"
+    ],
+    "disposition_status_labels": {
+      "done": "已完成",
+      "doing": "进行中",
+      "absent": "未留痕"
+    },
     "alerts": [
       {
         "alert_id": "DEMO-ALERT-001",
@@ -79,14 +98,27 @@
         "tolerance": 6.0,
         "ts": "2026-12-02T09:00:00",
         "closure_ts": "2026-12-03T09:00:00",
-        "event_refs": ["DEMO-EV-0013", "DEMO-EV-0014", "DEMO-EV-0015"],
-        "steps": ["done", "absent", "absent", "doing", "done"],
+        "event_refs": [
+          "DEMO-EV-0013",
+          "DEMO-EV-0014",
+          "DEMO-EV-0015"
+        ],
+        "steps": [
+          "done",
+          "absent",
+          "absent",
+          "doing",
+          "done"
+        ],
         "step_evidence": {
           "拉群": "DEMO-EV-0013（alert / kind=spc，判异推送即拉起处置群，演示口径）",
           "会签": "DEMO-EV-0014（hitl，槽位 pqe / pe，结果处置中）",
           "闭环": "DEMO-EV-0015（alert / kind=closed，判异处置闭环）"
         },
-        "signoff_slots": ["pqe", "pe"],
+        "signoff_slots": [
+          "pqe",
+          "pe"
+        ],
         "signoff_result": "处置中",
         "signoff_ts": "2026-12-02T09:00:00",
         "note": "SMT 炉温偏离：判异即时推送处置会签，次日闭环。"
@@ -102,8 +134,17 @@
         "tolerance": 0.005,
         "ts": "2026-12-10T09:00:00",
         "closure_ts": "2026-12-11T09:00:00",
-        "event_refs": ["DEMO-EV-0019", "DEMO-EV-0020"],
-        "steps": ["done", "absent", "absent", "absent", "done"],
+        "event_refs": [
+          "DEMO-EV-0019",
+          "DEMO-EV-0020"
+        ],
+        "steps": [
+          "done",
+          "absent",
+          "absent",
+          "absent",
+          "done"
+        ],
         "step_evidence": {
           "拉群": "DEMO-EV-0019（alert / kind=spc，判异推送，演示口径）",
           "闭环": "DEMO-EV-0020（alert / kind=closed，判异处置闭环）"
@@ -127,8 +168,16 @@
       "triggered_at": "2026-12-05T09:00:00",
       "signoff_ts": "2026-12-06T09:00:00",
       "effective_ts": "2026-12-07T09:00:00",
-      "event_refs": ["DEMO-EV-0016", "DEMO-EV-0017", "DEMO-EV-0018"],
-      "signoff_slots": ["rd", "pe", "pqe"],
+      "event_refs": [
+        "DEMO-EV-0016",
+        "DEMO-EV-0017",
+        "DEMO-EV-0018"
+      ],
+      "signoff_slots": [
+        "rd",
+        "pe",
+        "pqe"
+      ],
       "signoff_result": "approved",
       "quadrant_titles": {
         "wos": "在制工单",
@@ -137,12 +186,30 @@
         "open_lines": "未发订单行"
       },
       "impact": {
-        "wos": ["DEMO-WO-002", "DEMO-WO-003"],
-        "stock_lots": ["DEMO-LOT-003"],
-        "transit_lots": ["DEMO-LOT-004"],
-        "open_lines": [{ "order_id": "DEMO-SO-001", "material_id": "DEMO-MAT-5001", "qty": 5000 }]
+        "wos": [
+          "DEMO-WO-002",
+          "DEMO-WO-003"
+        ],
+        "stock_lots": [
+          "DEMO-LOT-003"
+        ],
+        "transit_lots": [
+          "DEMO-LOT-004"
+        ],
+        "open_lines": [
+          {
+            "order_id": "DEMO-SO-001",
+            "material_id": "DEMO-MAT-5001",
+            "qty": 5000
+          }
+        ]
       },
-      "impact_counts": { "wos": 2, "stock_lots": 1, "transit_lots": 1, "open_lines": 1 },
+      "impact_counts": {
+        "wos": 2,
+        "stock_lots": 1,
+        "transit_lots": 1,
+        "open_lines": 1
+      },
       "impact_payload_note": "DEMO-EV-0016 payload 中 impact_wos 直接给工单清单（DEMO-WO-002 / DEMO-WO-003）；impact_stock_lots / impact_transit_lots / impact_open_lines 给的是数量（各 1），对应清单由本屏按 lots（持旧料 DEMO-MAT-2201 的库存批 / 在途新料批）与 sales_orders（未发订单行）现算归集，并与 payload 数量逐项对账（tests/demo/test_s04.py）。",
       "impact_sources": {
         "wos": "DEMO-EV-0016 payload.impact_wos（事件直给：DEMO-WO-002 / DEMO-WO-003）",
@@ -166,6 +233,15 @@
       "rd": "陈晨",
       "pe": "郑昊",
       "pqe": "赵拓"
+    },
+    "agent_layer": {
+      "replays": {
+        "agent": "s04_spc_anomaly",
+        "cases": "s04_spc_similar_cases"
+      },
+      "title": "SPC 判异智能体（判异 → 取证 → 相似不良）",
+      "source": "spc_series / cases（控制限口径回指 EV-0013 载荷）",
+      "degrade": "判异智能体回放未就绪，不展示编造结论"
     }
   };
 
@@ -1014,8 +1090,47 @@
       + alertSection(S, D, K.isReadonly())
       + ecnSection(S, D, K.isReadonly())
       + eventSection(D)
+      + '<div class="sk-block" id="s04-agent"></div>'
       + '<div class="sk-note">本屏全部数字取自演示装载层（口径见 spec-v1.md），'
       + "取不到即显示降级提示，不编造数字；ECN 影响面四象限逐行可下钻到原始记录。</div>";
+  }
+
+  /* ---------- T19：SPC 判异智能体（判异 → 取证 → 相似不良，只读回放） ---------- */
+  function hydrateAgentBlock(root, S) {
+    const K = kit();
+    const el = root ? root.querySelector("#s04-agent") : null;
+    const a = (S && S.agent_layer) || null;
+    if (!el || !a || !K || !a.replays) return;
+    K.replay(a.replays.agent).then(function (res) {
+      if (!el.parentNode) return;
+      if (!res || !res.ok || !res.package) {
+        el.innerHTML = '<div class="sk-degrade" data-sk-s04-agent-degrade="1">'
+          + K.esc(a.degrade || "判异智能体回放未就绪，不展示编造结论") + "</div>";
+        return;
+      }
+      const pkg = res.package;
+      const head = '<div class="section-title">' + K.esc(a.title)
+        + '<span class="section-extra">' + K.esc(a.source || "") + "</span></div>"
+        + K.agentPanel({
+          title: pkg.title, agents: pkg.agents, dag: pkg.dag, steps: pkg.steps,
+          node_steps: pkg.node_steps, conclusion: pkg.conclusion, source: "replay",
+        });
+      el.innerHTML = head;
+      K.replay(a.replays.cases).then(function (cres) {
+        if (!el.parentNode || !cres || !cres.ok || !cres.package) return;
+        const cp = cres.package;
+        const hits = (cp.hits || []).map(function (h) {
+          return '<div class="sk-case-list" style="margin-top:6px"><b>'
+            + K.esc(h.case_id) + " · " + K.esc(h.title) + "</b><div>根因："
+            + K.esc(h.root_cause) + " · 相似度 " + K.esc(String(h.score)) + "</div></div>";
+        }).join("");
+        el.innerHTML = head
+          + (hits ? '<div class="section-title">相似历史不良案例（Agentic RAG 回放）</div>'
+            + hits : "")
+          + '<div class="sk-note">判异口径不抹平：SPC 序列 30 点 / 2 判异点与判异事件两组'
+          + "数据源并列展示（T09 纪律）；控制限回指 EV-0013 载荷。</div>";
+      });
+    });
   }
 
   function degradeHtml(D) {
@@ -1075,6 +1190,7 @@
       }
       body.innerHTML = bodyHtml(S, D);
       K.bindDrills(body, openDrillByKey);
+      hydrateAgentBlock(body, S);
     }).catch(function () {
       if (!body || !body.parentNode) return;
       body.innerHTML = degradeHtml(null);

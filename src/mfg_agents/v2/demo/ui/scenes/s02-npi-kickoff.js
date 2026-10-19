@@ -582,6 +582,49 @@
     return hits;
   }
 
+  /* ---------- T19：立项案例检索智能体（Agentic RAG 回放，关键词版保留为降级） ---------- */
+  function hydrateAgentBlock(box, meta) {
+    const K = window.SceneKit;
+    const el = box ? box.querySelector('[data-sk-slot="agent"]') : null;
+    const a = (meta && meta.agent_layer) || null;
+    if (!el || !a || !K || !a.replays) return;
+    K.replay(a.replays.agent).then(function (res) {
+      if (!el.parentNode) return;
+      if (!res || !res.ok || !res.package) {
+        el.innerHTML = '<div class="sk-degrade" data-sk-s02-agent-degrade="1">'
+          + K.esc(a.degrade || "检索智能体回放未就绪，已回落关键词检索") + "</div>"
+          + '<div class="sk-note">' + K.esc(a.fallback || "") + "</div>";
+        return;
+      }
+      const pkg = res.package;
+      const head = '<div class="section-title">' + K.esc(a.title) + "</div>"
+        + K.agentPanel({
+          title: pkg.title, agents: pkg.agents, dag: pkg.dag, steps: pkg.steps,
+          node_steps: pkg.node_steps, conclusion: pkg.conclusion, source: "replay",
+        });
+      el.innerHTML = head;
+      K.replay(a.replays.cases).then(function (cres) {
+        if (!el.parentNode || !cres || !cres.ok || !cres.package) return;
+        const cp = cres.package;
+        const trace = (cp.trace || []).map(function (t) {
+          return "<li><b>" + K.esc(t.title) + "</b> — " + K.esc(t.detail) + "</li>";
+        }).join("");
+        const hits = (cp.hits || []).map(function (h) {
+          return '<div class="sk-case-list" style="margin-top:6px"><b>'
+            + K.esc(h.case_id) + " · " + K.esc(h.title) + "</b><div>根因："
+            + K.esc(h.root_cause) + " · 相似度 " + K.esc(String(h.score)) + "</div></div>";
+        }).join("");
+        el.innerHTML = head
+          + (trace ? '<div class="section-title">检索轨迹（归一 → 扩展 → 过滤 → 引用）</div>'
+            + '<ol style="margin:8px 0 0 18px;font-size:12.4px;line-height:1.9;'
+            + 'color:var(--text-2,#57606A)">' + trace + "</ol>" : "")
+          + (hits ? '<div class="section-title">命中案例（回放）</div>' + hits : "")
+          + '<div class="sk-note">回放与真实链路同构（trace 五步 / filter_explain）；'
+          + "下方关键词检索保留为降级路径。</div>";
+      });
+    });
+  }
+
   function renderCaseList(box, cases, meta, keyword) {
     const K = kit();
     const view = meta.caseView || {};
@@ -667,30 +710,90 @@
       "caseListLimit": 20
     },
     "cards": [
-      { "key": "order-input", "label": "订单输入", "tone": "blue", "unit": "片", "hint": "口径：sales_orders 主线订单行 qty（承诺交期 promise_date）" },
-      { "key": "ebom", "label": "EBOM / MBOM", "tone": "purple", "unit": "项", "hint": "口径：boms 中 kind=E 的子件行数（MBOM 两版差异单独列示）" },
-      { "key": "dfm", "label": "DFM 预审 · 风险项", "tone": "amber", "unit": "项", "hint": "口径：命中「供应商 OTD 低于阈值」或「已存在同品类替代料」的 EBOM 子件项数" },
-      { "key": "long-lead", "label": "长周期料（在途 / 延期）", "tone": "red", "unit": "张 PO", "hint": "口径：purchase_orders 在途张数（status=delayed 计为延期）" },
-      { "key": "stage-gate-plan", "label": "阶段门计划", "tone": "green", "unit": "门", "hint": "口径：events 中 scene=S3 的阶段门事件数（EVT / DVT / PVT）" }
+      {
+        "key": "order-input",
+        "label": "订单输入",
+        "tone": "blue",
+        "unit": "片",
+        "hint": "口径：sales_orders 主线订单行 qty（承诺交期 promise_date）"
+      },
+      {
+        "key": "ebom",
+        "label": "EBOM / MBOM",
+        "tone": "purple",
+        "unit": "项",
+        "hint": "口径：boms 中 kind=E 的子件行数（MBOM 两版差异单独列示）"
+      },
+      {
+        "key": "dfm",
+        "label": "DFM 预审 · 风险项",
+        "tone": "amber",
+        "unit": "项",
+        "hint": "口径：命中「供应商 OTD 低于阈值」或「已存在同品类替代料」的 EBOM 子件项数"
+      },
+      {
+        "key": "long-lead",
+        "label": "长周期料（在途 / 延期）",
+        "tone": "red",
+        "unit": "张 PO",
+        "hint": "口径：purchase_orders 在途张数（status=delayed 计为延期）"
+      },
+      {
+        "key": "stage-gate-plan",
+        "label": "阶段门计划",
+        "tone": "green",
+        "unit": "门",
+        "hint": "口径：events 中 scene=S3 的阶段门事件数（EVT / DVT / PVT）"
+      }
     ],
     "caseView": {
       "keywordPlaceholder": "输入缺陷模式 / 症状 / 根因关键词（如 炉温、来料、模具）",
-      "matchedFields": ["title", "root_cause", "dept"],
+      "matchedFields": [
+        "title",
+        "root_cause",
+        "dept"
+      ],
       "fields": [
-        { "key": "case_id", "label": "案例编号" },
-        { "key": "dept", "label": "所属部门" },
-        { "key": "title", "label": "案例标题" },
-        { "key": "root_cause", "label": "根因（脱敏）" }
+        {
+          "key": "case_id",
+          "label": "案例编号"
+        },
+        {
+          "key": "dept",
+          "label": "所属部门"
+        },
+        {
+          "key": "title",
+          "label": "案例标题"
+        },
+        {
+          "key": "root_cause",
+          "label": "根因（脱敏）"
+        }
       ],
       "scoreLabel": "关键词命中",
       "redactionNote": "本文为脱敏知识层原文：已隐去企业名、人名、真实批次号；证据层引用（原文附件 / 检测报告）需另行申请授权。"
     },
     "signoff": {
       "title": "立项会签（研发 / 工艺 双槽位）",
-      "slotLabels": { "rd": "研发", "pe": "工艺", "pqe": "制程质量", "pln": "计划" },
+      "slotLabels": {
+        "rd": "研发",
+        "pe": "工艺",
+        "pqe": "制程质量",
+        "pln": "计划"
+      },
       "note": "留痕来源：装载层事件 DEMO-EV-0005（type=hitl，payload.slots=[rd,pe]，result=approved）。演示实例只读回放该留痕；写路径由治理层（HITL）承载，不在本演示屏范围内。"
     },
-    "sourceNote": "本屏全部数字由 T04 装载层（GET /api/v2/demo/objects/<对象>）现算，无手写散数；装载层不可用时显示降级提示，不显示编造数字。"
+    "sourceNote": "本屏全部数字由 T04 装载层（GET /api/v2/demo/objects/<对象>）现算，无手写散数；装载层不可用时显示降级提示，不显示编造数字。",
+    "agent_layer": {
+      "replays": {
+        "agent": "s02_case_rag",
+        "cases": "s02_case_search"
+      },
+      "title": "立项案例检索智能体（Agentic RAG 回放）",
+      "fallback": "回放未就绪时回落关键词检索（现有关键词版保留为降级路径）",
+      "degrade": "检索智能体回放未就绪，已回落关键词检索"
+    }
   };
   // <<< INLINE_SCENE_DATA
 
@@ -729,6 +832,7 @@
       + '<div class="sk-block" data-sk-slot="cards"><div class="empty">'
       + (K.spinner ? K.spinner("lg") : "") + "正在读取装载层…</div></div>"
       + '<div class="sk-block" data-sk-slot="flow"></div>'
+      + '<div class="sk-block" data-sk-slot="agent"></div>'
       + '<div class="sk-block" data-sk-slot="cases"></div>'
       + '<div class="sk-block" data-sk-slot="signoff"></div>'
       + '<div class="sk-note">' + K.esc(meta.sourceNote || "") + "</div>"
@@ -803,6 +907,9 @@
         });
       }
       runSearch();
+
+      // T19：检索智能体（Agentic RAG 回放）——回放未就绪时保留上面的关键词版为降级路径
+      hydrateAgentBlock(box, meta);
 
       // 会签留痕
       const signoffMeta = meta.signoff || {};

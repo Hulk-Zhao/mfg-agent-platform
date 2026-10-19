@@ -40,9 +40,21 @@
     },
     "escalation_rule": "预警持续天数 = 升级留痕时间 − 缺料预警时间；0–1 天由采购员催料，≥2 天升级采购主管，≥5 天升级供应链经理；升级链每一级可追到人",
     "escalation_levels": [
-      { "level": 1, "owner_role": "采购员", "threshold_days": 0 },
-      { "level": 2, "owner_role": "采购主管", "threshold_days": 2 },
-      { "level": 3, "owner_role": "供应链经理", "threshold_days": 5 }
+      {
+        "level": 1,
+        "owner_role": "采购员",
+        "threshold_days": 0
+      },
+      {
+        "level": 2,
+        "owner_role": "采购主管",
+        "threshold_days": 2
+      },
+      {
+        "level": 3,
+        "owner_role": "供应链经理",
+        "threshold_days": 5
+      }
     ],
     "short_ship_rule": "实收量 < PO 下单量 → 短装，按短装量触发二次催料；当前演示数据集未建模实收量字段，按「无短装留痕」呈现，不编造短装数量",
     "assignees": {
@@ -55,7 +67,24 @@
       "escalation_rule": "spec-v1.md §3 第 15 行（S6）延期升级链；演示载荷 DEMO-EV-0029 记载升级至采购主管",
       "plan_need": "工排计划需料日：机加/装配按主线工单排产倒推（DEMO-WO-002 / DEMO-WO-003）"
     },
-    "object_source": ["purchase_orders", "suppliers", "materials", "work_orders", "sales_orders", "events"]
+    "object_source": [
+      "purchase_orders",
+      "suppliers",
+      "materials",
+      "work_orders",
+      "sales_orders",
+      "events"
+    ],
+    "agent_layer": {
+      "replays": {
+        "agent": "s06_shortage_procurement",
+        "cases": "s06_supplier_cases",
+        "faq": "s06_urge_faq"
+      },
+      "title": "采购智能体（缺口判定 → 供应商案例 → 催料制度）",
+      "source": "purchase_orders / cases / faqs（回放与 T08 缺口机械口径同源）",
+      "degrade": "采购智能体回放未就绪，不展示编造结论"
+    }
   };
 
   /** 取场景配置：优先已加载的 `window.SCENE_DATA['s06']`，缺位时登记内联镜像。 */
@@ -617,7 +646,54 @@
           + (readonly ? "当前岗位为只读访客。" : "")
           + "事件字段口径见 spec-v1.md §2.10。",
       })
+      + '<div class="sk-block" id="s06-agent"></div>'
       + "</div>";
+  }
+
+  /* ---------- T19：采购智能体（缺口 → 供应商案例 → 催料制度，只读回放） ---------- */
+  function hydrateAgentBlock(box) {
+    const K = window.SceneKit;
+    const el = box ? box.querySelector("#s06-agent") : null;
+    const a = (CFG && CFG.agent_layer) || null;
+    if (!el || !a || !K || !a.replays) return;
+    const degrade = function (text) {
+      el.innerHTML = '<div class="sk-degrade" data-sk-s06-agent-degrade="1">'
+        + K.esc(text || a.degrade || "采购智能体回放未就绪，不展示编造结论") + "</div>";
+    };
+    K.replay(a.replays.agent).then(function (res) {
+      if (!el.parentNode) return;
+      if (!res || !res.ok || !res.package) { degrade(); return; }
+      const pkg = res.package;
+      let html = '<div class="section-title">' + K.esc(a.title)
+        + '<span class="section-extra">' + K.esc(a.source || "") + "</span></div>"
+        + K.agentPanel({
+          title: pkg.title, agents: pkg.agents, dag: pkg.dag, steps: pkg.steps,
+          node_steps: pkg.node_steps, conclusion: pkg.conclusion, source: "replay",
+        });
+      el.innerHTML = html;
+      K.replay(a.replays.cases).then(function (cres) {
+        if (!el.parentNode || !cres || !cres.ok || !cres.package) return;
+        const cp = cres.package;
+        const hits = (cp.hits || []).map(function (h) {
+          return '<div class="s06-case"><b>' + K.esc(h.case_id) + " · " + K.esc(h.title)
+            + "</b><div>根因：" + K.esc(h.root_cause) + " · 部门：" + K.esc(h.dept)
+            + (h.redacted ? " · 已脱敏" : "") + "</div></div>";
+        }).join("");
+        if (hits) {
+          el.innerHTML = html + '<div class="section-title">供应商来料案例（Agentic RAG 回放）</div>'
+            + '<div class="s06-cases">' + hits + "</div>";
+        }
+        K.replay(a.replays.faq).then(function (fres) {
+          if (!el.parentNode || !fres || !fres.ok || !fres.package) return;
+          const fp = fres.package;
+          el.innerHTML = el.innerHTML + '<div class="section-title">催料制度问答（kbqa 回放）</div>'
+            + K.agentPanel({
+              title: fp.title, agents: fp.agents, steps: fp.steps,
+              conclusion: fp.conclusion, source: "replay",
+            });
+        });
+      });
+    });
   }
 
   /* ============================================================
@@ -845,6 +921,7 @@
       registerDrills(d, state);
       bodyBox.innerHTML = bodyHtml(d, readonly, state);
       K.bindDrills(bodyBox, openDrillByKey);
+      hydrateAgentBlock(bodyBox);
     }).catch(function () {
       if (!bodyBox || !bodyBox.parentNode) return;
       state.loaded.purchase_orders = false;

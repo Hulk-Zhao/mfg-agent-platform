@@ -21,11 +21,23 @@
     "scene": "s03",
     "title": "S3 · 阶段门会签",
     "sub": "EVT / DVT / PVT 记分卡 · 门禁机械判定 · 阶段门会签",
-    "stage_order": ["EVT", "DVT", "PVT"],
+    "stage_order": [
+      "EVT",
+      "DVT",
+      "PVT"
+    ],
     "gate": {
-      "yield_min": { "EVT": 0.9, "DVT": 0.93, "PVT": 0.95 },
+      "yield_min": {
+        "EVT": 0.9,
+        "DVT": 0.93,
+        "PVT": 0.95
+      },
       "cpk_min": 1.33,
-      "fpy_min": { "EVT": 0.95, "DVT": 0.96, "PVT": 0.98 }
+      "fpy_min": {
+        "EVT": 0.95,
+        "DVT": 0.96,
+        "PVT": 0.98
+      }
     },
     "verdict_rule": "四维（良率 / CPK / 直通率 / 问题闭环数）全部达标 → Go；恰 1 项不达标且无未决高风险 → 有条件 Go；其余 → No-Go",
     "threshold_sources": {
@@ -34,8 +46,28 @@
       "fpy_min": "spec-v1.md §3（PVT：直通率≥98%）",
       "closed_min": "阶段门放行前置：无未决高风险 / 无未决问题"
     },
-    "object_source": ["events", "sales_orders", "work_orders", "inspections"],
-    "signoff_slot_labels": { "rd": "研发", "pqe": "品质工程(PQE)", "pln": "计划" },
-    "signoff_users": { "rd": "陈晨", "pqe": "赵拓", "pln": "周航" }
+    "object_source": [
+      "events",
+      "sales_orders",
+      "work_orders",
+      "inspections"
+    ],
+    "signoff_slot_labels": {
+      "rd": "研发",
+      "pqe": "品质工程(PQE)",
+      "pln": "计划"
+    },
+    "signoff_users": {
+      "rd": "陈晨",
+      "pqe": "赵拓",
+      "pln": "周航"
+    },
+    "agent_layer": {
+      "replay": "s03_gate_faq",
+      "kind": "kbqa",
+      "title": "门禁准则问答（kbqa 回放）",
+      "source": "faqs.jsonl · DEMO-FAQ-007（Go 的四项条件）",
+      "degrade": "制度问答回放未就绪，不展示编造答案"
+    }
   };
 })();

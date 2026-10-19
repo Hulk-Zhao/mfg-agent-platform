@@ -39,11 +39,23 @@
     "scene": "s03",
     "title": "S3 · 阶段门会签",
     "sub": "EVT / DVT / PVT 记分卡 · 门禁机械判定 · 阶段门会签",
-    "stage_order": ["EVT", "DVT", "PVT"],
+    "stage_order": [
+      "EVT",
+      "DVT",
+      "PVT"
+    ],
     "gate": {
-      "yield_min": { "EVT": 0.9, "DVT": 0.93, "PVT": 0.95 },
+      "yield_min": {
+        "EVT": 0.9,
+        "DVT": 0.93,
+        "PVT": 0.95
+      },
       "cpk_min": 1.33,
-      "fpy_min": { "EVT": 0.95, "DVT": 0.96, "PVT": 0.98 }
+      "fpy_min": {
+        "EVT": 0.95,
+        "DVT": 0.96,
+        "PVT": 0.98
+      }
     },
     "verdict_rule": "四维（良率 / CPK / 直通率 / 问题闭环数）全部达标 → Go；恰 1 项不达标且无未决高风险 → 有条件 Go；其余 → No-Go",
     "threshold_sources": {
@@ -52,9 +64,29 @@
       "fpy_min": "spec-v1.md §3（PVT：直通率≥98%）",
       "closed_min": "阶段门放行前置：无未决高风险 / 无未决问题"
     },
-    "object_source": ["events", "sales_orders", "work_orders", "inspections"],
-    "signoff_slot_labels": { "rd": "研发", "pqe": "品质工程(PQE)", "pln": "计划" },
-    "signoff_users": { "rd": "陈晨", "pqe": "赵拓", "pln": "周航" }
+    "object_source": [
+      "events",
+      "sales_orders",
+      "work_orders",
+      "inspections"
+    ],
+    "signoff_slot_labels": {
+      "rd": "研发",
+      "pqe": "品质工程(PQE)",
+      "pln": "计划"
+    },
+    "signoff_users": {
+      "rd": "陈晨",
+      "pqe": "赵拓",
+      "pln": "周航"
+    },
+    "agent_layer": {
+      "replay": "s03_gate_faq",
+      "kind": "kbqa",
+      "title": "门禁准则问答（kbqa 回放）",
+      "source": "faqs.jsonl · DEMO-FAQ-007（Go 的四项条件）",
+      "degrade": "制度问答回放未就绪，不展示编造答案"
+    }
   };
 
   /** 取场景配置：优先已加载的 `window.SCENE_DATA['s03']`，缺位时登记内联镜像。 */
@@ -507,7 +539,33 @@
           + d.s3.filter(function (e) { return e.type === "hitl"; }).length + " 条）。"
           + "事件字段口径见 spec-v1.md §2.10。",
       })
+      + '<div class="sk-block" id="s03-agent"></div>'
       + "</div>";
+  }
+
+  /* ---------- T19：门禁准则问答（kbqa 回放，轻形态） ---------- */
+  function hydrateAgentBlock(box) {
+    const K = window.SceneKit;
+    const el = box ? box.querySelector("#s03-agent") : null;
+    const a = (CFG && CFG.agent_layer) || null;
+    if (!el || !a || !K) return;
+    K.replay(a.replay).then(function (res) {
+      if (!el.parentNode) return;
+      if (!res || !res.ok || !res.package) {
+        el.innerHTML = '<div class="sk-degrade" data-sk-s03-agent-degrade="1">'
+          + K.esc(a.degrade || "制度问答回放未就绪，不展示编造答案") + "</div>";
+        return;
+      }
+      const pkg = res.package;
+      el.innerHTML = '<div class="section-title">' + K.esc(a.title)
+        + '<span class="section-extra">' + K.esc(a.source || "") + "</span></div>"
+        + K.agentPanel({
+          title: pkg.title, agents: pkg.agents, steps: pkg.steps,
+          conclusion: pkg.conclusion, source: "replay",
+        })
+        + '<div class="sk-note">来源徽标「演示回放」不可去除；门禁阈值口径见记分卡，'
+        + "制度出处见 FAQ 编号（channel=faq，L1 命中直答）。</div>";
+    });
   }
 
   /* ============================================================
@@ -759,6 +817,7 @@
       registerDrills(d, state);
       bodyBox.innerHTML = bodyHtml(d, readonly, state);
       K.bindDrills(bodyBox, openDrillByKey);
+      hydrateAgentBlock(bodyBox);
     }).catch(function () {
       if (!bodyBox || !bodyBox.parentNode) return;
       state.loaded.events = false;
