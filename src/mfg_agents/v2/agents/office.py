@@ -403,11 +403,11 @@ class OfficeAssistantAgent:
         - 任何异常转结构化观察，不冒泡成崩溃。
         """
         if table:
-            from ..services.text2sql import TABLE_ACL
-            allowed = TABLE_ACL.get(table, set())
-            if not (self._roles() & allowed):
+            from ..services.text2sql import table_acl
+            if not (self._roles() & table_acl(table)):
                 return {"ok": False,
-                        "error": f"当前岗位无权限查询该数据（{table}），请走对应职责岗或申请授权"}
+                        "error": f"当前岗位无权限查询该数据（{table}）；请走对应职责岗，"
+                                 "或在「数据速查」页申请查询权限"}
         reg = getattr(getattr(self.orchestrator, "runtime", None),
                       "data_registry", None)
         if reg is None:
@@ -609,7 +609,7 @@ class OfficeAssistantAgent:
                 return self._data_query("incoming_batch_by_no",
                                         {"batch_no": batch_no}, "incoming_batch")
             if supplier or unqualified_only:
-                # 供应商/不合格筛选：取全量扫描（上限 60）后客户端过滤，
+                # 供应商/不合格筛选：取全量扫描（上限 300）后客户端过滤，
                 # 避免 :supplier 绑定需从口语抽取供应商名的脆弱环节，
                 # 也避免"近期 10 条"窗口漏掉更早的不合格批次。
                 res = self._data_query("incoming_batch_scan", None,

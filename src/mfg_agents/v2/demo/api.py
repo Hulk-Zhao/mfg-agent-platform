@@ -162,6 +162,26 @@ class OfficeCancelRequest(BaseModel):
     actor: str = ""                # 操作人（缺省用演示身份）
 
 
+class DataAccessRequestModel(BaseModel):
+    """数据查询权限申请（演示端点；授权只在审批通过那一刻发生）。
+
+    演示无登录令牌，申请人身份与 ``/office/snapshot`` 同口径：由前端带上当前岗位的
+    ``roles`` / ``dept`` / ``actor``（真实环境按登录态由服务端解析）。
+    """
+
+    dataset: str = ""              # 速查块 key：material_stock/shortage/finished_stock/incoming_batch
+    reason: str = ""
+    roles: list[str] = []
+    dept: str = ""
+    actor: str = ""
+
+
+class DataAccessApproveRequest(BaseModel):
+    """演示代批请求体：只需申请人标识（校验"只能为本人申请触发"）。"""
+
+    actor: str = ""
+
+
 @app.get("/api/v2/health")
 def health() -> dict[str, Any]:
     """健康检查：结构化依赖探针（业务库 / 治理库 / Redis / 向量库 / LLM）。
@@ -914,40 +934,52 @@ def api_office_cancel(req: OfficeCancelRequest) -> dict[str, Any]:
     return {"code": 0, "data": out, "message": "ok"}
 
 
+#: 数据速查四块（dataset key → 注册查询名 / 物理表 / 说明）。
+_SNAPSHOT_BLOCKS: list[tuple[str, str, str, str]] = [
+    ("material_stock", "material_stock_all", "material_inventory",
+     "材料库存（按料号×仓库；可用量=在库-预留，冻结量不计可用）"),
+    ("shortage", "material_shortage", "material_inventory",
+     "缺料清单（可用量低于安全库存，含缺口）"),
+    ("finished_stock", "finished_stock_all", "finished_inventory",
+     "成品库存（型号×仓库；可发量 ATP=在库-预留）"),
+    # 用「全量扫描（上限 300）」而非「近期 10 条」：速查卡的检索是在**返回行**上做的，
+    # 若只给最近 10 条，按批号/料号搜更早的批次会搜不到，演示不了检索完整性。
+    ("incoming_batch", "incoming_batch_scan", "incoming_batch",
+     "来料批次（全量，上限 300；IQC 结论：合格/不合格/待检/让步接收）"),
+]
+#: dataset key → 物理表（权限申请按物理表；前端只认 key，不额外暴露物理表名）。
+_SNAPSHOT_TABLE_BY_DATASET: dict[str, str] = {
+    key: table for key, _qname, table, _note in _SNAPSHOT_BLOCKS
+}
+
+
 @app.get("/api/v2/office/snapshot")
 def api_office_snapshot(roles: Optional[str] = Query(None)) -> dict[str, Any]:
     """企业综合助手·制造数据速查快照（首屏用，无需 LLM）。
 
     一次返回四块确定性只读数据：材料库存速查、缺料清单、成品库存、近期来料批次。
-    全部转发统一注册查询（口径即代码），并按岗位表级权限（TABLE_ACL）过滤：
-    无权限的块标记 ``authorized=false`` 并给出提示，越权不返回数据（fail-closed）。
+    全部转发统一注册查询（口径即代码），并按岗位表级权限过滤：
+    无权限的块标记 ``authorized=false`` 并给出提示（含 ``requestable`` / ``owner_label``
+    供前端展示「申请查询权限」入口），越权不返回数据（fail-closed）。
     任一查询失败只降级该块（``ok=false``），端点绝不 500。
     """
-    from ..services.text2sql import TABLE_ACL
+    from ..services.data_access import OWNER_LABEL
+    from ..services.text2sql import table_acl
 
     role_set = {s.strip() for s in str(roles or "").split(",") if s.strip()}
     if not role_set:
         role_set = {str(r) for r in (DEFAULT_USER_CTX.get("roles") or [])}
 
-    blocks_spec = [
-        ("material_stock", "material_stock_all", "material_inventory",
-         "材料库存（按料号×仓库；可用量=在库-预留，冻结量不计可用）"),
-        ("shortage", "material_shortage", "material_inventory",
-         "缺料清单（可用量低于安全库存，含缺口）"),
-        ("finished_stock", "finished_stock_all", "finished_inventory",
-         "成品库存（型号×仓库；可发量 ATP=在库-预留）"),
-        # 用「全量扫描（上限 60）」而非「近期 10 条」：速查卡的检索是在**返回行**上做的，
-        # 若只给最近 10 条，按批号/料号搜更早的批次会搜不到，演示不了检索完整性。
-        ("incoming_batch", "incoming_batch_scan", "incoming_batch",
-         "来料批次（全量，上限 60；IQC 结论：合格/不合格/待检/让步接收）"),
-    ]
     reg = get_orchestrator().runtime.data_registry
     blocks: dict[str, Any] = {}
-    for key, qname, table, note in blocks_spec:
-        if not (role_set & TABLE_ACL.get(table, set())):
+    for key, qname, table, note in _SNAPSHOT_BLOCKS:
+        # 白名单经 table_acl() 读取：静态 TABLE_ACL ∪ 数据查询权限申请的运行时授权叠加层。
+        if not (role_set & table_acl(table)):
             blocks[key] = {"authorized": False, "ok": False, "rows": [], "count": 0,
-                           "note": note,
-                           "message": f"当前岗位无权限查询（{table}），请走对应职责岗"}
+                           "note": note, "requestable": True,
+                           "owner_label": OWNER_LABEL.get(table, ""),
+                           "message": f"当前岗位无权限查询（{table}），"
+                                      "请走对应职责岗或申请查询权限"}
             continue
         try:
             rows = reg.run_query(qname)
@@ -962,6 +994,103 @@ def api_office_snapshot(roles: Optional[str] = Query(None)) -> dict[str, Any]:
     return {"code": 0, "data": {
         "blocks": blocks, "roles": sorted(role_set), "degraded": degraded,
         "source": "registered_query（统一口径，只读）",
+    }, "message": "ok"}
+
+
+@app.get("/api/v2/office/data-access/requests")
+def api_data_access_requests(actor: str = Query("")) -> dict[str, Any]:
+    """我提交的数据查询权限申请（含已裁决状态，供卡片状态展示）。"""
+    from ..services.data_access import get_data_access
+
+    svc = get_data_access()
+    svc.reap_expired()
+    return {"code": 0, "data": {"requests": svc.list_mine(actor)}, "message": "ok"}
+
+
+@app.post("/api/v2/office/data-access/request")
+def api_data_access_request(req: DataAccessRequestModel) -> dict[str, Any]:
+    """提交数据查询权限申请（**不直接授权**；授权只在审批通过那一刻发生）。
+
+    返回 ``demo_approval`` 预检：前端据此决定提交后是直接提示"等待审批"，
+    还是弹窗走模拟审批链路（与案例检索 ``request-access`` 同构）。
+    """
+    from ..services.data_access import (
+        AlreadyAuthorized,
+        DataAccessError,
+        DuplicateRequest,
+        get_data_access,
+    )
+
+    table = _SNAPSHOT_TABLE_BY_DATASET.get(str(req.dataset or ""))
+    if not table:
+        raise HTTPException(status_code=400, detail={
+            "code": "DATA_ACCESS_DATASET_INVALID",
+            "message": f"未知的数据集: {req.dataset!r}"})
+
+    svc = get_data_access()
+    try:
+        created = svc.request_access(table=table, roles=req.roles, reason=req.reason,
+                                     actor=req.actor, dept=req.dept)
+    except AlreadyAuthorized as exc:
+        raise HTTPException(status_code=409, detail={
+            "code": "DATA_ACCESS_ALREADY_AUTHORIZED", "message": str(exc)}) from exc
+    except DuplicateRequest as exc:
+        raise HTTPException(status_code=409, detail={
+            "code": "DATA_ACCESS_DUPLICATE", "message": str(exc)}) from exc
+    except DataAccessError as exc:
+        raise HTTPException(status_code=400, detail={
+            "code": "DATA_ACCESS_INVALID", "message": str(exc)}) from exc
+
+    return {"code": 0, "data": {
+        "request": created,
+        "demo_approval": svc.preview(table=table, roles=req.roles, actor=req.actor),
+        "message": "申请已提交，等待职责岗审批",
+    }, "message": "ok"}
+
+
+@app.post("/api/v2/office/data-access/requests/{request_id}/demo-approve")
+def api_data_access_demo_approve(request_id: str,
+                                  req: DataAccessApproveRequest) -> dict[str, Any]:
+    """演示专用：模拟「职责岗审批通过」的回调（**预留接口，仅演示**）。
+
+    生产形态：职责岗负责人在真实审批流（OA / IM 审批）里点同意，系统回调同一条
+    "审批通过 → 写入授权叠加层"的路径；本端点只是把"谁点的同意"换成职责岗演示身份。
+    硬约束：① 只有申请人本人能触发；② 审批身份由服务端按表归属职责岗解析，解析不出
+    → 409，**不降级找"差不多的人"批**；③ 授权副作用只有 ``demo_approve`` 一条路，
+    事件打 ``.demo`` 后缀显式标记。开关：``CASE_DEMO_MODE`` 且 ``DATA_ACCESS_AUTO_APPROVE_DEMO``。
+    """
+    from ..services.data_access import (
+        ApproverUnavailable,
+        DataAccessError,
+        DemoDisabled,
+        NotRequester,
+        RequestNotFound,
+        get_data_access,
+    )
+
+    svc = get_data_access()
+    try:
+        decided = svc.demo_approve(request_id, actor=req.actor)
+    except DemoDisabled as exc:
+        raise HTTPException(status_code=403, detail={
+            "code": "DATA_ACCESS_DEMO_DISABLED", "message": str(exc)}) from exc
+    except NotRequester as exc:
+        raise HTTPException(status_code=403, detail={
+            "code": "DATA_ACCESS_NOT_REQUESTER", "message": str(exc)}) from exc
+    except ApproverUnavailable as exc:
+        raise HTTPException(status_code=409, detail={
+            "code": "DATA_ACCESS_APPROVER_UNAVAILABLE", "message": str(exc)}) from exc
+    except RequestNotFound as exc:
+        raise HTTPException(status_code=404, detail={
+            "code": "DATA_ACCESS_REQUEST_NOT_FOUND", "message": str(exc)}) from exc
+    except DataAccessError as exc:
+        raise HTTPException(status_code=400, detail={
+            "code": "DATA_ACCESS_DECISION_INVALID", "message": str(exc)}) from exc
+
+    return {"code": 0, "data": {
+        "request": decided,
+        "demo": True,
+        "message": "职责岗已审批通过：授权已写入（带有效期，到期自动回收）",
     }, "message": "ok"}
 
 

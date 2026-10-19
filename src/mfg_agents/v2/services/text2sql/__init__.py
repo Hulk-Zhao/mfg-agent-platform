@@ -9,7 +9,8 @@
 from __future__ import annotations
 
 from .auditor import SQLAuditError, SQLAuditor, extract_tables
-from .libraries import TABLE_ACL, MetricLibrary, QueryLibrary
+from .libraries import (TABLE_ACL, MetricLibrary, QueryLibrary, grant_table_access,
+                        reset_table_grants, revoke_table_access, table_acl)
 from .masker import SENSITIVE_COLUMNS, FieldMasker
 from .service import QueryResult, ResultValidator, Text2SQLService
 
@@ -17,4 +18,5 @@ __all__ = [
     "Text2SQLService", "QueryResult", "SQLAuditor", "SQLAuditError",
     "ResultValidator", "FieldMasker", "MetricLibrary", "QueryLibrary",
     "TABLE_ACL", "SENSITIVE_COLUMNS", "extract_tables",
+    "table_acl", "grant_table_access", "revoke_table_access", "reset_table_grants",
 ]

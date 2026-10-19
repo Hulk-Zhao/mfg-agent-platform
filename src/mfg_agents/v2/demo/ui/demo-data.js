@@ -3351,7 +3351,7 @@
       "generated_at": "2026-10-17 20:41:15",
       "source": "demo",
       "degraded": true,
-      "degraded_reason": "后端离线 · 演示数据（口径与真实链路一致）",
+      "degraded_reason": "后端离线 · 演示数据",
       "window": { "start": "2026-10-08", "end": "2026-10-14", "days": 7, "label": "最近 7 天（演示窗口）" },
       "kpis": [
         { "key": "availability", "label": "稼动率", "value": 82.7, "unit": "%", "numerator": 3060, "denominator": 3700,
@@ -3416,7 +3416,7 @@
       "generated_at": "2026-10-17 20:41:15",
       "source": "demo",
       "degraded": true,
-      "degraded_reason": "后端离线 · 演示数据（口径与真实链路一致）",
+      "degraded_reason": "后端离线 · 演示数据",
       "window": { "start": "2026-10-08", "end": "2026-10-14", "days": 7, "label": "最近 7 天（演示窗口）" },
       "kpis": [
         { "key": "defect_rate", "label": "不良率", "value": 2.1, "unit": "%", "numerator": 269, "denominator": 12800,
@@ -3513,7 +3513,7 @@
     "generated_at": "2026-10-18 09:20:00",
     "source": "demo",
     "degraded": true,
-    "degraded_reason": "后端离线 · 演示数据（口径与真实链路一致）",
+    "degraded_reason": "后端离线 · 演示数据",
     "window": { "start": "2026-10-08", "end": "2026-10-14", "days": 7, "label": "最近 7 天（演示窗口）" },
     "kpis": [
       { "key": "otd", "label": "OTD 准时交付率", "value": 71.4, "unit": "%", "numerator": 20, "denominator": 28,
@@ -3603,7 +3603,7 @@
     "generated_at": "2026-10-18 09:20:00",
     "source": "demo",
     "degraded": true,
-    "degraded_reason": "后端离线 · 演示数据（口径与真实链路一致）",
+    "degraded_reason": "后端离线 · 演示数据",
     "window": { "start": "2026-10-08", "end": "2026-10-14", "days": 7, "label": "最近 7 天（演示窗口）" },
     "kpis": [
       { "key": "spc_capability", "characteristic": "焊点高度(mm)", "label": "焊点高度(mm) 过程能力",

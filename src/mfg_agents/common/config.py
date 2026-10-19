@@ -164,6 +164,11 @@ class Settings:
     CASE_ENABLED: bool = _env_bool("CASE_ENABLED", True)
     # 演示模式：允许 POST /api/v2/cases/session 自选演示身份（生产必须 false）
     CASE_DEMO_MODE: bool = _env_bool("CASE_DEMO_MODE", True)
+    # 演示模式：检索/预览的业务维（部门/工厂/产线/客户/供应商/项目）对正式员工放行，
+    # 但 read/cite（读全文/引用）仍按 ACL 判定 → "检索全可见、查看需申请"。
+    # 硬维度（租户/密级/状态/知识层）与显式拒绝照常独立否决。
+    # 只在演示环境开启；生产必须 false（否则等于放弃"权限前置"的差异化）。
+    CASE_DEMO_OPEN_QUERY: bool = _env_bool("CASE_DEMO_OPEN_QUERY", False)
     # 向量后端：memory（默认，纯内存确定性）| chroma（dev/POC）| milvus（生产）
     CASE_VECTOR_BACKEND: str = os.getenv("CASE_VECTOR_BACKEND", "memory")
     # Chroma 持久化目录（仅 CASE_VECTOR_BACKEND=chroma 时使用）
@@ -212,6 +217,20 @@ class Settings:
     # 配成 0 或负数表示关闭（仅限本地调试）。
     CASE_RATE_LIMIT_PER_MIN: int = int(os.getenv("CASE_RATE_LIMIT_PER_MIN", "60"))
 
+    # ================= 数据速查：查询权限申请（演示自动审批）=================
+    # 说明：以下 DATA_ACCESS_* 均为**新增项**，不改变任何既有字段的语义与默认值。
+    #
+    # 数据域没有逐条 ACL，权限是「表级 × 角色」（TABLE_ACL）；无权限岗位在「数据速查」
+    # 页可发起查询权限申请，演示模式下由**表归属职责岗**的演示身份走同一条
+    # "审批通过 → 写入运行时授权叠加层"的路径（见 services/data_access.py，事件打
+    # .demo 后缀）。与案例一致：**仅在 CASE_DEMO_MODE=true 时生效**；生产置 false，
+    # 由真实审批流回调同一路径（服务端代码零改动）。
+    DATA_ACCESS_AUTO_APPROVE_DEMO: bool = _env_bool(
+        "DATA_ACCESS_AUTO_APPROVE_DEMO", True)
+    # 数据查询授权的有效期（天；到期由查询路径惰性回收）。
+    DATA_ACCESS_GRANT_TTL_DAYS: int = int(
+        os.getenv("DATA_ACCESS_GRANT_TTL_DAYS", "30"))
+
     # ================= 企业问答助手（kbqa）FAQ 前置层 =================
     # ADR-001：L1 制度直答阈值 + L0 缓存版本命名空间 + 晋升管理端点保护。
     # 以下均为**新增项**，不改变任何既有字段的语义与默认值。
@@ -234,7 +253,8 @@ class Settings:
     # 实测依据：thinking-disabled 裸 LLM ~1.0s vs search_kb+LLM ~2.6s，省 1.6s。
     # 总开关做逃生阀：置 false 时全部回落 L2 RAG（迭代一行为，零质量回退）。
     KBQA_DIRECT_ENABLED: bool = _env_bool("KBQA_DIRECT_ENABLED", True)
-    # 直答 max_tokens：prompt 已约束 100 字以内，200 足够兜住；与 RAG 的 400 区分
+    # 直答 max_tokens：prompt 约束 200 token（约 150 字）以内，此值即上限；
+    # 非制度类问题允许助手按自身理解作答，故与 RAG 的 400 区分
     KBQA_DIRECT_MAX_TOKENS: int = int(os.getenv("KBQA_DIRECT_MAX_TOKENS", "200"))
 
 

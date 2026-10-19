@@ -270,10 +270,10 @@ queries:
     sql: "SELECT batch_no, part_no, part_name, supplier, arrival_time, qty, qualified_qty, inspect_status, warehouse, bin_location FROM incoming_batch ORDER BY arrival_time DESC LIMIT 10"
 
   incoming_batch_scan:
-    desc: "QMS/WMS：来料批次全量扫描（供 Agent 按供应商/料号二次过滤，上限 60）"
+    desc: "QMS/WMS：来料批次全量扫描（供 Agent 按供应商/料号二次过滤，上限 300）"
     tables: [incoming_batch]
     keywords: [来料全量扫描, 批次扫描]
-    sql: "SELECT batch_no, part_no, part_name, supplier, arrival_time, qty, qualified_qty, inspect_status, warehouse, bin_location FROM incoming_batch ORDER BY arrival_time DESC LIMIT 60"
+    sql: "SELECT batch_no, part_no, part_name, supplier, arrival_time, qty, qualified_qty, inspect_status, warehouse, bin_location FROM incoming_batch ORDER BY arrival_time DESC LIMIT 300"
 
   incoming_batch_by_no:
     desc: "QMS/WMS：按批号查来料综合（数量/合格数/结论/库位/COA）"

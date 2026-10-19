@@ -2896,6 +2896,10 @@ a:hover { text-decoration: underline; }
   padding: 12px 18px 16px; border-top: 1px solid var(--border); margin-top: 12px;
 }
 
+/* 数据速查：无权限块的「申请查询权限」入口条 */
+.of-apply-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
+.of-apply-hint { font-size: 11.5px; color: var(--text-3); line-height: 1.6; }
+
 /* ============================================================
    案例助手（cases）· case-screen.js
    命名空间 `.case-` 前缀，避免与看板/知识库样式互相覆盖。
@@ -3532,3 +3536,161 @@ a:hover { text-decoration: underline; }
   padding: 1px 5px; border-radius: 4px; background: var(--bg-2, #F2F5F8);
   color: var(--text); border: 1px solid var(--border);
 }
+
+/* ================= 案例检索 · 界面创新（I2/I3/I6/I7/I9/I10） =================
+ * 追加样式，命名一律 `case-` 前缀，不与既有规则冲突。纯展示，不改变任何判定。 */
+
+/* I2 · 加入对比按钮 + 选中态 */
+.case-pick { white-space: nowrap; }
+.case-pick.is-on { background: var(--accent, #2F6FEB); color: #fff; border-color: var(--accent, #2F6FEB); }
+.case-hit-picked { border-color: var(--accent, #2F6FEB); box-shadow: 0 0 0 1px var(--accent, #2F6FEB) inset; }
+
+/* I2 · 关键差异对比表 */
+.case-diff { margin: 10px 0 14px; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; background: var(--bg-2, #F7F9FB); }
+.case-diff > summary { cursor: pointer; font-weight: 600; color: var(--text); }
+.case-diff-table { width: 100%; margin-top: 8px; border-collapse: collapse; }
+.case-diff-table th, .case-diff-table td { padding: 6px 8px; border-top: 1px solid var(--border); text-align: left; font-size: 12.5px; }
+.case-diff-table thead th { border-top: none; color: var(--text-2); font-weight: 600; }
+.case-diff-table tbody th { color: var(--text-2); white-space: nowrap; width: 1%; }
+.case-diff-differ td { background: rgba(255, 196, 0, 0.16); font-weight: 600; }
+
+/* I7 · 验证 / 热度 / 新鲜度信号 */
+.case-hit-signals { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 6px 0 2px; }
+.case-signal { font-size: 11.5px; padding: 1px 7px; border-radius: 10px; border: 1px solid var(--border); color: var(--text-2); }
+.case-signal-ok { color: #1a7f37; border-color: #b7e0c2; background: #eaf7ee; }
+.case-signal-warn { color: #9a6700; border-color: #f0d9a0; background: #fdf6e3; }
+.case-fresh { display: inline-flex; align-items: center; gap: 6px; min-width: 150px; }
+.case-fresh-bar { display: block; height: 6px; border-radius: 4px; background: #37a06a; min-width: 8px; max-width: 90px; }
+.case-fresh-stale .case-fresh-bar { background: #c8922a; }
+.case-fresh-unknown .case-fresh-bar { background: #b9c2cc; }
+.case-fresh-txt { font-size: 11.5px; color: var(--text-2); }
+
+/* I3 · 判定链（身份令牌 + 计数） */
+.case-why-ident { margin: 6px 0; padding: 6px 8px; border-left: 3px solid var(--border); color: var(--text-2); font-size: 12.3px; }
+.case-why-ident code { margin-right: 6px; }
+.case-why-jump { margin-top: 6px; }
+
+/* I6 · 处理轨迹时间线 + 本体增强收益 */
+.case-trace-gain { margin: 6px 0 10px; padding: 8px 10px; border-radius: 8px; background: rgba(47, 111, 235, 0.08); border: 1px solid rgba(47, 111, 235, 0.25); }
+.case-trace-gain-tag { display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 10px; background: var(--accent, #2F6FEB); color: #fff; margin-right: 8px; }
+.case-trace-timeline { position: relative; margin-left: 6px; }
+.case-trace-timeline .case-trace-step { position: relative; padding-left: 18px; }
+.case-trace-timeline .case-trace-step::before {
+  content: ""; position: absolute; left: 6px; top: 4px; bottom: -6px; width: 2px; background: var(--border);
+}
+.case-trace-timeline .case-trace-step:last-child::before { bottom: auto; height: 8px; }
+.case-trace-timeline .case-trace-no { box-shadow: 0 0 0 3px var(--bg, #fff); }
+
+/* I9 · 岗位对比：独有案例的归属线索 */
+.case-cmp-only-list { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
+.case-cmp-only-list code { align-self: flex-start; }
+.case-cmp-why { font-size: 11.5px; color: var(--text-2); }
+.case-cmp-hint { margin-top: 8px; }
+
+/* I10 · 空结果「相邻概念」引导 */
+.case-concept { margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--border); }
+.case-concept-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.case-concept-tag { border-radius: 12px; }
+
+/* ================= 案例检索 · 界面创新 P1（I1 段导航 / I4 关系视图 / I5 跨段关联） ================= */
+
+/* I1 · 段/工序导航 facet */
+.case-facets { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 10px 0 4px; }
+.case-facets-lead { font-size: 12.3px; color: var(--text-2); margin-right: 2px; }
+.case-facet { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 14px; border: 1px solid var(--border); background: transparent; color: var(--text-2); font-size: 12.3px; cursor: pointer; }
+.case-facet:hover { border-color: var(--accent, #2F6FEB); color: var(--text); }
+.case-facet.is-on { background: var(--accent, #2F6FEB); border-color: var(--accent, #2F6FEB); color: #fff; }
+.case-facet i { font-style: normal; font-size: 11px; opacity: 0.85; }
+.case-facets-note { flex-basis: 100%; margin-top: 2px; }
+
+/* I4 · 关系视图开关 */
+.case-relview-bar { display: flex; align-items: center; gap: 8px; margin: 4px 0 8px; flex-wrap: wrap; }
+.case-mini.is-on { background: var(--accent, #2F6FEB); color: #fff; border-color: var(--accent, #2F6FEB); }
+
+/* I4 · 关系视图 SVG 图谱 */
+.case-graph { margin: 8px 0 14px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-2, #F7F9FB); }
+.case-graph-head { font-weight: 600; color: var(--text); margin-bottom: 4px; }
+.case-graph svg { width: 100%; height: 220px; display: block; }
+.case-graph-edge { stroke: var(--border); stroke-width: 1.4; stroke-dasharray: 4 3; }
+.case-graph-edge.is-root { stroke: #6b86c9; stroke-dasharray: none; stroke-width: 1.8; }
+.case-graph-center circle { fill: var(--accent, #2F6FEB); }
+.case-graph-center text, .case-graph-node text { font-size: 11px; fill: var(--text); }
+.case-graph-node circle { fill: #fff; stroke: #9db2d6; stroke-width: 1.6; cursor: pointer; }
+.case-graph-node.is-cross circle { fill: #fdf6e3; stroke: #c8922a; }
+.case-graph-node:hover circle { stroke: var(--accent, #2F6FEB); stroke-width: 2.4; }
+.case-graph-sub { fill: var(--text-2); font-size: 10px; }
+
+/* I5 · 卡片内相关案例（跨段/跨域关联） */
+.case-related { margin: 8px 0 6px; border-left: 3px solid var(--border); padding-left: 10px; }
+.case-related > summary { cursor: pointer; font-size: 12.5px; color: var(--text-2); }
+.case-related ul { list-style: none; margin: 6px 0 0; padding: 0; }
+.case-related-row { display: flex; align-items: center; gap: 8px; padding: 3px 0; flex-wrap: wrap; }
+.case-related-kind { font-size: 11px; padding: 1px 7px; border-radius: 10px; background: var(--bg-2, #F2F5F8); color: var(--text-2); border: 1px solid var(--border); }
+.case-related-cross { font-size: 11px; padding: 1px 7px; border-radius: 10px; background: #fdf6e3; color: #9a6700; border: 1px solid #f0d9a0; }
+.case-related-link { color: var(--accent, #2F6FEB); text-decoration: none; font-size: 12.5px; }
+.case-related-link:hover { text-decoration: underline; }
+.case-related-seg { font-size: 11.5px; color: var(--text-2); }
+
+/* ================= 提问对话窗口（对话式 + 回答案例列表） ================= */
+
+.case-chat-turn { margin: 10px 0 14px; }
+.case-chat-q { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 6px; }
+.case-chat-role {
+  flex: none; width: 22px; height: 22px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 11.5px; font-weight: 600; color: #fff; background: var(--accent, #2F6FEB);
+}
+.case-chat-q > span:last-child {
+  background: var(--bg-2, #F2F5F8); border: 1px solid var(--border);
+  border-radius: 10px; padding: 5px 10px; font-size: 13px; color: var(--text);
+}
+.case-chat-a { margin-left: 30px; }
+
+/* 回答案例列表 */
+.case-ans-list { list-style: none; margin: 6px 0 0; padding: 0; }
+.case-ans-item {
+  display: flex; gap: 10px; padding: 9px 10px; margin-bottom: 8px;
+  border: 1px solid var(--border); border-radius: 8px; background: #fff;
+}
+.case-ans-idx {
+  flex: none; width: 20px; height: 20px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 600; color: var(--accent, #2F6FEB);
+  border: 1px solid var(--accent, #2F6FEB);
+}
+.case-ans-main { flex: 1; min-width: 0; }
+.case-ans-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.case-ans-head b { color: var(--text); font-size: 13px; }
+.case-ans-score { font-size: 11.5px; color: var(--text-2); }
+.case-ans-meta { margin-top: 3px; font-size: 11.5px; color: var(--text-2); }
+.case-ans-meta code {
+  font-family: ui-monospace, Consolas, Menlo, monospace; font-size: 11px;
+  padding: 1px 5px; border-radius: 4px; background: var(--bg-2, #F2F5F8);
+  border: 1px solid var(--border); color: var(--text);
+}
+.case-ans-text { margin: 6px 0 0; font-size: 12.8px; line-height: 1.72; color: var(--text); }
+.case-ans-act { margin-top: 7px; display: flex; gap: 8px; }
+
+/* 对话折叠：每轮 = details，summary 常驻显示"问题 + 条数徽标" */
+.case-chat-tools { display: flex; align-items: center; gap: 8px; margin: 8px 0 6px; }
+.case-chat-sum {
+  display: flex; align-items: center; gap: 8px; cursor: pointer; list-style: none;
+  padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--bg-2, #F7F9FB);
+}
+.case-chat-sum::-webkit-details-marker { display: none; }
+.case-chat-qtext {
+  flex: 1; min-width: 0; font-size: 13px; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.case-chat-badge {
+  flex: none; font-size: 11px; padding: 1px 7px; border-radius: 10px;
+  background: #fff; border: 1px solid var(--border); color: var(--text-2);
+}
+.case-chat-time {
+  flex: none; font-size: 11px; color: var(--text-2);
+  font-family: ui-monospace, Consolas, Menlo, monospace;
+}
+.case-chat-caret { flex: none; color: var(--text-2); transition: transform .15s; }
+.case-chat-turn[open] > .case-chat-sum .case-chat-caret { transform: rotate(180deg); }
+.case-chat-turn[open] > .case-chat-sum { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }

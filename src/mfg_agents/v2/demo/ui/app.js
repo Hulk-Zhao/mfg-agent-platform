@@ -466,12 +466,12 @@
     return `${sec}s`;
   }
 
-  /** 演示数据标记 / 真实链路标记 */
+  /** 演示数据标记 / 实时数据标记 */
   function demoFlag(text = "演示数据") {
     return `<span class="demo-flag">${icon("info", 11)}${esc(text)}</span>`;
   }
 
-  function realFlag(text = "真实链路") {
+  function realFlag(text = "实时数据") {
     return `<span class="real-flag">${icon("check", 11)}${esc(text)}</span>`;
   }
 
@@ -712,6 +712,21 @@
       const qs = list ? `?roles=${encodeURIComponent(list)}` : "";
       return this._get(`/api/v2/office/snapshot${qs}`);
     },
+    /** 数据查询权限申请：提交（dataset = 四块 key），返回 { request, demo_approval } */
+    officeDataAccessRequest(payload) {
+      return this._post("/api/v2/office/data-access/request", payload || {});
+    },
+    /** 数据查询权限申请：演示专用自动审批（模拟职责岗审批回调） */
+    officeDataAccessApprove(requestId, actor) {
+      return this._post(
+        `/api/v2/office/data-access/requests/${encodeURIComponent(requestId)}/demo-approve`,
+        { actor: actor || "" });
+    },
+    /** 我提交的数据查询权限申请（含已裁决状态） */
+    officeDataAccessRequests(actor) {
+      const qs = `?actor=${encodeURIComponent(actor || "")}`;
+      return this._get(`/api/v2/office/data-access/requests${qs}`);
+    },
     /** 会议室目录（可按最小容量筛选） */
     officeRooms(capacityMin) {
       const qs = capacityMin ? `?capacity_min=${encodeURIComponent(capacityMin)}` : "";
@@ -951,7 +966,7 @@
       if (chip) chip.title = "未配置 LLM 提供方：路由走规则、结论走模板，数字仍取自 SQL";
     } else {
       if (dot) dot.className = "dot dot-ok";
-      if (text) text.textContent = "后端在线 · 真实链路";
+      if (text) text.textContent = "后端在线";
       if (envMode) { envMode.textContent = "完整模式"; envMode.className = "env-value online"; }
       if (chip) chip.title = "全部依赖就绪";
     }

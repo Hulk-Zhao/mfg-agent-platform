@@ -181,3 +181,544 @@ terms:
     status: deprecated
     approved_by: 设备工程
     approved_at: "2026-10-18"
+
+  # ---------- 插件段（DIP / THT）：把"段"补进受控词表 ----------
+  - code: DM-DIP-100
+    name: 插件与波峰焊类缺陷
+    synonyms: [插件类缺陷, 波峰焊类缺陷]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-19"
+  - code: DM-DIP-101
+    name: 插件脚变形
+    parent: DM-DIP-100
+    synonyms: [插件脚弯曲, 引脚变形, 插件脚共面度不良]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-19"
+  - code: DM-DIP-102
+    name: 漏插错插
+    parent: DM-DIP-100
+    synonyms: [漏插, 错插, 漏装元件, 插错位置]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-19"
+  - code: DM-DIP-103
+    name: 元件反向
+    parent: DM-DIP-100
+    synonyms: [反向装配, 极性反, 元件装反]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-19"
+  - code: DM-DIP-104
+    name: 波峰焊锡桥拉尖
+    parent: DM-DIP-100
+    synonyms: [锡桥, 拉尖, 波峰焊连锡, 桥连波峰]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-19"
+  - code: DM-DIP-105
+    name: 助焊剂残留超标
+    parent: DM-DIP-100
+    synonyms: [助焊剂残留, 残留腐蚀, 助焊剂超标]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-19"
+  - code: DM-DIP-106
+    name: 插件压深不足
+    parent: DM-DIP-100
+    synonyms: [压深不足, 插入深度不足, 插件深度不足]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-19"
+
+  # ---------- pack（组包 / 包装）段 ----------
+  - code: DM-PACK-200
+    name: 组包与包装类缺陷
+    synonyms: [包装类缺陷, 组包类缺陷, 包装不良]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+  - code: DM-PACK-201
+    name: 包装标签错印
+    parent: DM-PACK-200
+    synonyms: [标签错印, 标签错误, 唛头错误]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+  - code: DM-PACK-202
+    name: 附件漏装
+    parent: DM-PACK-200
+    synonyms: [漏装附件, 缺少说明书, 漏放配件]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+  - code: DM-PACK-203
+    name: 装箱数量错
+    parent: DM-PACK-200
+    synonyms: [多装, 少装, 装箱数错, 混装]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+  - code: DM-PACK-204
+    name: 包装破损
+    parent: DM-PACK-200
+    synonyms: [箱子破损, 纸箱破损, 堆码破损]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+  - code: DM-PACK-205
+    name: 静电袋密封不良
+    parent: DM-PACK-200
+    synonyms: [静电袋漏气, 密封不严, 封边开裂]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+  - code: DM-PACK-206
+    name: 包装条码不可读
+    parent: DM-PACK-200
+    synonyms: [条码不可读, 标签无法扫描, 打印模糊]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+
+  # ---------- 整机（装配 / 测试）段 ----------
+  - code: DM-ASSY-300
+    name: 整机装配与测试类缺陷
+    synonyms: [整机类缺陷, 整机装配不良, 整机测试不良]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+  - code: DM-ASSY-301
+    name: 整机异响
+    parent: DM-ASSY-300
+    synonyms: [异响, 整机噪声, 干涉异响]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+  - code: DM-ASSY-302
+    name: 整机螺钉滑牙
+    parent: DM-ASSY-300
+    synonyms: [螺钉滑牙, 滑丝, 螺钉漏拧]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+  - code: DM-ASSY-303
+    name: 整机接地电阻超标
+    parent: DM-ASSY-300
+    synonyms: [接地不良, 接地电阻超, 接地阻抗超标]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+  - code: DM-ASSY-304
+    name: 整机外观划伤
+    parent: DM-ASSY-300
+    synonyms: [外观划伤, 壳体划痕, 外观不良]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+  - code: DM-ASSY-305
+    name: 整机气密性不足
+    parent: DM-ASSY-300
+    synonyms: [气密性不足, 漏气, 整机密封不严]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+  - code: DM-ASSY-306
+    name: 整机功能测试误判
+    parent: DM-ASSY-300
+    synonyms: [测试误判, EOL误判, 功能测试FAIL, 测试漏检]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+
+  # ---------- 采购 / 供应链域 ----------
+  - code: DM-SCM-400
+    name: 采购与供应链类缺陷
+    synonyms: [供应链缺陷, 采购类缺陷]
+    status: active
+    approved_by: 供应链
+    approved_at: "2026-10-19"
+  - code: DM-SCM-401
+    name: 缺料停线
+    parent: DM-SCM-400
+    synonyms: [缺料停线, 断线待料]
+    status: active
+    approved_by: 供应链
+    approved_at: "2026-10-19"
+  - code: DM-SCM-402
+    name: 供应商交期延迟
+    parent: DM-SCM-400
+    synonyms: [交期延迟, 供应商延期]
+    status: active
+    approved_by: 供应链
+    approved_at: "2026-10-19"
+  - code: DM-SCM-403
+    name: 特采让步接收风险
+    parent: DM-SCM-400
+    synonyms: [特采风险, 让步接收风险]
+    status: active
+    approved_by: 供应链
+    approved_at: "2026-10-19"
+  - code: DM-SCM-404
+    name: 供应商批次波动
+    parent: DM-SCM-400
+    synonyms: [批次波动, 供应商批次不稳]
+    status: active
+    approved_by: 供应链
+    approved_at: "2026-10-19"
+  - code: DM-SCM-405
+    name: 库存呆滞超期
+    parent: DM-SCM-400
+    synonyms: [呆滞库存, 库存超期]
+    status: active
+    approved_by: 供应链
+    approved_at: "2026-10-19"
+
+  # ---------- 客服 / 售后域 ----------
+  - code: DM-SVC-500
+    name: 客服与售后类缺陷
+    synonyms: [售后缺陷, 客服类缺陷]
+    status: active
+    approved_by: 客服
+    approved_at: "2026-10-19"
+  - code: DM-SVC-501
+    name: 客诉升级口径不一致
+    parent: DM-SVC-500
+    synonyms: [客诉口径不一致, 升级口径不统一]
+    status: active
+    approved_by: 客服
+    approved_at: "2026-10-19"
+  - code: DM-SVC-502
+    name: 售后返修率偏高
+    parent: DM-SVC-500
+    synonyms: [返修率偏高, 售后返修超标]
+    status: active
+    approved_by: 客服
+    approved_at: "2026-10-19"
+  - code: DM-SVC-503
+    name: 售后备件供应不足
+    parent: DM-SVC-500
+    synonyms: [备件不足, 售后缺件]
+    status: active
+    approved_by: 客服
+    approved_at: "2026-10-19"
+
+  # ---------- 设计域 ----------
+  - code: DM-DES-080
+    name: 设计类缺陷
+    synonyms: [设计缺陷, 研发设计不良]
+    status: active
+    approved_by: 研发
+    approved_at: "2026-10-19"
+  - code: DM-DES-081
+    name: 设计余量不足
+    parent: DM-DES-080
+    synonyms: [设计裕度不足, 余量设计不足]
+    status: active
+    approved_by: 研发
+    approved_at: "2026-10-19"
+  - code: DM-DES-082
+    name: 器件降额不足
+    parent: DM-DES-080
+    synonyms: [降额不足, 器件裕度不足]
+    status: active
+    approved_by: 研发
+    approved_at: "2026-10-19"
+  - code: DM-DES-083
+    name: DFM 可制造性不足
+    parent: DM-DES-080
+    synonyms: [可制造性不足, DFM不足]
+    status: active
+    approved_by: 研发
+    approved_at: "2026-10-19"
+  - code: DM-DES-084
+    name: 测试点覆盖不足
+    parent: DM-DES-080
+    synonyms: [测试点不足, 测试覆盖不全]
+    status: active
+    approved_by: 研发
+    approved_at: "2026-10-19"
+  - code: DM-DES-085
+    name: 散热设计不足
+    parent: DM-DES-080
+    synonyms: [散热不足, 热设计不足]
+    status: active
+    approved_by: 研发
+    approved_at: "2026-10-19"
+
+  # ---------- 跨部门域 ----------
+  - code: DM-XD-600
+    name: 跨部门协同类缺陷
+    synonyms: [跨部门缺陷, 协同类缺陷]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+  - code: DM-XD-601
+    name: 停线应急协同不足
+    parent: DM-XD-600
+    synonyms: [停线协同不足, 应急响应不足]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+  - code: DM-XD-602
+    name: 缺料联动不及时
+    parent: DM-XD-600
+    synonyms: [缺料联动不及时, 联动响应滞后]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+  - code: DM-XD-603
+    name: 客诉与供应联动断点
+    parent: DM-XD-600
+    synonyms: [客诉供应联动断点, 跨部门联动断点]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+
+  # ---------- 电芯组包段 ----------
+  - code: DM-CELL-700
+    name: 电芯组包类缺陷
+    synonyms: [电芯组包缺陷, 电芯模组缺陷]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-19"
+  - code: DM-CELL-701
+    name: 配组容量偏差
+    parent: DM-CELL-700
+    synonyms: [配组容量偏差, 容量分档不当]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-19"
+  - code: DM-CELL-702
+    name: 内阻不一致
+    parent: DM-CELL-700
+    synonyms: [内阻不一致, 内阻离散]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-19"
+  - code: DM-CELL-703
+    name: 极耳焊接虚焊
+    parent: DM-CELL-700
+    synonyms: [极耳虚焊, 极耳焊接不良]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-19"
+  - code: DM-CELL-704
+    name: BMS 采线接错
+    parent: DM-CELL-700
+    synonyms: [采线接错, BMS接线错误]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-19"
+  - code: DM-CELL-705
+    name: 极耳折弯挤压
+    parent: DM-CELL-700
+    synonyms: [极耳折弯, 极耳挤压变形]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-19"
+  - code: DM-CELL-706
+    name: 模组绝缘耐压不足
+    parent: DM-CELL-700
+    synonyms: [模组绝缘不足, 耐压不足]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-19"
+
+  # ---------- 老化段 ----------
+  - code: DM-AGING-800
+    name: 老化类缺陷
+    synonyms: [老化缺陷, 老化类不良]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+  - code: DM-AGING-801
+    name: 老化容量衰减超标
+    parent: DM-AGING-800
+    synonyms: [容量衰减超标, 老化衰减超标]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+  - code: DM-AGING-802
+    name: 老化内阻升高
+    parent: DM-AGING-800
+    synonyms: [内阻升高, 老化内阻上升]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+  - code: DM-AGING-803
+    name: 老化房温度不均
+    parent: DM-AGING-800
+    synonyms: [老化房温差大, 老化温度分布不均]
+    status: active
+    approved_by: 设备工程
+    approved_at: "2026-10-19"
+  - code: DM-AGING-804
+    name: 老化鼓包漏液
+    parent: DM-AGING-800
+    synonyms: [鼓包, 漏液, 电芯鼓胀]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+
+  # ---------- 测试段（含补注册历史码 DM-TST-07x） ----------
+  - code: DM-TST-070
+    name: 测试类缺陷
+    synonyms: [测试不良, 测试类缺陷]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+  - code: DM-TST-071
+    name: 测试程序错误
+    parent: DM-TST-070
+    synonyms: [测试程序设置错, 程序参数错误]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+  - code: DM-TST-072
+    name: 测试阈值误判
+    parent: DM-TST-070
+    synonyms: [阈值误判, 测试判据过紧]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+  - code: DM-TST-073
+    name: 老化不充分
+    parent: DM-TST-070
+    synonyms: [老化不足, 老化不彻底]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+  - code: DM-TST-074
+    name: 测试数据未追溯
+    parent: DM-TST-070
+    synonyms: [测试数据缺失, 测试记录不全]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+  - code: DM-TST-075
+    name: 绝缘耐压失效
+    parent: DM-TST-070
+    synonyms: [耐压失效, 绝缘失效]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+  - code: DM-TST-076
+    name: ATE 接触不良
+    parent: DM-TST-070
+    synonyms: [ATE接触不良, 测试针床接触不良]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+
+  # ---------- 整机组装 / 包装 补充 ----------
+  - code: DM-ASSY-307
+    name: 整机线束接错
+    parent: DM-ASSY-300
+    synonyms: [线束接错, 线束插错]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-19"
+  - code: DM-ASSY-308
+    name: 整机结构件装配错位
+    parent: DM-ASSY-300
+    synonyms: [结构件错位, 装配错位]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-19"
+  - code: DM-PACK-207
+    name: 包装标识与实物不符
+    parent: DM-PACK-200
+    synonyms: [标识不符, 唛头与实物不符]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+  - code: DM-PACK-208
+    name: 出货文件缺失
+    parent: DM-PACK-200
+    synonyms: [出货文件缺失, 随货文件不全]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+
+  # ---------- 常见器件/塑胶件来料缺陷（补 IC / MOS / 塑胶件 章节） ----------
+  - code: DM-MAT-059
+    name: IC 引脚共面度超差
+    parent: DM-MAT-040
+    synonyms: [IC共面度超差, IC引脚平整度不良]
+    status: active
+    approved_by: SQE
+    approved_at: "2026-10-19"
+  - code: DM-MAT-060
+    name: IC 潮敏受潮爆米花
+    parent: DM-MAT-040
+    synonyms: [潮敏受潮, 爆米花现象, MSL受潮]
+    status: active
+    approved_by: SQE
+    approved_at: "2026-10-19"
+  - code: DM-MAT-061
+    name: IC 静电损伤
+    parent: DM-MAT-040
+    synonyms: [IC ESD损伤, 器件静电损伤]
+    status: active
+    approved_by: SQE
+    approved_at: "2026-10-19"
+  - code: DM-MAT-062
+    name: IC 丝印型号错印
+    parent: DM-MAT-040
+    synonyms: [丝印错误, IC型号错印, 丝印与实物不符]
+    status: active
+    approved_by: SQE
+    approved_at: "2026-10-19"
+  - code: DM-MAT-063
+    name: MOS 管静电击穿
+    parent: DM-MAT-040
+    synonyms: [MOS击穿, MOS静电击穿]
+    status: active
+    approved_by: SQE
+    approved_at: "2026-10-19"
+  - code: DM-MAT-064
+    name: MOS 参数漂移
+    parent: DM-MAT-040
+    synonyms: [MOS阈值电压漂移, 导通电阻漂移]
+    status: active
+    approved_by: SQE
+    approved_at: "2026-10-19"
+  - code: DM-MAT-065
+    name: 塑胶件缩水变形
+    parent: DM-MAT-040
+    synonyms: [塑件缩水变形, 塑胶件变形]
+    status: active
+    approved_by: SQE
+    approved_at: "2026-10-19"
+  - code: DM-MAT-066
+    name: 塑胶件熔接痕强度不足
+    parent: DM-MAT-040
+    synonyms: [熔接痕强度不足, 熔接线开裂]
+    status: active
+    approved_by: SQE
+    approved_at: "2026-10-19"
+  - code: DM-MAT-067
+    name: 塑胶件阻燃不达标
+    parent: DM-MAT-040
+    synonyms: [阻燃等级不足, 阻燃不达标]
+    status: active
+    approved_by: SQE
+    approved_at: "2026-10-19"
+
+  # ---------- SOP 工位补充：印刷 / 贴片段 ----------
+  - code: DM-SMT-016
+    name: 锡量不足
+    parent: DM-SMT-010
+    synonyms: [锡膏量偏少, 锡量偏低, 少锡]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-19"
+  - code: DM-PKG-033
+    name: 贴装元件损伤
+    parent: DM-PKG-030
+    synonyms: [贴装损伤, 元件压伤]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-19"

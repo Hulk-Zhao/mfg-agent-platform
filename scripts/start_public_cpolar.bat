@@ -64,7 +64,10 @@ echo   Share  ^<that-url^>/demo-ui/  with external users.
 echo   Stop with scripts\stop_public.bat
 echo ============================================================
 echo.
-"%CPEXE%" http %PORT%
+rem Free-plan accounts are region-locked; the "us" default is rejected
+rem with StatusCode 5005. Pass -region=cn explicitly - the region key
+rem in %USERPROFILE%\.cpolar\cpolar.yml is NOT honoured by the client.
+"%CPEXE%" http %PORT% -region=cn
 
 echo.
 if errorlevel 1 (

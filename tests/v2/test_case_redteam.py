@@ -663,12 +663,12 @@ def test_k_larger_than_visible_returns_all_without_backfill(case_client):
 
     token = _session(case_client, "manufacturing", dept="production",
                      employment_type="outsource", user_id="u-k50")
-    resp = _search(case_client, token, query="锡膏印刷偏移 虚焊 连锡", k=200)
+    resp = _search(case_client, token, query="锡膏印刷偏移 虚焊 连锡", k=1000)
     assert resp.status_code == 200, resp.text
     data = resp.json()["data"]
 
-    # 外协可见 chunk 已 >120：k 必须放大到超过它，才能验证"不补齐"。
-    assert len(data["hits"]) < 200, "外协人员不可能有 200 条可见 chunk（否则此用例失效）"
+    # 外协可见 chunk 已 >200：k 必须放大到超过它，才能验证"不补齐"。
+    assert len(data["hits"]) < 1000, "外协人员不可能有 1000 条可见 chunk（否则此用例失效）"
     assert len(data["hits"]) <= int(getattr(settings, "CASE_K_MAX", 20))
     assert "不放宽过滤补齐" in data["notice"]
     assert data["hidden_count"] > 0

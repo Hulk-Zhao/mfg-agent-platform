@@ -47,10 +47,14 @@ def case_client(tmp_path_factory):
         "CASE_DEMO_MODE": True,
         "CASE_VECTOR_BACKEND": "memory",
         "CASE_EXPOSE_HIDDEN_COUNT": True,
-        # k 上限放宽到 200：种子已扩到 70 例，任一主体可见 chunk 都 >120 条，
-        # 默认上限 20（红队旧值 50）会把 k 直接钳掉，"候选不足 / k 放大不补齐"
-        # 两条不变量测不到。
-        "CASE_K_MAX": 200,
+        # k 上限放宽到 1000：种子已扩到 150 例（含插件/pack/整机/多职能域），
+        # 部分主体可见 chunk 已超过 200 条，旧上限会把 k 直接钳掉，
+        # "候选不足 / k 放大不补齐 / hidden_count 口径" 几条不变量就测不到。
+        # 注意：这里放的是**测试环境**上限；产品默认值仍由 test_case_demo_corpus.py 守护。
+        "CASE_K_MAX": 1000,
+        # 演示"检索全可见"开关：测试里**必须显式关闭**，否则跨部门/跨工厂的
+        # 越权守护用例（红队 + e2e）会被演示语义放行而失真。
+        "CASE_DEMO_OPEN_QUERY": False,
         # B8 限流在测试里放宽：红队会以同一主体发起 100+ 次请求，
         # 用生产值（60/分钟）会把用例自己撞成 429。专项限流用例
         # （test_case_rate_limit.py）自己把阈值调低，不依赖这里。

@@ -191,6 +191,12 @@ class AclEvaluator:
                 if principal_token(prefix, value) in principal.principal_tokens:
                     return AuthDecision(False, f"命中显式拒绝条目 {dim}:{value}")
 
+        # ── 9.5 演示模式：检索/预览业务维豁免（硬门禁与显式拒绝已在上方执行）──
+        # 与 acl_compiler 阶段 4 的 demo-open 同一语义（两套实现必须同步改，
+        # 否则召回放行、二次授权整批丢弃）。只放宽"业务范围"，不动任何安全约束。
+        if self._demo_open(act, principal):
+            return AuthDecision(True, "演示模式：检索/预览业务维豁免（硬门禁照常）")
+
         # ── 10. 可见性维（快/慢路径，与编译器语义等价但算法独立）────
         try:
             vc = int(scalars.get("visibility_class", "1"))
@@ -219,8 +225,22 @@ class AclEvaluator:
             return AuthDecision(True, "令牌交集命中", matched=tuple(sorted(set(matched))))
         return AuthDecision(False, "受限案例：主体令牌与案例 ACL 无交集")
 
-    # ---------- 批量 ----------
+    @staticmethod
+    def _demo_open(act: str, principal) -> bool:
+        """演示模式：检索/预览对正式员工放行业务维（与编译器 demo-open 同步）。
 
+        只放宽"业务范围"（部门/工厂/产线/客户/供应商/项目），
+        硬门禁（租户/密级/状态/知识层）与显式拒绝已在调用点上方独立执行。
+        """
+        if act not in ("query", "preview"):
+            return False
+        from ...common.config import settings
+
+        if not bool(getattr(settings, "CASE_DEMO_OPEN_QUERY", False)):
+            return False
+        return str(getattr(principal, "employment_type", "employee")) == "employee"
+
+    # ---------- 批量 ----------
     def filter_authorized(self, principal: Optional[Principal],
                           candidate_rows: Mapping[str, Sequence[Mapping[str, Any]]],
                           action: str,

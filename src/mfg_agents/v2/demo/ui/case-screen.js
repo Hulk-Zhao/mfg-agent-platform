@@ -64,7 +64,143 @@
   const ACTION_LABEL = { query: "检索", preview: "预览", read: "读全文", cite: "引用" };
   const RETRIEVAL_ACTIONS = ["query", "cite", "read"];
 
-  /* ============ 中文化映射表（硬约束：中文文案只放这里，不散落在模板里） ============ */
+  /** 同一屏最多勾选的对比条数（超过则提示；不做静默截断）。 */
+  const MAX_DIFF = 3;
+
+  /* ============ 界面创新辅助（I2/I7/I10）============
+   * 纪律：这些函数**只读取服务端已返回的字段做展示**，不编造任何数据，
+   * 也不参与过滤/授权判定。 */
+
+  /** I7 新鲜度：由 `last_verified_at` 推导（只读字段，不在前端编数据）。 */
+  function freshnessMeta(hit) {
+    const raw = String((hit && hit.last_verified_at) || "").trim();
+    const ts = raw ? Date.parse(raw.replace(/\//g, "-")) : NaN;
+    if (!raw || isNaN(ts)) {
+      return { days: null, pct: 0, cls: "case-fresh-unknown", label: "未标注复核日期" };
+    }
+    const days = Math.max(0, Math.floor((Date.now() - ts) / 86400000));
+    const stale = days > 730;   // 与策略 freshness_days 同口径（24 个月）
+    return {
+      days: days,
+      pct: Math.max(8, Math.min(100, Math.round((1 - Math.min(days, 730) / 730) * 100))),
+      cls: stale ? "case-fresh-stale" : "case-fresh-ok",
+      label: (stale ? "距复核 " : "距复核 ") + days + " 天" + (stale ? "（超 24 个月，注意时效）" : ""),
+    };
+  }
+
+  /** I7 新鲜度可视化：一条量度条 + 文案（纯展示）。 */
+  function freshnessBar(hit) {
+    const f = freshnessMeta(hit);
+    return '<span class="case-fresh ' + f.cls + '" title="' + UI_ESC(f.label) + '">'
+      + '<i class="case-fresh-bar" style="width:' + f.pct + '%"></i>'
+      + '<span class="case-fresh-txt">' + UI_ESC(f.label) + "</span></span>";
+  }
+
+  /** UI.esc 在 IIFE 外不可见，这里做一个本地兜底转义（仅用于 title 属性）。 */
+  function UI_ESC(v) {
+    return String(v == null ? "" : v).replace(/&/g, "&amp;").replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+
+  /** I10 兜底：按 2 字窗口找与输入共享字面的受控词条（确定性、只做建议）。 */
+  function bigramConcepts(meta, query, limit) {
+    const onto = (meta && meta.ontology) || {};
+    const q = String(query || "").toLowerCase();
+    if (q.length < 2) return [];
+    const grams = {};
+    for (let i = 0; i + 2 <= q.length; i++) grams[q.slice(i, i + 2)] = true;
+    const out = [];
+    Object.keys(onto).forEach(function (vocab) {
+      (onto[vocab] || []).forEach(function (t) {
+        if (!t || t.status === "deprecated") return;
+        const labels = [t.name].concat(t.synonyms || []);
+        const score = labels.reduce(function (n, l) {
+          const low = String(l || "").toLowerCase();
+          let s = 0;
+          for (let i = 0; i + 2 <= low.length; i++) if (grams[low.slice(i, i + 2)]) s++;
+          return n + s;
+        }, 0);
+        if (score > 0) {
+          out.push({ score: score, code: t.code, name: t.name,
+                     label: labels.slice(0, 2).join(" / ") });
+        }
+      });
+    });
+    out.sort(function (a, b) { return b.score - a.score || a.code.localeCompare(b.code); });
+    return out.slice(0, limit || 6);
+  }
+
+  function adjacentConcepts(meta, query, limit) {
+    const onto = (meta && meta.ontology) || {};
+    const q = String(query || "").toLowerCase();
+    if (!q) return [];
+    const hit = [];
+    Object.keys(onto).forEach(function (vocab) {
+      (onto[vocab] || []).forEach(function (t) {
+        if (!t || t.status === "deprecated") return;
+        const labels = [t.name].concat(t.synonyms || []);
+        const matched = labels.some(function (l) {
+          const low = String(l || "").toLowerCase();
+          return low.length >= 2 && q.indexOf(low) >= 0;
+        });
+        if (matched) {
+          hit.push({ vocab: vocab, code: t.code, name: t.name,
+                     label: (labels.slice(0, 2).join(" / ")) });
+        }
+      });
+    });
+    return hit.slice(0, limit || 6);
+  }
+
+
+  /* ============ 界面创新 · P1（I1 段导航 / I4 关系视图 / I5 跨段关联）============
+   * 纪律：全部**只依据本次已返回的可见结果**做展示与筛选；
+   * 段导航只过滤显示层（与既有"分类下拉只过滤已返回结果"同口径），
+   * 不改召回、不改授权、不发新请求。 */
+
+  /** 产线编码前缀 → 工艺段中文名（载体维度的一等展示）。 */
+  const SEGMENT_PREFIX = {
+    SMT: "SMT 段", DIP: "插件段", THT: "插件段",
+    CELL: "电芯组包段", AGING: "老化段",
+    ASSY: "整机组装段", 装配: "整机组装段", ASM: "整机组装段",
+    TEST: "测试段", PKG: "包装段",
+    注塑: "注塑段", INJ: "注塑段", 机加: "机加段", MCH: "机加段",
+    来料: "来料段",
+  };
+
+  /** 由 `line_code` 前缀推导工艺段；无产线（职能/跨部门案例）归"职能 / 通用"。 */
+  function segmentOf(hit) {
+    const line = String((hit && hit.line_code) || "").trim();
+    if (!line) return "职能 / 通用";
+    const prefix = line.split("-")[0];
+    return SEGMENT_PREFIX[prefix] || (line + " 段");
+  }
+
+  /** I5：本次结果内与某案例相关的其他案例（同根因优先，其次同缺陷模式；标出是否跨段）。 */
+  function relatedOf(S, hit, limit) {
+    const all = (S.result && S.result.hits) || [];
+    const seen = {};
+    const out = [];
+    all.forEach(function (h) {
+      if (!h || h.case_id === hit.case_id || seen[h.case_id]) return;
+      const sameRoot = hit.root_cause_code && h.root_cause_code === hit.root_cause_code;
+      const sameDefect = hit.defect_mode_code && h.defect_mode_code === hit.defect_mode_code;
+      if (!sameRoot && !sameDefect) return;
+      seen[h.case_id] = true;
+      out.push({
+        hit: h,
+        kind: sameRoot ? "同根因" : "同缺陷模式",
+        cross: segmentOf(h) !== segmentOf(hit),
+      });
+    });
+    // 同根因排在前（关系更强），跨段优先展示
+    out.sort(function (a, b) {
+      if (a.kind !== b.kind) return a.kind === "同根因" ? -1 : 1;
+      return (b.cross ? 1 : 0) - (a.cross ? 1 : 0);
+    });
+    return out.slice(0, limit || 4);
+  }
+
   const ZH = {
     /** 审计动作 → 中文 */
     action: {
@@ -327,10 +463,21 @@
       result: null,
       error: null,
       showWhy: false,
+      // I2 关键差异对比：勾选 2–3 条案例做结构化比对（只比较已返回的可见案例）
+      selected: [],
+      diffOpen: true,
+      // I1 段导航（只过滤已返回结果，不改召回/授权）+ I4 关系视图开关
+      segment: "all",
+      relView: false,
       detail: null,
       cite: null,
       asking: false,
       answer: null,
+      // 提问对话窗口：多轮"问-答"历史（最多保留 6 轮，避免刷屏）
+      askLog: [],
+      // 对话折叠视图（三态）：latest = 仅最新一轮展开（旧轮收起，默认）；
+      // all = 全部展开；none = 全部收起（含最新一轮，避免"收起后最新一轮仍开着"）
+      chatView: "latest",
       compare: null, compareA: "qa", compareB: "equipment",
       compareDeptA: null, compareDeptB: null, comparing: false,
       audit: null,
@@ -379,6 +526,7 @@
       + '    <section class="case-main">' + mainPanel(UI, S) + "</section>"
       + "  </div>"
       + (S.detail ? detailOverlay(UI, S) : "")
+      + (S.accessForm ? accessFormOverlay(UI, S) : "")
       + (S.ingestForm ? ingestOverlay(UI, S) : "")
       + (S.autoFlow ? accessAutoOverlay(UI, S) : "")
       + "</div>";
@@ -726,7 +874,7 @@
     const askBlock = '<section class="case-block case-block-ask">'
       + '<h3 class="case-block-title">智能问答'
       + '<span class="case-hint">本体增强 Agentic RAG：术语归一 → 同义扩展 → 三元组检索 → 权限过滤 → 引用校验</span>'
-      + "</h3>" + askWithTrace(UI, S, S.answer) + "</section>";
+      + "</h3>" + askPane(UI, S) + "</section>";
 
     const searchOpen = S.tab !== "search" && !S.result;
     const searchBlock = '<section class="case-block case-block-search">'
@@ -829,8 +977,15 @@
       + "由职能部门审批后授权（演示模式下提交后将自动弹窗模拟审批通过）。</div>"
       + '<table class="case-table"><thead><tr><th>案例</th><th>说明</th><th>操作</th></tr></thead>'
       + "<tbody>" + rows + "</tbody></table>"
-      + (S.accessForm ? accessForm(UI, S) : "")
       + "</div>";
+  }
+
+  /** 访问申请表单的**弹层**包装：不依赖"受限清单"是否存在（演示全可见时该清单为空）。 */
+  function accessFormOverlay(UI, S) {
+    return '<div class="case-modal"><div class="case-modal-card">'
+      + '<div class="case-modal-head"><b>发起访问申请</b>'
+      + '<button class="case-mini" data-act="access-close">关闭</button></div>'
+      + accessForm(UI, S) + "</div></div>";
   }
 
   function accessForm(UI, S) {
@@ -946,6 +1101,7 @@
       + degradeBar(UI, r || {})
       + noticeBar(UI, r || {})
       + whyPanel(UI, S, r)
+      + (r ? segmentFacet(UI, S, r) + relViewToggle(UI, S, r) : "")
       + '<div class="case-hits">' + hitList(UI, S, r) + "</div>"
       + restrictedPane(UI, S, r);
   }
@@ -980,10 +1136,13 @@
     }
     if (data.notice) lines.push(UI.esc(data.notice));
     return '<div class="case-notice case-notice-' + tone + '">'
-      + '<span class="case-notice-ico">!</span><div>' + lines.join("<br>") + "</div></div>";
+      + '<span class="case-notice-ico">!</span><div>' + lines.join("<br>")
+      + '<div><button class="case-mini case-why-jump" data-act="why-open">'
+      + "查看判定链（为什么会有看不到的）</button></div>"
+      + "</div></div>";
   }
 
-  /** 「为什么看不到」：只展示 hash 与人类可读解释，**不展示 expr/AST**。 */
+  /** I3 「为什么看到 / 为什么看不到」：只展示服务端编译出的判定与人类可读解释，**不展示 expr/AST**。 */
   function whyPanel(UI, S, r) {
     if (!r) return "";
     const facts = [
@@ -991,6 +1150,8 @@
       ["候选 chunk 数", String(r.candidates == null ? "-" : r.candidates)],
       ["向量后端", r.backend || "-"],
       ["二次授权丢弃", String(r.second_stage_dropped || 0)],
+      ["本次不可见（案例）", String(r.hidden_count || 0)],
+      ["受限·可申请", String((r.restricted || []).length)],
     ];
     const rows = facts.map(function (pair) {
       return '<div class="case-why-row"><span>' + UI.esc(pair[0]) + "</span><code>"
@@ -999,9 +1160,16 @@
     const explain = (r.filter_explain || []).map(function (line) {
       return "<li>" + UI.esc(line) + "</li>";
     }).join("");
+    const tok = S.session && S.session.principal
+      ? tokensHuman(S.session.principal.principal_tokens, S.meta) : [];
+    const ident = tok.length
+      ? '<div class="case-why-ident">你的可见范围由以下令牌与服务端策略共同编译：'
+        + tok.map(function (t) { return "<code>" + UI.esc(t) + "</code>"; }).join(" ")
+        + "</div>"
+      : "";
     return '<details class="case-why"' + (S.showWhy ? " open" : "") + ">"
-      + "<summary>为什么是这些结果？（技术详情：服务端编译出的过滤条件）</summary>"
-      + rows
+      + "<summary>为什么是这些结果 / 为什么有看不到的？（服务端编译判定）</summary>"
+      + ident + rows
       + (explain ? '<div class="case-side-title">编译结果（人类可读，不是原始表达式）</div>'
         + '<ul class="case-why-list">' + explain + "</ul>" : "")
       + '<div class="case-hint">服务端只回传指纹与可读描述，不回传原始表达式：'
@@ -1020,8 +1188,11 @@
       return '<div class="case-hint case-pad">输入关键词后回车。建议先搜「锡膏印刷偏移 虚焊 连锡」。</div>';
     }
     const all = r.hits || [];
-    const hits = S.category === "all" ? all
+    const byCategory = S.category === "all" ? all
       : all.filter(function (h) { return h.subcategory === S.category; });
+    // I1 段导航：与分类下拉同口径——只过滤"已返回结果"的显示层。
+    const hits = S.segment === "all" ? byCategory
+      : byCategory.filter(function (h) { return segmentOf(h) === S.segment; });
     if (!hits.length) {
       const filteredOut = all.length - hits.length;
       return '<div class="case-empty"><b>0 条可见</b>'
@@ -1030,12 +1201,19 @@
         + (r.hidden_count > 0 ? "<p>另有 <b>" + r.hidden_count + "</b> 条<b>案例</b>在你当前权限范围之外——"
           + "系统不会为了凑数放宽过滤条件。</p>" : "")
         + (filteredOut === 0 && !r.hidden_count ? "<p>没有匹配的案例。</p>" : "")
+        + (filteredOut === 0 ? conceptHintBlock(UI, S) : "")
         + "</div>";
     }
     // 同一案例的多个 chunk 折叠成一张卡：命中列表按"案例"读，不按"片段"读。
     // 否则一次检索 20 张卡其实只有 10 个案例，现场会被问穿"到底几条案例"。
     const groups = groupByCase(hits);
-    return groups.map(function (g, i) { return hitCard(UI, S, g, i); }).join("");
+    const diff = (S.selected || []).length >= 2 ? diffPane(UI, S, all) : "";
+    // I4 关系视图：以某案例为圆心，画出"同根因 / 同缺陷模式"的关联边（仅用本次结果）。
+    const graph = S.relView ? relationGraph(UI, S, all) : "";
+    // I10：命中非空但**输入未命中任何受控词条**时，也给出术语引导
+    // （demo 记忆后端对任何输入都返回 k 条，"0 命中"几乎不可达——这才是真正需要引导的场景）。
+    const hint = adjacentConcepts(S.meta, S.query, 1).length ? "" : conceptHintBlock(UI, S);
+    return diff + graph + groups.map(function (g, i) { return hitCard(UI, S, g, i); }).join("") + hint;
   }
 
   /** 命中项按 case_id 归并（保持首次出现的顺序 = 分数顺序）。 */
@@ -1082,29 +1260,42 @@
 
     const chips = [];
     if (hit.plant) chips.push(hit.plant + (hit.line_code ? " · " + hit.line_code : ""));
-    if (hit.defect_mode_code) chips.push(hit.defect_mode_code);
+    if (hit.defect_mode_code) chips.push("缺陷 " + hit.defect_mode_code);
+    if (hit.root_cause_code) chips.push("根因 " + hit.root_cause_code);
     if (hit.cls_rank) chips.push("密级 L" + hit.cls_rank);
     if (hit.content_version) chips.push("v" + hit.content_version);
 
     const score = typeof hit.score === "number" ? hit.score.toFixed(2) : "-";
     const multi = chunks.length > 1;
 
-    return '<article class="case-hit" data-case-id="' + UI.esc(hit.case_id) + '" tabindex="0">'
+    const picked = (S.selected || []).indexOf(hit.case_id) >= 0;
+    return '<article class="case-hit' + (picked ? " case-hit-picked" : "") + '" data-case-id="' + UI.esc(hit.case_id) + '" tabindex="0">'
       + '<div class="case-hit-score">' + score + "<i>#" + (index + 1) + "</i></div>"
       + '<div class="case-hit-body">'
       + '<div class="case-hit-top"><h4>' + UI.esc(hit.title || hit.case_id) + "</h4>"
       + statusBadge(UI, hit.status, hit.status_badge)
       + (multi ? '<span class="case-chunk-count" title="该案例命中了几个知识层片段">'
         + chunks.length + " 个片段</span>" : "")
+      + '<button class="case-mini case-pick' + (picked ? " is-on" : "") + '"'
+      + ' data-act="pick" data-id="' + UI.esc(hit.case_id) + '"'
+      + ' title="勾选后可与其他案例做「关键差异」比对（最多 ' + MAX_DIFF + " 条）\">"
+      + (picked ? "已选对比" : "加入对比") + "</button>"
       + "</div>"
       + '<div class="case-hit-meta">' + UI.esc(hit.category || "")
       + (hit.subcategory ? " / " + UI.esc(hit.subcategory) : "")
       + (chips.length ? " · " + chips.map(UI.esc).join(" · ") : "") + "</div>"
+      + '<div class="case-hit-signals">'
+      + '<span class="case-signal ' + (hit.verified ? "case-signal-ok" : "case-signal-warn")
+      + '">' + (hit.verified ? "已验证有效性" : "未验证有效性") + "</span>"
+      + (hit.citation_count ? '<span class="case-signal">被引用 ' + hit.citation_count + " 次</span>" : "")
+      + freshnessBar(hit)
+      + "</div>"
       + (hit.text ? '<p class="case-hit-text">' + UI.esc(hit.text) + "</p>" : "")
       + (multi ? '<details class="case-chunk-list"><summary>展开 ' + chunks.length
         + " 个片段（引用要精确到段）</summary><ul>"
         + chunks.map(function (c) { return chunkRow(UI, S, c); }).join("")
         + "</ul></details>" : "")
+      + relatedStrip(UI, S, hit)
       + '<div class="case-hit-foot">'
       + '<span class="case-foot-cn">案例编号与片段编号见「技术详情」</span>'
       + '<details class="case-tech"><summary>技术详情</summary><code>'
@@ -1126,13 +1317,159 @@
       + "</div></article>";
   }
 
-  /** 问答面板 = 处理轨迹 + 结论卡片（轨迹来自后端，前端只渲染）。 */
-  function askWithTrace(UI, S, a) {
-    const pane = askPane(UI, S);
-    return a ? tracePane(UI, S, a) + pane : pane;
+  /** I1 段/工序导航：按本次结果的 `line_code` 归段，点击只过滤显示层。 */
+  function segmentFacet(UI, S, r) {
+    const all = (r && r.hits) || [];
+    if (!all.length) return "";
+    const counts = {};
+    all.forEach(function (h) { const s = segmentOf(h); counts[s] = (counts[s] || 0) + 1; });
+    const segs = Object.keys(counts).sort(function (a, b) {
+      return counts[b] - counts[a] || a.localeCompare(b);
+    });
+    if (segs.length < 2) return "";   // 只有一段时不提供导航（避免噪音）
+    const chip = function (key, label, n) {
+      const on = S.segment === key;
+      return '<button class="case-facet' + (on ? " is-on" : "") + '" data-act="segment"'
+        + ' data-seg="' + UI.esc(key) + '">' + UI.esc(label) + "<i>" + n + "</i></button>";
+    };
+    return '<div class="case-facets"><span class="case-facets-lead">按工艺段看：</span>'
+      + chip("all", "全部", all.length)
+      + segs.map(function (s) { return chip(s, s, counts[s]); }).join("")
+      + '<span class="case-hint case-facets-note">段导航只过滤已返回结果的显示层，不改召回与授权。</span>'
+      + "</div>";
   }
 
-  /** 本体增强处理轨迹（数据来自后端 /cases/ask 的 trace，前端只渲染）。 */
+  /** I4 关系视图开关（仅用本次结果内的同根因 / 同缺陷模式关系）。 */
+  function relViewToggle(UI, S, r) {
+    const all = (r && r.hits) || [];
+    if (all.length < 2) return "";
+    return '<div class="case-relview-bar">'
+      + '<button class="case-mini' + (S.relView ? " is-on" : "") + '" data-act="relview">'
+      + (S.relView ? "收起关系视图" : "关系视图（同根因 / 同缺陷模式）") + "</button>"
+      + '<span class="case-hint">仅依据本次已返回的可见结果绘制关联边，不含未授权内容。</span>'
+      + "</div>";
+  }
+
+  /** I5 跨段/跨域关联（卡片内折叠）：本次结果内的相关案例。 */
+  function relatedStrip(UI, S, hit) {
+    const rel = relatedOf(S, hit, 4);
+    if (!rel.length) return "";
+    const rows = rel.map(function (x) {
+      return '<li class="case-related-row">'
+        + '<span class="case-related-kind">' + UI.esc(x.kind) + "</span>"
+        + (x.cross ? '<span class="case-related-cross">跨段</span>' : "")
+        + '<a class="case-related-link" data-act="detail" data-id="' + UI.esc(x.hit.case_id)
+        + '" href="javascript:void(0)">' + UI.esc(x.hit.title || x.hit.case_id) + "</a>"
+        + '<span class="case-related-seg">' + UI.esc(segmentOf(x.hit)) + "</span></li>";
+    }).join("");
+    return '<details class="case-related"><summary>相关案例（同根因 / 同缺陷模式，本次结果内 '
+      + rel.length + " 条）</summary><ul>" + rows + "</ul>"
+      + '<div class="case-hint">跨段提示：同一根因出现在不同工艺段，往往是系统性问题而非单点。</div>'
+      + "</details>";
+  }
+
+  /** I4 关系视图：紧凑 SVG——圆心案例 + 关联节点（边 = 同根因 / 同缺陷模式）。 */
+  function relationGraph(UI, S, all) {
+    const hits = all || [];
+    if (!hits.length) return "";
+    const groups = groupByCase(hits);
+    const map = {};
+    hits.forEach(function (h) { if (!map[h.case_id]) map[h.case_id] = h; });
+    const centerId = (S.selected && S.selected[0]) || groups[0].case_id;
+    const center = map[centerId] || groups[0].primary;
+    const rel = relatedOf(S, center, 6);
+    const W = 720, H = 220, cx = W / 2, cy = H / 2;
+    if (!rel.length) {
+      return '<div class="case-graph"><div class="case-graph-head">关系视图 · 圆心：'
+        + UI.esc(center.title || center.case_id) + "（" + UI.esc(segmentOf(center)) + "）</div>"
+        + '<div class="case-hint case-pad">本次结果中没有与它同根因 / 同缺陷模式的其他可见案例。</div></div>';
+    }
+    const edges = [], nodeEls = [];
+    const n = rel.length;
+    rel.forEach(function (x, i) {
+      const ang = (Math.PI * 2 * i) / Math.max(1, n) - Math.PI / 2;
+      const nx = Math.round(cx + 250 * Math.cos(ang));
+      const ny = Math.round(cy + 74 * Math.sin(ang));
+      edges.push('<line x1="' + cx + '" y1="' + cy + '" x2="' + nx + '" y2="' + ny + '" class="case-graph-edge'
+        + (x.kind === "同根因" ? " is-root" : "") + '"/>');
+      nodeEls.push('<g class="case-graph-node' + (x.cross ? " is-cross" : "") + '"'
+        + ' data-act="detail" data-id="' + UI.esc(x.hit.case_id) + '" role="button">'
+        + '<circle cx="' + nx + '" cy="' + ny + '" r="9"/>'
+        + '<text x="' + nx + '" y="' + (ny - 14) + '" text-anchor="middle">'
+        + UI.esc(String(x.hit.title || x.hit.case_id).slice(0, 12)) + "</text>"
+        + '<text x="' + nx + '" y="' + (ny + 24) + '" text-anchor="middle" class="case-graph-sub">'
+        + UI.esc(segmentOf(x.hit)) + (x.cross ? " · 跨段" : "") + "</text></g>");
+    });
+    return '<div class="case-graph"><div class="case-graph-head">关系视图 · 圆心：'
+      + UI.esc(center.title || center.case_id) + "（" + UI.esc(segmentOf(center)) + "）</div>"
+      + '<svg viewBox="0 0 ' + W + " " + H + '" preserveAspectRatio="xMidYMid meet" role="img">'
+      + edges.join("")
+      + '<g class="case-graph-center"><circle cx="' + cx + '" cy="' + cy + '" r="13"/>'
+      + '<text x="' + cx + '" y="' + (cy - 20) + '" text-anchor="middle">'
+      + UI.esc(String(center.title || center.case_id).slice(0, 14)) + "</text></g>"
+      + nodeEls.join("") + "</svg>"
+      + '<div class="case-hint">边 = 同根因（实线）/ 同缺陷模式（虚线）；<b>跨段</b>节点高亮。'
+      + "节点可点开详情（需有 read 权限）。仅用本次结果，不越权。</div></div>";
+  }
+
+  /** I2 关键差异对比：对勾选的可见案例做结构化比对（只比较服务端已返回的字段）。 */
+  function diffPane(UI, S, hits) {
+    const picked = (S.selected || []).slice(0, MAX_DIFF);
+    if (picked.length < 2) return "";
+    const byId = {};
+    (hits || []).forEach(function (h) { if (!byId[h.case_id]) byId[h.case_id] = h; });
+    const cols = picked.map(function (id) { return byId[id]; }).filter(Boolean);
+    if (cols.length < 2) return "";
+    const dims = [
+      ["缺陷模式", function (h) { return h.defect_mode_code || "—"; }],
+      ["根因", function (h) { return h.root_cause_code || "—"; }],
+      ["载体", function (h) { return (h.plant || "—") + (h.line_code ? " · " + h.line_code : ""); }],
+      ["分类", function (h) { return (h.category || "—") + (h.subcategory ? " / " + h.subcategory : ""); }],
+      ["状态", function (h) { return h.status_badge || h.status || "—"; }],
+      ["有效性验证", function (h) { return h.verified ? "已验证" : "未验证"; }],
+      ["最近复核", function (h) { return h.last_verified_at || "—"; }],
+      ["相似度", function (h) { return typeof h.score === "number" ? h.score.toFixed(2) : "—"; }],
+    ];
+    const head = "<tr><th>比对维度</th>" + cols.map(function (h) {
+      return "<th>" + UI.esc(h.title || h.case_id) + "</th>";
+    }).join("") + "</tr>";
+    const body = dims.map(function (pair) {
+      const vals = cols.map(pair[1]);
+      const differ = vals.some(function (v) { return v !== vals[0]; });
+      return "<tr" + (differ ? ' class="case-diff-differ"' : "") + "><th>" + UI.esc(pair[0]) + "</th>"
+        + vals.map(function (v) { return "<td>" + UI.esc(v) + "</td>"; }).join("") + "</tr>";
+    }).join("");
+    return '<details class="case-diff"' + (S.diffOpen === false ? "" : " open") + ">"
+      + "<summary>关键差异对比（" + cols.length + " 条 · <b>高亮行 = 取值不同</b>）</summary>"
+      + '<table class="case-table case-diff-table"><thead>' + head + "</thead><tbody>"
+      + body + "</tbody></table>"
+      + '<div class="case-hint">相似度高不等于可以混用：<b>差异维度才是取舍依据</b>'
+      + "（PRD §9「关键差异比相似度更重要」）。</div>"
+      + '<button class="case-mini" data-act="diff-clear">清空对比</button></details>';
+  }
+
+  /** I10 「相邻概念」引导：输入未命中受控词条（或 0 命中）时，给出可选术语并一键重搜。 */
+  function conceptHintBlock(UI, S) {
+    const matched = adjacentConcepts(S.meta, S.query, 6);
+    const related = matched.length ? matched : bigramConcepts(S.meta, S.query, 6);
+    const head = matched.length ? "没找到？试试相邻概念" : "本次未命中受控词条（检索按字面进行）";
+    const desc = matched.length
+      ? "以下是受控词表里匹配到的相近概念（点击即替换查询重搜）："
+      : (related.length
+        ? "以下词条与你的输入共享字面，可能是你想表达的概念（点击即替换查询重搜）："
+        : "你的输入与受控词表没有交集；可换个制造术语再试（缺陷模式 / 工序名 / 现象词）。");
+    const tags = related.length
+      ? '<div class="case-concept-tags">' + related.map(function (c) {
+        return '<button class="case-mini case-concept-tag" data-act="concept"'
+          + ' data-term="' + UI.esc(c.name) + '" title="' + UI.esc(c.code) + '">'
+          + UI.esc(c.label) + "</button>";
+      }).join("") + "</div>"
+      : "";
+    return '<div class="case-concept"><b>' + head + "</b>"
+      + '<p class="case-hint">' + desc + "</p>" + tags + "</div>";
+  }
+
+  /** I6 决策轨迹时间线（数据来自后端 /cases/ask 的 trace / ontology_gain，前端只渲染）。 */
   function tracePane(UI, S, a) {
     const trace = a.trace || [];
     if (!trace.length) return "";
@@ -1147,39 +1484,117 @@
         + (items ? '<ul class="case-trace-items">' + items + "</ul>" : "")
         + "</div></li>";
     }).join("");
-    return '<details class="case-trace" open><summary>处理轨迹（这一步 Agent 做了什么、为什么）'
-      + '</summary><ol class="case-trace-list">' + rows + "</ol></details>";
+    const gain = a.ontology_gain && a.ontology_gain.summary
+      ? '<div class="case-trace-gain"><span class="case-trace-gain-tag">本体增强收益</span>'
+        + UI.esc(a.ontology_gain.summary)
+        + ((a.ontology_gain.items || []).length
+          ? '<ul class="case-trace-items">' + a.ontology_gain.items.map(function (x) {
+            return "<li>" + UI.esc(x) + "</li>";
+          }).join("") + "</ul>" : "")
+        + '<span class="case-hint">数字由服务端真实统计（同一句话：原文检索 vs 本体归一后），非前端估算。</span>'
+        + "</div>"
+      : "";
+    return '<details class="case-trace" open><summary>处理轨迹时间线（这一步做了什么、为什么）'
+      + "</summary>" + gain + '<ol class="case-trace-list case-trace-timeline">' + rows + "</ol></details>";
   }
 
+  /** 去掉模板作答里的"案例 X 的经验（type）："前缀，只留正文。 */
+  function claimBody(text) {
+    const t = String(text || "");
+    const i = t.indexOf("：");
+    return (i >= 0 && i < 40) ? t.slice(i + 1) : t;
+  }
+
+  /** 时间戳 → 本地 HH:MM:SS（提问时间）。 */
+  function fmtTime(ts) {
+    const d = new Date(ts || Date.now());
+    const p = function (n) { return (n < 10 ? "0" : "") + n; };
+    return p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds());
+  }
+
+  /** 一轮对话：问题气泡 + 轨迹 + 答案卡片（**案例以列表展示**）。 */
+  function chatTurn(UI, S, turn, isLast) {
+    const a = (turn && turn.a) || {};
+    const hitsById = {};
+    ((a.search && a.search.hits) || []).forEach(function (h) {
+      if (h && !hitsById[h.case_id]) hitsById[h.case_id] = h;
+    });
+    const nAns = (a.claims || []).length;
+    const sum = '<summary class="case-chat-sum"><span class="case-chat-role">问</span>'
+      + '<span class="case-chat-qtext">' + UI.esc((turn && turn.q) || "") + "</span>"
+      + (turn && turn.ts ? '<span class="case-chat-time">' + UI.esc(fmtTime(turn.ts)) + "</span>" : "")
+      + '<span class="case-chat-badge">' + UI.esc(a.answered ? (nAns ? nAns + " 条案例" : "结论") : "拒答")
+      + '</span><span class="case-chat-caret">▾</span></summary>';
+    const items = (a.claims || []).map(function (c, i) {
+      const cit = (c.citations || [])[0] || {};
+      const h = hitsById[cit.case_id] || {};
+      const title = h.title || cit.case_id || "案例";
+      const chunkType = String(cit.chunk_id || "").split("::")[1] || "summary";
+      return '<li class="case-ans-item">'
+        + '<span class="case-ans-idx">' + (i + 1) + "</span>"
+        + '<div class="case-ans-main">'
+        + '<div class="case-ans-head"><b>' + UI.esc(title) + "</b>"
+        + (h.status_badge ? statusBadge(UI, h.status, h.status_badge) : "")
+        + (typeof h.score === "number"
+          ? '<span class="case-ans-score">相似 ' + h.score.toFixed(2) + "</span>" : "")
+        + "</div>"
+        + '<div class="case-ans-meta">片段 '
+        + UI.esc(CHUNK_LABEL[chunkType] || chunkType) + " · <code>"
+        + UI.esc(cit.case_id || "") + "#" + UI.esc(chunkType) + "@v"
+        + UI.esc(String(cit.content_version || 1)) + "</code></div>"
+        + '<p class="case-ans-text">' + UI.esc(claimBody(c.text)) + "</p>"
+        + '<div class="case-ans-act">'
+        + (cit.case_id ? '<button class="case-mini" data-act="detail" data-id="'
+            + UI.esc(cit.case_id) + '">看全文</button>' : "")
+        + (cit.case_id ? '<button class="case-mini" data-act="cite" data-id="'
+            + UI.esc(cit.case_id) + '" data-chunk="' + UI.esc(chunkType)
+            + '" data-ver="' + UI.esc(String(cit.content_version || 1)) + '">引用到工单</button>' : "")
+        + "</div></div></li>";
+    }).join("");
+    const notice = a.search && a.search.notice
+      ? '<div class="case-hint case-notice-inline">后端提示：' + UI.esc(a.search.notice) + "</div>" : "";
+    const ans = '<div class="case-chat-a"><div class="case-answer'
+      + (a.answered ? "" : " case-answer-deny") + '">'
+      + "<h4>" + (a.answered ? "结论 · 命中的案例" : "拒答") + "</h4>"
+      + (a.answered && items
+        ? '<ul class="case-ans-list">' + items + "</ul>"
+        : "<p>" + UI.esc(a.answered ? a.answer : (a.reason || "（无内容）")) + "</p>")
+      + (a.dropped_claims ? '<div class="case-warn">有 ' + a.dropped_claims
+        + " 条结论因引用校验失败被丢弃。</div>" : "")
+      + notice + (a.search ? whyPanel(UI, S, a.search) : "")
+      + "</div></div>";
+    const trace = (a.trace && a.trace.length) ? tracePane(UI, S, a) : "";
+    // 折叠：默认只展开最新一轮（新提问自动收起旧轮）；「全部展开」全开；「全部收起」全关。
+    const open = (S.chatView === "all" ||
+      (S.chatView === "latest" && isLast)) ? " open" : "";
+    return '<details class="case-chat-turn"' + open + ">" + sum + trace + ans + "</details>";
+  }
+
+  /** 提问对话窗口：输入在顶部，历史按"问-答"气泡展示（答案是**案例列表**）。 */
   function askPane(UI, S) {
-    const a = S.answer;
-    let body = '<div class="case-hint case-pad">提问后系统检索案例、拼装带引用的结论；'
-      + "任何一条结论挂不上 (case_id, chunk_id, content_version) 就会被丢弃，"
-      + "全丢、或最高匹配度低于阈值 → 拒答（不编造）。</div>";
-    if (S.asking) body = '<div class="case-loading">' + UI.spinner() + " 检索并组装引用…</div>";
-    else if (a) {
-      const claims = (a.claims || []).map(function (c, i) {
-        const cites = (c.citations || []).map(function (x) {
-          return '<span class="case-cite-cn">案例引用</span>'
-            + '<details class="case-tech"><summary>技术详情</summary><code>'
-            + UI.esc(x.case_id + "#" + x.chunk_id + "@v" + String(x.content_version))
-            + "</code></details>";
-        }).join("");
-        return "<li><em>[" + (i + 1) + "]</em><span>" + UI.esc(c.text) + "</span>"
-          + (cites || '<i class="case-warn-inline">无引用</i>') + "</li>";
-      }).join("");
-      const notice = a.search && a.search.notice
-        ? '<div class="case-hint case-notice-inline">后端提示：' + UI.esc(a.search.notice) + "</div>" : "";
-      body = '<div class="case-answer' + (a.answered ? "" : " case-answer-deny") + '">'
-        + "<h4>" + (a.answered ? "结论" : "拒答") + "</h4>"
-        + "<p>" + UI.esc(a.answered ? a.answer : (a.reason || "（无内容）")) + "</p>"
-        + (claims ? '<div class="case-side-title">逐条结论与出处</div>'
-          + '<ul class="case-claims">' + claims + "</ul>" : "")
-        + (a.dropped_claims ? '<div class="case-warn">有 ' + a.dropped_claims
-          + " 条结论因引用校验失败被丢弃。</div>" : "")
-        + notice
-        + (a.search ? whyPanel(UI, S, a.search) : "")
-        + "</div>";
+    const log = S.askLog || [];
+    let body = "";
+    if (!log.length && !S.asking) {
+      body = '<div class="case-hint case-pad">提问后系统检索案例、拼装带引用的结论；'
+        + "任何一条结论挂不上 (case_id, chunk_id, content_version) 就会被丢弃，"
+        + "全丢、或最高匹配度低于阈值 → 拒答（不编造）。</div>";
+    }
+    if (log.length) {
+      body += '<div class="case-chat-tools">'
+        + '<button class="case-mini" data-act="chat-toggle-all">'
+        + (S.chatView === "all" ? "全部收起" : "全部展开") + "</button>"
+        + '<span class="case-hint">共 ' + log.length
+        + " 轮 · 仅最新一轮默认展开（新提问自动收起旧轮）</span></div>";
+    }
+    // 逆序渲染：**最新一轮置顶**（新提问出现在最上方，旧轮向下排列并默认收起）
+    const ordered = log.slice().reverse();
+    body += ordered.map(function (t, i) {
+      return chatTurn(UI, S, t, i === 0);
+    }).join("");
+    if (S.asking) {
+      body += '<div class="case-chat-turn"><div class="case-chat-q">'
+        + '<span class="case-chat-role">问</span><span>提问中…</span></div>'
+        + '<div class="case-loading">' + UI.spinner() + " 检索并组装引用…</div></div>";
     }
     return '<div class="case-searchbar">'
       + '<input id="case-question" class="case-input" placeholder="例如：锡膏印刷偏移通常怎么处置？" autocomplete="off">'
@@ -1216,11 +1631,30 @@
             return '<code class="' + (mark ? "case-cmp-only" : "") + '">' + UI.esc(id) + "</code>";
           }).join("") || '<span class="case-hint">0 条</span>') + "</div></div>";
       };
+      const mapOf = function (data) {
+        const m = {};
+        (data.hits || []).forEach(function (h) { if (!m[h.case_id]) m[h.case_id] = h; });
+        return m;
+      };
+      const idChip = function (m, id) {
+        const h = m[id];
+        const meta = h ? [(h.subcategory || h.category || ""),
+          (h.plant || "") + (h.line_code ? "·" + h.line_code : "")].filter(Boolean).join(" / ") : "";
+        return '<code class="case-cmp-only">' + UI.esc(id) + "</code>"
+          + (meta ? '<span class="case-cmp-why">' + UI.esc(meta) + "</span>" : "");
+      };
+      const mA = mapOf(c.a), mB = mapOf(c.b);
       out += '<div class="case-cmp">' + col(c.labelA, c.a, c.onlyA) + col(c.labelB, c.b, c.onlyB) + "</div>"
         + '<div class="case-cmp-diff">'
-        + "<div><b>" + UI.esc(c.labelA) + " 独有</b>：" + (c.onlyA.map(UI.esc).join("、") || "—") + "</div>"
-        + "<div><b>" + UI.esc(c.labelB) + " 独有</b>：" + (c.onlyB.map(UI.esc).join("、") || "—") + "</div>"
-        + "</div>";
+        + "<div><b>" + UI.esc(c.labelA) + " 独有</b>"
+        + '<div class="case-cmp-only-list">'
+        + (c.onlyA.map(function (id) { return idChip(mA, id); }).join("") || "—") + "</div></div>"
+        + "<div><b>" + UI.esc(c.labelB) + " 独有</b>"
+        + '<div class="case-cmp-only-list">'
+        + (c.onlyB.map(function (id) { return idChip(mB, id); }).join("") || "—") + "</div></div>"
+        + '<div class="case-hint case-cmp-hint">差异只可能来自授权维度'
+        + "（部门 / 工厂 / 产线 / 客户 / 密级 / 状态）——同一句话、同一索引、同一版过滤逻辑。"
+        + "</div></div>";
     }
     return '<div class="case-searchbar">'
       + '<select id="case-cmp-a" class="case-select">' + opts(S.compareA) + "</select>"
@@ -1279,12 +1713,18 @@
         + '<button class="case-mini" data-act="close">关闭</button></div></div></div>';
     }
     if (d.error) {
+      const deny = d.denied
+        ? '<div class="case-deny"><p>无权查看该案例全文（接口返回 404，不泄漏"这份案例是否存在"）。</p>'
+          + '<p class="case-hint">演示模式：<b>检索对全员开放</b>（你能搜到全部案例并看到脱敏片段），'
+          + "但<b>读全文 / 引用需申请授权</b>——授权走审批，通过后写入 ACL 才对本人生效。</p>"
+          + '<button class="case-btn" data-act="access-open-denied" data-id="'
+          + UI.esc(d.case_id || "") + '">发起访问申请</button></div>'
+        : '<div class="case-deny"><p>' + UI.esc(d.error.message) + "</p>"
+          + '<p class="case-hint">404 而不是 403：无权访问时不告诉你"这份案例存在"。</p></div>';
       return '<div class="case-modal"><div class="case-modal-card">'
         + '<div class="case-modal-head"><b>' + UI.esc(d.error.code || "无法打开") + "</b>"
         + '<button class="case-mini" data-act="close">关闭</button></div>'
-        + '<div class="case-deny"><p>' + UI.esc(d.error.message) + "</p>"
-        + '<p class="case-hint">404 而不是 403：无权访问时不告诉你"这份案例存在"。</p></div>'
-        + "</div></div>";
+        + deny + "</div></div>";
     }
     const c = d.case || {};
     const section = function (title, text) {
@@ -1577,12 +2017,55 @@
         else if (act === "access-reject") {
           doAccessDecide(el.getAttribute("data-rid"), false);
         }
+        // I2 关键差异对比：勾选 / 清空
+        else if (act === "pick") togglePick(id);
+        else if (act === "diff-clear") { S.selected = []; repaint(); }
+        // I3 判定链跳转（noticeBar 的「查看判定链」按钮）
+        else if (act === "why-open") { S.showWhy = true; repaint(); }
+        // 「搜得到但读不了」→ 关掉详情、打开访问申请表单（演示模式：查看需申请）
+        else if (act === "access-open-denied") {
+          S.detail = null; S.accessForm = { case_id: id, reason: "" }; repaint();
+        }
+        // 对话整体展开/收起：'all'/'latest' 时点一次全部展开，'all' 时点一次全部收起（含最新一轮）
+        else if (act === "chat-toggle-all") {
+          S.chatView = (S.chatView === "all") ? "none" : "all";
+          repaint();
+        }
+        // I10 相邻概念：点击即替换查询并重搜
+        else if (act === "concept") applyConcept(el.getAttribute("data-term"));
+        // I1 段导航：只切换显示层筛选
+        else if (act === "segment") { S.segment = el.getAttribute("data-seg") || "all"; repaint(); }
+        // I4 关系视图开关
+        else if (act === "relview") { S.relView = !S.relView; repaint(); }
       });
     });
 
     Array.prototype.forEach.call(root.querySelectorAll(".case-hit"), function (el) {
-      el.addEventListener("click", function () { openDetail(el.getAttribute("data-case-id")); });
+      el.addEventListener("click", function (ev) {
+        // 卡内的可交互元素（summary / data-act 按钮 / 链接）各自处理，不触发"打开详情"。
+        const t = ev.target;
+        if (t && t.closest && (t.closest("summary") || t.closest("[data-act]") || t.closest("a"))) return;
+        openDetail(el.getAttribute("data-case-id"));
+      });
     });
+
+    /** I2：勾选/取消一条案例参与「关键差异」比对（上限 MAX_DIFF，不静默截断）。 */
+    function togglePick(id) {
+      const sel = S.selected || (S.selected = []);
+      const i = sel.indexOf(id);
+      if (i >= 0) sel.splice(i, 1);
+      else if (sel.length >= MAX_DIFF) { UI.toast("最多对比 " + MAX_DIFF + " 条案例", "info"); return; }
+      else sel.push(id);
+      repaint();
+    }
+
+    /** I10：把「相邻概念」词条替换为查询并立即重搜。 */
+    function applyConcept(term) {
+      if (!term) return;
+      S.query = term;
+      repaint();
+      doSearch();
+    }
 
     function doSearch() {
       const q = ((root.querySelector("#case-q") || {}).value || "").trim();
@@ -1619,13 +2102,18 @@
       const q = ((root.querySelector("#case-question") || {}).value || "").trim();
       if (!q) { UI.toast("请输入问题", "err"); return; }
       S.asking = true;
-      S.answer = null;
       repaint();
       caseFetch(base, "/api/v2/cases/ask", {
         token: S.token, body: { question: q, k: 5, action: "read" },
       }).then(function (data) {
         S.asking = false;
-        S.answer = data;
+        // 新提问 → 旧轮**自动收起**（只保留最新一轮展开，避免越堆越长）
+        S.chatView = "latest";
+        // 追加到对话历史（对话式窗口：历史按"问-答"展示，答案里的案例以列表呈现）
+        const log = S.askLog || (S.askLog = []);
+        log.push({ q: q, a: data, ts: Date.now() });
+        while (log.length > 6) log.shift();
+        S.answer = data;          // 兼容：仍保留最近一条
         repaint();
       }).catch(function (err) {
         S.asking = false;
@@ -1708,7 +2196,14 @@
       repaint();
       caseFetch(base, "/api/v2/cases/" + encodeURIComponent(id), { token: S.token })
         .then(function (data) { S.detail = { case: data }; repaint(); })
-        .catch(function (err) { S.detail = { error: err }; repaint(); });
+        .catch(function (err) {
+          // 404 = 不存在或无权（B1 刻意同构）：给出"发起访问申请"入口——
+          // 演示模式允许检索全部案例，因此"搜得到但读不了"是常态而非异常。
+          S.detail = (err && err.status === 404)
+            ? { denied: true, case_id: id, error: err }
+            : { error: err };
+          repaint();
+        });
     }
 
     /** 某部门下的岗位 key 列表（级联用）。

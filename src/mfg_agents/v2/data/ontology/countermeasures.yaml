@@ -85,3 +85,333 @@ terms:
     status: active
     approved_by: 质量体系
     approved_at: "2026-10-18"
+
+  # ---------- 插件段（DIP / THT） ----------
+  - code: CM-DIP-101
+    name: 插件脚整形与治具校准
+    synonyms: [插件脚整形, 插件治具校准]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-19"
+  - code: CM-DIP-102
+    name: 上料防错与首件确认
+    synonyms: [上料防错, 上料首件确认]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-19"
+  - code: CM-DIP-103
+    name: 极性检查与防错工装
+    synonyms: [极性防错, 反向检查]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-19"
+  - code: CM-DIP-104
+    name: 波峰焊参数锁定与复测
+    synonyms: [波峰焊参数锁定, 波峰温度复测]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-19"
+  - code: CM-DIP-105
+    name: 助焊剂喷嘴清洗与喷涂验证
+    synonyms: [喷嘴清洗, 喷涂量验证]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-19"
+  - code: CM-DIP-106
+    name: 压深限位锁定与测深确认
+    synonyms: [压深限位锁定, 测深确认]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-19"
+
+  # ---------- pack（组包 / 包装）段 ----------
+  - code: CM-PACK-201
+    name: 包装标签模板受控
+    synonyms: [标签模板受控, 标签首件核对]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+  - code: CM-PACK-202
+    name: 附件清单校验与称重复核
+    synonyms: [附件清单校验, 装箱称重复核]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+  - code: CM-PACK-203
+    name: 装箱复核与数量防错
+    synonyms: [装箱复核, 数量防错]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+  - code: CM-PACK-204
+    name: 包材选型与堆码验证
+    synonyms: [包材选型验证, 堆码验证]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+  - code: CM-PACK-205
+    name: 热封参数管控与密封测试
+    synonyms: [封口参数管控, 密封测试]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+  - code: CM-PACK-206
+    name: 条码打印质量抽检
+    synonyms: [条码打印抽检, 条码可读性验证]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+
+  # ---------- 整机（装配 / 测试）段 ----------
+  - code: CM-ASSY-041
+    name: 装配公差分析与治具修正
+    synonyms: [装配公差分析, 治具修正]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-19"
+  - code: CM-ASSY-042
+    name: 扭力工具校准与点检
+    synonyms: [扭力工具校准, 扭力点检]
+    status: active
+    approved_by: 设备工程
+    approved_at: "2026-10-19"
+  - code: CM-ASSY-043
+    name: 接地工艺固化与复测
+    synonyms: [接地工艺固化, 接地复测]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-19"
+  - code: CM-ASSY-044
+    name: 搬运防护与外观抽检
+    synonyms: [搬运防护, 外观抽检]
+    status: active
+    approved_by: 生产
+    approved_at: "2026-10-19"
+  - code: CM-ASSY-045
+    name: 密封工艺参数固化与气密测试
+    synonyms: [密封工艺固化, 气密测试]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-19"
+  - code: CM-ASSY-046
+    name: 测试阈值分层与夹具点检
+    synonyms: [测试阈值分层, 夹具点检]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+
+  # ---------- 采购 / 供应链域 ----------
+  - code: CM-SCM-301
+    name: 安全库存动态重算
+    synonyms: [安全库存重算, 安全库存动态调整]
+    status: active
+    approved_by: 供应链
+    approved_at: "2026-10-19"
+  - code: CM-SCM-302
+    name: 供应商产能与交期双周评
+    synonyms: [产能交期双周评, 供应商双周评]
+    status: active
+    approved_by: 供应链
+    approved_at: "2026-10-19"
+  - code: CM-SCM-303
+    name: 特采评审与替代料验证
+    synonyms: [特采评审, 替代料验证]
+    status: active
+    approved_by: 供应链
+    approved_at: "2026-10-19"
+  - code: CM-SCM-304
+    name: 供应商变更 ECN 管控
+    synonyms: [供应商变更管控, ECN管控]
+    status: active
+    approved_by: 供应链
+    approved_at: "2026-10-19"
+  - code: CM-SCM-305
+    name: 库存周转与呆滞预警
+    synonyms: [呆滞预警, 库存周转预警]
+    status: active
+    approved_by: 供应链
+    approved_at: "2026-10-19"
+
+  # ---------- 客服 / 售后域 ----------
+  - code: CM-SVC-306
+    name: 客诉升级与口径统一
+    synonyms: [客诉口径统一, 客诉升级机制]
+    status: active
+    approved_by: 客服
+    approved_at: "2026-10-19"
+  - code: CM-SVC-307
+    name: 售后备件安全库存
+    synonyms: [备件安全库存, 售后备件储备]
+    status: active
+    approved_by: 客服
+    approved_at: "2026-10-19"
+  - code: CM-SVC-308
+    name: 售后返修根因回溯
+    synonyms: [返修根因回溯, 返修分析闭环]
+    status: active
+    approved_by: 客服
+    approved_at: "2026-10-19"
+
+  # ---------- 设计域 ----------
+  - code: CM-DES-309
+    name: 设计余量与降额评审
+    synonyms: [余量降额评审, 设计裕度评审]
+    status: active
+    approved_by: 研发
+    approved_at: "2026-10-19"
+  - code: CM-DES-310
+    name: DFM 与测试覆盖评审
+    synonyms: [DFM评审, 测试覆盖评审]
+    status: active
+    approved_by: 研发
+    approved_at: "2026-10-19"
+
+  # ---------- 跨部门域 ----------
+  - code: CM-XD-311
+    name: 停线应急联动看板
+    synonyms: [停线联动看板, 应急联动看板]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+  - code: CM-XD-312
+    name: 缺料缺口日清联动
+    synonyms: [缺料日清, 缺口日清联动]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+
+  # ---------- 电芯组包段 ----------
+  - code: CM-CELL-701
+    name: 分容分档重排配组
+    synonyms: [分容分档重排, 重排配组]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-19"
+  - code: CM-CELL-702
+    name: 内阻分档配组
+    synonyms: [内阻分档配组, 按内阻配组]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-19"
+  - code: CM-CELL-703
+    name: 极耳焊接参数锁定与拉力抽检
+    synonyms: [焊接参数锁定, 极耳拉力抽检]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-19"
+  - code: CM-CELL-704
+    name: 采线防错与首件校验
+    synonyms: [采线防错校验, BMS首件校验]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-19"
+  - code: CM-CELL-705
+    name: 工装优化与极耳外观检查
+    synonyms: [工装优化, 极耳外观检查]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-19"
+  - code: CM-CELL-706
+    name: 模组绝缘复测与工艺固化
+    synonyms: [绝缘复测, 绝缘工艺固化]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-19"
+
+  # ---------- 老化段 ----------
+  - code: CM-AGING-801
+    name: 老化房温度验证
+    synonyms: [老化温度验证, 老化房温度校准]
+    status: active
+    approved_by: 设备工程
+    approved_at: "2026-10-19"
+  - code: CM-AGING-802
+    name: 老化时长与判据校准
+    synonyms: [老化判据校准, 老化时长优化]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+  - code: CM-AGING-803
+    name: 老化夹具点检与接触改善
+    synonyms: [老化夹具点检, 夹具接触改善]
+    status: active
+    approved_by: 设备工程
+    approved_at: "2026-10-19"
+  - code: CM-AGING-804
+    name: 老化后容量内阻复核
+    synonyms: [老化后复核, 老化后容量内阻复测]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+
+  # ---------- 测试段 ----------
+  - code: CM-TST-071
+    name: 测试程序版本受控
+    synonyms: [测试程序受控, 程序版本管理]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+  - code: CM-TST-072
+    name: 测试判据分层校准
+    synonyms: [判据分层校准, 判据批次校准]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+  - code: CM-TST-073
+    name: 测试项覆盖评审与耐压验证
+    synonyms: [测试项评审, 耐压验证]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+
+  # ---------- 常见器件 / 塑胶件来料对策 ----------
+  - code: CM-MAT-101
+    name: IC 来料共面度加严检验
+    synonyms: [共面度加严检验, IC共面度抽检]
+    status: active
+    approved_by: SQE
+    approved_at: "2026-10-19"
+  - code: CM-MAT-102
+    name: 潮敏器件 MSL 管控与烘烤
+    synonyms: [MSL管控, 器件烘烤, 潮敏管控]
+    status: active
+    approved_by: SQE
+    approved_at: "2026-10-19"
+  - code: CM-MAT-103
+    name: 来料 ESD 防护与抽检
+    synonyms: [ESD防护抽检, 来料静电防护]
+    status: active
+    approved_by: SQE
+    approved_at: "2026-10-19"
+  - code: CM-MAT-104
+    name: MOS 来料参数抽测
+    synonyms: [MOS参数抽测, 来料参数抽测]
+    status: active
+    approved_by: SQE
+    approved_at: "2026-10-19"
+  - code: CM-MAT-105
+    name: 塑件成型参数与模流优化
+    synonyms: [成型参数优化, 模流分析优化]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-19"
+  - code: CM-MAT-106
+    name: 塑件熔接痕结构优化
+    synonyms: [熔接痕优化, 结构加强优化]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-19"
+  - code: CM-MAT-107
+    name: 塑件阻燃验证与来料抽检
+    synonyms: [阻燃验证, 阻燃抽检]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-19"
+
+  # ---------- SOP 工位补充：印刷 ----------
+  - code: CM-TOOL-APERTURE
+    name: 钢网开孔优化与锡量验证
+    synonyms: [钢网开孔优化, 锡量验证]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-19"

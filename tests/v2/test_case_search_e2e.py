@@ -120,10 +120,12 @@ def principal(rt: CaseRuntime, roles, dept, *, plant="P1",
     return rt.resolver.from_payload(payload, verify_pv=False)
 
 
-#: 种子案例已扩充到 99 条：本文件的断言是「谁能看到什么」（ACL 语义），
+#: 种子案例已扩充到 150 条：本文件的断言是「谁能看到什么」（ACL 语义），
 #: 与 top-k 截断无关，因此用足够大的 k 取回全部可见案例，避免排序把
-#: 精选案例挤出结果集而误报。k 不再等于默认上限 20。
-_K_ALL = 200
+#: 精选案例挤出结果集而误报。k 不再等于默认上限 20，也要**高于全库 chunk 数**
+#: （150 例 × 最多 4 chunk ≈ 600），否则 `outsource ⊆ equipment` 这类全集合断言
+#: 会因 top-k 截断而漂移。
+_K_ALL = 1000
 
 
 def search_ids(rt: CaseRuntime, person: Principal, k: int = _K_ALL):

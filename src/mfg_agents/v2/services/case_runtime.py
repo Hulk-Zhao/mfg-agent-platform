@@ -99,15 +99,17 @@ class CaseRuntime:
         """
         stats = {"imported": 0, "indexed": 0, "skipped": 0}
         target = self._seed_target(seed_path)
-        if self.store.count() == 0:
-            if target is not None and target.is_file():
-                # B3：种子与线上入库走同一套脱敏 + 复检（种子不是豁免通道）
-                from .redaction import get_redaction_service
+        if target is not None and target.is_file():
+            # 幂等重导：``seed_from_json`` 按 case_id 覆盖（先 _purge 再建），
+            # 因此**不再依赖"库是否为空"**。原实现只在空库时播种，导致
+            # "种子扩了、持久库没跟上"——新案例永远进不了索引，前端也就看不到。
+            # B3：种子与线上入库走同一套脱敏 + 复检（种子不是豁免通道）。
+            from .redaction import get_redaction_service
 
-                stats["imported"] = self.store.seed_from_json(
-                    target, redactor=get_redaction_service())
-            else:
-                logger.warning("[case_runtime] 未找到种子文件，案例库为空: %s", target)
+            stats["imported"] = self.store.seed_from_json(
+                target, redactor=get_redaction_service())
+        else:
+            logger.warning("[case_runtime] 未找到种子文件: %s", target)
         rebuilt = self.index_service.rebuild()
         stats["indexed"] = rebuilt.get("chunks", 0)
         stats["skipped"] = rebuilt.get("skipped", 0)

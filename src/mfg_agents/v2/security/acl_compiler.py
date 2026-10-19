@@ -34,6 +34,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Optional, Sequence
 
+from ...common.config import settings
+
 from ..contracts.case_acl import (
     ACTIONS,
     FILTERABLE_FIELDS,
@@ -437,7 +439,16 @@ class AclCompiler:
 
         # ── 阶段 4：软维度（快路径 / 跨部门通行 / 慢路径）─────────────
         cross_dept = active_policy.cross_dept_pass(principal)
-        if active_policy.fast_path_only(principal):
+        demo_open = (bool(getattr(settings, "CASE_DEMO_OPEN_QUERY", False))
+                     and action in ("query", "preview")
+                     and str(getattr(principal, "employment_type", "employee")) == "employee")
+        if demo_open:
+            # 演示模式：检索/预览对正式员工放行业务维（软维度不设置约束）。
+            # 硬维度仍在 ``hard`` 里独立否决；显式 DENY 已在阶段 1 短路。
+            # 与 AclEvaluator 的 demo-open 是**同一语义的两套实现**，必须同步改。
+            soft = None
+            path = "demo-open"
+        elif active_policy.fast_path_only(principal):
             soft: Optional[FilterNode] = FilterNode(Op.EQ, "visibility_class", 0)
             path = "fast"
         elif cross_dept:

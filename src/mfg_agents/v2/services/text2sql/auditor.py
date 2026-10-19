@@ -9,7 +9,7 @@ import logging
 import re
 from typing import Optional
 
-from .libraries import TABLE_ACL
+from .libraries import TABLE_ACL, table_acl
 
 logger = logging.getLogger(__name__)
 
@@ -83,12 +83,15 @@ class SQLAuditor:
 
     @staticmethod
     def check_table_permission(sql: str, user_ctx: dict) -> None:
-        """第三道闸：表级权限（用户部门/角色必须在表白名单内，fail-closed）。"""
+        """第三道闸：表级权限（用户部门/角色必须在表白名单内，fail-closed）。
+
+        白名单经 ``table_acl()`` 读取（静态白名单 ∪ 数据查询权限申请的运行时授权叠加层）。
+        """
         allowed = SQLAuditor._user_scopes(user_ctx)
         for table in sorted(extract_tables(sql)):
-            acl = TABLE_ACL.get(table)
-            if acl is None:
+            if table not in TABLE_ACL:
                 raise SQLAuditError(f"表未注册权限，拒绝访问: {table}")
+            acl = table_acl(table)
             if not (allowed & acl):
                 raise SQLAuditError(
                     f"表级权限不足: {table}（用户范围 {sorted(allowed)}）")

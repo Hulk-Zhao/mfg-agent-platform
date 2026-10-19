@@ -8,31 +8,19 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Optional
+from typing import Iterable, Optional
 
 import yaml
 
-__all__ = ["TABLE_ACL", "MetricLibrary", "QueryLibrary"]
+__all__ = ["TABLE_ACL", "MetricLibrary", "QueryLibrary",
+           "table_acl", "grant_table_access", "revoke_table_access",
+           "reset_table_grants"]
 
 # ---------- 表级权限（白名单，fail-closed；coordinator=总控跨域取证角色） ----------
 # 角色口径与登录岗位（demo/ui demo-data.js ROLES）保持一致：
 #   gm=总经理（五域全局 · 只读汇总）→ 全域可读；
 #   material_control=物控（物料 · 库存 · 齐套）、sales=业务经理（订单 · 对客 ETA · 出货）
 #   为本岗位核心场景表。
-# 全部演示岗位的治理角色令牌（demo/ui/demo-data.js ROLES）+ 域级/跨域令牌。
-# 供「对所有人开放」的表直接复用：新增岗位时只改这一处，不会漏配。
-_ALL_ROLES: set[str] = {
-    "gm", "manufacturing", "equipment", "sqe", "pqe", "qa",
-    "rd_engineering", "product_engineering", "planning", "material_control",
-    "procurement", "warehouse", "sales", "finance",
-    "quality_director", "equipment_manager", "rd_manager", "supply_chain_manager",
-    "procurement_manager", "warehouse_manager", "finance_manager",
-    "ie_engineer", "npi_engineer", "project_manager", "test_engineer",
-    "me_engineer", "rd_test_engineer", "admin_hr", "ehs", "customer_service",
-    "maintenance_tech",
-    # 域级 / 跨域令牌（沿用既有 ACL 口径）
-    "quality", "qa_manager", "coordinator",
-}
 TABLE_ACL: dict[str, set[str]] = {
     # V3.1：quality 加入产出/停线表——质量分析（FPY/良率）本职需要产出与停线数据
     "production_output": {"manufacturing", "planning", "coordinator", "quality", "gm",
@@ -46,13 +34,17 @@ TABLE_ACL: dict[str, set[str]] = {
                        "supply_chain_manager"},
     "equipment_log": {"manufacturing", "coordinator", "gm", "equipment_manager"},
     "inventory": {"warehouse", "supply_chain", "coordinator", "gm"},
-    # V3.7 库存域（材料库存/成品库存/来料批次综合）· 数据速查数据源：
-    # **对全部岗位开放只读**（需求变更：数据查询权限对所有岗位开通）。
-    # 口径仍是注册查询（只读、fail-closed 机制不变，仅白名单放宽到全岗位）；
-    # 若后续要恢复岗位隔离，把 _ALL_ROLES 换回具体岗位白名单即可。
-    "material_inventory": set(_ALL_ROLES),
-    "finished_inventory": set(_ALL_ROLES),
-    "incoming_batch": set(_ALL_ROLES),
+    # V3.7 库存域（材料库存/成品库存/来料批次综合）· 数据速查数据源。
+    # **按岗位隔离（fail-closed）**：仅仓储 / 物控 / 采购 / 供应链管理职能可读；
+    # 其余岗位在「数据速查」页如实显示无权限，可走权限申请（services/data_access.py）
+    # 经演示自动审批获得授权——授权写入本文件尾部的运行时叠加层，三个生效点统一读 table_acl()。
+    "material_inventory": {"warehouse", "warehouse_manager", "material_control",
+                           "supply_chain_manager", "procurement", "coordinator", "gm"},
+    "finished_inventory": {"warehouse", "warehouse_manager", "material_control",
+                           "supply_chain_manager", "coordinator", "gm"},
+    "incoming_batch": {"warehouse", "warehouse_manager", "material_control",
+                       "supply_chain_manager", "procurement", "quality",
+                       "coordinator", "gm"},
     # sales=业务经理：对客 ETA / 出货风险 / 客诉响应核心场景
     "shipment": {"business", "warehouse", "coordinator", "sales", "gm",
                  "supply_chain_manager"},
@@ -84,6 +76,43 @@ TABLE_ACL: dict[str, set[str]] = {
     "test_records": {"quality", "rd_engineering", "manufacturing", "gm",
                      "quality_director", "qa_manager", "coordinator"},
 }
+
+
+# ---------- 运行时授权叠加层（数据查询权限申请 · 演示自动审批） ----------
+# 语义：数据权限是**表级 × 角色**的，没有逐行/逐用户过滤，因此「授权」按**角色**落
+# （案例域的申请是按 user 落 ACL——那是案例有逐条 ACL 的结构差异，不是标准不同）。
+# 演示自动审批（``services/data_access.py``）把获批角色写入本叠加层；三个权限生效点
+# （``auditor`` / ``agents.office`` / ``demo.api``）统一通过 ``table_acl()`` 取值，
+# 读到的即「静态白名单 ∪ 已授权角色」。进程内存储（重启复位，demo 可接受）；
+# 测试用 ``reset_table_grants()`` 隔离。
+_GRANT_OVERLAY: dict[str, set[str]] = {}
+
+
+def table_acl(table: str) -> set[str]:
+    """有效表级权限 = 静态白名单 ∪ 运行时授权叠加层（fail-closed 语义不变）。"""
+    return set(TABLE_ACL.get(table, set())) | set(_GRANT_OVERLAY.get(table, set()))
+
+
+def grant_table_access(table: str, roles: Iterable[str]) -> None:
+    """把获批角色写入叠加层（唯一合法来源：``data_access.demo_approve`` 的审批通过路径）。"""
+    granted = _GRANT_OVERLAY.setdefault(str(table), set())
+    granted.update(str(r) for r in roles if r)
+
+
+def revoke_table_access(table: str, roles: Iterable[str]) -> None:
+    """回收授权（TTL 到期惰性回收；供 ``data_access.reap_expired`` 调用）。"""
+    granted = _GRANT_OVERLAY.get(str(table))
+    if not granted:
+        return
+    for role in roles:
+        granted.discard(str(role))
+    if not granted:
+        _GRANT_OVERLAY.pop(str(table), None)
+
+
+def reset_table_grants() -> None:
+    """清空叠加层（测试隔离用）。"""
+    _GRANT_OVERLAY.clear()
 
 
 class MetricLibrary:

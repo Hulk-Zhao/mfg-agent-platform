@@ -123,3 +123,526 @@ terms:
     status: active
     approved_by: 设备工程
     approved_at: "2026-10-18"
+
+  # ---------- 插件段（DIP / THT） ----------
+  - code: RC-GRP-DIP
+    name: 插件与波峰焊类根因
+    synonyms: [插件类根因, 波峰焊类根因]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-19"
+  - code: RC-DIP-002
+    name: 插件脚共面度不良
+    parent: RC-GRP-DIP
+    synonyms: [共面度超差, 插件脚平整度不良]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-19"
+  - code: RC-DIP-005
+    name: 波峰焊参数偏移
+    parent: RC-GRP-DIP
+    synonyms: [波峰焊参数漂移, 波峰温度偏移, 波峰焊工艺偏移]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-19"
+  - code: RC-DIP-006
+    name: 助焊剂喷涂不均
+    parent: RC-GRP-DIP
+    synonyms: [喷涂不均, 助焊剂喷嘴堵塞, 雾化不均]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-19"
+  - code: RC-DIP-007
+    name: 压深限位偏移
+    parent: RC-GRP-DIP
+    synonyms: [压深限位漂移, 深度限位偏移]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-19"
+  - code: RC-DIP-008
+    name: 波峰预热不足
+    parent: RC-GRP-DIP
+    synonyms: [预热不足, 预热温度偏低]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-19"
+  - code: RC-DIP-011
+    name: 波峰焊焊接偏冷
+    parent: RC-GRP-DIP
+    synonyms: [焊接偏冷, 波峰焊冷焊, 焊接热量不足]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-19"
+  - code: RC-PROC-SUP-003
+    name: 上料防错缺失
+    parent: RC-GRP-PROC
+    synonyms: [防错缺失, 上料无校验, 上料未防错]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+  - code: RC-PROC-SOP-004
+    name: 作业指导缺失
+    parent: RC-GRP-PROC
+    synonyms: [SOP缺失, 作业指导不明确]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+  - code: RC-PROC-ESD-009
+    name: 静电防护缺失
+    parent: RC-GRP-PROC
+    synonyms: [ESD防护缺失, 静电防护失效]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+  - code: RC-MAT-COPLANAR-010
+    name: 来料共面度超差
+    parent: RC-GRP-MAT
+    synonyms: [来料共面度不良, 引脚共面度超差]
+    status: active
+    approved_by: SQE
+    approved_at: "2026-10-19"
+
+  # ---------- pack（组包 / 包装）段 ----------
+  - code: RC-GRP-PACK
+    name: 组包包装类根因
+    synonyms: [包装类根因]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+  - code: RC-PACK-021
+    name: 打印模板错误
+    parent: RC-GRP-PACK
+    synonyms: [打印模板错, 标签模板版本错]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+  - code: RC-PACK-022
+    name: 附件清单版本不一致
+    parent: RC-GRP-PACK
+    synonyms: [附件清单错, BOM变更未同步]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+  - code: RC-PACK-023
+    name: 装箱称重未校验
+    parent: RC-GRP-PACK
+    synonyms: [称重未校验, 装箱未复核]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+  - code: RC-PACK-024
+    name: 包材强度不足
+    parent: RC-GRP-PACK
+    synonyms: [纸箱强度不足, 包材选型不当]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+  - code: RC-PACK-025
+    name: 封口温度漂移
+    parent: RC-GRP-PACK
+    synonyms: [热封温度异常, 热封温度偏移]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+  - code: RC-PACK-026
+    name: 条码打印质量差
+    parent: RC-GRP-PACK
+    synonyms: [打印浓度不足, 条码打印不清晰]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+  - code: RC-PACK-027
+    name: 称重设备未校准
+    parent: RC-GRP-PACK
+    synonyms: [电子秤未校准, 称重设备失准]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+  - code: RC-PACK-028
+    name: 缓冲设计不足
+    parent: RC-GRP-PACK
+    synonyms: [缓冲不足, 填充不足]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+  - code: RC-PACK-029
+    name: 封口参数未管控
+    parent: RC-GRP-PACK
+    synonyms: [热封参数失控, 封口参数失控]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+  - code: RC-PACK-030
+    name: 型号切换防错缺失
+    parent: RC-GRP-PACK
+    synonyms: [混料防错缺失, 换型防错缺失]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+
+  # ---------- 整机（装配 / 测试）段 ----------
+  - code: RC-GRP-ASSY
+    name: 整机装配类根因
+    synonyms: [装配类根因, 整机类根因]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-19"
+  - code: RC-ASSY-041
+    name: 装配公差累积
+    parent: RC-GRP-ASSY
+    synonyms: [公差累积, 装配累积公差]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-19"
+  - code: RC-ASSY-042
+    name: 扭力工具衰减
+    parent: RC-GRP-ASSY
+    synonyms: [扭力衰减, 扭力枪失准]
+    status: active
+    approved_by: 设备工程
+    approved_at: "2026-10-19"
+  - code: RC-ASSY-043
+    name: 接地工艺缺陷
+    parent: RC-GRP-ASSY
+    synonyms: [接地工艺不良, 接地连接缺陷]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-19"
+  - code: RC-ASSY-044
+    name: 搬运防护不足
+    parent: RC-GRP-ASSY
+    synonyms: [搬运防护不足, 周转防护缺失]
+    status: active
+    approved_by: 生产
+    approved_at: "2026-10-19"
+  - code: RC-ASSY-045
+    name: 密封工艺缺陷
+    parent: RC-GRP-ASSY
+    synonyms: [密封工艺不良, 密封圈装配缺陷]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-19"
+  - code: RC-ASSY-046
+    name: 测试阈值设置不当
+    parent: RC-GRP-ASSY
+    synonyms: [测试阈值不当, 阈值过紧]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+  - code: RC-ASSY-047
+    name: 老化房温度不均
+    parent: RC-GRP-ASSY
+    synonyms: [老化温度不均, 老化房风道问题]
+    status: active
+    approved_by: 设备工程
+    approved_at: "2026-10-19"
+  - code: RC-ASSY-048
+    name: 装配紧固顺序错
+    parent: RC-GRP-ASSY
+    synonyms: [紧固顺序不当, 拧紧顺序错]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-19"
+  - code: RC-ASSY-049
+    name: 线束布局干涉
+    parent: RC-GRP-ASSY
+    synonyms: [线束干涉, 走线布局缺陷]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-19"
+  - code: RC-ASSY-050
+    name: 测试夹具接触不良
+    parent: RC-GRP-ASSY
+    synonyms: [夹具接触不良, 探针接触不良]
+    status: active
+    approved_by: 设备工程
+    approved_at: "2026-10-19"
+
+  # ---------- 采购 / 供应链域 ----------
+  - code: RC-GRP-SCM
+    name: 采购供应链类根因
+    synonyms: [供应链类根因, 采购类根因]
+    status: active
+    approved_by: 供应链
+    approved_at: "2026-10-19"
+  - code: RC-SCM-031
+    name: 安全库存设置不当
+    parent: RC-GRP-SCM
+    synonyms: [安全库存偏低, 库存策略不当]
+    status: active
+    approved_by: 供应链
+    approved_at: "2026-10-19"
+  - code: RC-SCM-032
+    name: 供应商产能不足
+    parent: RC-GRP-SCM
+    synonyms: [产能不足, 供应商产能瓶颈]
+    status: active
+    approved_by: 供应链
+    approved_at: "2026-10-19"
+  - code: RC-SCM-033
+    name: 特采评审不充分
+    parent: RC-GRP-SCM
+    synonyms: [特采评审缺失, 让步接收审核不足]
+    status: active
+    approved_by: 供应链
+    approved_at: "2026-10-19"
+  - code: RC-SCM-034
+    name: 供应商变更未验证
+    parent: RC-GRP-SCM
+    synonyms: [供应商变更未验证, 二供未验证]
+    status: active
+    approved_by: 供应链
+    approved_at: "2026-10-19"
+  - code: RC-SCM-035
+    name: 库存周转监控缺失
+    parent: RC-GRP-SCM
+    synonyms: [库存监控缺失, 呆滞未预警]
+    status: active
+    approved_by: 供应链
+    approved_at: "2026-10-19"
+
+  # ---------- 客服 / 售后域 ----------
+  - code: RC-GRP-SVC
+    name: 客服售后类根因
+    synonyms: [售后类根因, 客服类根因]
+    status: active
+    approved_by: 客服
+    approved_at: "2026-10-19"
+  - code: RC-SVC-036
+    name: 客诉升级机制缺失
+    parent: RC-GRP-SVC
+    synonyms: [升级机制缺失, 客诉响应不及时]
+    status: active
+    approved_by: 客服
+    approved_at: "2026-10-19"
+  - code: RC-SVC-037
+    name: 维修备件管理缺失
+    parent: RC-GRP-SVC
+    synonyms: [备件管理缺失, 备件缺货]
+    status: active
+    approved_by: 客服
+    approved_at: "2026-10-19"
+  - code: RC-SVC-038
+    name: 售后口径未统一
+    parent: RC-GRP-SVC
+    synonyms: [口径不一致, 对外口径不统一]
+    status: active
+    approved_by: 客服
+    approved_at: "2026-10-19"
+
+  # ---------- 设计域 ----------
+  - code: RC-GRP-DES
+    name: 设计类根因
+    synonyms: [研发类根因, 设计缺陷根因]
+    status: active
+    approved_by: 研发
+    approved_at: "2026-10-19"
+  - code: RC-DES-051
+    name: 设计余量不足
+    parent: RC-GRP-DES
+    synonyms: [余量不足, 设计裕度不足]
+    status: active
+    approved_by: 研发
+    approved_at: "2026-10-19"
+  - code: RC-DES-052
+    name: 降额设计不足
+    parent: RC-GRP-DES
+    synonyms: [降额不足, 降额裕度不足]
+    status: active
+    approved_by: 研发
+    approved_at: "2026-10-19"
+  - code: RC-DES-053
+    name: DFM 评审缺失
+    parent: RC-GRP-DES
+    synonyms: [DFM评审缺失, 可制造性评审缺失]
+    status: active
+    approved_by: 研发
+    approved_at: "2026-10-19"
+  - code: RC-DES-054
+    name: 测试覆盖不足
+    parent: RC-GRP-DES
+    synonyms: [测试点不足, 测试覆盖不全]
+    status: active
+    approved_by: 研发
+    approved_at: "2026-10-19"
+
+  # ---------- 跨部门域 ----------
+  - code: RC-GRP-XD
+    name: 跨部门协同类根因
+    synonyms: [跨部门类根因, 协同类根因]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+  - code: RC-XD-061
+    name: 跨部门接口不清
+    parent: RC-GRP-XD
+    synonyms: [接口职责不清, 部门边界模糊]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+  - code: RC-XD-062
+    name: 联动响应机制缺失
+    parent: RC-GRP-XD
+    synonyms: [联动机制缺失, 应急响应缺失]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+
+  # ---------- 电芯组包段 ----------
+  - code: RC-GRP-CELL
+    name: 电芯组包类根因
+    synonyms: [组包类根因, 电芯模组类根因]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-19"
+  - code: RC-CELL-001
+    name: 配组筛选不当
+    parent: RC-GRP-CELL
+    synonyms: [配组筛选不足, 配档不当]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-19"
+  - code: RC-CELL-002
+    name: 内阻未分档
+    parent: RC-GRP-CELL
+    synonyms: [内阻分档缺失, 未按内阻配组]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-19"
+  - code: RC-CELL-003
+    name: 极耳焊接能量不足
+    parent: RC-GRP-CELL
+    synonyms: [焊接能量不足, 极耳焊接参数偏低]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-19"
+  - code: RC-CELL-004
+    name: 采线防错缺失
+    parent: RC-GRP-CELL
+    synonyms: [BMS采线防错缺失, 采线无校验]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-19"
+  - code: RC-CELL-005
+    name: 装配工装挤压
+    parent: RC-GRP-CELL
+    synonyms: [工装挤压极耳, 工装限位不当]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-19"
+  - code: RC-CELL-006
+    name: 模组绝缘工艺不良
+    parent: RC-GRP-CELL
+    synonyms: [绝缘工艺不良, 绝缘处理不到位]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-19"
+
+  # ---------- 老化段 ----------
+  - code: RC-GRP-AGING
+    name: 老化类根因
+    synonyms: [老化过程根因, 老化工艺根因]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+  - code: RC-AGING-001
+    name: 老化温度分布不均
+    parent: RC-GRP-AGING
+    synonyms: [老化温差偏大, 老化温区偏差]
+    status: active
+    approved_by: 设备工程
+    approved_at: "2026-10-19"
+  - code: RC-AGING-002
+    name: 老化时长不足
+    parent: RC-GRP-AGING
+    synonyms: [老化时间不足, 老化周期偏短]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+  - code: RC-AGING-003
+    name: 老化判据不合理
+    parent: RC-GRP-AGING
+    synonyms: [老化判据不适配, 老化放行标准不当]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+
+  # ---------- 测试段 ----------
+  - code: RC-GRP-TST
+    name: 测试类根因
+    synonyms: [测试过程根因, 测试用例根因]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+  - code: RC-TST-001
+    name: 测试程序参数错误
+    parent: RC-GRP-TST
+    synonyms: [测试程序设置不当, 程序参数不匹配]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+  - code: RC-TST-002
+    name: 测试判据不适配
+    parent: RC-GRP-TST
+    synonyms: [测试判据不匹配, 判据未随批次校准]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+  - code: RC-TST-003
+    name: 测试项缺失
+    parent: RC-GRP-TST
+    synonyms: [测试项目不全, 漏做测试项]
+    status: active
+    approved_by: 质量体系
+    approved_at: "2026-10-19"
+
+  # ---------- 常见器件 / 塑胶件来料根因 ----------
+  - code: RC-MAT-MSL-011
+    name: IC 潮敏器件受潮
+    parent: RC-GRP-MAT
+    synonyms: [潮敏受潮, MSL受潮, 器件受潮]
+    status: active
+    approved_by: SQE
+    approved_at: "2026-10-19"
+  - code: RC-MAT-ESD-012
+    name: 来料静电损伤
+    parent: RC-GRP-MAT
+    synonyms: [来料ESD损伤, 器件静电损伤]
+    status: active
+    approved_by: SQE
+    approved_at: "2026-10-19"
+  - code: RC-MAT-PARAM-013
+    name: MOS 来料参数离散
+    parent: RC-GRP-MAT
+    synonyms: [MOS参数离散, 来料参数波动]
+    status: active
+    approved_by: SQE
+    approved_at: "2026-10-19"
+  - code: RC-MAT-WARP-014
+    name: 塑胶件成型收缩不均
+    parent: RC-GRP-MAT
+    synonyms: [成型收缩差异, 塑件收缩不均]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-19"
+  - code: RC-MAT-WELD-015
+    name: 塑胶件熔接强度不足
+    parent: RC-GRP-MAT
+    synonyms: [熔接强度不足, 熔接痕强度低]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-19"
+  - code: RC-MAT-FR-016
+    name: 塑胶件阻燃配方不足
+    parent: RC-GRP-MAT
+    synonyms: [阻燃配方不足, 阻燃剂不足]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-19"
+  - code: RC-TOOL-APERTURE-006
+    name: 钢网开孔设计不当
+    parent: RC-GRP-TOOL
+    synonyms: [开孔面积不足, 钢网开孔偏小]
+    status: active
+    approved_by: 工艺
+    approved_at: "2026-10-19"

@@ -366,7 +366,7 @@
 
         <div class="section-title">我的看板
           <span class="section-extra">统计范围：${UI.esc(role.name)}视角 · ${drill ? "下钻明细分解 · 面包屑逐级返回" : "点卡片下钻分解 / 问数"}</span>
-          ${drill ? "" : UI.demoFlag("指标卡为岗位视角演示配置 · 下钻与看板屏走真实链路")}
+          ${drill ? "" : UI.demoFlag("指标卡为岗位视角演示配置 · 下钻与看板屏取后端实时数据")}
         </div>
         <div id="dash-crumb"></div>
         <div id="dash-body">
@@ -905,7 +905,7 @@
         UI.toast("看板数据请求失败，已切换演示数据", "warn", 3600);
       }
     } else {
-      reason = "后端离线 · 演示数据（口径与真实链路一致）";
+      reason = "后端离线 · 演示数据";
     }
 
     if (!payload) {
@@ -925,7 +925,7 @@
     if (flagEl) {
       flagEl.innerHTML = (source === "demo"
         ? UI.demoFlag(reason || "演示数据")
-        : UI.realFlag("真实链路")) + maskedFlag(UI, scopeMeta && scopeMeta.masked);
+        : "") + maskedFlag(UI, scopeMeta && scopeMeta.masked);
     }
     const genEl = document.getElementById(cfg.gen);
     if (genEl && payload.generated_at) genEl.textContent = " · 生成于 " + payload.generated_at;
@@ -1108,7 +1108,7 @@
         <div class="chat-screen-head">
           <div class="page-title">${UI.icon("chat", 19)}协同问数</div>
           ${online
-            ? UI.realFlag("真实链路 · 后端在线")
+            ? ""
             : `<span class="offline-banner" style="padding:5px 11px">${UI.icon("warn", 13)}后端离线——当前为演示模式：对话使用预置演示结果回放（已标注演示）</span>`}
           <div class="head-extra">
             <span style="font-size:12px;color:var(--text-3)">问数角色</span>
@@ -1366,7 +1366,7 @@
     if (!demo) {
       chat.messages.push({
         kind: "error", id: "m" + ++chat.seq,
-        text: "后端离线：该问题未收录离线回放（离线回放覆盖 5 个快捷问题）。请启用在线模式（起后端服务）运行真实链路，或点击上方 5 个快捷问题之一。",
+        text: "后端离线：该问题未收录离线回放（离线回放覆盖 5 个快捷问题）。请启用在线模式（起后端服务），或点击上方 5 个快捷问题之一。",
       });
       flow.status = "error";
       renderChatMessages(ctx, scroll);
@@ -1555,7 +1555,7 @@
     return `<div class="result-card chitchat-card">
       <div class="result-head">
         <div class="result-title">${UI.icon("chat", 15)}打个招呼</div>
-        <div class="badges">${demo ? UI.demoFlag("演示回放") : UI.realFlag("真实链路")}</div>
+        <div class="badges">${demo ? UI.demoFlag("演示回放") : ""}</div>
       </div>
       <div class="result-body">
         <div style="font-size:13px;line-height:1.9">${UI.esc(result.report || "")}</div>
@@ -1586,7 +1586,7 @@
       <div class="result-head">
         <div class="result-title"><span class="status-dot ${sev}"></span>${UI.icon("chat", 15)}数据直答</div>
         <div class="badges">
-          ${demo ? UI.demoFlag("演示回放") : UI.realFlag("真实链路")}
+          ${demo ? UI.demoFlag("演示回放") : ""}
           ${UI.badge(term("levelName", sev), sev === "alert" ? "badge-red" : sev === "warn" ? "badge-amber" : "badge-green")}
         </div>
       </div>
@@ -1695,7 +1695,7 @@
       <div class="result-head">
         <div class="result-title"><span class="status-dot ${sev}"></span>${UI.icon("file", 15)}${UI.esc(term("scenarioName", result.scenario_key))}</div>
         <div class="badges">
-          ${demo ? UI.demoFlag("演示回放") : UI.realFlag("真实链路")}
+          ${demo ? UI.demoFlag("演示回放") : ""}
           ${UI.badge(term("levelName", sev), sev === "alert" ? "badge-red" : sev === "warn" ? "badge-amber" : "badge-green")}
         </div>
       </div>
@@ -1778,7 +1778,7 @@
       <div class="result-head">
         <div class="result-title"><span class="status-dot alert"></span>${UI.icon("shield", 15)}人工兜底工单</div>
         <div class="badges">
-          ${demo ? UI.demoFlag("演示回放") : UI.realFlag("真实链路")}
+          ${demo ? UI.demoFlag("演示回放") : ""}
           ${UI.badge("待人工跟进", "badge-amber")}
         </div>
       </div>
@@ -3216,7 +3216,7 @@
   /** 口径说明（后端 notes）：指标定义即口径，保证与真实链路一致。 */
   function mfgNotes(UI, notes) {
     if (!(notes || []).length) return "";
-    return `<div class="section-title">口径说明 <span class="section-extra">指标定义即口径 · 真实链路同源</span></div>
+    return `<div class="section-title">口径说明 <span class="section-extra">指标定义即口径 · 与后端数据同源</span></div>
       <div class="card"><div class="kpi-def">
         ${notes.map((n) => `<div class="kpi-def-row">${UI.icon("info", 12)}<span>${UI.esc(n)}</span></div>`).join("")}
       </div></div>`;
@@ -3866,7 +3866,7 @@
         UI.toast("下钻数据请求失败，已切换演示数据", "warn", 3600);
       }
     } else {
-      reason = "后端离线 · 演示数据（口径与真实链路一致）";
+      reason = "后端离线 · 演示数据";
     }
 
     if (!payload) {
@@ -3884,7 +3884,7 @@
     }
     const flagEl = document.getElementById(cfg.flag);
     if (flagEl) flagEl.innerHTML = source === "demo"
-      ? UI.demoFlag(reason || "演示数据") : UI.realFlag("真实链路");
+      ? UI.demoFlag(reason || "演示数据") : "";
 
     const crumbEl = document.getElementById(cfg.crumb);
     if (crumbEl) {
@@ -3977,7 +3977,7 @@
         UI.toast("看板数据请求失败，已切换演示数据", "warn", 3600);
       }
     } else {
-      reason = "后端离线 · 演示数据（口径与真实链路一致）";
+      reason = "后端离线 · 演示数据";
     }
 
     if (!payload) {
@@ -3998,7 +3998,7 @@
     if (flagEl) {
       flagEl.innerHTML = (source === "demo"
         ? UI.demoFlag(reason || "演示数据")
-        : UI.realFlag("真实链路")) + maskedFlag(UI, scopeMeta && scopeMeta.masked);
+        : "") + maskedFlag(UI, scopeMeta && scopeMeta.masked);
     }
     const genEl = document.getElementById("mfg-gen");
     if (genEl && payload.generated_at) genEl.textContent = " · 生成于 " + payload.generated_at;
@@ -4157,7 +4157,7 @@
         UI.toast("看板数据请求失败，已切换演示数据", "warn", 3600);
       }
     } else {
-      reason = "后端离线 · 演示数据（口径与真实链路一致）";
+      reason = "后端离线 · 演示数据";
     }
 
     if (!payload) {
@@ -4177,7 +4177,7 @@
     if (flagEl) {
       flagEl.innerHTML = (source === "demo"
         ? UI.demoFlag(reason || "演示数据")
-        : UI.realFlag("真实链路")) + maskedFlag(UI, scopeMeta && scopeMeta.masked);
+        : "") + maskedFlag(UI, scopeMeta && scopeMeta.masked);
     }
     const genEl = document.getElementById(cfg.gen);
     if (genEl && payload.generated_at) genEl.textContent = " · 生成于 " + payload.generated_at;

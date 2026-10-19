@@ -74,6 +74,14 @@
     deviation: { t: "让步接收", c: "badge-amber" },
   };
 
+  // 速查四块标题（dataset key → 中文名；申请弹窗首行「受理」用）
+  const SNAP_TITLE = {
+    material_stock: "材料库存",
+    shortage: "缺料清单",
+    finished_stock: "成品库存与可发量",
+    incoming_batch: "来料批次与 IQC 结论",
+  };
+
   function pad(n) { return String(n).padStart(2, "0"); }
   function dateStr(offsetDays) {
     const d = new Date();
@@ -382,9 +390,17 @@
   /** 速查块主体：q 为小写关键词，命中行保持「点行即交给助手问答」 */
   function blockBody(key, b, esc, q) {
     if (!b || !b.ok) {
-      const msg = b && b.authorized === false ? (b.message || "当前岗位无权限查询")
+      const denied = !!(b && b.authorized === false);
+      const msg = denied ? (b.message || "当前岗位无权限查询")
         : `暂不可用（${(b && b.message) || "后端未返回"}）`;
-      return `<div class="of-note">${esc(msg)}</div>`;
+      // 无权限块：给出「申请查询权限」入口（与案例检索同构）。
+      const apply = (denied && b.requestable !== false)
+        ? `<div class="of-apply-bar">`
+          + `<button class="btn btn-primary btn-sm" data-apply-table="${esc(key)}">申请查询权限</button>`
+          + `<span class="of-apply-hint">提交申请，由${esc(b.owner_label || "职责岗")}审批通过后即可查询</span>`
+          + `</div>`
+        : "";
+      return `<div class="of-note">${esc(msg)}</div>${apply}`;
     }
     const all = b.rows || [];
     const rows = q ? all.filter((r) => rowText(key, r).includes(q)) : all;
@@ -877,9 +893,164 @@
     // ---------- 数据速查：制造数据只读快照 ----------
 
     if (!isOa) {
+      // ---- 数据查询权限申请 · 审批弹窗（与案例检索同构）----
+      // 无权限块点「申请查询权限」→ 受理 → 解析职责岗 → 推送审批 → 审批通过 → 写入授权。
+      // 授权按岗位角色写入服务端运行时叠加层（三个权限探测点统一生效）。
+      const dataFlowSteps = (flow) => [
+        "已受理查询权限申请（" + flow.title + "）",
+        "解析申请理由与数据归属…",
+        "推断职责岗：" + flow.ownerLabel + "（依据：数据表归属职责）",
+        "已推送至 " + flow.ownerLabel + " 审批通道，职责岗审批中…",
+        flow.ownerLabel + "审批通过，正在写入授权…",
+      ];
+
+      const paintDataFlow = (mask, flow) => {
+        const steps = dataFlowSteps(flow);
+        const rows = steps.map((label, i) => {
+          let st = "wait";
+          if (flow.status === "failed" && i === 4) st = "fail";
+          else if (flow.status === "approved" || i < flow.step) st = "done";
+          else if (i === flow.step && flow.status === "running") st = "run";
+          const ico = st === "done" ? "✓" : st === "fail" ? "✕" : st === "run" ? "•" : "";
+          return `<div class="case-auto-step is-${st}"><span class="case-auto-ico">${ico}</span>`
+            + `<span>${esc(label)}</span></div>`;
+        }).join("");
+        let result = "";
+        if (flow.status === "approved") {
+          const exp = String(flow.expires || "").slice(0, 10);
+          result = `<div class="case-auto-result is-ok"><b>${esc(flow.ownerLabel)}已审批通过</b>`
+            + `<div>授权已生效（按岗位角色生效，带有效期${exp ? "，有效期至 " + esc(exp) + "，到期自动回收" : ""}）。</div>`
+            + `<div>关闭后刷新速查卡即可看到该数据——岗位没变，变的是表的可见范围。</div></div>`;
+        } else if (flow.status === "manual") {
+          result = `<div class="case-auto-result is-err"><b>申请已提交</b>`
+            + `<div>${esc(flow.error || "请等待职责岗审批后授权。")}</div></div>`;
+        } else if (flow.status === "failed") {
+          result = `<div class="case-auto-result is-err"><b>审批未能完成</b>`
+            + `<div>${esc(flow.error || "未知原因")}</div>`
+            + `<div>请稍后重试，或联系职责岗处理。</div></div>`;
+        }
+        const bar = flow.status === "approved"
+          ? '<button type="button" class="btn btn-primary btn-sm" data-done="1">完成</button>'
+          : ((flow.status === "manual" || flow.status === "failed")
+            ? '<button type="button" class="btn btn-outline btn-sm" data-close="1">知道了</button>'
+            : '<span class="case-hint">执行中，请稍候…</span>');
+        mask.innerHTML = `<div class="of-clarify" role="dialog" aria-modal="true">
+          <div class="of-clarify-head"><div class="of-clarify-title">数据查询权限审批</div>
+            <button type="button" class="of-clarify-close" data-close="1" aria-label="关闭">×</button></div>
+          <div class="case-auto-steps">${rows}</div>
+          ${result}
+          <div class="of-clarify-foot">${bar}</div>
+          <div class="case-auto-note">审批通过后授权即时生效（按岗位角色生效，带有效期，到期自动回收）。</div>
+        </div>`;
+      };
+
+      const openDataApply = (key) => {
+        const title = SNAP_TITLE[key] || key;
+        const blk = (S.snap && S.snap.blocks && S.snap.blocks[key]) || {};
+        const ownerLabel = blk.owner_label || "职责岗";
+        const mask = document.createElement("div");
+        mask.className = "of-clarify-mask";
+        let flow = null;
+        const close = () => {
+          if (flow && flow.timers) flow.timers.forEach(clearTimeout);
+          if (mask.parentNode) mask.parentNode.removeChild(mask);
+        };
+
+        const fillForm = () => {
+          mask.innerHTML = `<div class="of-clarify" role="dialog" aria-modal="true">
+            <div class="of-clarify-head">
+              <div class="of-clarify-title">申请查询权限 · ${esc(title)}</div>
+              <button type="button" class="of-clarify-close" data-close="1" aria-label="关闭">×</button></div>
+            <div class="of-clarify-q">当前岗位无权限查询该数据。请说明申请用途，提交后推送至
+              <b>${esc(ownerLabel)}</b> 审批，通过后授权即时生效。</div>
+            <div class="of-clarify-body">
+              <div class="of-clarify-field" data-key="reason" data-type="text" data-required="1" data-label="申请理由">
+                <div class="of-clarify-label">申请理由 <span class="of-req">*</span></div>
+                <input class="of-clarify-input" id="of-apply-reason" type="text"
+                  placeholder="请说明查询用途，例如：核对生产齐套与交付风险" /></div>
+            </div>
+            <div class="of-clarify-foot">
+              <button type="button" class="btn btn-outline btn-sm" data-close="1">取消</button>
+              <button type="button" class="btn btn-primary btn-sm" data-submit="1">提交申请并推送</button></div>
+          </div>`;
+        };
+
+        const start = async (reason) => {
+          flow = { dataset: key, title, ownerLabel, requestId: "",
+                   step: 0, status: "running", error: "", expires: "", timers: [] };
+          paintDataFlow(mask, flow);
+          let data;
+          try {
+            data = await api.officeDataAccessRequest({
+              dataset: key, reason, roles: actor.roles, dept: actor.dept,
+              actor: actor.uid || actor.name });
+          } catch (err) {
+            flow.status = "failed";
+            flow.error = UI.friendlyError(err).text;
+            paintDataFlow(mask, flow);
+            return;
+          }
+          const demo = data.demo_approval || {};
+          const request = data.request || {};
+          if (!demo.available) {
+            flow.status = "manual";
+            flow.error = demo.reason || "请等待职责岗审批后授权。";
+            paintDataFlow(mask, flow);
+            return;
+          }
+          flow.ownerLabel = demo.owner_label || flow.ownerLabel;
+          flow.requestId = request.request_id || "";
+          const tick = (n) => {
+            if (flow.status === "running") { flow.step = n; paintDataFlow(mask, flow); }
+          };
+          flow.timers.push(setTimeout(() => tick(1), 420));
+          flow.timers.push(setTimeout(() => tick(2), 920));
+          flow.timers.push(setTimeout(() => tick(3), 1480));
+          flow.timers.push(setTimeout(async () => {
+            if (flow.status !== "running") return;
+            flow.step = 4; paintDataFlow(mask, flow);
+            try {
+              const out = await api.officeDataAccessApprove(
+                flow.requestId, actor.uid || actor.name);
+              flow.status = "approved";
+              flow.step = 5;
+              flow.expires = ((out && out.request) || {}).expires_at || "";
+              paintDataFlow(mask, flow);
+            } catch (err) {
+              flow.status = "failed";
+              flow.error = UI.friendlyError(err).text;
+              paintDataFlow(mask, flow);
+            }
+          }, 1980));
+        };
+
+        fillForm();
+        document.body.appendChild(mask);
+        mask.addEventListener("click", (e) => {
+          if (e.target.closest("[data-done]")) {
+            const ok = !!flow && flow.status === "approved";
+            close();
+            if (ok) {
+              loadSnap().then(
+                () => toast("授权已生效：该数据已进入你的查询范围", "ok", 3600));
+            }
+            return;
+          }
+          if (e.target === mask || e.target.closest("[data-close]")) { close(); return; }
+          if (!e.target.closest("[data-submit]")) return;
+          const inp = mask.querySelector("#of-apply-reason");
+          const reason = ((inp && inp.value) || "").trim();
+          if (reason.length < 6) { toast("请说明申请理由（至少 6 个字）", "err"); return; }
+          start(reason);
+        });
+      };
+
       const bindSnap = () => {
         root.querySelectorAll("#of-snap [data-q]").forEach((el) => {
           el.addEventListener("click", () => send(el.dataset.q));
+        });
+        root.querySelectorAll("#of-snap [data-apply-table]").forEach((el) => {
+          el.addEventListener("click", () => openDataApply(el.dataset.applyTable));
         });
       };
       const paintSnap = () => {

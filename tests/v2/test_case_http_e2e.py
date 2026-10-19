@@ -152,9 +152,9 @@ def test_hidden_count_and_notice_when_result_is_short(case_client):
     token = _session(case_client, "equipment", dept="equipment")
     # k 取足够大（种子扩到 70 例后设备工程师可见 chunk 已 >120），
     # 否则 k 会被候选填满，"候选不足"分支根本走不到。
-    data = _search(case_client, token, "锡膏印刷偏移 虚焊 连锡", k=200).json()["data"]
+    data = _search(case_client, token, "锡膏印刷偏移 虚焊 连锡", k=1000).json()["data"]
 
-    assert len(data["hits"]) < 200, "设备工程师可见量应少于 k（否则此用例失去意义）"
+    assert len(data["hits"]) < 1000, "设备工程师可见量应少于 k（否则此用例失去意义）"
     assert data["hidden_count"] > 0
     assert "另有" in data["notice"] and "不可见" in data["notice"]
     assert "不放宽过滤补齐" in data["notice"]
