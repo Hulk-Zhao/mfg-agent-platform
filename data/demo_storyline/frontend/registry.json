@@ -294,6 +294,14 @@
       "module": "scenes/s02-npi-kickoff.js",
       "data": "frontend/s02-npi-kickoff.js",
       "owner": "T10",
+      "label": "立项",
+      "title": "S2 · 立项",
+      "sub": "立项材料自动汇总 · 相似历史案例检索 · 立项会签",
+      "icon": "file",
+      "order": 20,
+      "globals": [
+        "SCENE_DATA"
+      ],
       "objects": [
         "sales_orders",
         "customers",
@@ -303,6 +311,16 @@
         "purchase_orders",
         "events",
         "cases"
+      ],
+      "roles": [
+        "gm",
+        "biz",
+        "rd",
+        "qa",
+        "mfg",
+        "sales",
+        "rd_engineering",
+        "manufacturing"
       ],
       "note": "S2 立项：立项材料自动汇总 / 相似历史案例检索 / 立项会签"
     },

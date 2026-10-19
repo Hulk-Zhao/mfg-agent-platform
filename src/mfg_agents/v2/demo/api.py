@@ -2148,5 +2148,15 @@ if _UI_DIR.is_dir():
     app.mount("/demo-ui", StaticFiles(directory=str(_UI_DIR), html=True),
               name="demo-ui")
 
+# ---------- 演示场景数据挂载（T10 追加：/demo-story → data/demo_storyline/frontend） ----------
+# 场景数据文件按 T05 数据契约放 data/demo_storyline/frontend/，而它不在 /demo-ui 静态目录内，
+# 浏览器无法用相对路径取到。这里补一条**只读**挂载把该目录暴露给演示前端：
+# 仅静态文件、无写接口、不引用任何真实库（隔离红线见 config_demo.assert_isolated）。
+_STORY_FRONTEND_DIR = Path(__file__).resolve().parents[4] / "data" / "demo_storyline" / "frontend"
+
+if _STORY_FRONTEND_DIR.is_dir():
+    app.mount("/demo-story", StaticFiles(directory=str(_STORY_FRONTEND_DIR)),
+              name="demo-story")
+
 
 __all__ = ["app", "get_orchestrator", "EventHub"]
