@@ -21,9 +21,9 @@
 #   AGENT_ACTOR_ROLES 显式黑名单，否则自检不会拦住「Agent 持 approve」的破防配置。
 version: 2
 
-# ---------- 8 个 HITL 槽位（对应 6 场景 8 个 HITL 节点） ----------
+# ---------- 9 个 HITL 槽位（对应 7 场景 + S1 接单评审 共 9 个 HITL 节点） ----------
 # available_permissions 必须显式声明（加载期校验：必须存在且归属本槽位）；
-# 场景 YAML 里出现这 8 个之外的 hitl kind，ScenarioRegistry 加载期即报错。
+# 场景 YAML 里出现这 9 个之外的 hitl kind，ScenarioRegistry 加载期即报错。
 slots:
   - key: restart
     name: 复线决策
@@ -57,8 +57,13 @@ slots:
     name: 过程异常处置
     scene: spc_anomaly_v2
     available_permissions: [hitl.spc_action.propose, hitl.spc_action.cosign, hitl.spc_action.approve]
+  # T15：S1 接单评审会签（propose=业务 / cosign=工程+计划 / approve=业务经理）
+  - key: order_review
+    name: 接单评审会签
+    scene: order_review_v2
+    available_permissions: [hitl.order_review.propose, hitl.order_review.cosign, hitl.order_review.approve]
 
-# ---------- 权限目录（24 条 = 8 slot × 3 verb） ----------
+# ---------- 权限目录（27 条 = 9 slot × 3 verb） ----------
 permissions:
   # 复线决策
   - {key: hitl.restart.propose,            name: 发起复线决策,     scope: hitl, description: "提出按建议/暂缓/分批试产复线的处置动作"}
@@ -92,6 +97,10 @@ permissions:
   - {key: hitl.spc_action.propose,         name: 发起过程处置,     scope: hitl, description: "提出加严检验/工程介入/计划内暂停/维持监控处置动作"}
   - {key: hitl.spc_action.cosign,          name: 过程处置会签,     scope: hitl, description: "对过程处置做工艺/PQE 侧会签背书"}
   - {key: hitl.spc_action.approve,         name: 过程处置终批,     scope: hitl, description: "过程异常处置最终放行（质量总监 / 制造现场负责人）"}
+  # 接单评审会签（T15 / S1）
+  - {key: hitl.order_review.propose,       name: 发起接单评审,     scope: hitl, description: "接单评审提出处置动作（接受 / 有条件接受 / 退回重议）"}
+  - {key: hitl.order_review.cosign,        name: 接单评审会签,     scope: hitl, description: "对工艺可行性与排产产能做会签背书（工程 / 计划）"}
+  - {key: hitl.order_review.approve,       name: 接单评审终批,     scope: hitl, description: "接单评审最终放行（业务经理）"}
 
 # ---------- 角色（Role = 命名权限集合） ----------
 # key 为英文稳定标识；aliases 覆盖场景 YAML / 演示前端 / 用户上下文里的各种写法。
@@ -186,6 +195,7 @@ roles:
       - hitl.eta.cosign
       - hitl.delivery_commit.cosign
       - hitl.maintenance_window.cosign
+      - hitl.order_review.cosign
 
   - key: material_control
     name: 物控
@@ -233,6 +243,8 @@ roles:
       - hitl.complaint_reply.approve
       - hitl.delivery_commit.propose
       - hitl.delivery_commit.approve
+      - hitl.order_review.propose
+      - hitl.order_review.approve
 
   - key: warehouse
     name: 仓库
@@ -252,6 +264,7 @@ roles:
       - hitl.maintenance_window.cosign
       - hitl.spc_action.propose
       - hitl.spc_action.cosign
+      - hitl.order_review.cosign
 
   - key: product_engineering
     name: 产品/工艺工程
