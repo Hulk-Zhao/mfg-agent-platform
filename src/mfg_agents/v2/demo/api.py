@@ -43,6 +43,15 @@ from ..core.orchestrator import V2Orchestrator, create_default_orchestrator
 from ..services import kbqa as kbqa_service
 from ..services import kbqa_store
 from ..services import workflow_scope
+from .config_demo import DEMO_MODE, assert_isolated
+from .loader import (
+    OBJECTS,
+    DemoDataError,
+    demo_banner,
+    get_object,
+    load_all,
+    story_timeline,
+)
 from ..services.auth import AuthError, get_codec, resolve_login_roles
 from ..services.data_scope import get_data_scope
 from ..services.workflow import (
@@ -58,6 +67,7 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def _lifespan(_: FastAPI):
     """启动钩子：后台预热 KB 检索（消首问冷启动），不阻塞服务就绪。"""
+    assert_isolated()  # 演示实例隔离自检：配置含外部连接特征即拒绝启动
     threading.Thread(target=_preheat_kb, name="kbqa-preheat", daemon=True).start()
     yield
 
@@ -199,6 +209,37 @@ def health() -> dict[str, Any]:
     from ..services.health import build_health_report
 
     return build_health_report()
+
+
+# ---------- 演示数据装载层（T04：合成故事数据只读 API，全部响应带演示标识） ----------
+
+
+@app.get("/api/v2/demo/banner")
+def demo_banner_api() -> dict[str, Any]:
+    """演示标识与装载层状态；前端强制渲染「演示数据」徽标。"""
+    return {**demo_banner(), "demo_mode": DEMO_MODE}
+
+
+@app.get("/api/v2/demo/objects")
+def demo_objects() -> dict[str, Any]:
+    """演示对象清单（与 data/demo_storyline/spec-v1.md 第 2 节对应）。"""
+    return {**demo_banner(), "objects": list(OBJECTS)}
+
+
+@app.get("/api/v2/demo/objects/{name}")
+def demo_object(name: str) -> dict[str, Any]:
+    """按对象取演示数据；未知对象返回 404（不泄漏内部结构）。"""
+    try:
+        rows = get_object(name)
+    except DemoDataError:
+        raise HTTPException(status_code=404, detail="demo object not found")
+    return {**demo_banner(), "object": name, "rows": rows}
+
+
+@app.get("/api/v2/demo/timeline")
+def demo_timeline(scene: str = Query(default="")) -> dict[str, Any]:
+    """演示事件流时间轴，可按场景过滤（S1..S6）。"""
+    return {**demo_banner(), "events": story_timeline(scene or None)}
 
 
 # ---------- 企业咨询助手（独立轻量 RAG：Milvus enterprise_faq + 统一 LLM） ----------
