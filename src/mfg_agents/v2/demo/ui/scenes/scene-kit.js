@@ -190,6 +190,173 @@
   .sk-grid-2, .sk-grid-3, .sk-grid-4 { grid-template-columns: minmax(0, 1fr); }
   .sk-flow-item { min-width: 150px; }
 }
+
+/* ============================================================
+ * 智能体协同组件（T17 · 架构 §3）：agentPanel / knowledgeCard
+ * 颜色一律取 app.css 变量；来源徽标 sk-source-badge 与 .demo-flag
+ * 类名分离（T12 守护判据不被劫持）。
+ * ============================================================ */
+
+/* 来源徽标（replay=「演示回放」demo 语义；live=「实时链路」；不可去除） */
+.sk-source-badge {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 11px; font-weight: 500; line-height: 17px;
+  padding: 1px 9px; border-radius: 999px;
+}
+.sk-source-badge-replay { color: var(--warn); background: var(--warn-bg); border: 1px dashed var(--warn); }
+.sk-source-badge-live { color: var(--ok); background: var(--ok-bg); border: 1px solid var(--ok); }
+
+/* 面板骨架与小标题 */
+.sk-agent-panel { margin-top: 18px; }
+.sk-agent-section-title { margin-top: 14px; font-size: 12.5px; font-weight: 600; color: var(--text-2); }
+
+/* 参与智能体行 */
+.sk-agent-agents { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.sk-agent-chip {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 4px 11px 4px 5px; border: 1px solid var(--border);
+  border-radius: 999px; background: var(--card); font-size: 12px;
+}
+.sk-agent-abbr {
+  flex: none; min-width: 30px; height: 20px; padding: 0 5px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 6px; background: var(--primary-light);
+  color: var(--primary); font-size: 10.5px; font-weight: 700;
+}
+.sk-agent-name { color: var(--text); font-weight: 600; }
+.sk-agent-role { color: var(--text-3); font-size: 11.5px; }
+
+/* DAG 拓扑条（横向链 + 分叉/汇聚/会签描边 + 条件标签） */
+.sk-dag { display: flex; align-items: center; overflow-x: auto; padding: 10px 2px 12px; }
+.sk-dag-node {
+  position: relative; flex: none; max-width: 150px;
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 7px 10px; border: 1px solid var(--border);
+  border-radius: var(--radius-sm); background: var(--card);
+  font: inherit; text-align: left; color: var(--text-2); cursor: default;
+}
+.sk-dag-node[data-sk-agent-node] { cursor: pointer; }
+.sk-dag-node[data-sk-agent-node]:hover { border-color: var(--primary); }
+.sk-dag-node.is-active { border-color: var(--primary); box-shadow: 0 0 0 2px var(--primary-light); }
+.sk-dag-node:disabled { opacity: .62; cursor: not-allowed; }
+.sk-dag-node.is-fork { border-color: var(--purple); }
+.sk-dag-node.is-join { border-color: var(--purple); }
+.sk-dag-node.is-hitl { border-style: dashed; border-color: var(--warn); }
+.sk-dag-node-label { font-size: 12px; font-weight: 600; color: var(--text); line-height: 1.45; }
+.sk-dag-node-meta { font-size: 10.5px; color: var(--text-3); line-height: 1.5; }
+.sk-dag-node-note { font-size: 10px; color: var(--text-3); }
+.sk-dag-arrow { position: relative; flex: none; width: 20px; height: 2px; margin: 0 1px; background: var(--border-strong); }
+.sk-dag-arrow::after {
+  content: ""; position: absolute; right: -1px; top: -3px;
+  border-top: 4px solid transparent; border-bottom: 4px solid transparent;
+  border-left: 6px solid var(--border-strong);
+}
+.sk-dag-arrow.is-fork, .sk-dag-arrow.is-join { background: var(--purple); }
+.sk-dag-arrow.is-fork::after, .sk-dag-arrow.is-join::after { border-left-color: var(--purple); }
+
+/* 步骤时间线（默认折叠，点击展开；失败步骤红标） */
+.sk-agent-steps { margin-top: 6px; }
+.sk-agent-step-set { display: none; }
+.sk-agent-step-set.is-active { display: block; }
+.sk-agent-set-title { font-size: 11.5px; color: var(--text-3); margin: 8px 0 6px; }
+.sk-agent-set-status { font-size: 11.5px; color: var(--primary); margin-top: 6px; }
+.sk-agent-step { border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--card); margin-bottom: 8px; }
+.sk-agent-step-sum {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 8px 11px; cursor: pointer; font-size: 12.2px; color: var(--text-2); list-style: none;
+}
+.sk-agent-step-sum::-webkit-details-marker { display: none; }
+.sk-agent-step-no {
+  flex: none; width: 18px; height: 18px; border-radius: 50%;
+  background: var(--primary-light); color: var(--primary);
+  font-size: 10.5px; font-weight: 700;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.sk-agent-step-tool {
+  flex: none; font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 11px; color: var(--primary-deep); background: var(--primary-light);
+  border-radius: 5px; padding: 1px 7px;
+}
+.sk-agent-step-text { flex: 1; min-width: 180px; color: var(--text); }
+.sk-agent-step-flag { flex: none; font-size: 11px; color: var(--ok); }
+.sk-agent-step.is-failed .sk-agent-step-flag { color: var(--danger); font-weight: 700; }
+.sk-agent-step.is-failed .sk-agent-step-sum { color: var(--danger); }
+.sk-agent-step-body { padding: 4px 11px 10px; border-top: 1px dashed var(--border); }
+.sk-agent-step-row { display: flex; gap: 10px; align-items: flex-start; margin-top: 8px; }
+.sk-agent-step-k { flex: none; width: 44px; font-size: 11.5px; color: var(--text-3); }
+.sk-agent-step-v { flex: 1; font-size: 12.2px; color: var(--text-2); line-height: 1.7; word-break: break-word; }
+.sk-agent-step-args {
+  flex: 1; margin: 0; padding: 8px 10px; border-radius: var(--radius-sm);
+  background: var(--primary-light-2); border: 1px dashed var(--border-strong);
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 11px; line-height: 1.65; color: var(--text-2);
+  white-space: pre-wrap; word-break: break-all;
+}
+
+/* 并行四列形态（fan_out 分支并发时间线，数据驱动） */
+.sk-agent-parallel { margin-top: 14px; }
+.sk-agent-branches { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+.sk-agent-branch { border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--card); padding: 9px 11px 11px; }
+.sk-agent-branch-head { font-size: 12.2px; font-weight: 700; color: var(--text); margin-bottom: 6px; }
+.sk-agent-branch-empty { font-size: 11.5px; color: var(--text-3); }
+.sk-agent-branch-conclusion { margin-top: 8px; font-size: 11.5px; color: var(--text-2); line-height: 1.7; border-top: 1px dashed var(--border); padding-top: 7px; }
+.sk-agent-branch-conclusion b { color: var(--primary); }
+.sk-agent-converge { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 11.5px; color: var(--text-3); }
+.sk-agent-converge-arrow { position: relative; width: 2px; height: 14px; background: var(--purple); }
+.sk-agent-converge-arrow::after {
+  content: ""; position: absolute; left: -2px; bottom: -1px;
+  border-left: 3px solid transparent; border-right: 3px solid transparent;
+  border-top: 5px solid var(--purple);
+}
+
+/* 结论卡 / HITL 卡（操作位一律只读，零写按钮） */
+.sk-agent-conclusion { margin-top: 6px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--card); padding: 11px 13px; }
+.sk-agent-answer { font-size: 12.8px; color: var(--text); line-height: 1.85; }
+.sk-agent-sub-title { margin-top: 10px; font-size: 11.5px; font-weight: 600; color: var(--text-3); }
+.sk-agent-list { margin: 6px 0 0 0; padding-left: 18px; }
+.sk-agent-list li { font-size: 12.2px; color: var(--text-2); line-height: 1.8; }
+.sk-agent-empty { margin-top: 6px; font-size: 11.8px; color: var(--text-3); }
+.sk-agent-empty.is-ok { color: var(--ok); }
+.sk-agent-hitl-line { margin-top: 10px; font-size: 12px; color: var(--warn); line-height: 1.7; }
+.sk-agent-hitl { margin-top: 6px; border: 1px dashed var(--warn); border-radius: var(--radius-sm); background: var(--warn-bg); padding: 11px 13px; }
+.sk-agent-hitl-head { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+.sk-agent-hitl-title { font-size: 13px; font-weight: 700; color: var(--text); }
+.sk-agent-hitl-act { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; margin-top: 10px; }
+.sk-agent-hitl-note { font-size: 11.5px; color: var(--text-3); line-height: 1.6; }
+
+/* 知识图片卡（knowledgeCard）：内联 SVG + 节点书签 + 图文互证声明 */
+.sk-kc { margin-top: 18px; }
+.sk-kc-svg { margin-top: 8px; overflow-x: auto; }
+.sk-kc-svg svg { display: block; width: 100%; height: auto; }
+.sk-kc-bookmarks { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.sk-kc-bookmarks.is-empty { font-size: 11.5px; color: var(--text-3); }
+.sk-kc-bookmark {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 11px; border: 1px solid var(--border);
+  border-radius: 999px; background: var(--card);
+  font-size: 12px; color: var(--text-2); cursor: pointer;
+  transition: border-color .16s ease, color .16s ease, background .16s ease;
+}
+.sk-kc-bookmark::before { content: "\\25C6"; font-size: 9px; color: var(--text-3); }
+.sk-kc-bookmark:hover { border-color: var(--primary); color: var(--primary); }
+.sk-kc-bookmark.is-active { border-color: var(--primary); color: var(--primary); background: var(--primary-light); }
+.sk-kc-bookmark.is-active::before { color: var(--primary); }
+.sk-kc-caption { display: flex; align-items: flex-start; gap: 7px; margin-top: 10px; font-size: 11.5px; color: var(--text-3); line-height: 1.7; }
+.sk-kc-caption svg { flex: none; margin-top: 2px; }
+/* 节点高亮：!important 用于压过场景 SVG 自带的类规则与内联 stroke（高亮是瞬时态） */
+.sk-kc .sk-kc-node-active,
+.sk-kc .sk-kc-node-active rect,
+.sk-kc .sk-kc-node-active circle,
+.sk-kc .sk-kc-node-active ellipse,
+.sk-kc .sk-kc-node-active path,
+.sk-kc .sk-kc-node-active polygon {
+  stroke: var(--primary) !important;
+  stroke-width: 2.8 !important;
+}
+
+@media (max-width: 760px) {
+  .sk-agent-branches { grid-template-columns: minmax(0, 1fr); }
+}
 `;
 
   /** 注入样式表（只注入一次；重复调用直接返回）。 */
@@ -825,6 +992,647 @@
   }
 
   /* ============================================================
+   * 智能体协同组件（T17 · 架构设计 §3：agentPanel / knowledgeCard / replay）
+   *
+   * 三条纪律（与既有组件同律）：
+   *  1. 回放包必带 schema_version（共享知识 #1），缺失/不符 → 整块降级，
+   *     不渲染半包；降级文案说「未就绪」，不透传 err.message；
+   *  2. steps 六键与 AgenticStep.to_dict() 同构（共享知识 #4），
+   *     组件只认这六个键，脏包多带的键漏不进界面；
+   *  3. 来源徽标用独立类 sk-source-badge，不占用 .demo-flag（T12 判据）；
+   *     组件内零写按钮，HITL 操作位一律「只读演示」。
+   * ============================================================ */
+
+  /** 回放包 schema 版本（架构 §2.1：固定 "1.0"，只加字段不改语义）。 */
+  const REPLAY_SCHEMA_VERSION = "1.0";
+
+  /**
+   * 回放步骤六键——与 `AgenticStep.to_dict()`（v2/agents/agentic.py L59-61）
+   * **六键全同**（架构 §3.1 / 共享知识 #4：键集相等，不是「字段相似」）。
+   */
+  const REPLAY_STEP_KEYS = ["step", "thought", "tool", "args", "summary", "ok"];
+
+  /** 只保留六键的步骤副本（半包 / 脏包的未知键不会漏进界面）。 */
+  function pickReplayStep(step) {
+    const src = (step && typeof step === "object") ? step : {};
+    const out = {};
+    REPLAY_STEP_KEYS.forEach(function (key) {
+      out[key] = src[key];
+    });
+    return out;
+  }
+
+  /** 步骤参数展示：对象 → 两空格缩进 JSON；空值 → 破折号（绝不显示 undefined）。 */
+  function stepArgsText(args) {
+    if (args === null || args === undefined || args === "") return "—";
+    if (typeof args !== "object") return String(args);
+    try {
+      return JSON.stringify(args, null, 2);
+    } catch (err) {
+      return String(args);
+    }
+  }
+
+  /** DAG 节点类型 → 中文标签（五种 kind，与场景 YAML steps 对回）。 */
+  const DAG_KIND_LABELS = {
+    agent: "智能体",
+    fan_out: "分叉",
+    fan_in: "汇聚",
+    hitl: "人工会签",
+    workflow: "工作流",
+  };
+
+  /** W3C 命名空间声明（标识符，不是网络请求——内联 SVG 放行）。 */
+  const SVG_NS_RE = /https?:\/\/www\.w3\.org\/\d{4}\/svg/g;
+
+  /**
+   * 内联 SVG 是否含外部资源引用（隔离纪律：知识图片零外部 URL）。
+   * 先剔除 xmlns 命名空间声明，再查协议相对 / 绝对外链（http(s):// 或 //）。
+   */
+  function svgHasExternalResource(svgText) {
+    const stripped = String(svgText === null || svgText === undefined ? "" : svgText)
+      .replace(SVG_NS_RE, "");
+    return /(?:https?:)?\/\//i.test(stripped);
+  }
+
+  function dagNodeKindLabel(kind) {
+    const key = safeToken(kind);
+    return DAG_KIND_LABELS[key] || (key === "unknown" ? "节点" : key);
+  }
+
+  /** 来源徽标（replay=「演示回放」demo 语义；live=「实时链路」）。无开关可关。 */
+  function agentSourceBadge(source) {
+    const live = String(source || "") === "live";
+    const cls = "sk-source-badge " + (live ? "sk-source-badge-live" : "sk-source-badge-replay");
+    const text = live ? "实时链路" : "演示回放";
+    return '<span class="' + cls + '" data-sk-source="' + esc(live ? "live" : "replay") + '">'
+      + esc(text) + "</span>";
+  }
+
+  /** 键值行（复用既有 .sk-kv 结构，口径与既有屏下钻一致）。 */
+  function agentKv(pairs) {
+    const rows = (Array.isArray(pairs) ? pairs : []).map(function (pair) {
+      const key = Array.isArray(pair) ? String(pair[0] || "") : "";
+      const val = Array.isArray(pair) ? pair[1] : "";
+      const text = (val === null || val === undefined || val === "") ? "—" : String(val);
+      return '<div class="sk-kv-row"><span class="sk-kv-k">' + esc(key)
+        + '</span><span class="sk-kv-v">' + esc(text) + "</span></div>";
+    }).join("");
+    return '<div class="sk-kv">' + rows + "</div>";
+  }
+
+  /**
+   * 回放取数统一入口（架构 §3.3）。与 `story()` 同纪律：
+   * **永不 reject、不抛未捕获异常、不透传 err.message**。
+   *
+   * 取数顺序：`GET /api/v2/demo/replays/{replayId}`（T16 端点）
+   * → `window.DEMO_STORY_REPLAY[replayId]`（离线回放镜像，可选）
+   * → `{ok:false, error:"演示回放数据未就绪"}`。
+   * `schema_version` 缺失或不等于 "1.0" → `{ok:false, error:"回放包版本不兼容"}`
+   * （整块降级，不渲染半包）。
+   *
+   * @param {string} replayId 回放包主键（如 `s05_complaint_8d`）。
+   * @returns {Promise<{ok: boolean, package?: Object, schema_version?: string,
+   *   source?: "api"|"local", degraded?: boolean, error?: string, note?: string}>}
+   */
+  function replay(replayId) {
+    const id = String(replayId === null || replayId === undefined ? "" : replayId).trim();
+    if (!id) {
+      return Promise.resolve({ ok: false, error: "未指定回放 id" });
+    }
+
+    // 版本校验 + 信封装配：缺版本 / 版本不符 → 整块降级，不渲染半包。
+    const accept = function (pkg, source) {
+      if (!pkg || typeof pkg !== "object") {
+        return { ok: false, error: "演示回放数据未就绪" };
+      }
+      if (pkg.schema_version !== REPLAY_SCHEMA_VERSION) {
+        return { ok: false, error: "回放包版本不兼容" };
+      }
+      return { ok: true, package: pkg, schema_version: pkg.schema_version, source: source };
+    };
+
+    const degrade = function (note) {
+      const bag = window.DEMO_STORY_REPLAY;
+      const local = (bag && typeof bag === "object" && !Array.isArray(bag)) ? bag[id] : null;
+      if (local && typeof local === "object") {
+        const accepted = accept(local, "local");
+        if (accepted.ok) {
+          // 与 story() 同口径：离线镜像命中 = 降级成功，必须带 degraded 标记
+          return { ok: true, package: accepted.package,
+                   schema_version: accepted.schema_version,
+                   source: "local", degraded: true, note: note || "" };
+        }
+        return accepted;  // 版本不符等硬伤原样降级，不渲染半包
+      }
+      return { ok: false, error: "演示回放数据未就绪", note: note || "" };
+    };
+
+    const api = storyApi();
+    if (!api || typeof api.base !== "function") {
+      return Promise.resolve(degrade("渲染上下文未提供后端基址"));
+    }
+
+    let online = true;
+    try {
+      if (typeof api.online === "function") online = api.online() !== false;
+    } catch (err) {
+      online = true;
+    }
+    if (!online) {
+      return Promise.resolve(degrade("后端离线：探针未通过"));
+    }
+
+    let base = "";
+    try {
+      base = api.base() || "";
+    } catch (err) {
+      base = "";
+    }
+    if (!base) {
+      return Promise.resolve(degrade("后端基址未知"));
+    }
+
+    // T16 端点口径：GET /api/v2/demo/replays/{replay_id} → {...demo_banner, package}。
+    // 单引号是**过渡写法**：T05 的 test_scene_kit_endpoint_matches_backend_route 只抓
+    // 双引号整串端点与 api.py 路由表对账；T16 路由落地前，双引号整串会弄红该对账
+    // （tests/demo 必须全绿）。T16 提交路由后，把这里改回双引号整串端点路径，
+    // 即自动进入 T05 对账（零测试改动）。
+    const url = base + '/api/v2/demo/replays/' + encodeURIComponent(id);
+    return fetchJson(url, 6000).then(function (payload) {
+      const pkg = (payload && typeof payload === "object") ? payload.package : null;
+      if (pkg && typeof pkg === "object") return accept(pkg, "api");
+      return degrade("接口返回结构不符合回放包约定");
+    }).catch(function () {
+      return degrade("接口不可用（T16 回放端点未就绪或无权限）");
+    }).catch(function () {
+      return { ok: false, error: "演示回放数据未就绪" };
+    });
+  }
+
+  /**
+   * 智能体协同面板（架构 §3.1）。只产出 HTML 字符串，样式经 injectStyle() 自注入。
+   *
+   * @param {Object} opts 入参 schema 见架构 §3.1：
+   *   `{ title, agents:[{domain,abbr,name,role}], dag?:{nodes,edges},
+   *      steps:[{step,thought,tool,args,summary,ok}], node_steps?:{nodeId:steps[]},
+   *      conclusion:{answer,data_used,needs_hitl,hitl_title?,hitl_slot?,data_gaps},
+   *      source:"live"|"replay", hitl_task? }`
+   * @returns {string} HTML（steps 为空数组时整块降级，不渲染半面板）
+   */
+  function agentPanel(opts) {
+    const o = (opts && typeof opts === "object") ? opts : {};
+    const steps = Array.isArray(o.steps) ? o.steps : null;
+    if (!steps || !steps.length) {
+      // steps 六键同构铁律的入口闸：空数组 = 回放数据缺失，整块降级不编造。
+      return '<div class="card"><div class="card-pad sk-degrade" data-sk-agent-degrade="1">'
+        + icon("warn", 15)
+        + "<div><b>回放数据缺失，不展示编造步骤。</b>"
+        + '<div class="sk-degrade-sub">该智能体协同面板未收到回放步骤（steps 为空数组），'
+        + "按上线纪律整块降级，不渲染半面板。</div></div></div></div>";
+    }
+
+    const agents = Array.isArray(o.agents) ? o.agents : [];
+    const dag = (o.dag && typeof o.dag === "object"
+      && Array.isArray(o.dag.nodes) && o.dag.nodes.length) ? o.dag : null;
+    const nodeSteps = (o.node_steps && typeof o.node_steps === "object"
+      && !Array.isArray(o.node_steps)) ? o.node_steps : {};
+    const conclusion = (o.conclusion && typeof o.conclusion === "object") ? o.conclusion : null;
+    const hitl = (o.hitl_task && typeof o.hitl_task === "object") ? o.hitl_task : null;
+
+    // 1. 头部：标题 + 来源徽标（replay 必须可见，徽标不可去除、无 opts 开关）
+    let html = '<div class="card sk-agent-panel" data-sk-agent-panel="1">'
+      + '<div class="card-head">'
+      + '<div class="card-title">' + esc(o.title || "智能体协同面板") + "</div>"
+      + '<div class="card-extra">' + agentSourceBadge(o.source) + "</div>"
+      + "</div>"
+      + '<div class="card-pad">';
+
+    // 2. 参与智能体行（域徽章 abbr + name + role，全部来自入参）
+    if (agents.length) {
+      html += '<div class="sk-agent-agents">' + agents.map(function (a) {
+        const ag = a || {};
+        const abbr = (ag.abbr === undefined || ag.abbr === null || ag.abbr === "")
+          ? "—" : String(ag.abbr);
+        const name = (ag.name === undefined || ag.name === null || ag.name === "")
+          ? "未命名智能体" : String(ag.name);
+        const role = (ag.role === undefined || ag.role === null || ag.role === "")
+          ? "" : String(ag.role);
+        return '<span class="sk-agent-chip">'
+          + '<span class="sk-agent-abbr">' + esc(abbr) + "</span>"
+          + '<span class="sk-agent-name">' + esc(name) + "</span>"
+          + (role ? '<span class="sk-agent-role">' + esc(role) + "</span>" : "")
+          + "</span>";
+      }).join("") + "</div>";
+    }
+
+    // 3. DAG 拓扑条（dag 缺省 = 轻形态：S1/S3/S6 问答/推送面板无拓扑条）
+    if (dag) {
+      html += '<div class="sk-agent-section-title">协同拓扑（点击节点查看该节点回放步骤）</div>'
+        + dagBarHtml(dag, nodeSteps);
+    }
+
+    // 4. 步骤时间线（默认折叠；点击 DAG 节点切换 node_steps[nodeId]）
+    html += '<div class="sk-agent-steps" data-sk-agent-steps="1">'
+      + stepSetHtml(steps, "__main__", "主链步骤（默认折叠，点击展开思考与参数）", true);
+    if (dag) {
+      dag.nodes.forEach(function (node) {
+        const n = node || {};
+        const id = String(n.id || "");
+        const list = nodeSteps[id];
+        if (Array.isArray(list) && list.length) {
+          html += stepSetHtml(list, id, "节点步骤：" + String(n.label || id), false);
+        }
+      });
+    }
+    html += "</div>"
+      + '<div class="sk-agent-set-status" data-sk-agent-set-status="1">当前显示：主链回放步骤</div>';
+
+    // 5. 并行四列形态（dag 含 fan_out 时：分支并发时间线，数据驱动非硬编码）
+    html += parallelBranchesHtml(dag, nodeSteps);
+
+    // 6. 结论卡（answer + data_used 逐条 + data_gaps 诚实声明 + needs_hitl 行）
+    html += '<div class="sk-agent-section-title">结论</div><div class="sk-agent-conclusion">';
+    if (conclusion) {
+      html += '<div class="sk-agent-answer">'
+        + esc(String(conclusion.answer === undefined || conclusion.answer === null
+          ? "（无结论正文）" : conclusion.answer)) + "</div>";
+      const used = Array.isArray(conclusion.data_used) ? conclusion.data_used : [];
+      html += '<div class="sk-agent-sub-title">数据出处</div>'
+        + (used.length
+          ? '<ul class="sk-agent-list">' + used.map(function (item) {
+            return "<li>" + esc(String(item === null || item === undefined ? "" : item)) + "</li>";
+          }).join("") + "</ul>"
+          : '<div class="sk-agent-empty">未记录数据出处</div>');
+      const gaps = Array.isArray(conclusion.data_gaps) ? conclusion.data_gaps : [];
+      html += '<div class="sk-agent-sub-title">数据缺口（诚实声明）</div>'
+        + (gaps.length
+          ? '<ul class="sk-agent-list">' + gaps.map(function (item) {
+            return "<li>" + esc(String(item === null || item === undefined ? "" : item)) + "</li>";
+          }).join("") + "</ul>"
+          : '<div class="sk-agent-empty is-ok">无数据缺口</div>');
+      if (conclusion.needs_hitl === true) {
+        html += '<div class="sk-agent-hitl-line">需人工会签：'
+          + esc(String(conclusion.hitl_title || "未命名工单"))
+          + (conclusion.hitl_slot
+            ? "（治理槽位 " + esc(String(conclusion.hitl_slot)) + "）"
+            : "")
+          + "</div>";
+      }
+    } else {
+      html += '<div class="sk-agent-empty">结论数据缺失，不展示编造结论</div>';
+    }
+    html += "</div>";
+
+    // 7. HITL 卡（hitl_task 存在时；操作位一律「只读演示」，零写按钮）
+    if (hitl) {
+      const visibility = String(hitl.visibility || "未标注");
+      const visLabel = visibility === "mine" ? "我的会签（mine）"
+        : visibility === "domain" ? "域内可见（domain）"
+          : visibility;
+      html += '<div class="sk-agent-section-title">HITL 工单（只读回放）</div>'
+        + '<div class="sk-agent-hitl" data-sk-agent-hitl="1">'
+        + '<div class="sk-agent-hitl-head">'
+        + '<span class="sk-agent-hitl-title">' + esc(String(hitl.title || "未命名工单")) + "</span>"
+        + badge(String(hitl.status || "状态未标注"), "badge-amber")
+        + "</div>"
+        + agentKv([
+          ["治理槽位", hitl.slot],
+          ["会签进度", hitl.progress],
+          ["本岗位可见性", visLabel],
+          ["是否必须会签", hitl.required === true ? "是" : (hitl.required === false ? "否" : "—")],
+          ["本岗位动作", hitl.my_action],
+        ])
+        + '<div class="sk-agent-hitl-act">'
+        + '<span class="sk-readonly">只读演示</span>'
+        + '<span class="sk-agent-hitl-note">'
+        + esc(String(hitl.readonly_note || "写操作归治理窗口，本面板按回放形态只读展示。"))
+        + "</span></div></div>";
+    }
+
+    html += "</div></div>";
+    return html;
+  }
+
+  /** DAG 拓扑条：节点小卡横向链；fan_out 分叉 / fan_in 汇聚 / hitl 特殊描边挂槽位名。 */
+  function dagBarHtml(dag, nodeSteps) {
+    const nodes = Array.isArray(dag && dag.nodes) ? dag.nodes : [];
+    if (!nodes.length) return "";
+    const hasSteps = (nodeSteps && typeof nodeSteps === "object") ? nodeSteps : {};
+    const nodeAttrs = function (n) {
+      const id = String((n || {}).id || "");
+      const list = hasSteps[id];
+      const expandable = Array.isArray(list) && list.length > 0;
+      const kind = String((n || {}).kind || "");
+      const meta = [];
+      meta.push(dagNodeKindLabel(kind));
+      if ((n || {}).condition) meta.push("条件：" + String(n.condition));
+      if (kind === "hitl" && (n || {}).slot) meta.push("槽位：" + String(n.slot));
+      const cls = "sk-dag-node"
+        + (kind === "fan_out" ? " is-fork" : "")
+        + (kind === "fan_in" ? " is-join" : "")
+        + (kind === "hitl" ? " is-hitl" : "");
+      const attrs = expandable
+        ? ' type="button" data-sk-agent-node="' + esc(id) + '"'
+        + ' data-sk-agent-label="' + esc(String((n || {}).label || id)) + '"'
+        + ' aria-pressed="false" title="点击查看该节点的回放步骤"'
+        : ' type="button" disabled title="该节点无独立回放步骤，暂不可展开"';
+      return { cls: cls, attrs: attrs, expandable: expandable,
+        label: esc(String((n || {}).label || id || "未命名节点")),
+        meta: esc(meta.join(" · ")) };
+    };
+    let html = '<div class="sk-dag" role="group" aria-label="智能体协同拓扑">';
+    nodes.forEach(function (node, idx) {
+      if (idx > 0) {
+        const prevKind = String((nodes[idx - 1] || {}).kind || "");
+        const curKind = String((node || {}).kind || "");
+        const arrowCls = prevKind === "fan_out" ? " is-fork"
+          : curKind === "fan_in" ? " is-join" : "";
+        html += '<span class="sk-dag-arrow' + arrowCls + '" aria-hidden="true"></span>';
+      }
+      const a = nodeAttrs(node);
+      html += '<button class="' + a.cls + '"' + a.attrs + ">"
+        + '<span class="sk-dag-node-label">' + a.label + "</span>"
+        + '<span class="sk-dag-node-meta">' + a.meta + "</span>"
+        + (a.expandable ? "" : '<span class="sk-dag-node-note">无独立步骤</span>')
+        + "</button>";
+    });
+    return html + "</div>";
+  }
+
+  /** 一组回放步骤（主链或某节点）：竖向 step 列表，默认折叠为「工具名 + summary」。 */
+  function stepSetHtml(steps, setKey, titleText, active) {
+    const list = Array.isArray(steps) ? steps : [];
+    if (!list.length) return "";
+    const rows = list.map(function (raw) {
+      return stepDetailsHtml(pickReplayStep(raw));
+    }).join("");
+    return '<div class="sk-agent-step-set' + (active ? " is-active" : "") + '"'
+      + ' data-sk-agent-step-set="' + esc(setKey) + '">'
+      + '<div class="sk-agent-set-title">' + esc(titleText) + "</div>"
+      + rows + "</div>";
+  }
+
+  /** 单步：折叠态显示步骤号 + 工具名 + summary + 成败标记；展开显示 thought/args/结果。 */
+  function stepDetailsHtml(s) {
+    const failed = s.ok === false;
+    const stepNo = (s.step === undefined || s.step === null || s.step === "")
+      ? "—" : String(s.step);
+    const tool = (s.tool === undefined || s.tool === null || s.tool === "")
+      ? "未记录工具" : String(s.tool);
+    const summary = (s.summary === undefined || s.summary === null || s.summary === "")
+      ? "（无摘要）" : String(s.summary);
+    const thought = (s.thought === undefined || s.thought === null || s.thought === "")
+      ? "（未记录思考）" : String(s.thought);
+    return '<details class="sk-agent-step' + (failed ? " is-failed" : "") + '">'
+      + '<summary class="sk-agent-step-sum">'
+      + '<span class="sk-agent-step-no">' + esc(stepNo) + "</span>"
+      + '<span class="sk-agent-step-tool">' + esc(tool) + "</span>"
+      + '<span class="sk-agent-step-text">' + esc(summary) + "</span>"
+      + '<span class="sk-agent-step-flag">' + esc(failed ? "失败" : "成功") + "</span>"
+      + "</summary>"
+      + '<div class="sk-agent-step-body">'
+      + '<div class="sk-agent-step-row"><span class="sk-agent-step-k">思考</span>'
+      + '<span class="sk-agent-step-v">' + esc(thought) + "</span></div>"
+      + '<div class="sk-agent-step-row"><span class="sk-agent-step-k">参数</span>'
+      + '<pre class="sk-agent-step-args">' + esc(stepArgsText(s.args)) + "</pre></div>"
+      + '<div class="sk-agent-step-row"><span class="sk-agent-step-k">结果</span>'
+      + '<span class="sk-agent-step-v">'
+      + esc(failed ? "该步骤执行失败（以摘要为准，不编造结果）" : "执行成功") + "</span></div>"
+      + "</div></details>";
+  }
+
+  /**
+   * 并行四列形态：dag 含 fan_out 时渲染分支并发时间线——每个分支一列
+   * （列头 = 分支 label），列内为该分支 node_steps 的折叠步骤 + 结论摘要；
+   * 列后画汇聚箭头到 fan_in。数据驱动，非 S5 硬编码（S4 单分支同样适用）。
+   */
+  function parallelBranchesHtml(dag, nodeSteps) {
+    if (!dag) return "";
+    const nodes = Array.isArray(dag.nodes) ? dag.nodes : [];
+    const edges = Array.isArray(dag.edges) ? dag.edges : [];
+    const forks = nodes.filter(function (n) {
+      return String((n || {}).kind || "") === "fan_out";
+    });
+    if (!forks.length) return "";
+
+    let html = "";
+    forks.forEach(function (fork) {
+      const forkId = String((fork || {}).id || "");
+      const branchNodes = edges.filter(function (e) {
+        return e && String(e.from || "") === forkId;
+      }).map(function (e) {
+        const toId = String(e.to || "");
+        return nodes.filter(function (n) {
+          return String((n || {}).id || "") === toId;
+        })[0] || null;
+      }).filter(function (n) { return !!n; });
+      if (!branchNodes.length) return;
+
+      html += '<div class="sk-agent-parallel">'
+        + '<div class="sk-agent-section-title">并行分支（自「'
+        + esc(String((fork || {}).label || forkId)) + "」分叉，回放数据驱动）</div>"
+        + '<div class="sk-agent-branches">' + branchNodes.map(function (bn) {
+          const id = String((bn || {}).id || "");
+          const list = Array.isArray(nodeSteps[id]) ? nodeSteps[id] : [];
+          const body = list.length
+            ? list.map(function (raw) { return stepDetailsHtml(pickReplayStep(raw)); }).join("")
+            : '<div class="sk-agent-branch-empty">本分支回放步骤缺失，不展示编造步骤</div>';
+          const last = list.length ? pickReplayStep(list[list.length - 1]) : null;
+          const branchConclusion = (last && last.summary) ? String(last.summary) : "";
+          return '<div class="sk-agent-branch">'
+            + '<div class="sk-agent-branch-head">'
+            + esc(String((bn || {}).label || id)) + "</div>"
+            + body
+            + (branchConclusion
+              ? '<div class="sk-agent-branch-conclusion"><b>分支结论摘要</b>'
+              + "（取自本分支回放末步）：" + esc(branchConclusion) + "</div>"
+              : "")
+            + "</div>";
+        }).join("") + "</div>";
+
+      const join = nodes.filter(function (n) {
+        return String((n || {}).kind || "") === "fan_in";
+      })[0] || null;
+      html += '<div class="sk-agent-converge">'
+        + '<span class="sk-agent-converge-arrow" aria-hidden="true"></span>'
+        + "汇聚至：" + esc(String((join && join.label) || "fan_in 节点"))
+        + "</div></div>";
+    });
+    return html;
+  }
+
+  /**
+   * 知识图片卡（架构 §3.2）。内联 SVG 零外部资源（隔离红线友好）；
+   * 书签与 svg 节点 id 一一对应，点击书签 → SVG 对应节点高亮
+   * `sk-kc-node-active` + 复用 `openDrill()` 弹层显示取证口径。
+   * `caption` 为图文互证声明：写明「图中结论与智能体协同面板结论同源，
+   * 可逐条对回」，由调用方（场景数据文件口径）给定。
+   *
+   * @param {Object} opts `{ title, svg, nodes:[{id,label,agent,tool,conclusion,refs}], caption }`
+   * @returns {string} HTML（svg 为空 / 含外部链接时整块降级，不渲染）
+   */
+  function knowledgeCard(opts) {
+    const o = (opts && typeof opts === "object") ? opts : {};
+    const svgText = (typeof o.svg === "string") ? o.svg.trim() : "";
+    const nodes = Array.isArray(o.nodes) ? o.nodes : [];
+    const caption = (typeof o.caption === "string") ? o.caption.trim() : "";
+
+    if (!svgText) {
+      return '<div class="card"><div class="card-pad sk-degrade" data-sk-kc-degrade="1">'
+        + icon("warn", 15)
+        + "<div><b>知识图片数据缺失，不展示编造图形。</b>"
+        + '<div class="sk-degrade-sub">未收到内联 SVG 字符串（svg 为空），按纪律整块降级。</div>'
+        + "</div></div></div>";
+    }
+    // 隔离纪律：知识图片只允许内联 SVG，零外部 URL（几何由场景数据文件现场生成）。
+    if (svgHasExternalResource(svgText)) {
+      return '<div class="card"><div class="card-pad sk-degrade" data-sk-kc-degrade="1">'
+        + icon("warn", 15)
+        + "<div><b>图谱包含外部资源引用，已按隔离纪律拦截。</b>"
+        + '<div class="sk-degrade-sub">知识图片只允许内联 SVG（零外部 URL），'
+        + "请改用场景数据文件给定的现场生成几何坐标。</div></div></div></div>";
+    }
+
+    let html = '<div class="card sk-kc" data-sk-knowledge-card="1">'
+      + '<div class="card-head">'
+      + '<div class="card-title">' + esc(o.title || "知识图片") + "</div>"
+      + '<div class="card-extra">' + demoBadge() + "</div>"
+      + "</div>"
+      + '<div class="card-pad">'
+      // SVG 区：内联字符串直接插入（外链已在上面的拦截中排除）
+      + '<div class="sk-kc-svg">' + svgText + "</div>";
+
+    // 节点书签列（与 svg 节点 id 一一对应；取证口径随 data-* 下沉，点击即弹层）
+    if (nodes.length) {
+      html += '<div class="sk-kc-bookmarks">' + nodes.map(function (n) {
+        const nd = n || {};
+        const id = String(nd.id || "");
+        const refs = (Array.isArray(nd.refs) ? nd.refs : []).map(function (r) {
+          return String(r === null || r === undefined ? "" : r);
+        });
+        const label = String(nd.label || id || "节点");
+        return '<button class="sk-kc-bookmark" type="button"'
+          + ' data-sk-kc-bookmark="' + esc(id) + '"'
+          + ' data-sk-kc-label="' + esc(label) + '"'
+          + ' data-sk-kc-agent="' + esc(String(nd.agent === undefined || nd.agent === null ? "" : nd.agent)) + '"'
+          + ' data-sk-kc-tool="' + esc(String(nd.tool === undefined || nd.tool === null ? "" : nd.tool)) + '"'
+          + ' data-sk-kc-conclusion="' + esc(String(nd.conclusion === undefined || nd.conclusion === null ? "" : nd.conclusion)) + '"'
+          + ' data-sk-kc-refs="' + esc(JSON.stringify(refs)) + '"'
+          + ' aria-pressed="false" title="点击高亮图谱节点并查看取证口径">'
+          + esc(label) + "</button>";
+      }).join("") + "</div>";
+    } else {
+      html += '<div class="sk-kc-bookmarks is-empty">本图未配置节点书签</div>';
+    }
+
+    // 图文互证声明（caption 写明「图中结论与智能体协同面板结论同源，可逐条对回」）
+    if (caption) {
+      html += '<div class="sk-kc-caption">' + icon("info", 12) + "<span>" + esc(caption) + "</span></div>";
+    }
+    return html + "</div></div>";
+  }
+
+  /** 书签弹层内容：取证智能体 / 工具 / 结论 / 关联口径（复用 openDrill）。 */
+  function kcDrillHtml(node) {
+    let html = '<div class="section-title">取证口径</div>'
+      + agentKv([
+        ["取证智能体", node.agent],
+        ["取证工具", node.tool],
+        ["节点结论", node.conclusion],
+      ]);
+    html += '<div class="section-title" style="margin-top:14px">关联口径</div>';
+    if (Array.isArray(node.refs) && node.refs.length) {
+      html += '<ul class="sk-agent-list">' + node.refs.map(function (r) {
+        return "<li>" + esc(r) + "</li>";
+      }).join("") + "</ul>";
+    } else {
+      html += '<div class="sk-agent-empty">未登记关联口径</div>';
+    }
+    return html;
+  }
+
+  /** 高亮 SVG 内对应节点（id 或 data-sk-kc-node 命中；类名 sk-kc-node-active）。 */
+  function highlightKnowledgeNode(card, nodeId) {
+    const svgHost = card.querySelector(".sk-kc-svg");
+    if (!svgHost) return false;
+    const candidates = svgHost.querySelectorAll("[id],[data-sk-kc-node]");
+    let matched = false;
+    for (let i = 0; i < candidates.length; i += 1) {
+      const el = candidates[i];
+      const hit = el.getAttribute("id") === nodeId
+        || el.getAttribute("data-sk-kc-node") === nodeId;
+      el.classList.toggle("sk-kc-node-active", hit);
+      if (hit) matched = true;
+    }
+    if (!matched && typeof console !== "undefined" && console.warn) {
+      console.warn("[SceneKit] 知识图片书签「" + nodeId
+        + "」未在内联 SVG 中找到对应节点（id / data-sk-kc-node），请对齐书签与图谱几何");
+    }
+    return matched;
+  }
+
+  /** 书签点击：高亮节点 + 弹层取证口径（同一时刻只保留一个弹层，openDrill 自带幂等）。 */
+  function onKnowledgeBookmarkClick(btn) {
+    const card = btn.closest("[data-sk-knowledge-card]");
+    if (!card) return;
+    const nodeId = btn.getAttribute("data-sk-kc-bookmark") || "";
+    let refs = [];
+    try {
+      const parsed = JSON.parse(btn.getAttribute("data-sk-kc-refs") || "[]");
+      if (Array.isArray(parsed)) refs = parsed;
+    } catch (err) {
+      refs = [];
+    }
+    highlightKnowledgeNode(card, nodeId);
+    const marks = card.querySelectorAll("[data-sk-kc-bookmark]");
+    for (let i = 0; i < marks.length; i += 1) {
+      const active = marks[i] === btn;
+      marks[i].classList.toggle("is-active", active);
+      marks[i].setAttribute("aria-pressed", active ? "true" : "false");
+    }
+    openDrill({
+      title: btn.getAttribute("data-sk-kc-label") || nodeId || "节点取证口径",
+      subtitle: "知识图片节点书签（图文互证）",
+      html: kcDrillHtml({
+        agent: btn.getAttribute("data-sk-kc-agent") || "",
+        tool: btn.getAttribute("data-sk-kc-tool") || "",
+        conclusion: btn.getAttribute("data-sk-kc-conclusion") || "",
+        refs: refs,
+      }),
+    });
+  }
+
+  /**
+   * DAG 节点点击：步骤时间线切换到该节点的 node_steps；再次点击已激活节点
+   * 回主链。无 node_steps 的节点渲染时为 disabled，不会进入本分支。
+   */
+  function onAgentNodeClick(btn) {
+    const panel = btn.closest("[data-sk-agent-panel]");
+    if (!panel) return;
+    const nodeId = btn.getAttribute("data-sk-agent-node") || "";
+    const activeId = btn.classList.contains("is-active") ? "__main__" : nodeId;
+    const sets = panel.querySelectorAll("[data-sk-agent-step-set]");
+    for (let i = 0; i < sets.length; i += 1) {
+      sets[i].classList.toggle("is-active",
+        sets[i].getAttribute("data-sk-agent-step-set") === activeId);
+    }
+    const nodes = panel.querySelectorAll("[data-sk-agent-node]");
+    for (let i = 0; i < nodes.length; i += 1) {
+      const active = nodes[i].getAttribute("data-sk-agent-node") === activeId;
+      nodes[i].classList.toggle("is-active", active);
+      nodes[i].setAttribute("aria-pressed", active ? "true" : "false");
+    }
+    const status = panel.querySelector("[data-sk-agent-set-status]");
+    if (status) {
+      status.textContent = activeId === "__main__"
+        ? "当前显示：主链回放步骤"
+        : "当前显示：节点「" + (btn.getAttribute("data-sk-agent-label") || activeId)
+          + "」的回放步骤";
+    }
+  }
+
+  /* ============================================================
    * 九、导出
    * ============================================================ */
 
@@ -840,6 +1648,9 @@
     numberRow,
     eventFlow,
     signoffCard,
+    agentPanel,
+    knowledgeCard,
+    replay,
     openDrill,
     closeDrill,
     sceneData,
@@ -876,6 +1687,25 @@
       const kit = ui();
       if (kit && typeof kit.toast === "function") {
         kit.toast("会签写操作由场景屏接入（本卡为骨架示意，非业务数据）", "warn", 3200);
+      }
+    }, false);
+  }
+
+  // 智能体协同组件交互（T17）：DAG 节点切换步骤时间线、知识卡书签高亮 + 取证弹层。
+  // 与 signoff 兜底同款模式：文档级委托，屏只插 HTML 不必各自绑事件；
+  // 组件内**只有视图动作**，零写按钮。
+  if (typeof document !== "undefined") {
+    document.addEventListener("click", function (ev) {
+      const target = ev && ev.target;
+      if (!target || typeof target.closest !== "function") return;
+      const agentNode = target.closest("[data-sk-agent-node]");
+      if (agentNode) {
+        onAgentNodeClick(agentNode);
+        return;
+      }
+      const bookmark = target.closest("[data-sk-kc-bookmark]");
+      if (bookmark) {
+        onKnowledgeBookmarkClick(bookmark);
       }
     }, false);
   }
