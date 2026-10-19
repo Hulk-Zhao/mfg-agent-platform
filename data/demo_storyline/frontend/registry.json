@@ -270,7 +270,7 @@
       "data": null,
       "owner": "T05",
       "note": "契约验收样本屏，不含业务结论",
-      "label": "场景骨架占位屏",
+      "label": "契约自检屏",
       "file": "scenes/s00-skeleton.js",
       "data_file": null,
       "globals": [],
@@ -294,7 +294,7 @@
       "module": "scenes/s02-npi-kickoff.js",
       "data": "frontend/s02-npi-kickoff.js",
       "owner": "T10",
-      "label": "立项",
+      "label": "S2 · 立项",
       "title": "S2 · 立项",
       "sub": "立项材料自动汇总 · 相似历史案例检索 · 立项会签",
       "icon": "file",
@@ -329,6 +329,8 @@
       "module": "scenes/s03-stage-gate.js",
       "data": "frontend/s03-stage-gate.js",
       "owner": "T11",
+      "label": "S3 · 阶段门会签",
+      "title": "S3 · 阶段门会签（EVT / DVT / PVT）",
       "objects": [
         "events",
         "sales_orders",
@@ -338,11 +340,113 @@
       "note": "S3 阶段门会签：EVT/DVT/PVT 记分卡（良率·CPK·直通率·问题闭环数）四维现算 / 门禁机械判定 / 会签留痕"
     },
     {
+      "id": "s01",
+      "module": "scenes/s01-intake.js",
+      "data": "frontend/s01-intake.js",
+      "owner": "T07",
+      "label": "S1 · 接单评审",
+      "title": "S1 · 接单评审",
+      "sub": "ATP 初评三来源 · 报价区间三分量 · 订单评审一次会签",
+      "icon": "orders",
+      "order": 10,
+      "globals": [
+        "SCENE_DATA"
+      ],
+      "objects": [
+        "sales_orders",
+        "quotes",
+        "customers",
+        "materials",
+        "boms",
+        "work_orders",
+        "purchase_orders",
+        "lots",
+        "events"
+      ],
+      "roles": [
+        "gm",
+        "biz",
+        "rd",
+        "qa",
+        "mfg",
+        "sales",
+        "rd_engineering",
+        "manufacturing"
+      ],
+      "note": "S1 接单评审：ATP 初评三来源（在库/在制/安全库存，逐来源可下钻）、料期与在途、报价区间与成本三分量现算对账、订单评审一次会签（biz/rd/pln 三槽位，留痕取自 events 的 hitl 事件）"
+    },
+    {
+      "id": "s04",
+      "module": "scenes/s04-batch-ecn.js",
+      "data": "frontend/s04-batch-ecn.js",
+      "owner": "T09",
+      "label": "S4 · 批量监控与 ECN",
+      "title": "S4 · 批量监控与 ECN",
+      "sub": "SPC 判异处置会签 · 支线 A 换料影响面四象限",
+      "icon": "activity",
+      "order": 40,
+      "globals": [
+        "SCENE_DATA"
+      ],
+      "objects": [
+        "spc_series",
+        "events",
+        "work_orders",
+        "lots",
+        "boms",
+        "sales_orders",
+        "materials",
+        "equipment"
+      ],
+      "roles": [
+        "gm",
+        "rd",
+        "qa",
+        "mfg",
+        "rd_engineering",
+        "manufacturing"
+      ],
+      "note": "S4 批量监控与 ECN：30 天 SPC 序列（含 2 个判异点）与判异处置会签链（拉群/取证/方案/会签/闭环，留痕取自 events）、支线 A ECN 影响面四象限（在制工单/库存批次/在途批次/未发订单行，逐行可下钻到原始记录）、ECN 切换会签与 MBOM v1.1 生效时间线"
+    },
+    {
+      "id": "s06",
+      "module": "scenes/s06-procurement.js",
+      "data": "frontend/s06-procurement.js",
+      "owner": "T08",
+      "label": "S6 · 采购执行",
+      "title": "S6 · 采购执行",
+      "sub": "交期确认 · 缺料预警 · 自动催料待办 · 延期升级",
+      "icon": "truck",
+      "order": 60,
+      "globals": [
+        "SCENE_DATA"
+      ],
+      "objects": [
+        "purchase_orders",
+        "suppliers",
+        "materials",
+        "work_orders",
+        "sales_orders",
+        "events"
+      ],
+      "roles": [
+        "gm",
+        "biz",
+        "rd",
+        "qa",
+        "mfg",
+        "sales",
+        "rd_engineering",
+        "manufacturing"
+      ],
+      "note": "S6 采购执行：PO 下发 → 供应商交期确认 → 缺料预警（料期 vs 工排需料日比对）→ 自动生成催料任务进采购员待办（零人工步骤）→ 延期升级链（每级可追到人）→ 催料记录留痕表"
+    },
+    {
       "id": "s05",
       "module": "scenes/s05-trace.js",
       "data": "frontend/s05-trace.js",
       "owner": "T06",
-      "label": "出货与质量追溯",
+      "label": "S5 · 出货与质量追溯",
       "title": "S5 · 出货与质量追溯",
       "sub": "客诉 15 分钟定位批次/工序/设备 · 同批库存影响面 · 8D 会签闭环",
       "icon": "truck",

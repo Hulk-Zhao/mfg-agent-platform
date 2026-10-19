@@ -866,7 +866,7 @@
 
   window.SceneRegistry.register({
     id: SCENE_ID,
-    label: "立项",
+    label: "S2 · 立项",
     title: "S2 · 立项",
     sub: "立项材料自动汇总 · 相似案例检索 · 立项会签",
     icon: "file",

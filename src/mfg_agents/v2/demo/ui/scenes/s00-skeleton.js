@@ -1,5 +1,5 @@
 /**
- * S00 · 场景骨架占位屏（T05 交付物）
+ * S00 · 契约自检屏（T05 交付物）
  *
  * 作用：把「屏契约 / 数据契约 / 组件契约」和「五访客角色」串成一条可验收的链路，
  * 给 T06–T11 十二个场景屏当施工样板。它**不承载业务结论**：
@@ -330,8 +330,8 @@
     const html = '<div id="s00-root">'
       + K.pageHead({
         icon: "layers",
-        title: "场景骨架占位屏",
-        desc: "骨架占位屏：验证屏 / 数据 / 组件三契约与五访客角色。"
+        title: "契约自检屏",
+        desc: "契约自检屏：验证屏 / 数据 / 组件三契约与五访客角色。"
           + "本屏为 T05 验收样本，T06–T11 场景屏按同一份契约施工。",
         extra: K.badge("T05 契约样本", "badge-blue")
           + K.badge("骨架屏不含业务结论", "badge-gray")
@@ -383,8 +383,8 @@
 
   window.SceneRegistry.register({
     id: SCENE_ID,
-    label: "场景骨架占位屏",
-    title: "场景骨架占位屏",
+    label: "契约自检屏",
+    title: "契约自检屏",
     sub: "屏契约 / 数据契约 / 组件契约 · 三契约验收样本",
     icon: "layers",
     group: window.SceneRegistry.GROUP_NAME,

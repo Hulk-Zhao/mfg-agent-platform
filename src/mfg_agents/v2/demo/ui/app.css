@@ -3694,3 +3694,212 @@ a:hover { text-decoration: underline; }
 .case-chat-caret { flex: none; color: var(--text-2); transition: transform .15s; }
 .case-chat-turn[open] > .case-chat-sum .case-chat-caret { transform: rotate(180deg); }
 .case-chat-turn[open] > .case-chat-sum { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+
+/* ============================================================
+   悬浮帮助助手（float-help.js · .fh- 命名空间）
+   light 主题 · 复用全局 CSS 变量 · 位置由 JS 持久化（localStorage）
+   ============================================================ */
+
+/* ⚠ hidden 属性必须显式压住：作者样式的 display:flex 会盖过 UA 的
+   [hidden]{display:none}，导致 JS 里 panel.hidden=true 的面板照样显示
+   （表现为「每次刷新窗口都挂在左上角」）。本条选择器优先级
+   （0,2,0）高于 .fh-panel（0,1,0），与书写顺序无关，但必须成对出现。 */
+.fh-panel[hidden] { display: none; }
+
+.fh-fab {
+  position: fixed;
+  left: 0; top: 0;               /* 左上角由 JS 写值，此处仅占位 */
+  width: 48px; height: 48px;
+  border-radius: 50%;
+  background: var(--primary);
+  color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: var(--shadow-md);
+  cursor: grab;
+  z-index: 500;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;           /* 指针拖动优先，不当页面滚动 */
+  transition: transform .15s, box-shadow .15s, background .15s;
+}
+.fh-fab:hover { background: var(--primary-hover); transform: translateY(-1px); box-shadow: var(--shadow-pop); }
+.fh-fab:active { cursor: grabbing; }
+.fh-fab.fh-grab { cursor: grabbing; transform: scale(1.06); box-shadow: var(--shadow-pop); }
+.fh-fab:focus-visible { outline: 2px solid var(--primary-deep); outline-offset: 2px; }
+
+/* 场景已变、面板关着：按钮右上角小点提示 */
+.fh-fab-dot {
+  position: absolute; top: -2px; right: -2px;
+  width: 11px; height: 11px; border-radius: 50%;
+  background: var(--danger);
+  border: 2px solid #fff;
+}
+
+/* 拖动中禁止文本选择，避免"拖出一片蓝" */
+body.fh-dragging { user-select: none; -webkit-user-select: none; cursor: grabbing; }
+
+/* ---------- 面板 ---------- */
+.fh-panel {
+  position: fixed;
+  left: 0; top: 0;
+  width: min(364px, calc(100vw - 24px));
+  max-height: min(520px, calc(100vh - 120px));
+  display: flex; flex-direction: column;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: var(--shadow-pop);
+  z-index: 501;
+  overflow: hidden;
+  animation: fh-pop .16s ease-out;
+}
+@keyframes fh-pop {
+  from { opacity: 0; transform: translateY(6px) scale(.98); }
+  to   { opacity: 1; transform: none; }
+}
+
+.fh-head {
+  display: flex; align-items: center; gap: 9px;
+  padding: 11px 12px;
+  background: linear-gradient(135deg, var(--primary) 0%, var(--primary-deep) 100%);
+  color: #fff;
+  cursor: grab;
+  flex-shrink: 0;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.fh-head:active { cursor: grabbing; }
+.fh-head-avatar {
+  width: 28px; height: 28px; border-radius: 8px;
+  background: rgba(255, 255, 255, .16);
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.fh-head-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.fh-head-name {
+  font-size: 13.5px; font-weight: 700;
+  display: flex; align-items: center; gap: 6px;
+}
+.fh-head-tag {
+  font-size: 10px; font-weight: 600;
+  padding: 1px 6px; border-radius: 8px;
+  background: rgba(255, 255, 255, .18);
+  letter-spacing: .5px;
+}
+.fh-head-scene {
+  font-size: 11.5px; color: rgba(255, 255, 255, .82);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.fh-head-close {
+  width: 26px; height: 26px; border-radius: 7px;
+  color: #fff; font-size: 16px; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0; opacity: .8;
+}
+.fh-head-close:hover { background: rgba(255, 255, 255, .18); opacity: 1; }
+
+/* ---------- 消息区 ---------- */
+.fh-body {
+  flex: 1; min-height: 120px;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex; flex-direction: column; gap: 9px;
+  background: var(--bg);
+}
+.fh-msg { display: flex; }
+.fh-msg-user { justify-content: flex-end; }
+.fh-msg-user .fh-bubble {
+  max-width: 82%;
+  background: var(--primary);
+  color: #fff;
+  font-size: 12.8px; line-height: 1.65;
+  padding: 8px 11px; border-radius: 12px 12px 3px 12px;
+}
+.fh-msg-bot { align-items: flex-start; gap: 7px; }
+.fh-avatar {
+  width: 24px; height: 24px; border-radius: 7px;
+  background: var(--primary-light); color: var(--primary);
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0; margin-top: 1px;
+}
+.fh-msg-bot .fh-bubble {
+  max-width: calc(100% - 32px);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px 12px 12px 3px;
+  padding: 9px 11px;
+  font-size: 12.8px; line-height: 1.7; color: var(--text);
+  box-shadow: var(--shadow-sm);
+}
+
+/* 答案正文排版（fmt() 产出） */
+.fh-p { margin: 0; }
+.fh-p + .fh-p, .fh-list + .fh-p, .fh-p + .fh-list { margin-top: 5px; }
+.fh-gap { height: 6px; }
+.fh-list { margin: 2px 0; }
+.fh-li { position: relative; padding-left: 13px; margin: 2px 0; }
+.fh-li::before {
+  content: ""; position: absolute; left: 2px; top: .62em;
+  width: 4px; height: 4px; border-radius: 50%; background: var(--primary);
+}
+.fh-bubble code {
+  font-family: ui-monospace, Consolas, Menlo, monospace; font-size: 11px;
+  padding: 1px 4px; border-radius: 4px;
+  background: var(--primary-light-2); border: 1px solid var(--border);
+  color: var(--primary-deep);
+}
+
+/* 流式输出光标 */
+.fh-caret {
+  display: inline-block; width: 2px; height: 1em;
+  background: var(--primary); margin-left: 2px;
+  vertical-align: -2px;
+  animation: fh-blink .8s steps(2) infinite;
+}
+@keyframes fh-blink { 50% { opacity: 0; } }
+
+/* ---------- 选项区（＋/－ 折叠） ---------- */
+.fh-optbar {
+  flex-shrink: 0;
+  border-top: 1px solid var(--border);
+  background: var(--card);
+  max-height: 46%;
+  display: flex; flex-direction: column;
+}
+.fh-opt-toggle {
+  display: flex; align-items: center; gap: 6px;
+  padding: 8px 12px;
+  font-size: 12px; font-weight: 600; color: var(--primary);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.fh-opt-toggle:hover { background: var(--primary-light-2); }
+.fh-opt-sign {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 17px; height: 17px; border-radius: 5px;
+  background: var(--primary-light); font-size: 12px; font-weight: 700;
+}
+.fh-optbar.collapsed .fh-opt-toggle { border-bottom: none; }
+.fh-optbar.collapsed .fh-opts { display: none; }
+
+.fh-opts { overflow-y: auto; padding: 7px; display: flex; flex-direction: column; gap: 5px; }
+.fh-opt {
+  display: flex; align-items: center; gap: 8px;
+  text-align: left;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--card);
+  font-size: 12.5px; color: var(--text);
+  transition: border-color .12s, background .12s;
+}
+.fh-opt:hover { border-color: var(--primary); background: var(--primary-light-2); }
+.fh-opt-q { flex: 1; min-width: 0; }
+.fh-opt-go { color: var(--text-3); font-size: 14px; flex-shrink: 0; }
+.fh-opt:hover .fh-opt-go { color: var(--primary); }
+
+/* 窄屏：面板贴边，别让圆角顶出视口 */
+@media (max-width: 480px) {
+  .fh-panel { border-radius: 12px 12px 0 0; }
+}

@@ -1177,7 +1177,7 @@
 
   window.SceneRegistry.register({
     id: SCENE_ID,
-    label: "出货与质量追溯",
+    label: "S5 · 出货与质量追溯",
     title: "S5 · 出货与质量追溯",
     sub: "客诉 15 分钟定位批次/工序/设备 · 同批库存影响面 · 8D 会签闭环",
     icon: "truck",

@@ -752,7 +752,80 @@
   }
 
   /* ============================================================
-   * 八、导出
+   * 八、框架级「演示数据」徽标强制（T12）
+   *
+   * 纪律：任何场景屏的**同步首帧**必须带「演示数据」徽标（唯一出口
+   * `demoBadge()`，产出 `.demo-flag`）。漏挂的屏**不渲染**——首帧被换成
+   * 框架错误面板并 console.error，而不是静默显示一屏没有演示标识的界面。
+   *
+   * 为什么挂在 `SceneRegistry.register` 上：scene-kit.js 在 registry.js
+   * **之后**、各场景脚本**之前**加载（index.html 偏序，T05 契约钉死），
+   * 所以在这里包装 register 能覆盖 T06–T11 已交付与后续新增的全部屏——
+   * 新屏忘记挂徽标时无法绕开，不必要求各屏自觉。
+   * ============================================================ */
+
+  /** `.demo-flag` 的类名匹配（只认 class 属性，避免误命中正文里的同名字样）。 */
+  const DEMO_BADGE_CLASS_RE = /class="[^"]*\bdemo-flag\b[^"]*"/;
+
+  /** 首帧 HTML 是否已带「演示数据」徽标。 */
+  function hasDemoBadge(root) {
+    if (!root) return false;
+    const html = typeof root.innerHTML === "string" ? root.innerHTML : "";
+    return DEMO_BADGE_CLASS_RE.test(html);
+  }
+
+  /** 漏挂徽标时呈现的框架拒绝面板（此时**不渲染**场景内容）。 */
+  function badgeGuardPanel(sceneId) {
+    return '<div class="content-inner"><div class="sk-degrade" data-sk-badge-guard="1">'
+      + icon("warn", 15)
+      + '<div><b>场景 ' + esc(String(sceneId || "未知"))
+      + ' 首帧未挂「演示数据」徽标，已按框架纪律拒绝渲染。</b>'
+      + '<div class="sk-degrade-sub">所有场景屏首帧须经 SceneKit.pageHead()'
+      + "（或 SceneKit.demoBadge()）产出 <code>.demo-flag</code>，用于钉死演示标识。"
+      + "修复：确认屏内首帧 HTML 调用了 SceneKit.pageHead()。</div></div></div></div>";
+  }
+
+  /**
+   * 包装 `window.SceneRegistry.register`，给每个场景的 render 加「首帧必有
+   * 演示徽标」的守护。幂等：重复调用直接返回。
+   *
+   * @returns {boolean} 是否已装上守护（registry 缺席时返回 false）
+   */
+  function installBadgeGuard() {
+    const reg = window.SceneRegistry;
+    if (!reg || typeof reg.register !== "function") return false;
+    if (reg.__demoBadgeGuard === true) return true;
+
+    const originalRegister = reg.register;
+    reg.register = function (def) {
+      if (def && typeof def === "object" && typeof def.render === "function") {
+        const sceneId = def.id;
+        const originalRender = def.render;
+        const guarded = Object.assign({}, def, {
+          render: function (root, ctx) {
+            originalRender.call(this, root, ctx);
+            if (hasDemoBadge(root)) return;
+            if (typeof console !== "undefined" && console.error) {
+              console.error("[SceneKit] 场景 " + String(sceneId)
+                + " 首帧缺少「演示数据」徽标（.demo-flag），已按框架纪律拒绝渲染；"
+                + "请确认屏内首帧调用了 SceneKit.pageHead()/demoBadge()。");
+            }
+            if (root) {
+              root.innerHTML = badgeGuardPanel(sceneId);
+              if (root.dataset) root.dataset.skBadgeGuard = "1";
+            }
+          },
+        });
+        return originalRegister.call(this, guarded);
+      }
+      return originalRegister.call(this, def);
+    };
+    reg.__demoBadgeGuard = true;
+    return true;
+  }
+
+  /* ============================================================
+   * 九、导出
    * ============================================================ */
 
   const SceneKit = {
@@ -775,12 +848,23 @@
     fmtDate,
     fmtNum,
     bindDrills,
+    hasDemoBadge,
+    installBadgeGuard,
   };
 
   window.SceneKit = SceneKit;
 
   // 首次加载即注入样式：即使某屏只调 fmtNum（不调 use），也不该等到首帧才闪一下样式。
   injectStyle();
+
+  // 框架级「演示数据」徽标强制：registry.js 已先加载，这里装上守护即覆盖全部场景屏；
+  // registry 尚未就绪时在 DOMContentLoaded 再补一次（幂等，绝不重复包装）。
+  installBadgeGuard();
+  if (typeof document !== "undefined" && document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", function () {
+      installBadgeGuard();
+    });
+  }
 
   // 会签按钮的骨架兜底：场景屏未接管时，给一句诚实的提示，而不是让按钮点了没反应。
   if (typeof document !== "undefined") {
