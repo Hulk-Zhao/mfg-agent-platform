@@ -45,9 +45,16 @@ from mfg_agents.v2.services.workflow import (
 
 SCENARIO_DIR = Path(v2_pkg.__file__).resolve().parent / "scenarios"
 
-# 9 个合法 HITL 槽位（与 permissions.yaml 的 slots 一致；V3.6 增 spc_action，T15 增 order_review）
+# 10 个合法 HITL 槽位（与 permissions.yaml 的 slots 一致；V3.6 增 spc_action，
+# T15 增 order_review，2026-10-20 报告中心增 report_publish）
 LEGAL_SLOTS = ["restart", "eta", "disposition", "d8_close", "complaint_reply",
-               "delivery_commit", "maintenance_window", "spc_action", "order_review"]
+               "delivery_commit", "maintenance_window", "spc_action", "order_review",
+               "report_publish"]
+
+# 由**场景 YAML** 的 HITL 节点驱动的 9 个槽位（``report_publish`` 由 API 驱动，
+# 无对应场景 YAML）——场景加载期白名单校验以本表为准。
+SCENARIO_SLOTS = ["restart", "eta", "disposition", "d8_close", "complaint_reply",
+                  "delivery_commit", "maintenance_window", "spc_action", "order_review"]
 
 # ---------- 演示身份（user_ctx.roles 为权威角色来源） ----------
 SQE_CTX: dict[str, Any] = {"user_id": "u-sqe", "dept": "quality",
@@ -117,17 +124,22 @@ def _select_concession(engine: WorkflowEngine, uid: str) -> Any:
 
 
 def test_permission_catalog_shape():
-    """目录规模：27 条权限（9 slot × 3 verb）/ 15 角色 / 9 槽位。"""
+    """目录规模：30 条权限（10 slot × 3 verb）/ 15 角色 / 10 槽位。
+
+    2026-10-20 同步：报告中心新增第 10 个 HITL 槽位 ``report_publish``
+    （报告审定与派发），27→30 条权限、9→10 个槽位——这是配置的合法扩张
+    （与 V3.6 增 spc_action、T15 增 order_review 同路径），不是改用例凑绿。
+    """
     registry = get_permission_registry()
     describe = registry.describe()
-    assert len(describe["permissions"]) == 27
-    assert len(describe["slots"]) == 9
+    assert len(describe["permissions"]) == 30
+    assert len(describe["slots"]) == 10
     assert len(describe["roles"]) >= 14
     assert {p["key"] for p in describe["permissions"]} == {
         f"hitl.{slot}.{verb}"
         for slot in ("restart", "eta", "disposition", "d8_close",
                      "complaint_reply", "delivery_commit", "maintenance_window",
-                     "spc_action", "order_review")
+                     "spc_action", "order_review", "report_publish")
         for verb in ("propose", "cosign", "approve")
     }
     assert DEFAULT_PERMISSIONS_PATH.is_file()
@@ -730,10 +742,10 @@ def test_api_governance_permissions_endpoint(api_client):
     resp = api_client.get("/api/v2/governance/permissions")
     assert resp.status_code == 200
     data = resp.json()["data"]
-    assert len(data["permissions"]) == 27
+    assert len(data["permissions"]) == 30
     assert {"restart", "eta", "disposition", "d8_close", "complaint_reply",
             "delivery_commit", "maintenance_window", "spc_action",
-            "order_review"} == {
+            "order_review", "report_publish"} == {
         s["key"] for s in data["slots"]}
 
 
@@ -1036,7 +1048,7 @@ def test_registry_rejects_agent_role_with_approve(tmp_path):
 
 
 def test_every_slot_declares_available_permissions():
-    """9 个槽位必须显式声明 3 个权限，且都存在于目录、归属本槽位。"""
+    """10 个槽位必须显式声明 3 个权限，且都存在于目录、归属本槽位。"""
     registry = get_permission_registry()
     assert sorted(registry.slot_keys()) == sorted(LEGAL_SLOTS)
     for slot_key in LEGAL_SLOTS:
@@ -1064,7 +1076,12 @@ def test_slot_with_undeclared_permission_fails_at_load(tmp_path):
 
 
 def test_all_scenarios_hitl_slots_are_whitelisted():
-    """8 个真实场景的 10 个 HITL 节点，槽位全部落在白名单内。"""
+    """8 个真实场景的 10 个 HITL 节点，槽位全部落在白名单内。
+
+    2026-10-20 调整：白名单新增 ``report_publish``（报告中心，由 API 驱动、
+    无对应场景 YAML），因此不再断言「场景槽位集合 == 白名单全集」，改为
+    「场景槽位集合 == 场景驱动槽位集合」+「⊆ 白名单」。
+    """
     registry = get_permission_registry()
     scenario_registry = ScenarioRegistry(SCENARIO_DIR)
     loaded = scenario_registry.load()
@@ -1074,7 +1091,8 @@ def test_all_scenarios_hitl_slots_are_whitelisted():
     assert len(nodes) == 10, f"HITL 节点数应为 10，实际 {len(nodes)}: {nodes}"
     for node in nodes:
         assert node["slot"] in registry.slot_keys(), node
-    assert {n["slot"] for n in nodes} == set(LEGAL_SLOTS)
+    assert {n["slot"] for n in nodes} == set(SCENARIO_SLOTS)
+    assert set(SCENARIO_SLOTS) <= set(registry.slot_keys())
 
 
 def test_illegal_hitl_slot_fails_at_scenario_load(tmp_path):

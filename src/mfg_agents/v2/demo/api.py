@@ -43,6 +43,7 @@ from ..core.orchestrator import V2Orchestrator, create_default_orchestrator
 from ..services import kbqa as kbqa_service
 from ..services import kbqa_store
 from ..services import workflow_scope
+from ..services import report_service, report_store
 from .config_demo import DEMO_LABEL, DEMO_MODE, assert_isolated
 from .loader import (
     OBJECTS,
@@ -110,7 +111,7 @@ def demo_ui_index() -> _HTMLResponse:
     保证清单内资源必定带上 ``?v=<mtime>``——文件一改，缓存自动失效。
     """
     html = (_UI_DIR / "index.html").read_text(encoding="utf-8")
-    for f in ("demo-data.js", "terms.js", "app.js", "screens.js", "help-screen.js", "kb-screen.js", "office-screen.js", "case-screen.js", "float-help.js", "app.css"):
+    for f in ("demo-data.js", "terms.js", "app.js", "screens.js", "reports-screen.js", "help-screen.js", "kb-screen.js", "office-screen.js", "case-screen.js", "float-help.js", "app.css", "aging.css", "aging-mode.js"):
         fp = _UI_DIR / f
         v = int(fp.stat().st_mtime) if fp.exists() else 0
         # 仅替换引号内的资源引用（允许 ./、子目录等路径前缀），不动 HTML 其余部分；
@@ -120,7 +121,17 @@ def demo_ui_index() -> _HTMLResponse:
             rf"\g<1>\g<2>?v={v}\g<1>",
             html,
         )
-    return _HTMLResponse(html)
+    # 单页应用外壳 URL 恒定（hash 路由），必须每次回源校验：
+    # 缺 Cache-Control 时浏览器会按启发式规则长期缓存这份 HTML，导致它一直
+    # 引用旧的 ?v= 资源 URL，前端改动"看起来没生效"。no-store 让外壳永不驻留。
+    return _HTMLResponse(
+        html,
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )
 
 
 
@@ -501,6 +512,13 @@ def api_query(req: QueryRequest, request: Request) -> dict[str, Any]:
     finally:
         unbind(token)
     data = result.to_dict()
+    # 报告中心归档（单一漏斗）：链路产出内部简报/对客报告的查询，自动成为报告一等对象。
+    # 幂等（report_id 由 run_id 派生）+ 全兜底——归档失败绝不能反噬问数主链路。
+    try:
+        report_service.archive_run_result(
+            data, actor=str(user_ctx.get("name") or ""), source_module="chat")
+    except Exception as exc:  # noqa: BLE001 - 归档是旁路，不得影响查询返回
+        logger.warning("[report] 归档异常，问数结果不受影响: %s", exc)
     # 先缓存不含 request_id 的快照（json 序列化即快照），再回填本次 request_id
     cache.cache_set(ckey, data, ttl=settings.CACHE_TTL_S)
     cache.remember_session(str(user_ctx.get("user_id") or ""), {
@@ -1020,6 +1038,150 @@ def api_workflow_reject(task_id: str, req: WorkflowActionRequest,
     return {"code": 0, "data": task.to_dict(), "message": "ok"}
 
 
+# ============================================================
+# 报告中心（报告一等对象：归档 → 列表/筛选 → 详情 → 审定 → 派发 → 导出）
+#
+# 设计要点：
+# - 真相同源：报告由 ``report_service`` 从编排结果 / 来源模块既有事实拼装，
+#   本层只做鉴权、参数校验与异常→状态码映射（不掺业务判断）。
+# - 两层可见性：读接口要令牌（fail-closed）；非内部岗位读 ``customer`` 报告时，
+#   服务层自动剥离 ``internal_brief``；内部专报对该岗位返回 404（不泄漏 ID 空间）。
+# - 审定/派发与审批确认中心共用同一套治理链（``hitl.report_publish`` 槽位 + 会签）。
+# ============================================================
+
+
+class ReportGenerateRequest(BaseModel):
+    """就地生成报告请求。
+
+    ``source_module``：``task``（工单，后端补真实事实）/ ``alert`` / ``case`` /
+    ``kpi`` / ``manual``；``context``：来源模块已渲染的真实字段
+    （``title`` 必填，其余如 ``summary/refs/line_code/risk_level`` 可选）。
+    """
+
+    source_module: str = "manual"
+    context: dict[str, Any] = {}
+
+
+class ReportReviewRequest(BaseModel):
+    """报告审定请求：``action`` ∈ submit（发起）/ approve（通过）/ reject（驳回）。"""
+
+    action: str = "submit"
+    comment: str = ""
+
+
+class ReportDispatchRequest(BaseModel):
+    """报告派发/对外发布请求：``comment`` 必填（说明派发对象与口径）。"""
+
+    comment: str = ""
+
+
+def _raise_report_http(exc: Exception) -> None:
+    """报告域异常 → HTTP（404 不存在 / 409 状态或会签冲突 / 403 无权限 / 400 参数）。"""
+    if isinstance(exc, report_store.ReportNotFound):
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if isinstance(exc, report_store.InvalidReportTransition):
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    _raise_workflow_http(exc)
+
+
+@app.get("/api/v2/reports")
+def api_reports(request: Request,
+                scenario_key: str = Query(""), source_module: str = Query(""),
+                status: str = Query(""), visibility: str = Query(""),
+                risk_level: str = Query(""), q: str = Query(""),
+                limit: int = Query(50, ge=1, le=200),
+                offset: int = Query(0, ge=0)) -> dict[str, Any]:
+    """报告列表：筛选（场景 / 来源模块 / 状态 / 可见范围 / 风险评级）+ 关键字 + 分页。"""
+    identity = _require_identity(request)
+    data = report_service.list_payload(
+        identity, scenario_key=scenario_key, source_module=source_module,
+        status=status, visibility=visibility, risk_level=risk_level, q=q,
+        limit=limit, offset=offset)
+    return {"code": 0, "data": data, "message": "ok", "scope": data["scope"]}
+
+
+@app.get("/api/v2/reports/stats")
+def api_reports_stats(request: Request) -> dict[str, Any]:
+    """顶部 KPI 概览条（必须在 ``/{report_id}`` **之前**声明，否则 stats 会被吞成 id）。"""
+    identity = _require_identity(request)
+    return {"code": 0, "data": report_service.stats_payload(identity), "message": "ok"}
+
+
+@app.get("/api/v2/reports/{report_id}")
+def api_report_detail(report_id: str, request: Request) -> dict[str, Any]:
+    """报告详情（内部简报 / 对客脱敏 / 数据溯源 / 关联 / 版本）。不可见 → 404。"""
+    identity = _require_identity(request)
+    try:
+        data = report_service.get_payload(report_id, identity)
+    except report_store.ReportStoreError as exc:
+        _raise_report_http(exc)
+        raise  # pragma: no cover
+    return {"code": 0, "data": data, "message": "ok"}
+
+
+@app.post("/api/v2/reports/generate")
+def api_reports_generate(req: ReportGenerateRequest,
+                         request: Request) -> dict[str, Any]:
+    """按来源模块上下文生成报告（各协同屏「生成报告」按钮的统一入口）。"""
+    identity = _require_identity(request)
+    try:
+        report = report_service.generate_from_context(
+            req.source_module, req.context,
+            actor=str(identity.get("name") or "用户"),
+            engine=_workflow_engine())
+    except (report_store.ReportStoreError, KeyError, ValueError) as exc:
+        _raise_report_http(exc)
+        raise  # pragma: no cover
+    return {"code": 0, "data": report, "message": "ok"}
+
+
+@app.post("/api/v2/reports/{report_id}/review")
+def api_report_review(report_id: str, req: ReportReviewRequest,
+                      request: Request) -> dict[str, Any]:
+    """报告审定（submit / approve / reject）：走 ``hitl.report_publish`` 治理链与多角色会签。"""
+    identity = _require_identity(request)
+    try:
+        data = report_service.review_report(
+            report_id, req.action, req.comment, identity, _workflow_engine())
+    except (report_store.ReportStoreError, KeyError, PermissionDenied,
+            SignoffIncomplete, WorkflowTransitionError, ValueError) as exc:
+        _raise_report_http(exc)
+        raise  # pragma: no cover
+    return {"code": 0, "data": data, "message": "ok"}
+
+
+@app.post("/api/v2/reports/{report_id}/dispatch")
+def api_report_dispatch(report_id: str, req: ReportDispatchRequest,
+                        request: Request) -> dict[str, Any]:
+    """报告派发/对外发布：需 ``approve`` 权限 + 必填意见 + 该报告有溯源。"""
+    identity = _require_identity(request)
+    try:
+        report = report_service.dispatch_report(report_id, req.comment, identity)
+    except (report_store.ReportStoreError, KeyError, PermissionDenied,
+            WorkflowTransitionError, ValueError) as exc:
+        _raise_report_http(exc)
+        raise  # pragma: no cover
+    return {"code": 0, "data": report, "message": "ok"}
+
+
+@app.get("/api/v2/reports/{report_id}/export")
+def api_report_export(report_id: str, request: Request,
+                      fmt: str = Query("md")) -> Response:
+    """导出报告（``md`` / ``html``）。PDF 交由浏览器打印对话框输出，后端不造 PDF。"""
+    identity = _require_identity(request)
+    try:
+        body, media_type, filename = report_service.export_report(
+            report_id, fmt, identity)
+    except report_store.ReportStoreError as exc:
+        _raise_report_http(exc)
+        raise  # pragma: no cover
+    from urllib.parse import quote
+    return Response(
+        content=body, media_type=media_type,
+        headers={"Content-Disposition":
+                 f"attachment; filename*=UTF-8''{quote(filename)}"})
+
+
 @app.get("/api/v2/agents/configs")
 def api_agents_configs() -> dict[str, Any]:
     """域组智能体配置总览（帮助界面的数据来源：意图/边界/工具/HITL 准则）。
@@ -1396,47 +1558,104 @@ def _scope_guard(request: Request, dashboard: str) -> dict[str, Any]:
     return ctx
 
 
-def _dashboard_payload(request: Request, dashboard: str, builder) -> dict[str, Any]:
-    """统一编排：裁决 → 聚合 → 脱敏 → 回写 scope 凭据。"""
+def _dashboard_payload(request: Request, dashboard: str, builder,
+                       window: Optional[str] = None,
+                       **extra: Any) -> dict[str, Any]:
+    """统一编排：裁决 → 聚合 → 脱敏 → 回写 scope 凭据。
+
+    ``window`` 为可选板级时间口径（``manufacturing`` / ``quality`` 支持
+    ``window|day|month``）；``None`` 表示该看板不接口径参数（orders / spc）。
+    ``extra``：看板自定义筛选（如品质看板的 ``stage`` / ``category``），原样透传给聚合器。
+    """
     ctx = _scope_guard(request, dashboard)
     registry = get_orchestrator().runtime.data_registry
-    data = builder(registry)
+    if window is not None:
+        data = builder(registry, window=window, **extra)
+    else:
+        data = builder(registry, **extra)
     data, masked = get_data_scope().apply(dashboard, data, ctx["roles"])
     return {"code": 0, "data": data, "message": "ok",
             "scope": {"dashboard": dashboard, "roles": list(ctx["roles"]),
                       "masked": masked}}
 
 
+# 板级时间口径白名单（制造/品质看板）：默认最近 7 天，非法值 → 400
+_WINDOW_KEYS = ("window", "day", "month")
+# 下钻口径白名单：额外放行 "all"（仅 defect_type 柏拉图类型下钻可用，见下钻端点）
+_DRILL_WINDOW_KEYS = _WINDOW_KEYS + ("all",)
+
+
+def _checked_window(window: str, allowed: tuple[str, ...] = _WINDOW_KEYS) -> str:
+    if window not in allowed:
+        raise HTTPException(status_code=400, detail="未知时间口径 window")
+    return window
+
+
 @app.get("/api/v2/dashboard/manufacturing")
-def api_dashboard_manufacturing(request: Request) -> dict[str, Any]:
+def api_dashboard_manufacturing(request: Request,
+                                window: str = Query("window")) -> dict[str, Any]:
     """制造看板：稼动率 / 报废率 / 报工完成率 / 测试直通率（按岗位范围裁决）。
+
+    ``window``：``window``（最近7天，默认）/ ``day``（当日）/ ``month``（当月）——
+    KPI 卡、TOP5 排行、迷你趋势与下钻均随所选口径切换。非法值 → 400。
 
     真实链路聚合本地只读数据源；聚合内部全兜底，数据源故障时返回
     ``degraded:true`` 的骨架，**绝不 500**（前端据此降级演示数据）。
     """
     from ..services.dashboard import build_manufacturing_dashboard
 
-    return _dashboard_payload(request, "manufacturing", build_manufacturing_dashboard)
+    return _dashboard_payload(request, "manufacturing",
+                              build_manufacturing_dashboard,
+                              _checked_window(window))
 
 
 @app.get("/api/v2/dashboard/quality")
-def api_dashboard_quality(request: Request) -> dict[str, Any]:
-    """品质看板：不良率 / 直通率 FPY / 标准三率（按岗位范围裁决）。"""
-    from ..services.dashboard import build_quality_dashboard
+def api_dashboard_quality(request: Request,
+                          window: str = Query("window"),
+                          stage: str = Query(""),
+                          category: str = Query("")) -> dict[str, Any]:
+    """品质看板：不良率 / 直通率 FPY / 来料批次合格率 / 客诉闭环率（按岗位范围裁决）。
 
-    return _dashboard_payload(request, "quality", build_quality_dashboard)
+    ``window`` 同制造看板（默认最近 7 天）。``stage``（工段：SMT/PCM/PACK/整机）/
+    ``category``（缺陷类别：性能不良/外观不良）为板级筛选，缺省 = 全部；仅同源的
+    ``quality_defect`` 指标（不良率 / 直通率及其 TOP5）随筛选重算（卡片值即所选范围
+    的汇总），无该维度的进料端 / 客户端指标保持板级口径并回传 ``scope_note``。
+    非法取值 → 400（fail-fast，不静默当「全部」）。
+
+    另返回 ``pareto_fact`` 预聚合事实表，供前端柏拉图本地交互（日别/月别 + 类别/工段筛选）。
+    """
+    from ..services.dashboard import (
+        QUALITY_CATEGORIES, QUALITY_STAGES, build_quality_dashboard,
+    )
+
+    stage = (stage or "").strip()
+    category = (category or "").strip()
+    if stage and stage not in QUALITY_STAGES:
+        raise HTTPException(status_code=400, detail="未知工段筛选 stage")
+    if category and category not in QUALITY_CATEGORIES:
+        raise HTTPException(status_code=400, detail="未知缺陷类别筛选 category")
+
+    return _dashboard_payload(request, "quality", build_quality_dashboard,
+                              _checked_window(window),
+                              stage=stage or None, category=category or None)
 
 
 @app.get("/api/v2/dashboard/orders")
-def api_dashboard_orders(request: Request) -> dict[str, Any]:
+def api_dashboard_orders(request: Request,
+                         window: str = Query("window")) -> dict[str, Any]:
     """订单履约看板：OTD / OTIF / 延期订单率 / 齐套率（按岗位范围裁决）。
+
+    ``window``：``window``（最近7天，默认）/ ``day``（当日）/ ``month``（当月）——
+    与制造综合看板同源口径，KPI 卡、TOP5 排行、迷你趋势、状态管道、风险订单与
+    下钻均随所选口径切换。非法值 → 400。
 
     客户身份字段按岗位脱敏（``data_scope.yaml`` 的 mask）：对客与收款责任的
     岗位看到客户真名，物控/仓库/采购看到「客户 A / 客户 B」并**失去客户维度下钻键**。
     """
     from ..services.dashboard import build_order_dashboard
 
-    return _dashboard_payload(request, "orders", build_order_dashboard)
+    return _dashboard_payload(request, "orders", build_order_dashboard,
+                              _checked_window(window))
 
 
 @app.get("/api/v2/dashboard/spc")
@@ -1455,7 +1674,11 @@ def api_dashboard_spc(request: Request) -> dict[str, Any]:
 def api_dashboard_drill(request: Request, screen: str = Query(...),
                         kpi: str = Query(...), step: str = Query(""),
                         station: str = Query(""),
-                        defect_type: str = Query("")) -> dict[str, Any]:
+                        defect_type: str = Query(""),
+                        window: str = Query("window"),
+                        stage: str = Query(""),
+                        category: str = Query(""),
+                        prod_category: str = Query("")) -> dict[str, Any]:
     """看板下钻（只读）：无实体 = L2；带实体 = L3；再带 ``step`` = L4；再带 ``station`` = L5。
 
     - ``screen``：``manufacturing`` / ``quality`` / ``orders`` / ``spc``；``kpi``：DRILL_DEFS 白名单键；
@@ -1464,6 +1687,10 @@ def api_dashboard_drill(request: Request, screen: str = Query(...),
       ``supplier`` / ``test_type`` / ``warehouse`` / ``wf`` 等；
     - 层级判定：无 entity→L2、有 entity→L3、``+step``→L4、``+step&station``→L5；
       跳级（有 step 无 entity、有 station 无 step）或指标不支持该层级 → 400；
+    - ``window``：``window``（最近7天，默认）/ ``day`` / ``month`` 与板级口径同源；
+      ``all`` 仅对不良类型下钻（``defect_type`` + pareto 路径）放行，可叠加
+      ``stage`` / ``category`` / ``prod_category``（与质量柏拉图当前
+      「产品分类/类别/工段」筛选一致）；
     - ``defect_type``：仅白名单 ``DEFECT_TYPE_DRILLS``（services/dashboard.py）内的指标
       支持——质量看板不良率走「L1 累计不良柏拉图 → L2 按产线 · 型号分解」，
       且不与实体/工序/工位组合（组合 → 400）；spc_pareto 作为已声明实体维度下钻；
@@ -1489,6 +1716,14 @@ def api_dashboard_drill(request: Request, screen: str = Query(...),
     entity: Optional[dict[str, str]] = vals if any(vals.values()) else None
 
     defect_type = (defect_type or "").strip()
+    # 时间口径：``window|day|month`` 与板级一致；``all`` 仅对不良类型下钻放行
+    # （质量柏拉图交互组件的数据集在 7 天窗口外，需要不限窗口的类型下钻）。
+    window = (window or "window").strip()
+    stage = (stage or "").strip()
+    category = (category or "").strip()
+    prod_category = (prod_category or "").strip()
+    if window not in _DRILL_WINDOW_KEYS:
+        raise HTTPException(status_code=400, detail="未知时间口径 window")
     # defect_type 只对白名单 DEFECT_TYPE_DRILLS 内的 (screen, kpi) 生效（唯一事实源）：
     #   "pareto" → 走 L1 累计不良柏拉图下钻；"entity" → 作为已声明实体维度走下方通用下钻；
     # 白名单外一律 400（脏参不被静默吞掉），不再用散落的 str 判定。
@@ -1500,7 +1735,11 @@ def api_dashboard_drill(request: Request, screen: str = Query(...),
                     status_code=400,
                     detail="不良类型下钻不支持与实体/工序/工位组合")
             registry = get_orchestrator().runtime.data_registry
-            data = build_pareto_drill(registry, screen, kpi, defect_type)
+            data = build_pareto_drill(registry, screen, kpi, defect_type,
+                                      stage=stage or None,
+                                      category=category or None,
+                                      prod_category=prod_category or None,
+                                      window=window)
             data, masked = get_data_scope().apply(screen, data, _ctx["roles"], kpi=kpi)
             return {"code": 0, "data": data, "message": "ok",
                     "scope": {"dashboard": screen, "roles": list(_ctx["roles"]),
@@ -1509,6 +1748,10 @@ def api_dashboard_drill(request: Request, screen: str = Query(...),
             raise HTTPException(status_code=400,
                                 detail="该指标不支持不良类型下钻")
 
+    # window=all 只对不良类型下钻放行，其余 KPI/实体下钻仍只接受三档板级口径
+    if window == "all":
+        raise HTTPException(status_code=400,
+                            detail="window=all 仅支持不良类型下钻")
     if station and not step:
         raise HTTPException(status_code=400, detail="下钻工位需先指定工序")
     if step and not entity:
@@ -1520,7 +1763,7 @@ def api_dashboard_drill(request: Request, screen: str = Query(...),
 
     registry = get_orchestrator().runtime.data_registry
     data = build_drill(registry, screen, kpi, entity, step or None,
-                       station or None)
+                       station or None, window)
     data, masked = get_data_scope().apply(screen, data, _ctx["roles"], kpi=kpi)
     return {"code": 0, "data": data, "message": "ok",
             "scope": {"dashboard": screen, "roles": list(_ctx["roles"]),
@@ -2348,11 +2591,32 @@ def api_case_cite(case_id: str, req: CaseCiteRequest, request: Request) -> dict[
 
 _UI_DIR = Path(__file__).resolve().parent / "ui"
 
+
+class _RevalidateStaticFiles(StaticFiles):
+    """演示前端静态资源：强制浏览器每次协商缓存（ETag → 304 空体，成本极低）。
+
+    为什么不能靠启发式缓存：``index.html`` 只给 10 个具名资源注入了 ``?v=<mtime>``，
+    ``scenes/*.js`` 等仍是无版本号的固定 URL。若让它们按启发式缓存驻留，改动同样
+    不会生效。统一 no-cache（回源校验）兼顾两者：有版本号的命中 304，无版本号的
+    变更后立即拿到新内容，代价只是一个空响应。
+    """
+
+    async def get_response(self, path: str, scope: Mapping[str, Any]) -> Any:
+        response = await super().get_response(path, scope)
+        if response.status_code in (200, 304):
+            # index.html 走外壳同款 no-store（含 /demo-ui 无斜杠时的 html 兜底）
+            if path.endswith("index.html") or path in ("", "."):
+                response.headers["cache-control"] = "no-store, no-cache, must-revalidate"
+            else:
+                response.headers["cache-control"] = "no-cache"
+        return response
+
+
 if _UI_DIR.is_dir():
     # html=True：/demo-ui 与 /demo-ui/ 均返回 index.html（单页应用）。
     # 直接双击 index.html（file://）亦可打开：前端自动探测后端，
     # 不可达时进入演示模式（页面完整渲染 + 明确降级提示）。
-    app.mount("/demo-ui", StaticFiles(directory=str(_UI_DIR), html=True),
+    app.mount("/demo-ui", _RevalidateStaticFiles(directory=str(_UI_DIR), html=True),
               name="demo-ui")
 
 # ---------- 演示场景数据挂载（T10 追加：/demo-story → data/demo_storyline/frontend） ----------

@@ -822,22 +822,40 @@
       }
     },
 
-    /** 制造看板（稼动率/报废率/报工完成率/测试直通率；按岗位数据范围裁决） */
-    manufacturingDashboard() { return this._getScoped("/api/v2/dashboard/manufacturing", 8000); },
+    /** 制造看板（稼动率/报废率/报工完成率/测试直通率；按岗位数据范围裁决）
+     *  window: "window"(最近7天，默认) | "day"(当日) | "month"(当月) */
+    manufacturingDashboard(window) {
+      return this._getScoped("/api/v2/dashboard/manufacturing"
+        + (window ? `?window=${encodeURIComponent(window)}` : ""), 8000);
+    },
 
-    /** 品质看板（不良率/直通率 FPY/标准三率；按岗位数据范围裁决） */
-    qualityDashboard() { return this._getScoped("/api/v2/dashboard/quality", 8000); },
+    /** 品质看板（不良率/直通率 FPY/来料批次合格率/客诉闭环率；按岗位数据范围裁决）
+     *  window: "window"(最近7天，默认) | "day"(当日) | "month"(当月)；
+     *  stage/category: 板级「工段 / 缺陷类别」筛选（缺省 = 全部），KPI 卡即所选范围汇总 */
+    qualityDashboard(window, stage, category) {
+      const qs = (stage ? `&stage=${encodeURIComponent(stage)}` : "")
+        + (category ? `&category=${encodeURIComponent(category)}` : "");
+      return this._getScoped("/api/v2/dashboard/quality"
+        + `?window=${encodeURIComponent(window || "window")}${qs}`, 8000);
+    },
 
-    /** 订单履约看板（OTD/OTIF/延期订单率/齐套率；客户身份按岗位脱敏） */
-    ordersDashboard() { return this._getScoped("/api/v2/dashboard/orders", 8000); },
+    /** 订单履约看板（OTD/OTIF/延期订单率/齐套率；客户身份按岗位脱敏）
+     *  window: "window"(最近7天，默认) | "day"(当日) | "month"(当月) */
+    ordersDashboard(window) {
+      return this._getScoped("/api/v2/dashboard/orders"
+        + (window ? `?window=${encodeURIComponent(window)}` : ""), 8000);
+    },
 
     /** SPC 过程能力看板（逐特性 Cpk/Pp/Ppk 判定 + 子组越限预警 + 不良柏拉图；按岗位裁决） */
     spcDashboard() { return this._getScoped("/api/v2/dashboard/spc", 8000); },
 
     /** 看板下钻：无 entity = L2（按维度分解）；带 entity = L3（单实体）；
      *  再带 step = L4（该工序逐日+工位）；再带 station = L5（该工位逐日+过站记录）；
-     *  defectType = 不良类型下钻（L1 累计柏拉图点击，该类型按产线 · 型号分解）。 */
-    dashboardDrill(screen, kpi, entity, step, station, defectType) {
+     *  defectType = 不良类型下钻（L1 累计柏拉图点击，该类型按产线 · 型号分解）。
+     *  window 与所看板级口径同源（"window"|"day"|"month"）；不良类型下钻另支持 "all"
+     *  （不限窗口）；stage/category/prodCat 为柏拉图「工段/类别/产品分类」筛选同口径。 */
+    dashboardDrill(screen, kpi, entity, step, station, defectType, window,
+                   stage, category, prodCat) {
       const qs = `screen=${encodeURIComponent(screen)}&kpi=${encodeURIComponent(kpi)}`;
       let extra = entity
         ? Object.keys(entity).filter((k) => entity[k])
@@ -846,6 +864,10 @@
       if (step) extra += `&step=${encodeURIComponent(step)}`;
       if (station) extra += `&station=${encodeURIComponent(station)}`;
       if (defectType) extra += `&defect_type=${encodeURIComponent(defectType)}`;
+      if (stage) extra += `&stage=${encodeURIComponent(stage)}`;
+      if (category) extra += `&category=${encodeURIComponent(category)}`;
+      if (prodCat) extra += `&prod_category=${encodeURIComponent(prodCat)}`;
+      extra += `&window=${encodeURIComponent(window || "window")}`;
       return this._getScoped(`/api/v2/dashboard/drill?${qs}${extra}`, 8000);
     },
 
@@ -872,6 +894,65 @@
     workflowReject(taskId, approver, comment, decision) {
       return this._post(`/api/v2/workflow/${encodeURIComponent(taskId)}/reject`,
         { approver, comment, decision: decision || "" });
+    },
+
+    /* ---------- 报告中心（报告一等对象：列表 → 详情 → 审定 → 派发 → 导出） ---------- */
+
+    /** 报告列表（筛选 + 关键字 + 分页）；返回 {items,total,limit,offset,scope} */
+    reportsList(params) {
+      const p = params || {};
+      const qs = Object.keys(p)
+        .filter((k) => p[k] !== "" && p[k] !== null && p[k] !== undefined)
+        .map((k) => `${k}=${encodeURIComponent(p[k])}`).join("&");
+      return this._get(`/api/v2/reports${qs ? "?" + qs : ""}`);
+    },
+
+    /** 顶部 KPI 概览条（各状态计数 + 含数据缺口数） */
+    reportStats() { return this._get("/api/v2/reports/stats"); },
+
+    /** 报告详情（内部简报 / 对客脱敏 / 溯源 / 关联 / 版本） */
+    reportDetail(reportId) {
+      return this._get(`/api/v2/reports/${encodeURIComponent(reportId)}`);
+    },
+
+    /** 按来源模块上下文生成报告（各协同屏「生成报告」按钮的统一入口） */
+    reportGenerate(sourceModule, context) {
+      return this._post("/api/v2/reports/generate",
+        { source_module: sourceModule || "manual", context: context || {} });
+    },
+
+    /** 报告审定：action ∈ submit（发起）/ approve（通过）/ reject（驳回，理由必填） */
+    reportReview(reportId, action, comment) {
+      return this._post(`/api/v2/reports/${encodeURIComponent(reportId)}/review`,
+        { action, comment: comment || "" });
+    },
+
+    /** 报告派发/对外发布（意见必填；后端另校验有溯源与已审定） */
+    reportDispatch(reportId, comment) {
+      return this._post(`/api/v2/reports/${encodeURIComponent(reportId)}/dispatch`,
+        { comment: comment || "" });
+    },
+
+    /** 导出报告正文（md / html）。走带令牌的 fetch → Blob 下载，
+     *  因为普通 <a href> 无法携带 Authorization 头。 */
+    async reportExport(reportId, fmt) {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), DEFAULT_TIMEOUT_MS);
+      let resp;
+      try {
+        const opts = { signal: ctrl.signal };
+        if (state.token) opts.headers = { Authorization: `Bearer ${state.token}` };
+        resp = await fetch(
+          `${this.base()}/api/v2/reports/${encodeURIComponent(reportId)}`
+          + `/export?fmt=${encodeURIComponent(fmt || "md")}`, opts);
+      } finally {
+        clearTimeout(timer);
+      }
+      if (!resp.ok) {
+        if (resp.status === 401) handleAuthExpired({});
+        throw apiError(resp.status, {});
+      }
+      return resp.text();
     },
   };
 
@@ -1096,6 +1177,12 @@
       // "AI 搜问"范式：任何关键词都可直达协同问数（权限内检索的统一入口）
       const isTaskId = /^wf-[0-9a-f]{6,}$/i.test(k);
       const isBatch = /^batch[-_]/i.test(k);
+      // 报告中心：关键词直接落到报告列表的检索框（prefill 由 reports-screen.js 消费）
+      results.unshift({
+        screen: "reports", ask: k, type: "报告",
+        title: `在报告中心检索：「${k.length > 22 ? k.slice(0, 22) + "…" : k}」`,
+        sub: "按标题 / 场景 / 来源模块过滤已归档报告",
+      });
       results.unshift({
         screen: "chat", ask: k,
         title: `去问数：「${k.length > 22 ? k.slice(0, 22) + "…" : k}」`,
@@ -1135,7 +1222,9 @@
           hit.addEventListener("click", () => {
             const hit2 = results[Number(hit.dataset.idx)];
             if (hit2.ask) {
-              try { sessionStorage.setItem("chat_prefill", hit2.ask); } catch (e) { /* 忽略 */ }
+              // 报告中心用独立预填键：命中"报告"条目时不得污染协同问数的提问框
+              const key = hit2.screen === "reports" ? "report_prefill" : "chat_prefill";
+              try { sessionStorage.setItem(key, hit2.ask); } catch (e) { /* 忽略 */ }
             }
             navigate(hit2.screen);
             closePanel();
@@ -1151,7 +1240,8 @@
         const r = search(input.value);
         if (r.length) {
           if (r[0].ask) {
-            try { sessionStorage.setItem("chat_prefill", r[0].ask); } catch (e) { /* 忽略 */ }
+            const key = r[0].screen === "reports" ? "report_prefill" : "chat_prefill";
+            try { sessionStorage.setItem(key, r[0].ask); } catch (e) { /* 忽略 */ }
           }
           navigate(r[0].screen);
           closePanel();

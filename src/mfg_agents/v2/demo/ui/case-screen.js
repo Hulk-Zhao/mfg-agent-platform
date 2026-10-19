@@ -29,6 +29,16 @@
  * 5. **令牌只在本屏用**：不碰 app 级 api._post/_get（它们自动带门户令牌且 401 会把
  *    用户踢回登录页）。本屏自带 caseFetch()，令牌存 localStorage 的 mfg_case_token。
  *
+ * ── 布局形态（2026-10-20 大对话框改版）────────────────────────────
+ * 整屏 = 左栏（身份卡 + 本体查看器 + 治理入口）+ 主区大对话框（复刻制度
+ * 助手的聊天气泡形态）。主对话框顶部页签「智能问答 / 案例检索」切换：
+ *   - 智能问答：时间序气泡对话（用户右绿 / 智能体左蓝，输入条固定底部），
+ *     每轮回答挂一个**默认收起**的「智能体检索」抽屉——收起时只露一行
+ *     管线摘要（术语归一 → 同义扩展 → 本体检索 → 引用校验），展开才是
+ *     完整轨迹时间线 + 本体增强收益面板（按需查看，不常驻刷屏）；
+ *   - 案例检索：保留关键词检索 + 案例卡片列表（原检索视图整体迁入）。
+ * 提问等待期展示管线逐级点亮的动画，让"智能体在干活"可见。
+ *
  * 注册方式：`window.Screens.render_cases`（app.js 的 renderScreen 按
  * `render_<screenId>` 查找，无需改 screens.js）。
  */
@@ -66,6 +76,31 @@
 
   /** 同一屏最多勾选的对比条数（超过则提示；不做静默截断）。 */
   const MAX_DIFF = 3;
+
+  /* ---- 大对话框改版常量 ---- */
+
+  /** 智能体头像（复用门户品牌六边形语言）。 */
+  const CASE_LOGO = '<svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L3 7v10l9 5 9-5V7l-9-5z"/><circle cx="12" cy="12" r="2.4"/></svg>';
+  /** 发送按钮图标（与制度助手同款）。 */
+  const SEND_ICON = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/></svg>';
+  /** 本体词表（与后端 ontology 词表同序；标签供查看器与搜索结果用）。 */
+  const ONTO_VOCABS = [
+    ["defect_mode", "缺陷模式"], ["root_cause", "根因"], ["countermeasure", "对策"],
+  ];
+  /** 提问等待期的管线动画步骤（与后端 trace 步骤同构，纯展示）。 */
+  const PIPE_STEPS = ["术语归一", "同义扩展", "本体检索", "权限过滤", "引用校验"];
+  /** 欢迎语的快捷提问（点击即问，降低冷启动门槛）。 */
+  const QUICK_QS = [
+    "锡膏印刷偏移通常怎么处置？",
+    "回流焊虚焊的常见根因有哪些？",
+    "来料五金件尺寸超差怎么处理？",
+  ];
+  function ontoLabel(vocab) {
+    for (let i = 0; i < ONTO_VOCABS.length; i++) {
+      if (ONTO_VOCABS[i][0] === vocab) return ONTO_VOCABS[i][1];
+    }
+    return vocab;
+  }
 
   /* ============ 界面创新辅助（I2/I7/I10）============
    * 纪律：这些函数**只读取服务端已返回的字段做展示**，不编造任何数据，
@@ -454,7 +489,8 @@
       session: null,            // 建会话时返回的 principal（含 token 与 tv/pv）
       meta: null, metaError: "", metaLoading: false,
       authError: "",            // 401/403 的专门文案（不弹 toast 了事）
-      tab: "ask",        // 主视觉是问答（布局裁定：问答在上、检索在下）
+      tab: "",           // 治理视图（compare / audit / access；空 = 大对话框主视图）
+      view: "ask",       // 大对话框主视图：ask=智能问答（聊天气泡）/ search=案例检索（列表）
       query: "锡膏印刷偏移 虚焊 连锡",
       action: "query",
       k: 20,
@@ -473,11 +509,12 @@
       cite: null,
       asking: false,
       answer: null,
-      // 提问对话窗口：多轮"问-答"历史（最多保留 6 轮，避免刷屏）
+      // 提问对话窗口：多轮"问-答"历史（时间序渲染，最新在底部；最多保留 8 轮）
       askLog: [],
-      // 对话折叠视图（三态）：latest = 仅最新一轮展开（旧轮收起，默认）；
-      // all = 全部展开；none = 全部收起（含最新一轮，避免"收起后最新一轮仍开着"）
-      chatView: "latest",
+      // 回答收缩：null = 自动（只有最新一轮展开，上方历史全部收缩成一行摘要）；
+      // 字符串 = 显式展开的轮次键（手点某轮历史）；"none" = 全部收缩。
+      // 新提问会把它重置为 null —— 这就是"有新的提问后对上面的回答做收缩展示"。
+      askOpen: null,
       compare: null, compareA: "qa", compareB: "equipment",
       compareDeptA: null, compareDeptB: null, comparing: false,
       audit: null,
@@ -491,7 +528,24 @@
       warnCollapsed: false,
       // 演示专用自动审批：执行弹窗状态 + 每个案例的路由信息（供"再演一次"）
       autoFlow: null, autoRoutes: {},
+      // 折叠态（key → true/false）。<details> 的开关原本只活在 DOM 里，
+      // 任何一次 repaint（点案例看全文 / 勾选对比 / 切段导航…）都会按默认值重画，
+      // 用户手动展开的那一轮、那一段就"自己收回去"了——所以折叠态必须进状态。
+      folds: {},
+      // 本体查看器（左栏）：当前词表 / 过滤词 / 选中的词条 {vocab, code}
+      ontoVocab: "defect_mode", ontoQ: "", ontoSel: null,
     };
+  }
+
+  /* ================= 折叠态（state 驱动，repaint 后不丢） ================= */
+
+  /** 生成 `<details>` 的折叠属性：data-fold 作键，open 取 state（无记录时用默认值）。 */
+  function fold(S, key, dfltOpen) {
+    const m = (S.folds || (S.folds = {}));
+    const open = Object.prototype.hasOwnProperty.call(m, key) ? !!m[key] : !!dfltOpen;
+    // 键可能带案例号等外部字面量：进属性前转义，避免引号把属性切断
+    return ' data-fold="' + String(key).replace(/&/g, "&amp;").replace(/"/g, "&quot;")
+      + '"' + (open ? " open" : "");
   }
 
   /* ================= 主渲染 ================= */
@@ -502,6 +556,15 @@
     const state = ctx.state;
     state.screenState = state.screenState || {};
     const S = state.screenState.cases || (state.screenState.cases = initialState());
+
+    // 深链：报告中心「关联案例」跳转时写入 cases_prefill（案例号）→ 预填检索词
+    try {
+      const want = sessionStorage.getItem("cases_prefill");
+      if (want) {
+        sessionStorage.removeItem("cases_prefill");
+        S.query = want;
+      }
+    } catch (e) { /* 隐私模式忽略 */ }
 
     if (!api.online()) {
       root.innerHTML = '<div class="case-offline">'
@@ -518,9 +581,9 @@
 
     root.innerHTML = ''
       + '<div class="case-root">'
-      + identityBar(UI, S)
       + (S.authError ? authErrorBar(UI, S) : "")
       + statsBar(UI, S)
+      + demoWarnings(UI, S)
       + '  <div class="case-body">'
       + '    <aside class="case-side">' + sidePanel(UI, S) + "</aside>"
       + '    <section class="case-main">' + mainPanel(UI, S) + "</section>"
@@ -535,8 +598,11 @@
     if (!S.meta && hasToken && !S.metaLoading && !S.metaError) loadMeta(root, ctx, S, base);
   }
 
-  /** 身份条：demo 的核心说服点——令牌是可见的，四类前缀一眼看到。 */
-  function identityBar(UI, S) {
+  /**
+   * 身份卡（左栏首块）：demo 的核心说服点——令牌是可见的，四类前缀一眼看到。
+   * 从整宽身份条压缩为侧栏卡片：选岗控件纵排，主体令牌紧随其下。
+   */
+  function identityCard(UI, S) {
     const id = S.identity;
     const etypeOptions = ["employee", "outsource", "temp", "supplier", "customer"]
       .map(function (t) {
@@ -548,26 +614,24 @@
         + ">≤ L" + n + "</option>";
     }).join("");
 
-    return '<header class="case-identity">'
-      + '<div class="case-identity-left">'
-      + '<div class="case-id-row">'
+    return '<div class="case-idcard">'
+      + '<div class="case-side-title">身份与令牌</div>'
+      + '<div class="case-id-grid">'
       + '<label>部门<select id="case-dept">' + deptOptions(UI, S.meta, id.dept) + "</select></label>"
       + '<label>岗位<select id="case-role">'
       + roleOptions(UI, S.meta, id.role, id.dept) + "</select></label>"
       + '<label>工厂<input id="case-plant" value="' + UI.esc(id.plant) + '" placeholder="P1"></label>'
       + '<label>用工类型<select id="case-etype">' + etypeOptions + "</select></label>"
-      + '<label>可见密级<select id="case-rank">' + rankOptions + "</select></label>"
+      + '<label class="case-id-full">可见密级<select id="case-rank">' + rankOptions + "</select></label>"
+      + "</div>"
+      + '<div class="case-id-act">'
       + '<button class="case-btn" id="case-session">'
       + (S.token ? "重建案例会话" : "建立案例会话") + "</button>"
-      + (S.token ? '<button class="case-btn case-btn-ghost" id="case-logout">退出</button>' : "")
+      + (S.token ? '<button class="case-mini" id="case-logout">退出</button>' : "")
       + "</div>"
-      + '<div class="case-id-note">演示态：在这里选择岗位即可建立会话；'
-      + '生产环境由公司统一登录系统注入身份，此选岗接口会关闭。'
-      + "岗位名称写错不会被放过——服务端按权限注册表逐个校验，未识别直接拒绝。</div>"
-      + demoWarnings(UI, S)
-      + "</div>"
+      + '<div class="case-id-note">演示态：选岗即建会话；生产环境由统一登录注入身份，此接口会关闭。</div>'
       + principalPanel(UI, S)
-      + "</header>";
+      + "</div>";
   }
 
   /**
@@ -608,7 +672,7 @@
       return '<code class="case-token">' + UI.esc(t) + "</code>";
     }).join("");
     const techTokens = rawTokens.length
-      ? '<details class="case-tech"><summary>技术详情（原始维度令牌）</summary><code>'
+      ? '<details class="case-tech"' + fold(S, "tech.pane", false) + '><summary>技术详情（原始维度令牌）</summary><code>'
         + UI.esc(rawTokens.join("\n")) + "</code></details>" : "";
     return '<div class="case-principal">'
       + '<div class="case-principal-name">' + UI.esc(p.user_id || "-")
@@ -758,50 +822,173 @@
     render(root, ctx);
   }
 
-  /* ================= 左栏 ================= */
+  /* ================= 左栏（身份卡 + 本体查看器 + 治理入口） ================= */
 
   function sidePanel(UI, S) {
-    if (!S.token) {
-      return '<div class="case-side-empty">请先建立案例会话。<br>'
-        + '<span class="case-hint">同一句话，换个岗位结果不同——这就是本屏要证明的事。</span></div>';
-    }
+    // 身份卡恒在——未建会话时它是唯一可用的入口
+    let html = '<div class="case-side-scroll">' + identityCard(UI, S);
     if (S.metaError) {
       // 加载失败优化：主提示说人话 + 给重试入口；原始错误进折叠区，
       // 不再把 "Failed to fetch" / "xxx is not defined" 直接甩给用户。
       const f = UI.friendlyError(S.metaError);
-      return '<div class="case-side-empty">'
+      html += '<div class="case-idcard">'
         + '<div class="case-load-fail-title">' + UI.icon("warn", 28) + " 页面信息加载失败</div>"
         + '<div class="case-load-fail-text">' + UI.esc(f.text) + "</div>"
         + '<button class="case-btn case-btn-wide" id="case-meta-retry">重新加载</button>'
         + (f.tech
-          ? '<details class="case-tech"><summary>技术详情（便于反馈）</summary><code>'
+          ? '<details class="case-tech"' + fold(S, "tech.metaerr", false)
+            + '><summary>技术详情（便于反馈）</summary><code>'
             + UI.esc(f.tech) + "</code></details>"
           : "")
         + "</div>";
+      return html + "</div>";
     }
-    if (!S.meta) return '<div class="case-side-empty">' + UI.spinner() + " 加载元信息…</div>";
+    if (!S.meta) {
+      html += '<div class="case-idcard">'
+        + (S.token ? UI.spinner() + " 加载本体词表…" : '<span class="case-hint">建立案例会话后，左侧将加载本体受控词表（缺陷模式 / 根因 / 对策）。</span>')
+        + "</div>";
+      return html + "</div>";
+    }
+    html += ontoBrowser(UI, S) + governBlock(UI, S);
+    return html + "</div>";
+  }
 
-    // 本体增强收益由问答结果携带（后端 case_qa._ontology_gain），检索态无此数据。
-    const gain = (S.result && S.result.ontology_gain) || null;
+  /* ---------- 本体查看器 ---------- */
 
-    // 本次结果分类分布：按 hits 的 category 聚合（无检索结果时不渲染该块）。
-    // 注意：此变量曾被引用但漏定义，侧栏整块 render 抛 ReferenceError，
-    // 页面停在旧 HTML——这类"引用未定义变量"的崩溃必须 fail-safe，
-    // 因为 render 一次失败 = 整屏不再刷新（2026-10-18 实测修复）。
-    const distRows = (function () {
-      const hits = (S.result && S.result.hits) || [];
-      if (!hits.length) return "";
-      const counts = {};
-      hits.forEach(function (h) {
-        const key = h.category || "未分类";
-        counts[key] = (counts[key] || 0) + 1;
+  /** 把 meta.ontology 组装成 {vocab: {terms, byCode, kids, roots}} 索引。 */
+  function ontoIndex(onto) {
+    const idx = {};
+    Object.keys(onto).forEach(function (vocab) {
+      const terms = onto[vocab] || [];
+      const byCode = {};
+      terms.forEach(function (t) { byCode[t.code] = t; });
+      const kids = {};
+      const roots = [];
+      terms.forEach(function (t) {
+        const p = (t.parent && byCode[t.parent]) ? t.parent : "";
+        if (p === "") roots.push(t);
+        else (kids[p] || (kids[p] = [])).push(t);
       });
-      return Object.keys(counts).map(function (key) {
-        return '<div class="case-act-row"><span>' + UI.esc(key)
-          + "</span><b>" + counts[key] + " 条</b></div>";
-      }).join("");
-    })();
+      idx[vocab] = { terms: terms, byCode: byCode, kids: kids, roots: roots };
+    });
+    return idx;
+  }
 
+  /**
+   * 本体查看器：词表页签 + 术语搜索 + 树形浏览 + 词条详情卡。
+   * 数据全部来自 /cases/meta 的受控词表投影（code/name/parent/synonyms/status），
+   * 点击词条可选中学名与同义词，并可一键「带词检索 / 去提问」。
+   */
+  function ontoBrowser(UI, S) {
+    const onto = (S.meta && S.meta.ontology) || {};
+    const total = Object.keys(onto).reduce(function (n, v) { return n + (onto[v] || []).length; }, 0);
+    let html = '<div class="case-onto">'
+      + '<div class="case-side-title">本体查看器 · ' + total + " 词条</div>"
+      + '<div class="case-hint">受控词表把「同一现象的不同叫法」归一，检索因此更准。点词条看同义词，可一键带词检索。</div>'
+      + '<input id="case-onto-q" class="case-onto-q" value="' + UI.esc(S.ontoQ || "") + '"'
+      + ' placeholder="搜术语 / 同义词…" autocomplete="off">'
+      + '<div class="case-onto-vocabs">'
+      + ONTO_VOCABS.map(function (pair) {
+        return '<button class="case-onto-vocab' + (S.ontoVocab === pair[0] ? " is-on" : "")
+          + '" data-act="onto-vocab" data-vocab="' + pair[0] + '">' + pair[1]
+          + " <i>" + (onto[pair[0]] || []).length + "</i></button>";
+      }).join("")
+      + "</div>";
+    if (String(S.ontoQ || "").trim()) html += ontoFlatList(UI, S, onto);
+    else html += ontoTree(UI, S, onto);
+    if (S.ontoSel) html += ontoCard(UI, S, onto);
+    return html + "</div>";
+  }
+
+  /** 树形浏览（当前词表）：父概念可展开，叶子与子概念点选。 */
+  function ontoTree(UI, S, onto) {
+    const ix = ontoIndex(onto)[S.ontoVocab];
+    if (!ix || !ix.terms.length) return '<div class="case-hint">该词表暂无词条。</div>';
+    const selCode = S.ontoSel && S.ontoSel.vocab === S.ontoVocab ? S.ontoSel.code : "";
+    const leaf = function (t) {
+      const on = selCode === t.code;
+      return '<div class="case-onto-leaf' + (on ? " is-on" : "") + '"'
+        + ' data-act="onto-term" data-vocab="' + UI.esc(S.ontoVocab) + '" data-code="' + UI.esc(t.code) + '"'
+        + ' title="' + UI.esc((t.synonyms || []).join(" / ")) + '">'
+        + "<span>" + UI.esc(t.name) + '</span><i class="case-onto-code">' + UI.esc(t.code) + "</i></div>";
+    };
+    const node = function (t) {
+      const ch = ix.kids[t.code] || [];
+      const dep = t.status === "deprecated";
+      if (!ch.length) return '<div class="case-onto-node-row">' + leaf(t) + "</div>";
+      const head = '<summary data-act="onto-term" data-vocab="' + UI.esc(S.ontoVocab)
+        + '" data-code="' + UI.esc(t.code) + '"'
+        + ' title="' + UI.esc((t.synonyms || []).join(" / ")) + '">'
+        + '<span class="case-onto-caret">▸</span>'
+        + "<span" + (dep ? ' class="case-onto-dep"' : "") + ">" + UI.esc(t.name) + "</span>"
+        + '<i class="case-onto-code">' + UI.esc(t.code) + "</i>"
+        + '<i class="case-onto-n">' + ch.length + "</i></summary>";
+      return '<details class="case-onto-node"'
+        + fold(S, "onto:" + S.ontoVocab + ":" + t.code, false) + ">" + head
+        + '<div class="case-onto-kids">' + ch.map(leaf).join("") + "</div></details>";
+    };
+    return '<div class="case-onto-tree">' + ix.roots.map(node).join("") + "</div>";
+  }
+
+  /** 搜索态：跨三本词表平铺匹配（名称 / 同义词），点击同样选中。 */
+  function ontoFlatList(UI, S, onto) {
+    const q = String(S.ontoQ || "").toLowerCase();
+    const hits = [];
+    ONTO_VOCABS.forEach(function (pair) {
+      (onto[pair[0]] || []).forEach(function (t) {
+        const labels = [t.name].concat(t.synonyms || []);
+        const matched = labels.some(function (l) {
+          return String(l || "").toLowerCase().indexOf(q) >= 0;
+        });
+        if (matched) hits.push({ vocab: pair[0], t: t });
+      });
+    });
+    if (!hits.length) {
+      return '<div class="case-hint case-onto-none">词表中没有匹配「' + UI.esc(S.ontoQ) + "」的词条。</div>";
+    }
+    const rows = hits.slice(0, 24).map(function (x) {
+      const on = S.ontoSel && S.ontoSel.vocab === x.vocab && S.ontoSel.code === x.t.code;
+      return '<div class="case-onto-leaf' + (on ? " is-on" : "") + '"'
+        + ' data-act="onto-term" data-vocab="' + UI.esc(x.vocab) + '" data-code="' + UI.esc(x.t.code) + '">'
+        + "<span>" + UI.esc(x.t.name) + '<i class="case-onto-vocabtag">' + UI.esc(ontoLabel(x.vocab)) + "</i></span>"
+        + '<i class="case-onto-code">' + UI.esc(x.t.code) + "</i></div>";
+    }).join("");
+    return '<div class="case-onto-tree">' + rows
+      + (hits.length > 24 ? '<div class="case-hint">仅显示前 24 条，缩小关键词试试。</div>' : "")
+      + "</div>";
+  }
+
+  /** 选中学词条的详情卡：定义 / 同义 / 父子概念 + 两个动作。 */
+  function ontoCard(UI, S, onto) {
+    const terms = onto[S.ontoSel.vocab] || [];
+    const t = terms.filter(function (x) { return x.code === S.ontoSel.code; })[0];
+    if (!t) { S.ontoSel = null; return ""; }
+    const parent = t.parent
+      ? (terms.filter(function (x) { return x.code === t.parent; })[0] || {}).name : "";
+    const kids = terms.filter(function (x) { return x.parent === t.code; })
+      .map(function (x) { return x.name; });
+    return '<div class="case-onto-card">'
+      + '<div class="case-onto-card-head"><b>' + UI.esc(t.name) + "</b>"
+      + '<i class="case-onto-code">' + UI.esc(t.code) + "</i>"
+      + (t.status === "deprecated" ? '<span class="case-chip">已停用</span>' : "")
+      + "</div>"
+      + '<div class="case-onto-card-row">词表 · ' + UI.esc(ontoLabel(S.ontoSel.vocab))
+      + (parent ? " · 父概念 " + UI.esc(parent) : "") + "</div>"
+      + ((t.synonyms || []).length
+        ? '<div class="case-onto-card-row">同义：' + t.synonyms.map(function (s) {
+          return '<span class="case-chip">' + UI.esc(s) + "</span>";
+        }).join("") + "</div>" : "")
+      + (kids.length ? '<div class="case-onto-card-row">子概念：' + UI.esc(kids.join("、")) + "</div>" : "")
+      + '<div class="case-onto-card-act">'
+      + '<button class="case-mini case-mini-key" data-act="onto-search">检索此概念</button>'
+      + '<button class="case-mini" data-act="onto-ask">去提问</button>'
+      + '<button class="case-mini" data-act="onto-close">收起</button>'
+      + "</div></div>";
+  }
+
+  /* ---------- 治理与工具 ---------- */
+
+  function governBlock(UI, S) {
     const p = S.meta.principal || {};
     const mine = ((S.meta.rbac && S.meta.rbac.roles) || []).filter(function (r) {
       return (p.roles || []).indexOf(r.key) >= 0;
@@ -810,7 +997,8 @@
 
     const actionChips = myActions.length
       ? myActions.map(function (a) {
-        return '<span class="case-chip case-chip-on">' + UI.esc(ACTION_LABEL[a.replace(/^case\./, "")] || a) + "</span>";
+        return '<span class="case-chip case-chip-on">'
+          + UI.esc(ACTION_LABEL[a.replace(/^case\./, "")] || a) + "</span>";
       }).join("")
       : '<span class="case-chip">无</span>';
 
@@ -821,33 +1009,44 @@
         + (a.roles || []).length + " 个角色</b></div>";
     }).join("");
 
-    const VOCAB_LABEL = { defect_mode: "缺陷模式", root_cause: "根因", countermeasure: "对策" };
-    const vocab = S.meta.ontology || {};
-    const vocabRows = Object.keys(vocab).map(function (key) {
-      return '<div class="case-act-row"><span>' + UI.esc(VOCAB_LABEL[key] || key)
-        + "</span><b>" + (vocab[key] || []).length + " 条</b></div>";
-    }).join("");
+    // 本次结果分类分布（有检索结果时才渲染）
+    const hits = (S.result && S.result.hits) || [];
+    let dist = "";
+    if (hits.length) {
+      const counts = {};
+      hits.forEach(function (h) {
+        const key = h.category || "未分类";
+        counts[key] = (counts[key] || 0) + 1;
+      });
+      dist = '<div class="case-side-title">本次结果分类分布</div><div class="case-dist">'
+        + Object.keys(counts).map(function (key) {
+          return '<div class="case-act-row"><span>' + UI.esc(key)
+            + "</span><b>" + counts[key] + " 条</b></div>";
+        }).join("") + "</div>";
+    }
 
     const canIngest = myActions.indexOf("case.ingest") >= 0;
+    const govLink = function (act, label) {
+      return '<button class="case-link' + (S.tab === act.slice(4) ? " is-active" : "")
+        + '" data-act="' + act + '">' + label + "</button>";
+    };
 
-    return '<div class="case-side-block">'
-      + '<div class="case-side-title">本体与资产</div>'
-      + '<div class="case-hint">受控词表把"同一现象的不同叫法"归一，'
-      + "检索因此更准、口径更一致。</div>"
-      + (vocabRows || '<span class="case-hint">-</span>')
-      + (gain ? '<div class="case-gain"><b>本体增强带来的差别</b>'
-        + UI.esc(gain.summary || "") + "</div>" : "")
-      + (distRows ? '<div class="case-side-title">本次结果分类分布</div>'
-        + '<div class="case-dist">' + distRows + "</div>" : "")
+    return '<div class="case-idcard">'
       + '<div class="case-side-title">我的动作</div>'
       + '<div class="case-chip-row">' + actionChips + "</div>"
-      + '<div class="case-side-title">动作门禁（持有角色数）</div>'
-      + (allActions || '<span class="case-hint">-</span>')
-      + '<div class="case-side-title">治理</div>'
-      + '<button class="case-btn case-btn-wide" id="case-audit">校验审计链</button>'
+      + '<div class="case-side-title">协同与治理</div>'
+      + '<div class="case-gov-links">'
+      + govLink("gov-compare", "岗位对比")
+      + govLink("gov-audit", "审计链校验")
+      + govLink("gov-access", "访问申请待办")
+      + "</div>"
       + (canIngest
         ? '<button class="case-btn case-btn-wide case-btn-ghost" id="case-ingest-open">录入案例（进入待审）</button>'
-        : '<div class="case-hint">当前岗位无 <code>case.ingest</code>：连入口都看不到（前端隐藏只是体验，服务端同样 403）。</div>')
+        : "")
+      + '<details class="case-tech"' + fold(S, "gov.gate", false)
+      + '><summary>动作门禁（持有角色数）</summary>'
+      + (allActions || '<span class="case-hint">-</span>') + "</details>"
+      + dist
       + "</div>";
   }
 
@@ -857,36 +1056,38 @@
     if (!S.token) {
       return '<div class="case-gate"><h3>建立案例会话后开始</h3>'
         + "<p>案例检索不看你是谁，看你的<b>维度令牌</b>：角色、部门、工厂、用工类型、可见密级。"
-        + "选一个岗位，服务端把它编译成过滤条件，再下推到向量库——过滤发生在召回之前。</p>"
-        + '<p class="case-hint">越权检索不会返回"空结果 + 提示无权限"，而是根本进不了候选集。</p></div>';
+        + "在左侧选一个岗位，服务端把它编译成过滤条件，再下推到向量库——过滤发生在召回之前。</p>"
+        + '<p class="case-hint">越权检索不会返回"空结果 + 提示无权限"，而是根本进不了候选集。</p>'
+        + '<p class="case-hint">会话建立后：主区是「智能问答 / 案例检索」大对话框，'
+        + "左侧可浏览本体受控词表。</p></div>";
     }
-    // 布局裁定：**问答在上、检索在下**。问答是主视觉（本体增强 Agentic RAG 的
-    // 卖点在这里），检索是次级工具。取消平铺页签，避免四个入口抢注意力。
-    const sideLinks = '<div class="case-side-links">'
-      + '<button class="case-link' + (S.tab === "compare" ? " is-active" : "")
-      + '" data-tab="compare">岗位对比</button>'
-      + '<button class="case-link' + (S.tab === "audit" ? " is-active" : "")
-      + '" data-tab="audit">审计链</button>'
-      + '<button class="case-link' + (S.tab === "access" ? " is-active" : "")
-      + '" data-tab="access">访问申请待办</button>'
+    // 治理视图（岗位对比 / 审计链 / 访问申请待办）占满主区
+    if (S.tab === "compare") return '<div class="case-pane">' + comparePane(UI, S) + "</div>";
+    if (S.tab === "audit") return '<div class="case-pane">' + auditPane(UI, S) + "</div>";
+    if (S.tab === "access") return '<div class="case-pane">' + accessPane(UI, S) + "</div>";
+    // 大对话框：顶部页签切换「智能问答（聊天气泡）/ 案例检索（列表）」
+    return '<div class="case-shell">'
+      + shellHead(UI, S)
+      + (S.view === "ask" ? chatPane(UI, S) : '<div class="case-shell-body">' + searchPane(UI, S) + "</div>")
       + "</div>";
+  }
 
-    const askBlock = '<section class="case-block case-block-ask">'
-      + '<h3 class="case-block-title">智能问答'
-      + '<span class="case-hint">本体增强 Agentic RAG：术语归一 → 同义扩展 → 三元组检索 → 权限过滤 → 引用校验</span>'
-      + "</h3>" + askPane(UI, S) + "</section>";
-
-    const searchOpen = S.tab !== "search" && !S.result;
-    const searchBlock = '<section class="case-block case-block-search">'
-      + '<details class="case-block-fold"' + (searchOpen ? "" : " open") + ">"
-      + "<summary>案例检索（按关键词查历史案例）</summary>"
-      + searchPane(UI, S) + "</details></section>";
-
-    let body = askBlock + searchBlock + sideLinks;
-    if (S.tab === "compare") body += '<section class="case-block">' + comparePane(UI, S) + "</section>";
-    else if (S.tab === "audit") body += '<section class="case-block">' + auditPane(UI, S) + "</section>";
-    else if (S.tab === "access") body += '<section class="case-block">' + accessPane(UI, S) + "</section>";
-    return body;
+  /** 大对话框头：品牌 + 页签 + 在线徽标（复刻制度助手的顶栏结构）。 */
+  function shellHead(UI, S) {
+    const govActive = S.tab === "compare" || S.tab === "audit" || S.tab === "access";
+    return '<div class="case-shell-head">'
+      + '<div class="case-shell-brand">'
+      + '<div class="case-shell-logo">' + CASE_LOGO + "</div>"
+      + '<div class="case-shell-title"><b>案例智能体</b><i>本体增强 Agentic RAG</i></div>'
+      + "</div>"
+      + '<div class="case-shell-tabs">'
+      + '<button class="case-tab' + (!govActive && S.view === "ask" ? " is-active" : "")
+      + '" data-act="view-ask">智能问答</button>'
+      + '<button class="case-tab' + (!govActive && S.view === "search" ? " is-active" : "")
+      + '" data-act="view-search">案例检索</button>'
+      + "</div>"
+      + '<div class="case-shell-status"><span class="case-online">在线</span></div>'
+      + "</div>";
   }
 
   /* ================= 访问申请 ================= */
@@ -1167,7 +1368,7 @@
         + tok.map(function (t) { return "<code>" + UI.esc(t) + "</code>"; }).join(" ")
         + "</div>"
       : "";
-    return '<details class="case-why"' + (S.showWhy ? " open" : "") + ">"
+    return '<details class="case-why"' + fold(S, "why", S.showWhy) + ">"
       + "<summary>为什么是这些结果 / 为什么有看不到的？（服务端编译判定）</summary>"
       + ident + rows
       + (explain ? '<div class="case-side-title">编译结果（人类可读，不是原始表达式）</div>'
@@ -1291,14 +1492,16 @@
       + freshnessBar(hit)
       + "</div>"
       + (hit.text ? '<p class="case-hit-text">' + UI.esc(hit.text) + "</p>" : "")
-      + (multi ? '<details class="case-chunk-list"><summary>展开 ' + chunks.length
+      + (multi ? '<details class="case-chunk-list"' + fold(S, "chunks:" + hit.case_id, false)
+        + "><summary>展开 " + chunks.length
         + " 个片段（引用要精确到段）</summary><ul>"
         + chunks.map(function (c) { return chunkRow(UI, S, c); }).join("")
         + "</ul></details>" : "")
       + relatedStrip(UI, S, hit)
       + '<div class="case-hit-foot">'
       + '<span class="case-foot-cn">案例编号与片段编号见「技术详情」</span>'
-      + '<details class="case-tech"><summary>技术详情</summary><code>'
+      + '<details class="case-tech"' + fold(S, "tech:" + hit.case_id, false)
+      + '><summary>技术详情</summary><code>'
       + UI.esc([hit.case_id, hit.chunk_id || "", "content_version="
                 + String(hit.content_version || 1),
                 "filter_hash=" + String((S.result && S.result.filter_hash) || "").slice(0, 16)]
@@ -1308,9 +1511,19 @@
       + '<button class="case-mini" data-act="cite" data-id="' + UI.esc(hit.case_id) + '"'
       + ' data-chunk="' + UI.esc(hit.chunk_type || "summary") + '"'
       + ' data-ver="' + UI.esc(String(hit.content_version || 1)) + '">引用</button>'
+      + '<button class="case-mini" data-report-gen="' + UI.esc(JSON.stringify({
+          source_module: "case",
+          context: {
+            title: "案例引用报告 · " + String(hit.title || hit.case_id),
+            summary: [hit.category, hit.subcategory, hit.defect_mode_code,
+                      hit.root_cause_code].filter(Boolean).join(" / "),
+            refs: [String(hit.case_id)],
+          },
+        })) + '" title="把该案例作为溯源引用，归档到报告中心">生成报告</button>'
       + "</span></div>"
       + (citedChunks.length ? '<div class="case-cite-inline">已引用（引用凭据）'
-        + '<details class="case-tech"><summary>技术详情</summary><code>'
+        + '<details class="case-tech"' + fold(S, "techcite:" + hit.case_id, false)
+        + '><summary>技术详情</summary><code>'
         + UI.esc(S.cite.citation.case_id + "#" + S.cite.citation.chunk_id
                 + "@v" + String(S.cite.citation.content_version)) + "</code></details>"
         + '<span class="case-hint">（三元组已落审计；这就是"可溯源"的凭据）</span></div>' : "")
@@ -1362,7 +1575,8 @@
         + '" href="javascript:void(0)">' + UI.esc(x.hit.title || x.hit.case_id) + "</a>"
         + '<span class="case-related-seg">' + UI.esc(segmentOf(x.hit)) + "</span></li>";
     }).join("");
-    return '<details class="case-related"><summary>相关案例（同根因 / 同缺陷模式，本次结果内 '
+    return '<details class="case-related"' + fold(S, "rel:" + hit.case_id, false)
+      + "><summary>相关案例（同根因 / 同缺陷模式，本次结果内 "
       + rel.length + " 条）</summary><ul>" + rows + "</ul>"
       + '<div class="case-hint">跨段提示：同一根因出现在不同工艺段，往往是系统性问题而非单点。</div>'
       + "</details>";
@@ -1439,7 +1653,7 @@
       return "<tr" + (differ ? ' class="case-diff-differ"' : "") + "><th>" + UI.esc(pair[0]) + "</th>"
         + vals.map(function (v) { return "<td>" + UI.esc(v) + "</td>"; }).join("") + "</tr>";
     }).join("");
-    return '<details class="case-diff"' + (S.diffOpen === false ? "" : " open") + ">"
+    return '<details class="case-diff"' + fold(S, "diff", S.diffOpen !== false) + ">"
       + "<summary>关键差异对比（" + cols.length + " 条 · <b>高亮行 = 取值不同</b>）</summary>"
       + '<table class="case-table case-diff-table"><thead>' + head + "</thead><tbody>"
       + body + "</tbody></table>"
@@ -1469,13 +1683,37 @@
       + '<p class="case-hint">' + desc + "</p>" + tags + "</div>";
   }
 
-  /** I6 决策轨迹时间线（数据来自后端 /cases/ask 的 trace / ontology_gain，前端只渲染）。 */
-  function tracePane(UI, S, a) {
+  /** 轮次键：时间戳 + 问题文本的 djb2 哈希（跨 repaint 稳定且不撑大 DOM）。 */
+  function turnKey(turn) {
+    const qtext = String((turn && turn.q) || "");
+    let qh = 5381;
+    for (let qi = 0; qi < qtext.length; qi++) qh = ((qh * 33) ^ qtext.charCodeAt(qi)) >>> 0;
+    return "turn:" + String((turn && turn.ts) || 0) + "-" + qh.toString(36);
+  }
+
+  /**
+   * 智能体检索细节抽屉（每轮回答下方，**默认收起**）。
+   * 收起 = 一行管线摘要（术语归一 → 同义扩展 → 本体检索 → 引用校验，带计数）；
+   * 展开 = 完整轨迹时间线 + 本体增强收益面板（即"本体增强检索"详情，按需查看）。
+   * 数据全部来自后端 /cases/ask 的 trace / ontology_gain，前端只渲染不编造。
+   */
+  function agentDrawer(UI, S, a, tkey) {
     const trace = a.trace || [];
-    if (!trace.length) return "";
+    if (!trace.length && !(a.ontology_gain && a.ontology_gain.summary)) return "";
+    const chips = trace.map(function (st) {
+      const n = (st.items || []).length;
+      return '<span class="case-pipe-step"><i>' + UI.esc(st.title || "") + "</i>"
+        + (n ? UI.esc(String(n)) : "") + "</span>";
+    });
+    const claimN = (a.claims || []).length;
+    const dropN = a.dropped_claims || 0;
+    if (trace.length) {
+      chips.push('<span class="case-pipe-step' + (dropN ? " is-warn" : " is-ok")
+        + '"><i>引用校验</i>' + (dropN ? "丢弃 " + dropN : claimN + " 通过") + "</span>");
+    }
     const rows = trace.map(function (step) {
       const items = (step.items || []).map(function (x) {
-        return '<li>' + UI.esc(x) + "</li>";
+        return "<li>" + UI.esc(x) + "</li>";
       }).join("");
       return '<li class="case-trace-step"><span class="case-trace-no">'
         + UI.esc(String(step.step)) + "</span>"
@@ -1484,18 +1722,25 @@
         + (items ? '<ul class="case-trace-items">' + items + "</ul>" : "")
         + "</div></li>";
     }).join("");
-    const gain = a.ontology_gain && a.ontology_gain.summary
+    const g = a.ontology_gain || {};
+    const gain = g.summary
       ? '<div class="case-trace-gain"><span class="case-trace-gain-tag">本体增强收益</span>'
-        + UI.esc(a.ontology_gain.summary)
-        + ((a.ontology_gain.items || []).length
-          ? '<ul class="case-trace-items">' + a.ontology_gain.items.map(function (x) {
+        + UI.esc(g.summary)
+        + ((g.items || []).length
+          ? '<ul class="case-trace-items">' + g.items.map(function (x) {
             return "<li>" + UI.esc(x) + "</li>";
           }).join("") + "</ul>" : "")
         + '<span class="case-hint">数字由服务端真实统计（同一句话：原文检索 vs 本体归一后），非前端估算。</span>'
         + "</div>"
       : "";
-    return '<details class="case-trace" open><summary>处理轨迹时间线（这一步做了什么、为什么）'
-      + "</summary>" + gain + '<ol class="case-trace-list case-trace-timeline">' + rows + "</ol></details>";
+    return '<details class="case-agent"' + fold(S, "agent:" + tkey, false) + ">"
+      + '<summary><span class="case-agent-tag">智能体检索</span>'
+      + '<span class="case-pipe">' + chips.join("") + "</span>"
+      + '<span class="case-agent-caret">▾</span></summary>'
+      + '<div class="case-agent-body">'
+      + (trace.length ? '<ol class="case-trace-list case-trace-timeline">' + rows + "</ol>" : "")
+      + gain
+      + "</div></details>";
   }
 
   /** 去掉模板作答里的"案例 X 的经验（type）："前缀，只留正文。 */
@@ -1512,19 +1757,24 @@
     return p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds());
   }
 
-  /** 一轮对话：问题气泡 + 轨迹 + 答案卡片（**案例以列表展示**）。 */
-  function chatTurn(UI, S, turn, isLast) {
+  /**
+   * 一轮对话：用户右气泡 + 智能体左气泡（答案是**案例列表**）+ 检索细节抽屉。
+   * open=false 时只留用户气泡 + 一行收缩摘要（历史轮次），点摘要条展开。
+   */
+  function chatTurn(UI, S, turn, open) {
     const a = (turn && turn.a) || {};
+    const tkey = turnKey(turn);
     const hitsById = {};
     ((a.search && a.search.hits) || []).forEach(function (h) {
       if (h && !hitsById[h.case_id]) hitsById[h.case_id] = h;
     });
-    const nAns = (a.claims || []).length;
-    const sum = '<summary class="case-chat-sum"><span class="case-chat-role">问</span>'
-      + '<span class="case-chat-qtext">' + UI.esc((turn && turn.q) || "") + "</span>"
-      + (turn && turn.ts ? '<span class="case-chat-time">' + UI.esc(fmtTime(turn.ts)) + "</span>" : "")
-      + '<span class="case-chat-badge">' + UI.esc(a.answered ? (nAns ? nAns + " 条案例" : "结论") : "拒答")
-      + '</span><span class="case-chat-caret">▾</span></summary>';
+    // 用户气泡（右，微信绿）
+    let html = '<div class="case-msg case-msg-user"><div class="case-msg-wrap">'
+      + '<div class="case-bubble case-bubble-user">' + UI.esc((turn && turn.q) || "") + "</div>"
+      + (turn && turn.ts ? '<div class="case-msg-time">' + UI.esc(fmtTime(turn.ts)) + "</div>" : "")
+      + "</div></div>";
+    if (!open) return html + foldedAnswer(UI, a, tkey, turn.ts);
+    // 案例列表项（与检索视图同一渲染口径：标题/状态/相似度/引用片段/操作）
     const items = (a.claims || []).map(function (c, i) {
       const cit = (c.citations || [])[0] || {};
       const h = hitsById[cit.case_id] || {};
@@ -1553,53 +1803,118 @@
     }).join("");
     const notice = a.search && a.search.notice
       ? '<div class="case-hint case-notice-inline">后端提示：' + UI.esc(a.search.notice) + "</div>" : "";
-    const ans = '<div class="case-chat-a"><div class="case-answer'
-      + (a.answered ? "" : " case-answer-deny") + '">'
+    const ansBody = '<div class="case-answer' + (a.answered ? "" : " case-answer-deny") + '">'
       + "<h4>" + (a.answered ? "结论 · 命中的案例" : "拒答") + "</h4>"
       + (a.answered && items
         ? '<ul class="case-ans-list">' + items + "</ul>"
         : "<p>" + UI.esc(a.answered ? a.answer : (a.reason || "（无内容）")) + "</p>")
       + (a.dropped_claims ? '<div class="case-warn">有 ' + a.dropped_claims
         + " 条结论因引用校验失败被丢弃。</div>" : "")
-      + notice + (a.search ? whyPanel(UI, S, a.search) : "")
+      + "</div>";
+    // 智能体气泡（左）+ 检索细节抽屉
+    html += '<div class="case-msg case-msg-bot"><div class="case-msg-avatar">' + CASE_LOGO + "</div>"
+      + '<div class="case-msg-wrap">'
+      + '<div class="case-bubble case-bubble-bot' + (a.answered ? "" : " case-bubble-deny") + '">'
+      + ansBody + notice
+      + "</div>"
+      + agentDrawer(UI, S, a, tkey)
+      + '<button class="case-fold-toggle" data-act="turn-toggle" data-tkey="'
+      + UI.esc(tkey) + '" title="把这一轮回答收成一行摘要">收起这一轮</button>'
       + "</div></div>";
-    const trace = (a.trace && a.trace.length) ? tracePane(UI, S, a) : "";
-    // 折叠：默认只展开最新一轮（新提问自动收起旧轮）；「全部展开」全开；「全部收起」全关。
-    const open = (S.chatView === "all" ||
-      (S.chatView === "latest" && isLast)) ? " open" : "";
-    return '<details class="case-chat-turn"' + open + ">" + sum + trace + ans + "</details>";
+    return html;
   }
 
-  /** 提问对话窗口：输入在顶部，历史按"问-答"气泡展示（答案是**案例列表**）。 */
-  function askPane(UI, S) {
+  /** 截断长文本（收缩摘要用，单行显示）。 */
+  function clipText(text, n) {
+    const t = String(text == null ? "" : text).replace(/\s+/g, " ").trim();
+    return t.length > n ? t.slice(0, n) + "…" : t;
+  }
+
+  /**
+   * 收缩态的一轮回答：与展开态同一份数据（claims / reason），只留一行摘要。
+   * 行内给「命中条数 + 首条结论摘要 + 提问时间」，点整条即展开。
+   */
+  function foldedAnswer(UI, a, tkey, ts) {
+    const claims = (a.claims || []);
+    const denied = !a.answered;
+    const tag = denied ? "已收缩 · 拒答" : "已收缩 · " + claims.length + " 条案例";
+    let main = "";
+    if (denied) main = clipText(a.reason || "未给出可引用的结论", 56);
+    else if (claims.length) main = clipText(claimBody(claims[0].text), 56);
+    else main = clipText(a.answer || "", 56);
+    const time = ts ? '<span class="case-foldbar-time">' + UI.esc(fmtTime(ts)) + "</span>" : "";
+    return '<div class="case-msg case-msg-bot case-msg-folded"><div class="case-msg-avatar">'
+      + CASE_LOGO + "</div>"
+      + '<div class="case-msg-wrap">'
+      + '<button class="case-foldbar' + (denied ? " is-deny" : "") + '"'
+      + ' data-act="turn-toggle" data-tkey="' + UI.esc(tkey) + '"'
+      + ' title="展开这一轮的完整回答">'
+      + '<span class="case-foldbar-caret">▸</span>'
+      + '<span class="case-foldbar-tag">' + UI.esc(tag) + "</span>"
+      + '<span class="case-foldbar-main">' + UI.esc(main) + "</span>"
+      + time
+      + "</button>"
+      + "</div></div>";
+  }
+
+  /** 欢迎卡片：智能体自我介绍 + 快捷提问（点击即问）。 */
+  function welcomeCard(UI) {
+    return '<div class="case-msg case-msg-bot"><div class="case-msg-avatar">' + CASE_LOGO + "</div>"
+      + '<div class="case-msg-wrap"><div class="case-bubble case-bubble-bot">'
+      + "<b>您好，我是制造案例智能体。</b><br>"
+      + "提问后我会沿「术语归一 → 同义扩展 → 本体检索 → 权限过滤 → 引用校验」的本体增强链路"
+      + "检索历史案例：每条结论都带 (案例, 片段, 版本) 引用，挂不上引用的直接丢弃——宁拒答，不编造。"
+      + "</div>"
+      + '<div class="case-quick">' + QUICK_QS.map(function (q) {
+        return '<button class="case-mini case-quick-q" data-act="chat-quick" data-q="'
+          + UI.esc(q) + '">' + UI.esc(q) + "</button>";
+      }).join("") + "</div>"
+      + "</div></div>";
+  }
+
+  /** 等待卡片：管线五步逐级点亮的动画，让"智能体在干活"可见。 */
+  function pendingCard() {
+    const steps = PIPE_STEPS.map(function (s, i) {
+      return '<span class="case-pipe-step" style="--i:' + i + '">' + s + "</span>";
+    }).join("");
+    return '<div class="case-msg case-msg-bot"><div class="case-msg-avatar">' + CASE_LOGO + "</div>"
+      + '<div class="case-msg-wrap"><div class="case-bubble case-bubble-bot case-bubble-pending">'
+      + '<div class="case-pipe-live"><span class="case-pipe-dot"></span>本体增强检索中…</div>'
+      + '<div class="case-pipe">' + steps + "</div>"
+      + "</div></div></div>";
+  }
+
+  /** 智能问答视图：时间序聊天气泡（最新在底部）+ 底部固定输入条。 */
+  function chatPane(UI, S) {
     const log = S.askLog || [];
     let body = "";
-    if (!log.length && !S.asking) {
-      body = '<div class="case-hint case-pad">提问后系统检索案例、拼装带引用的结论；'
-        + "任何一条结论挂不上 (case_id, chunk_id, content_version) 就会被丢弃，"
-        + "全丢、或最高匹配度低于阈值 → 拒答（不编造）。</div>";
-    }
-    if (log.length) {
-      body += '<div class="case-chat-tools">'
-        + '<button class="case-mini" data-act="chat-toggle-all">'
-        + (S.chatView === "all" ? "全部收起" : "全部展开") + "</button>"
-        + '<span class="case-hint">共 ' + log.length
-        + " 轮 · 仅最新一轮默认展开（新提问自动收起旧轮）</span></div>";
-    }
-    // 逆序渲染：**最新一轮置顶**（新提问出现在最上方，旧轮向下排列并默认收起）
-    const ordered = log.slice().reverse();
-    body += ordered.map(function (t, i) {
-      return chatTurn(UI, S, t, i === 0);
+    if (!log.length && !S.asking) body += welcomeCard(UI);
+    let folded = 0;
+    body += log.map(function (t, i) {
+      const open = turnIsOpen(S, log, i, turnKey(t));
+      if (!open) folded += 1;
+      return chatTurn(UI, S, t, open);
     }).join("");
-    if (S.asking) {
-      body += '<div class="case-chat-turn"><div class="case-chat-q">'
-        + '<span class="case-chat-role">问</span><span>提问中…</span></div>'
-        + '<div class="case-loading">' + UI.spinner() + " 检索并组装引用…</div></div>";
+    if (folded) {
+      body = '<div class="case-fold-hint">上方 ' + folded
+        + " 轮历史回答已收缩（只留一行摘要），点摘要条可重新展开。</div>" + body;
     }
-    return '<div class="case-searchbar">'
-      + '<input id="case-question" class="case-input" placeholder="例如：锡膏印刷偏移通常怎么处置？" autocomplete="off">'
-      + '<button class="case-btn" id="case-ask">提问</button>'
-      + "</div>" + body;
+    if (S.asking) body += pendingCard();
+    return '<div class="case-chat" id="case-chat">' + body + "</div>"
+      + '<div class="case-inputbar">'
+      + '<input id="case-question" class="case-input case-input-ask" placeholder="例如：锡膏印刷偏移通常怎么处置？" autocomplete="off">'
+      + '<button class="case-btn-ask case-send" id="case-ask" title="提问">' + SEND_ICON + "</button>"
+      + "</div>";
+  }
+
+  /**
+   * 某一轮是否展开：默认只有最新一轮展开（上方历史收缩），
+   * 用户点开某一轮后由 S.askOpen 记住；下一次提问会把状态重置回"只有最新展开"。
+   */
+  function turnIsOpen(S, log, index, tkey) {
+    if (S.askOpen === "none") return false;
+    if (typeof S.askOpen === "string" && S.askOpen) return S.askOpen === tkey;
+    return index === (log || []).length - 1;
   }
 
   function comparePane(UI, S) {
@@ -1682,7 +1997,8 @@
       const rows = (a.recent || []).map(function (row) {
         const actionZh = ZH.action[row.action] || row.action;
         const actorZh = actorLabel(row.actor, S.meta);
-        const detail = ['<details class="case-tech"><summary>技术详情</summary><code>'
+        const detail = ['<details class="case-tech"' + fold(S, "tech.audit:" + row.seq, false)
+          + '><summary>技术详情</summary><code>'
           + UI.esc([row.action, row.actor, row.case_id || "-",
                     "filter_hash=" + String(row.filter_hash || "").slice(0, 12),
                     "query_hash=" + String(row.query_hash || "").slice(0, 12),
@@ -1810,6 +2126,23 @@
       if (el) el.addEventListener(event, handler);
     };
 
+    /* ---- 折叠态回写（**关键**）----
+       `<details>` 的开合只活在 DOM 上：不写回 state 的话，下一次 repaint（点案例看全文、
+       勾选对比、切段导航…）都会按默认值重画，用户手动展开的那一轮/那一段就"自己收回去"。
+       toggle 事件不冒泡，必须在捕获阶段接；root 每次 render 复用同一节点，只绑一次。 */
+    if (!root.__caseFoldBound) {
+      root.__caseFoldBound = true;
+      root.addEventListener("toggle", function (ev) {
+        const el = ev.target;
+        if (!el || el.tagName !== "DETAILS" || !el.getAttribute) return;
+        const key = el.getAttribute("data-fold");
+        if (!key) return;
+        const st = ctx.state.screenState.cases;   // 取当前态，避免闭包里握着旧对象
+        if (!st) return;
+        (st.folds || (st.folds = {}))[key] = !!el.open;
+      }, true);
+    }
+
     /* ---- 统计卡片：刷新 + 点击直达 ---- */
     on("#case-stats-refresh", "click", function () { loadStats(root, ctx, S, base); });
     // 演示说明黄条：收起/展开（信息不丢，噪音可控）
@@ -1885,7 +2218,10 @@
       S.compare = null;
       S.audit = null;
       S.detail = null;
-      S.tab = "search";
+      S.tab = "";
+      S.view = "ask";     // 新会话回到大对话框的问答主视图
+      S.ontoQ = "";
+      S.ontoSel = null;
       // 换身份 = 换可见范围：旧统计必须作废，否则卡片会短暂显示上一岗位的数字
       S.stats = null;
       S.statsError = "";
@@ -1950,9 +2286,8 @@
     on("#case-question", "keydown", function (ev) {
       if (ev.key === "Enter") { ev.preventDefault(); doAsk(); }
     });
-    on("#case-ask", "click", doAsk);
+    on("#case-ask", "click", function () { doAsk(); });
     on("#case-compare", "click", doCompare);
-    on("#case-audit", "click", function () { S.tab = "audit"; repaint(); doAudit(); });
     on("#case-audit-run", "click", doAudit);
     // 页面信息加载失败后的重试入口（清错误态重新拉 meta）
     on("#case-meta-retry", "click", function () {
@@ -1964,15 +2299,26 @@
       S.ingestForm = {}; S.ingestResult = null; repaint();
     });
 
-    Array.prototype.forEach.call(root.querySelectorAll(".case-link[data-tab]"),
-      function (el) {
-        el.addEventListener("click", function () {
-          S.tab = el.getAttribute("data-tab");
-          repaint();
-          if (S.tab === "audit" && !S.audit) doAudit();
-          if (S.tab === "access" && !S.myRequests) doAccessList();
-        });
+    // 本体查看器：术语搜索（每键过滤；repaint 后恢复焦点与光标到末尾）
+    on("#case-onto-q", "input", function () {
+      const el = root.querySelector("#case-onto-q");
+      S.ontoQ = el ? el.value : "";
+      repaint();
+      const el2 = root.querySelector("#case-onto-q");
+      if (el2) {
+        el2.focus();
+        const v = el2.value;
+        try { el2.setSelectionRange(v.length, v.length); } catch (err) { /* 非文本输入忽略 */ }
+      }
+    });
+
+    // 聊天滚动：新消息入栈 / 切回问答视图时贴底
+    const scrollChat = function () {
+      requestAnimationFrame(function () {
+        const el = root.querySelector("#case-chat");
+        if (el) el.scrollTop = el.scrollHeight;
       });
+    };
 
     // 部门级联：切部门后岗位下拉只保留该部门的岗位
     on("#case-dept", "change", function () {
@@ -2021,16 +2367,48 @@
         else if (act === "pick") togglePick(id);
         else if (act === "diff-clear") { S.selected = []; repaint(); }
         // I3 判定链跳转（noticeBar 的「查看判定链」按钮）
-        else if (act === "why-open") { S.showWhy = true; repaint(); }
+        else if (act === "why-open") {
+          S.showWhy = true;
+          (S.folds || (S.folds = {})).why = true;   // 显式打开要压过用户之前的折叠痕迹
+          repaint();
+        }
         // 「搜得到但读不了」→ 关掉详情、打开访问申请表单（演示模式：查看需申请）
         else if (act === "access-open-denied") {
           S.detail = null; S.accessForm = { case_id: id, reason: "" }; repaint();
         }
-        // 对话整体展开/收起：'all'/'latest' 时点一次全部展开，'all' 时点一次全部收起（含最新一轮）
-        else if (act === "chat-toggle-all") {
-          S.chatView = (S.chatView === "all") ? "none" : "all";
+        // ---- 大对话框：页签 / 快捷提问 / 本体查看器 / 治理入口 ----
+        else if (act === "view-ask") {
+          S.tab = ""; S.view = "ask"; repaint(); scrollChat();
+        }
+        else if (act === "view-search") { S.tab = ""; S.view = "search"; repaint(); }
+        else if (act === "chat-quick") {
+          const q = el.getAttribute("data-q") || "";
+          S.tab = ""; S.view = "ask";
+          repaint();
+          doAsk(q);
+        }
+        // 回答收缩/展开：点摘要条展开该轮；点已展开那轮的「收起这一轮」收回
+        else if (act === "turn-toggle") {
+          const k = el.getAttribute("data-tkey") || "";
+          const log = S.askLog || [];
+          const cur = log.length ? (turnIsOpen(S, log, log.length - 1, turnKey(log[log.length - 1]))
+            ? turnKey(log[log.length - 1]) : S.askOpen) : "";
+          S.askOpen = (cur === k) ? "none" : k;
           repaint();
         }
+        else if (act === "onto-vocab") {
+          S.ontoVocab = el.getAttribute("data-vocab") || "defect_mode";
+          repaint();
+        }
+        else if (act === "onto-term") {
+          selectTerm(el.getAttribute("data-vocab"), el.getAttribute("data-code"));
+        }
+        else if (act === "onto-search") applyOntoTerm("search");
+        else if (act === "onto-ask") applyOntoTerm("ask");
+        else if (act === "onto-close") { S.ontoSel = null; repaint(); }
+        else if (act === "gov-compare") { S.tab = "compare"; repaint(); }
+        else if (act === "gov-audit") { S.tab = "audit"; repaint(); doAudit(); }
+        else if (act === "gov-access") { S.tab = "access"; repaint(); doAccessList(); }
         // I10 相邻概念：点击即替换查询并重搜
         else if (act === "concept") applyConcept(el.getAttribute("data-term"));
         // I1 段导航：只切换显示层筛选
@@ -2046,6 +2424,19 @@
         const t = ev.target;
         if (t && t.closest && (t.closest("summary") || t.closest("[data-act]") || t.closest("a"))) return;
         openDetail(el.getAttribute("data-case-id"));
+      });
+    });
+
+    // 问答答案里的案例行：整行可点开详情（与检索卡片同一手感；截图里用户点的就是标题）。
+    // 选文字时不算点击，避免"想复制就被弹窗打断"。
+    Array.prototype.forEach.call(root.querySelectorAll(".case-ans-item"), function (el) {
+      el.setAttribute("title", "点击查看案例详情");
+      el.addEventListener("click", function (ev) {
+        const t = ev.target;
+        if (t && t.closest && (t.closest("[data-act]") || t.closest("a") || t.closest("summary"))) return;
+        if (String(window.getSelection ? window.getSelection() : "") !== "") return;
+        const btn = el.querySelector("[data-act='detail']");
+        openDetail(btn && btn.getAttribute("data-id"));
       });
     });
 
@@ -2098,32 +2489,73 @@
       });
     }
 
-    function doAsk() {
-      const q = ((root.querySelector("#case-question") || {}).value || "").trim();
+    function doAsk(qArg) {
+      // qArg：快捷提问 / 本体「去提问」直接带词调用；否则读输入条
+      const q = String(qArg != null ? qArg
+        : ((root.querySelector("#case-question") || {}).value || "")).trim();
       if (!q) { UI.toast("请输入问题", "err"); return; }
       S.asking = true;
+      S.tab = "";
+      S.view = "ask";       // 等待动画只在问答视图
       repaint();
+      scrollChat();
       caseFetch(base, "/api/v2/cases/ask", {
         token: S.token, body: { question: q, k: 5, action: "read" },
       }).then(function (data) {
         S.asking = false;
-        // 新提问 → 旧轮**自动收起**（只保留最新一轮展开，避免越堆越长）
-        S.chatView = "latest";
-        // 追加到对话历史（对话式窗口：历史按"问-答"展示，答案里的案例以列表呈现）
+        // 时间序聊天：新回答追加到末尾（最新在底部，输入条固定下方）
         const log = S.askLog || (S.askLog = []);
         log.push({ q: q, a: data, ts: Date.now() });
-        while (log.length > 6) log.shift();
+        while (log.length > 8) log.shift();
+        S.askOpen = null;         // 新提问 → 上方历史一律收缩，只展开这一轮
         S.answer = data;          // 兼容：仍保留最近一条
         repaint();
+        scrollChat();
       }).catch(function (err) {
         S.asking = false;
-        S.answer = {
-          answered: false, answer: "", claims: [], citations: [],
-          reason: UI.friendlyError(err).text,
-        };
+        // 失败也进对话流（气泡里给出原因），而不是只弹 toast 就消失
+        const log = S.askLog || (S.askLog = []);
+        log.push({
+          q: q, ts: Date.now(),
+          a: { answered: false, answer: "", claims: [], citations: [],
+               reason: UI.friendlyError(err).text },
+        });
+        while (log.length > 8) log.shift();
+        S.askOpen = null;         // 失败轮同样收缩上方历史
+        S.answer = null;
         handle(err, "问答失败");
         repaint();
+        scrollChat();
       });
+    }
+
+    /** 本体查看器：选中一个词条（详情卡出现在词表下方）。 */
+    function selectTerm(vocab, code) {
+      if (!vocab || !code) return;
+      S.ontoSel = { vocab: vocab, code: code };
+      repaint();
+    }
+
+    /** 本体词条 → 动作：mode=search 切检索视图带词搜；mode=ask 切问答视图预填。 */
+    function applyOntoTerm(mode) {
+      const sel = S.ontoSel;
+      if (!sel) return;
+      const onto = (S.meta && S.meta.ontology) || {};
+      const t = (onto[sel.vocab] || []).filter(function (x) { return x.code === sel.code; })[0] || {};
+      const term = t.name || "";
+      if (!term) return;
+      if (mode === "ask") {
+        S.tab = ""; S.view = "ask";
+        repaint();
+        const inp = root.querySelector("#case-question");
+        if (inp) { inp.value = term; inp.focus(); }
+      } else {
+        S.tab = ""; S.view = "search";
+        S.query = term;
+        S.category = "all"; S.segment = "all";
+        repaint();
+        doSearch();
+      }
     }
 
     function doCompare() {

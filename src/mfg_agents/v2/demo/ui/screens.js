@@ -733,7 +733,7 @@
       <div class="${grid}">${(d.kpis || []).map((k) => mfgKpiCard(UI, k, "orders")).join("")}</div>`;
 
     const rankHtml = `<div class="section-title">重点关注 TOP5 <span class="section-extra">最需关注的最差 5 名 · 点行看实体逐日明细</span></div>
-      <div class="grid grid-2">${(d.rankings || []).map((r) => mfgRankCard(UI, r, "orders")).join("")}</div>`;
+      <div class="grid grid-2">${(d.rankings || []).map((r) => mfgRankCard(UI, r, "orders", d.window && d.window.label)).join("")}</div>`;
 
     const pipeHtml = `<div class="section-title">订单状态管道 <span class="section-extra">按订单环节分布 · 标注各环节延期单数</span></div>
       <div class="card">
@@ -819,6 +819,10 @@
   function render_orders(root, ctx) {
     const UI = ctx.UI;
     const st = ctx.state.screenState;
+    // 板级时间口径：当日 / 当月 / 最近7天（默认最近7天，与后端 resolve_window 同键）
+    const WINDOW_KEYS = ["day", "month", "window"];
+    const winKey = WINDOW_KEYS.indexOf(st.ordersWindow) >= 0 ? st.ordersWindow : "window";
+    const WINDOW_CN = { day: "当日", month: "当月", window: "最近7天" };
     // 下钻状态只在本屏有效；从其它看板进入时复位
     let drill = st.boardDrill;
     // 仅本屏下钻有效；其它看板/工作台内联下钻残留一律复位
@@ -835,14 +839,32 @@
             <span id="orders-window">统计窗口加载中…</span>
             <span id="orders-flag"></span><span id="orders-gen" class="mfg-gen"></span></div>
         </div>
+        <div class="chip-row mfg-windows" id="orders-windows" style="margin-bottom:14px">
+          <span class="chip-row-label">统计口径</span>
+          ${WINDOW_KEYS.map((k) => `<button class="chip${k === winKey ? " active" : ""}"
+            data-window="${k}">${UI.icon("clock", 13)}${WINDOW_CN[k]}</button>`).join("")}
+          <span class="chip-row-note">· KPI / TOP5 / 状态管道 / 风险订单 / 下钻 均按所选口径</span>
+        </div>
         <div id="orders-crumb"></div>
         <div id="orders-body">
           <div class="empty">${UI.spinner("lg")}<div style="margin-top:10px">正在加载看板数据…</div></div>
         </div>
       </div>`;
 
+    root.querySelectorAll("#orders-windows [data-window]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        if (winKey === btn.dataset.window) return;
+        st.ordersWindow = btn.dataset.window;
+        // 换口径保持当前下钻层级（L2–L5）：只把下钻对象的窗口改成新口径，不退回看板首页。
+        // loadMfgDrill 以 drill.window 为首选窗口键，故就地改写即可同层刷新。
+        if (drill) drill.window = btn.dataset.window;
+        else st.boardDrill = null;
+        ctx.refreshScreen();
+      });
+    });
+
     if (drill) loadMfgDrill(ctx, drill);
-    else loadOrdersDashboard(ctx);
+    else loadOrdersDashboard(ctx, winKey);
   }
 
   /**
@@ -877,18 +899,20 @@
 
   /**
    * 订单履约看板 L1 数据加载（真实优先 + 演示降级，全程不抛）：
-   * 在线且未降级 → /api/v2/dashboard/orders；否则 → DEMO.ORDERS_DASHBOARD（与接口同构）。
+   * 在线且未降级 → /api/v2/dashboard/orders（按所选时间口径）；否则 → DEMO.ORDERS_DASHBOARD。
    */
-  async function loadOrdersDashboard(ctx) {
+  async function loadOrdersDashboard(ctx, windowKey) {
     const UI = ctx.UI;
     const cfg = BOARD_CFG.orders;
     const box = document.getElementById(cfg.body);
     if (!box) return;
+    // 时间口径：默认最近 7 天（与后端 resolve_window 同键），非法值回落 "window"
+    const win = ["day", "month", "window"].indexOf(windowKey) >= 0 ? windowKey : "window";
     let payload = null, source = "real", reason = "", scopeMeta = null;
 
     if (ctx.api.online()) {
       try {
-        const d = await ctx.api.ordersDashboard();
+        const d = await ctx.api.ordersDashboard(win);
         if (d && !d.degraded && (d.kpis || []).length) {
           payload = d;
           scopeMeta = d.scope || null;
@@ -2433,6 +2457,15 @@
       <div class="adp-actions">
         <button class="btn btn-outline btn-sm" data-ask-alert="${UI.esc(askQ)}">${UI.icon("chat", 13)}去问数分析</button>
         ${a.status !== "已闭环" ? `<button class="btn btn-outline btn-sm" data-ask-alert="为预警 ${UI.esc(a.id)} 创建人工跟进工单">${UI.icon("approve", 13)}转人工跟进</button>` : ""}
+        <button class="btn btn-outline btn-sm" data-report-gen="${UI.esc(JSON.stringify({
+          source_module: "alert",
+          context: {
+            title: `预警处置报告 · ${a.title}`,
+            summary: `${a.detail || ""}｜影响分析：${a.impact || "暂无"}｜状态：${a.status || ""}`,
+            refs: [a.id],
+            risk_level: /^[A-D]$/.test(String(a.level || "")) ? a.level : "",
+          },
+        }))}">${UI.icon("report", 13)}生成报告</button>
       </div>
     </div>`;
   }
@@ -2661,6 +2694,15 @@
       const current = visible.find((t) => t.task_uid === st.hitlSelected) || visible[0];
       renderHitlDetail(ctx, current);
     };
+
+    // 深链：报告中心「关联工单」跳转时写入 hitl_prefill（工单号）→ 自动选中该工单
+    try {
+      const want = sessionStorage.getItem("hitl_prefill");
+      if (want) {
+        sessionStorage.removeItem("hitl_prefill");
+        if (tasks.some((t) => t.task_uid === want)) st.hitlSelected = want;
+      }
+    } catch (e) { /* 隐私模式忽略 */ }
 
     drawList(st.hitlQuery || "");
 
@@ -2998,6 +3040,17 @@
         <span style="color:var(--text-3)">${UI.esc(h.actor || "")}${h.comment ? " · " + UI.esc(h.comment) : ""}</span>
       </div>`).join("");
 
+    // 报告中心「就地生成报告」载荷：来源=工单，后端会补真实工单事实（不靠前端编造）
+    const rpPayload = UI.esc(JSON.stringify({
+      source_module: "task",
+      context: {
+        title: `工单处置报告 · ${t.title || kindLabel}`,
+        task_uid: t.task_uid,
+        refs: [t.task_uid],
+        summary: `状态 ${t.status || "-"}｜优先级 ${t.priority || "-"}｜治理槽位 ${slot || "未纳管"}`,
+      },
+    }));
+
     box.innerHTML = `
       <div class="card card-pad">
         <div class="hitl-detail-head">
@@ -3027,6 +3080,11 @@
 
         ${history ? `<div class="section-title" style="margin:16px 0 4px">处理历史（状态机留痕）</div><div class="history-list">${history}</div>` : ""}
         ${decisionGuideHtml(t) }
+
+        <div class="rp-actions" style="margin-top:12px">
+          <button class="btn btn-outline btn-sm" data-report-gen="${rpPayload}">${UI.icon("report", 13)}生成本工单报告</button>
+          <span class="rp-note">归档到报告中心：后端按工单真实字段生成简报，可继续走审定 / 派发。</span>
+        </div>
 
         ${processed ? hitlProcessedBanner(ctx, t.task_uid) : (t._readonly
           ? `<div class="gate-hint">${UI.icon("info", 13)} 当前岗位对该工单无待办动作（只读视图）：审批/会签由对应岗位执行，安全校验在后端。</div>`
@@ -3067,6 +3125,11 @@
     spc_capability: "spc",
   };
 
+  // 品质看板板级「工段 / 缺陷类别」筛选白名单（与后端 QUALITY_STAGES /
+  // QUALITY_CATEGORIES 同源：前端只出选项，取值合法性由接口 fail-fast 裁决）。
+  const QUALITY_STAGE_CHIPS = ["SMT", "PCM", "PACK", "整机"];
+  const QUALITY_CAT_CHIPS = [["性能不良", "性能"], ["外观不良", "外观"]];
+
   // 看板通用配置：下钻容器 id + 面包屑首节点名（制造 / 品质 / 订单履约 共用同一套机件）
   const BOARD_CFG = {
     manufacturing: { name: "制造看板", body: "mfg-body", crumb: "mfg-crumb",
@@ -3106,15 +3169,23 @@
   /** 迷你趋势线：把后端 kpi.trend（7 点数值数组）画成内联 SVG 折线 + 淡色面积。 */
   function mfgSpark(values, tone) {
     const vals = (values || []).filter((v) => typeof v === "number" && !Number.isNaN(v));
-    if (vals.length < 2) return "";
     const w = 132, h = 26, pad = 2;
+    const color = { green: "#2DA44E", amber: "#D4A017", red: "#CF222E" }[tone] || "#185FA5";
+    // 「当日」口径只有 1 个数据点：画一条水平基准线（容错渲染，不退化为空白）
+    if (vals.length === 1) {
+      const y = (h / 2).toFixed(1);
+      return `<svg class="spark spark-single" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" `
+        + `preserveAspectRatio="none" aria-hidden="true">`
+        + `<path d="M${pad} ${y} L${w - pad} ${y}" fill="none" stroke="${color}" `
+        + `stroke-width="1.6" stroke-linecap="round" stroke-dasharray="4 3"/></svg>`;
+    }
+    if (vals.length < 2) return "";
     const mn = Math.min.apply(null, vals), mx = Math.max.apply(null, vals);
     const rng = (mx - mn) || 1;
     const step = (w - pad * 2) / (vals.length - 1);
     const pts = vals.map((v, i) => [pad + i * step, h - pad - ((v - mn) / rng) * (h - pad * 2)]);
     const line = pts.map((p, i) => `${i ? "L" : "M"}${p[0].toFixed(1)} ${p[1].toFixed(1)}`).join(" ");
     const area = `${line} L${pts[pts.length - 1][0].toFixed(1)} ${h} L${pts[0][0].toFixed(1)} ${h} Z`;
-    const color = { green: "#2DA44E", amber: "#D4A017", red: "#CF222E" }[tone] || "#185FA5";
     return `<svg class="spark" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" `
       + `preserveAspectRatio="none" aria-hidden="true">`
       + `<path d="${area}" fill="${color}" fill-opacity="0.10"/>`
@@ -3140,6 +3211,7 @@
         <div class="stat-num">${UI.esc(kpi.value)}<span class="stat-unit">${UI.esc(kpi.unit)}</span></div>
         <div class="stat-label">${UI.esc(kpi.label)} · 目标 ${UI.esc(kpi.target)}${UI.esc(kpi.unit)}</div>
         <div class="stat-trend ${ok ? "down" : "up"}">${UI.icon(ok ? "check" : "warn", 12)} ${UI.esc(delta)}pt · ${UI.esc(dir)}</div>
+        ${kpi.scope_note ? `<div class="stat-scope">${UI.icon("info", 11)}${UI.esc(kpi.scope_note)}</div>` : ""}
         <div class="spark-wrap">${mfgSpark(kpi.trend, tone)}</div>
         <button class="stat-ask-btn" data-ask="${UI.esc(kpi.ask || "")}"
                 title="跳转协同问数：${UI.esc(kpi.ask || "")}">
@@ -3148,11 +3220,14 @@
     </div>`;
   }
 
-  /** TOP5 排行卡：行主体点击 = 下钻 L3（该实体明细）；行内「问数」= 跳协同问数。 */
-  function mfgRankCard(UI, ranking, screen) {
+  /** TOP5 排行卡：行主体点击 = 下钻 L3（该实体明细）；行内「问数」= 跳协同问数。
+   *  ``winLabel`` 为板级当前口径（当日/当月/最近7天），``scopeCn`` 为板级「工段 / 类别」
+   *  筛选范围（缺省空串），两者叠加进问数文案，避免问数与所看口径不符。 */
+  function mfgRankCard(UI, ranking, screen, winLabel, scopeCn) {
     const hb = ranking.higher_is_better;
     const dir = hb ? "越高越好 · 取最低 5" : "越低越好 · 取最高 5";
-    const ask = `最近7天${ranking.label}${hb ? "最低" : "最高"}的 5 项分别是哪些？`;
+    const scope = scopeCn ? `${scopeCn} ` : "";
+    const ask = `${winLabel || "最近7天"}${scope}${ranking.label}${hb ? "最低" : "最高"}的 5 项分别是哪些？`;
     const rows = (ranking.items || []).map((it) => {
       const worst = it.status === "danger";
       // 后端已按岗位脱敏并移除下钻键（masked:true）→ 行不再可点击。
@@ -3181,10 +3256,33 @@
     </div>`;
   }
 
-  /** 标准三率专区：符合率 = 完整率 × 完善率 × 遵守率（大字 + 分型号明细）。 */
+  /** 标准三率 1 级看板（工段）：整体公式 + 4 个工段卡；点工段卡**下钻**到 2 级班组看板。
+   *  符合率 = 完整率 × 完善率 × 遵守率；工段/班组与整体同一套口径（后端 _std_by_stage）。
+   *  ``by_stage`` 缺失（后端旧版 / 旧缓存演示数据）时退回原「分型号」表，不白屏。 */
   function mfgStdThreeRates(UI, s) {
     if (!s || !s.overall) return "";
     const o = s.overall;
+    const stages = s.by_stage || [];
+    const cards = stages.map((st) => {
+      const bars = [["完整", st.completeness_rate], ["完善", st.perfection_rate],
+                    ["遵守", st.compliance_rate]].map(([name, v]) => `
+          <span class="std-bar-row"><i>${name}</i>
+            <span class="std-bar"><b class="${UI.esc(st.status)}"
+              style="width:${Math.max(0, Math.min(100, Number(v) || 0))}%"></b></span>
+            <em>${UI.esc(v)}%</em>
+          </span>`).join("");
+      return `<button type="button" class="std-stage" data-std-stage="${UI.esc(st.stage)}"
+          title="下钻查看「${UI.esc(st.stage)}」各班组（2 级看板）">
+        <span class="std-stage-head">
+          <span class="std-stage-name">${UI.esc(st.stage)}</span>
+          <span class="std-stage-line">${UI.esc(st.line || "—")}</span>
+        </span>
+        <span class="std-stage-val std-conform ${UI.esc(st.status)}">${UI.esc(st.conformity_rate)}<i>%</i></span>
+        <span class="std-stage-bars">${bars}</span>
+        <span class="std-stage-foot">${UI.esc(st.team_count)} 个班组 · ${UI.esc(st.audit_rows)} 条审核
+          <span class="std-stage-go">班组明细${UI.icon("arrow", 11)}</span></span>
+      </button>`;
+    }).join("");
     const modelRows = (s.by_model || []).map((m) => `<tr>
       <td>${UI.esc(m.model)}</td>
       <td>${UI.esc(m.completeness_rate)}%</td>
@@ -3205,12 +3303,120 @@
         <span class="std-term"><b>${UI.esc(o.compliance_rate)}%</b><i>遵守率</i></span>
         <em>=</em>
         <span class="std-conform ${UI.esc(o.status)}">${UI.esc(o.conformity_rate)}%</span>
+        <span class="std-scope">整体 · ${UI.esc(o.audit_rows || 0)} 条审核记录</span>
       </div>
-      ${modelRows ? `<table class="std-table">
-        <thead><tr><th>型号</th><th>完整率</th><th>完善率</th><th>遵守率</th><th>符合率</th></tr></thead>
-        <tbody>${modelRows}</tbody>
-      </table>` : ""}
+      ${stages.length ? `<div class="std-level">
+          <span class="std-level-tag">1 级看板 · 工段</span>
+          <span class="std-level-hint">点任一工段卡下钻到 2 级看板（该工段班组明细 + 汇总）· 四段加权即回整体</span>
+        </div>
+        <div class="grid grid-4 std-stage-grid">${cards}</div>`
+        : (modelRows ? `<table class="std-table">
+          <thead><tr><th>型号</th><th>完整率</th><th>完善率</th><th>遵守率</th><th>符合率</th></tr></thead>
+          <tbody>${modelRows}</tbody>
+        </table>` : "")}
     </div>`;
+  }
+
+  /** 该工段窗口内 TOP3 不良类型：与累计柏拉图同源（pareto_fact 的 stage 维度本地切片）。
+   *  仅作下钻页的「为什么这一段差」参照，不参与三率计算；无数据返回空数组。 */
+  function stdStageTopDefects(d, stageName, limit) {
+    const rows = ((d && d.pareto_fact) || {}).rows || [];
+    if (!rows.length) return [];
+    const w = d.window || {};
+    const inWin = (r) => (!w.start || r.d >= w.start) && (!w.end || r.d <= w.end);
+    const by = {};
+    rows.filter((r) => r.stage === stageName && inWin(r))
+      .forEach((r) => { by[r.type] = (by[r.type] || 0) + (r.qty || 0); });
+    const total = Object.keys(by).reduce((a, k) => a + by[k], 0);
+    return Object.keys(by).map((k) => ({ name: k, qty: by[k] }))
+      .sort((a, b) => b.qty - a.qty).slice(0, limit || 3)
+      .map((x) => ({ name: x.name, qty: x.qty,
+                     share: total ? Math.round((x.qty / total) * 1000) / 10 : 0 }));
+  }
+
+  /** 标准三率 2 级看板（下钻页）：工段汇总（公式 + 4 个派生指标）+ 班组明细 + TOP3 不良。
+   *  汇总与明细来自同一批审核记录（后端按工段/班组分别聚合），明细加权即回汇总。 */
+  function stdL2Body(UI, d, stage) {
+    const s = (d && d.standard_three_rates) || {};
+    const o = s.overall || {};
+    const t = s.targets || {};
+    // 目标符合率 = 三个目标率相乘（与后端 _STD_CONFORMITY_TARGET 同算：100×98×90/10000 = 88.2）
+    const target = Math.round((t.completeness_rate || 100) * (t.perfection_rate || 98)
+                              * (t.compliance_rate || 90)) / 10000;
+    const teams = (stage.teams || []).slice()
+      .sort((a, b) => a.conformity_rate - b.conformity_rate);
+    const okCnt = teams.filter((x) => x.status === "ok").length;
+    const badCnt = teams.filter((x) => x.status !== "ok").length;
+    const worst = teams[0];
+    const gap = Math.round((stage.conformity_rate - target) * 10) / 10;
+    const vsOverall = Math.round((stage.conformity_rate - (o.conformity_rate || 0)) * 10) / 10;
+    const rows = teams.map((x, i) => {
+      const delta = Math.round((x.conformity_rate - stage.conformity_rate) * 10) / 10;
+      return `<tr>
+        <td class="std-team">${i < 3 ? `<span class="std-top-tag">TOP${i + 1}</span>` : ""}${
+          x.status === "danger" ? UI.icon("warn", 11) : ""}${UI.esc(x.team)}</td>
+        <td>${UI.esc(x.completeness_rate)}%</td>
+        <td>${UI.esc(x.perfection_rate)}%</td>
+        <td>${UI.esc(x.compliance_rate)}%</td>
+        <td class="std-conform ${UI.esc(x.status)}">${UI.esc(x.conformity_rate)}%</td>
+        <td class="std-delta ${delta < 0 ? "neg" : "pos"}">${delta > 0 ? "+" : ""}${UI.esc(delta)}pt</td>
+        <td>${UI.badge(MFG_STATUS_CN[x.status] || x.status, MFG_BADGE[x.status] || "badge-gray")}</td>
+        <td class="std-dim">${UI.esc(x.audit_rows)} 条 · ${UI.esc(x.audit_items)} 项</td>
+      </tr>`;
+    }).join("");
+    const topDefects = stdStageTopDefects(d, stage.stage, 3);
+    const defBlock = topDefects.length
+      ? `<div class="std-topdef">
+          <span class="std-topdef-title">${UI.icon("list", 12)}该工段 TOP3 不良类型
+            <i>窗口内累计 · 与累计柏拉图同源</i></span>
+          <span class="std-topdef-list">${topDefects.map((x, i) => `<span class="std-topdef-item">
+            <b>#${i + 1}</b>${UI.esc(x.name)}<em>${UI.esc(x.qty)} 件 · ${UI.esc(x.share)}%</em>
+          </span>`).join("")}</span>
+        </div>` : "";
+    return `<div class="section-title">标准三率 · 2 级看板（${UI.esc(stage.stage)}）
+        <span class="section-extra">汇总 = 该工段全部班组审核记录加权 · 与整体同一套口径</span></div>
+      <div class="card std-card">
+        <div class="std-l2-head">
+          <span class="std-l2-tag">2 级看板 · 班组</span>
+          <span class="std-l2-name">${UI.esc(stage.stage)}${stage.line ? " · " + UI.esc(stage.line) : ""}</span>
+          <span class="std-l2-sum">全厂 ${UI.esc(o.conformity_rate)}% · 该段 ${
+            vsOverall > 0 ? "+" : ""}${UI.esc(vsOverall)}pt ｜ 目标 ${UI.esc(target)}%</span>
+        </div>
+        <div class="std-formula">
+          <span class="std-term"><b>${UI.esc(stage.completeness_rate)}%</b><i>完整率</i></span>
+          <em>×</em>
+          <span class="std-term"><b>${UI.esc(stage.perfection_rate)}%</b><i>完善率</i></span>
+          <em>×</em>
+          <span class="std-term"><b>${UI.esc(stage.compliance_rate)}%</b><i>遵守率</i></span>
+          <em>=</em>
+          <span class="std-conform ${UI.esc(stage.status)}">${UI.esc(stage.conformity_rate)}%</span>
+          <span class="std-scope">该工段汇总 · ${UI.esc(stage.audit_rows)} 条 / ${
+            UI.esc(stage.audit_items)} 项审核</span>
+        </div>
+        <div class="grid grid-4 std-kpis">
+          <div class="std-mini"><i>班组达标</i><b>${UI.esc(okCnt)} / ${UI.esc(teams.length)}</b>
+            <em>未达标 ${UI.esc(badCnt)} 个</em></div>
+          <div class="std-mini"><i>最低班组</i>
+            <b class="std-conform ${worst ? UI.esc(worst.status) : ""}">${worst ? UI.esc(worst.conformity_rate) : "—"}%</b>
+            <em>${worst ? UI.esc(worst.team) : "无班组数据"}</em></div>
+          <div class="std-mini"><i>与目标差</i>
+            <b class="${gap < 0 ? "std-neg" : "std-pos"}">${gap > 0 ? "+" : ""}${UI.esc(gap)}pt</b>
+            <em>目标 ${UI.esc(target)}%</em></div>
+          <div class="std-mini"><i>短板环节</i>
+            <b>${UI.esc(Math.min(stage.completeness_rate, stage.perfection_rate, stage.compliance_rate))}%</b>
+            <em>${stage.completeness_rate <= stage.perfection_rate && stage.completeness_rate <= stage.compliance_rate
+              ? "完整率最低（标准缺失）"
+              : (stage.perfection_rate <= stage.compliance_rate ? "完善率最低（标准与现场不一致）"
+                : "遵守率最低（现场未按标准作业）")}</em></div>
+        </div>
+        ${rows ? `<table class="std-table std-team-table">
+          <thead><tr><th>班组</th><th>完整率</th><th>完善率</th><th>遵守率</th><th>符合率</th>
+            <th>与工段差</th><th>状态</th><th>审核量</th></tr></thead>
+          <tbody>${rows}</tbody></table>
+          <div class="std-l2-note">班组按符合率升序（最差在前，TOP1–3 标出需关注）；审核量 = 审核条数 · 审核项数——样本少时别急着下结论。</div>`
+          : `<div class="empty">该工段暂无班组级审核记录</div>`}
+        ${defBlock}
+      </div>`;
   }
 
   /** 口径说明（后端 notes）：指标定义即口径，保证与真实链路一致。 */
@@ -3227,19 +3433,54 @@
     return `<div class="section-title">核心指标 <span class="section-extra">点卡片看明细分解 · 卡内「问数」可跳协同问数</span></div>
       <div class="${grid}">${(d.kpis || []).map((k) => mfgKpiCard(UI, k, "manufacturing")).join("")}</div>
       <div class="section-title">重点关注 TOP5 <span class="section-extra">最需关注的最差 5 名 · 点行看实体逐日明细</span></div>
-      <div class="grid grid-2">${(d.rankings || []).map((r) => mfgRankCard(UI, r, "manufacturing")).join("")}</div>
+      <div class="grid grid-2">${(d.rankings || []).map((r) => mfgRankCard(UI, r, "manufacturing", d.window && d.window.label)).join("")}</div>
       ${mfgNotes(UI, d.notes)}`;
+  }
+
+  /** 品质看板板级「工段 / 缺陷类别」筛选的中文范围标签（缺省 = 空串，表示未筛选）。 */
+  function mfgScopeCn(filter) {
+    const f = filter || {};
+    const bits = [];
+    if (f.stage) bits.push(`工段 ${f.stage}`);
+    if (f.category) bits.push(`类别 ${f.category}`);
+    return bits.join(" · ");
+  }
+
+  /** 品质看板筛选条：工段（全部 / SMT / PCM / PACK / 整机）+ 类别（全部 / 性能 / 外观）。
+   *  选中即按该范围重算 4 张 KPI 卡的汇总值（无该维度的两项由后端标注「筛选不适用」）。 */
+  function mfgScopeChips(UI, st) {
+    const stage = st.mfgStage || "";
+    const cat = st.mfgCat || "";
+    const chip = (attr, val, label, on) => `<button class="chip${on ? " active" : ""}"
+      ${attr}="${UI.esc(val)}" title="按「${UI.esc(label)}」范围汇总 4 张 KPI 卡">${UI.esc(label)}</button>`;
+    return `<span class="chip-row-label">工段</span>`
+      + chip("data-stage", "", "全部", !stage)
+      + QUALITY_STAGE_CHIPS.map((s) => chip("data-stage", s, s, stage === s)).join("")
+      + `<span class="chip-row-label">类别</span>`
+      + chip("data-cat", "", "全部", !cat)
+      + QUALITY_CAT_CHIPS.map(([v, cn]) => chip("data-cat", v, cn, cat === v)).join("");
   }
 
   function mfgQualityBody(UI, d) {
     const grid = (d.kpis || []).length >= 4 ? "grid grid-4" : "grid grid-2";
-    return `<div class="section-title">核心指标 <span class="section-extra">点卡片看明细分解 · 卡内「问数」可跳协同问数</span></div>
+    const scopeCn = mfgScopeCn(d.filter);
+    const scopeTag = scopeCn ? `汇总口径：${UI.esc(scopeCn)} · ` : "";
+    // 主体一：核心指标 + 重点关注 TOP5 —— 二者共用顶部筛选卡片（统计口径 / 工段 / 类别）同源同口径
+    const bodyTop = `<div class="mfg-group" data-mfg-group="metrics">
+      <div class="section-title">核心指标 <span class="section-extra">${scopeTag}与顶部筛选卡同源 · 点卡片看明细分解 · 卡内「问数」可跳协同问数</span></div>
       <div class="${grid}">${(d.kpis || []).map((k) => mfgKpiCard(UI, k, "quality")).join("")}</div>
+      <div class="section-title">重点关注 TOP5 <span class="section-extra">${scopeTag}同口径最需关注的最差 5 名 · 点行看实体逐日明细</span></div>
+      <div class="grid grid-2">${(d.rankings || []).map((r) => mfgRankCard(UI, r, "quality", d.window && d.window.label, scopeCn)).join("")}</div>
+    </div>`;
+    // 主体二：标准三率（不受筛选影响，独立居中）
+    const bodyStd = `<div class="mfg-group" data-mfg-group="standard">
       ${mfgStdThreeRates(UI, d.standard_three_rates)}
+    </div>`;
+    // 主体三：不良累计柏拉图（自带筛选卡：顶部 产品分类/工段 · 底部 缺陷类别）
+    const bodyPareto = `<div class="mfg-group" data-mfg-group="pareto">
       ${mfgParetoCard(UI, d, "quality")}
-      <div class="section-title">重点关注 TOP5 <span class="section-extra">最需关注的最差 5 名 · 点行看实体逐日明细</span></div>
-      <div class="grid grid-2">${(d.rankings || []).map((r) => mfgRankCard(UI, r, "quality")).join("")}</div>
-      ${mfgNotes(UI, d.notes)}`;
+    </div>`;
+    return bodyTop + bodyStd + bodyPareto + mfgNotes(UI, d.notes);
   }
 
   /* ---------------- 二级 / 三级下钻（看板内就地展开，不跳协同问数） ---------------- */
@@ -3386,9 +3627,11 @@
         <tbody>${rows}</tbody></table></div>`;
   }
 
-  /** 累计柏拉图 SVG：柱 = 损失量（左轴），折线 = 累计占比（右轴 0–100%），虚线 = 关键少数阈值。 */
-  function mfgParetoChart(UI, list, max, threshold, vitalCount) {
-    const W = 640, H = 190, padL = 46, padR = 42, padT = 14, padB = 22;
+  /** 累计柏拉图 SVG：柱 = 损失量（左轴），折线 = 累计占比（右轴 0–100%），虚线 = 关键少数阈值。
+   *  ``size`` 可选（``{w,h}``）——双面板并排时用更紧凑的画布，缺省沿用整幅 640×190。 */
+  function mfgParetoChart(UI, list, max, threshold, vitalCount, size) {
+    const W = (size && size.w) || 640, H = (size && size.h) || 190;
+    const padL = 46, padR = 42, padT = 14, padB = 22;
     const pw = W - padL - padR, ph = H - padT - padB;
     const band = pw / (list.length || 1);
     const bw = Math.min(48, Math.max(10, band * 0.5));
@@ -3412,19 +3655,190 @@
         + `<text x="${padL - 6}" y="${(y + 3.5).toFixed(1)}" class="ptick" text-anchor="end">`
         + `${Math.round((max * p) / 100)}</text>`;
     }).join("");
+    // 阈值虚线 + 「关键少数」标签：**绘制在柱体之后**，并用浅琥珀药丸底承托文字——
+    // 柱子再高也不会盖住标签（此前标签先画、被高柱遮死）。
+    const tag = `关键少数 ${threshold}%`;
+    const tagW = 16 + [...tag].reduce(
+      (w, ch) => w + (ch.codePointAt(0) > 0x2E80 ? 11 : 6.4), 0);
+    const tagY = Math.max(padT + 12, Math.min(ty - 4, H - padB - 2));
+    const thr = `<line x1="${padL}" y1="${ty.toFixed(1)}" x2="${W - padR}" y2="${ty.toFixed(1)}" class="pthr"/>`
+      + `<rect x="${padL + 6}" y="${(tagY - 11).toFixed(1)}" width="${tagW.toFixed(1)}"`
+      + ` height="14" rx="7" class="pthr-pill"/>`
+      + `<text x="${padL + 13}" y="${tagY.toFixed(1)}" class="pthr-label">${tag}</text>`;
     return `<div class="pareto-chart"><svg viewBox="0 0 ${W} ${H}" role="img"
         aria-label="累计不良柏拉图：柱为损失量，折线为累计占比">
       ${grid}
-      <line x1="${padL}" y1="${ty.toFixed(1)}" x2="${W - padR}" y2="${ty.toFixed(1)}" class="pthr"/>
-      <text x="${padL + 4}" y="${(ty - 5).toFixed(1)}" class="pthr-label">关键少数 ${threshold}%</text>
       ${bars}
+      ${thr}
       <path d="${line.trim()}" class="pline"/>
       ${dots}
     </svg></div>`;
   }
 
-  /** 累计柏拉图卡：柱 + 累计折线 + 80% 参考线；L1（带 screen / pareto_kpi）可点击类型下钻。 */
+  /** 累计柏拉图卡（分发）：有 ``pareto_fact`` 预聚合事实表 → 交互式分析组件
+   *  （左右两块「月别 / 日别」 + 产品分类/类别/工段 本地筛选，零网络往返）；否则回退静态渲染。 */
   function mfgParetoCard(UI, d, screen) {
+    const fact = d && d.pareto_fact;
+    if (fact && (fact.rows || []).length) return mfgParetoFactCard(UI, d);
+    return mfgParetoStaticCard(UI, d, screen);
+  }
+
+  /** 交互式柏拉图外壳：顶部筛选卡（产品分类下拉 + 工段 chips）+ 左右两块并排面板
+   *  （左 · 月别 = 当月累计；右 · 日别 = 当日）+ 底部筛选（缺陷类别：性能不良 / 外观不良）。
+   *  已去掉「粒度」切换与「期间」下拉；控件与内容由 mfgParetoBind 渲染。 */
+  function mfgParetoFactCard(UI, d) {
+    return `<div class="section-title">不良累计柏拉图
+        <span class="section-extra">左 · 月别（当月累计） ｜ 右 · 日别（当日） · 顶部产品分类/工段 · 底部缺陷类别 · 点类型下钻产线 · 型号分解</span></div>
+      <div class="card" id="mfg-pareto-fact">
+        <div class="card-head">
+          <div class="card-title">${UI.icon("list", 16)}${UI.esc(d.pareto_label || "不良类型")}累计柏拉图</div>
+        </div>
+        <div data-p-body><div class="empty">${UI.spinner("lg")}<div style="margin-top:8px">绘制中…</div></div></div>
+      </div>`;
+  }
+
+  /** 交互式柏拉图渲染 + 绑定：``pareto_fact`` 本地切片 → 两块各自按类型求和 → 降序累计 →
+   *  关键少数（累计首达阈值）→ 复用 mfgParetoChart 重绘；全程无网络往返。
+   *  左块期间 = 最新月（当月）、右块 = 最新日（当日）；行可下钻（``window`` = 本块期间，
+   *  叠加 stage/category/prod_category，与当前筛选同口径），行内「问数」跳协同问数。 */
+  function mfgParetoBind(ctx, box, d) {
+    const UI = ctx.UI;
+    const host = box.querySelector("#mfg-pareto-fact");
+    const fact = d && d.pareto_fact;
+    if (!host || !fact || !(fact.rows || []).length) return;
+    const body = host.querySelector("[data-p-body]");
+    if (!body) return;
+    const months = fact.months || [], days = fact.days || [];
+    const cats = fact.categories || [], stages = fact.stages || [];
+    const pcats = fact.prod_cats || [];
+    const threshold = d.pareto_threshold || 80;
+    const screen = d.screen || "quality";
+    const kpi = d.pareto_kpi || "defect_rate";
+    // 控制状态挂 screenState：下钻往返后按原筛选恢复（两块期间固定，不进状态）
+    const st = (ctx.state.screenState.mfgPareto = ctx.state.screenState.mfgPareto || {});
+    if (st.pcat && pcats.indexOf(st.pcat) < 0) st.pcat = "";
+    if (st.cat && cats.indexOf(st.cat) < 0) st.cat = "";
+    if (st.stage && stages.indexOf(st.stage) < 0) st.stage = "";
+
+    const chip = (on, attr, val, label) => `<button class="chip${on ? " active" : ""}"
+      ${attr}="${UI.esc(val)}">${UI.esc(label)}</button>`;
+
+    /** 单块聚合：期间过滤（月 = 前缀匹配 / 日 = 精确匹配）+ 共享筛选 → 类型降序累计。 */
+    const paneOf = (gran, period) => {
+      const rows = (fact.rows || []).filter((r) => (gran === "month"
+        ? String(r.d || "").slice(0, 7) === period : r.d === period)
+        && (!st.pcat || r.pc === st.pcat)
+        && (!st.cat || r.cat === st.cat) && (!st.stage || r.stage === st.stage));
+      const byType = {};
+      rows.forEach((r) => { byType[r.type] = (byType[r.type] || 0) + (r.qty || 0); });
+      const total = Object.keys(byType).reduce((a, k) => a + byType[k], 0);
+      let acc = 0;
+      const list = Object.keys(byType).map((name) => ({ name: name, value: byType[name] }))
+        .sort((a, b) => b.value - a.value)
+        .map((x) => {
+          const share = total ? Math.round((x.value / total) * 1000) / 10 : 0;
+          acc = Math.round((acc + share) * 10) / 10;
+          return { name: x.name, value: x.value, share: share, cum: acc };
+        });
+      // 关键少数 = 累计占比首达阈值（含该项）——与后端 _pareto_cum/_vital_few 同源口径
+      const vital = [];
+      for (let i = 0; i < list.length; i += 1) {
+        vital.push(list[i].name);
+        if (list[i].cum >= threshold) break;
+      }
+      return { list: list, total: total,
+               max: Math.max.apply(null, list.map((x) => x.value)) || 1, vital: vital };
+    };
+
+    const paneHtml = (gran, title, period) => {
+      const p = paneOf(gran, period);
+      const scopeCn = [st.pcat || "全部产品分类", st.stage || "全部工段",
+                       st.cat || "全部类别", period || "—"].join(" · ");
+      const askOf = (t) => `${scopeCn} 的「${t}」不良按产线 · 型号分布如何？`;
+      const head = `<div class="pareto-pane-head">
+        <span class="pareto-pane-title">${UI.esc(title)}</span>
+        <span class="pareto-pane-meta">${UI.esc(period || "—")}</span>
+        <span class="pareto-pane-extra">合计 ${p.total} · 关键少数 ${p.vital.length} 类 · 累计 ≥ ${threshold}%</span>
+      </div>`;
+      if (!p.list.length) {
+        return `<div class="pareto-pane" data-p-pane="${UI.esc(gran)}">${head}
+          <div class="empty">${UI.icon("warn", 22)}
+            <div style="margin-top:8px">该筛选条件下暂无不良明细</div></div></div>`;
+      }
+      const rows = p.list.map((x, i) => {
+        const hot = p.vital.indexOf(x.name) >= 0;
+        return `<div class="pareto-row${hot ? " vital" : ""} drillable" role="button" tabindex="0"
+          data-drill-pareto="${UI.esc(x.name)}" data-kpi="${UI.esc(kpi)}"
+          data-screen="${UI.esc(screen)}" data-drill-window="${UI.esc(gran)}"
+          data-drill-stage="${UI.esc(st.stage)}" data-drill-category="${UI.esc(st.cat)}"
+          data-drill-prod-cat="${UI.esc(st.pcat)}"
+          title="点击下钻：${UI.esc(x.name)} 在 ${UI.esc(scopeCn)} 下的产线 · 型号分解">
+          <span class="pareto-no">${i + 1}</span>
+          <span class="pareto-name" title="损失 ${UI.esc(x.value)} · 占比 ${UI.esc(x.share)}% · 累计 ${UI.esc(x.cum)}%"
+            >${UI.esc(x.name)}</span>
+          <span class="pareto-bar"><i style="width:${((x.value / p.max) * 100).toFixed(1)}%"></i></span>
+          <span class="pareto-val">${UI.esc(x.value)}</span>
+          <span class="pareto-share">${UI.esc(x.share)}%</span>
+          <span class="pareto-cum">${UI.esc(x.cum)}%</span>
+          <button class="row-ask pareto-ask" data-ask="${UI.esc(askOf(x.name))}"
+            title="跳转协同问数：${UI.esc(askOf(x.name))}">${UI.icon("chat", 11)}问数</button>
+        </div>`;
+      }).join("");
+      return `<div class="pareto-pane" data-p-pane="${UI.esc(gran)}">${head}
+        ${mfgParetoChart(UI, p.list, p.max, threshold, p.vital.length, { w: 560, h: 170 })}
+        <div class="pareto-head"><span class="pareto-no">#</span><span class="pareto-name">类型</span>
+          <span class="pareto-bar">损失量</span><span class="pareto-val">数量</span>
+          <span class="pareto-share">占比</span><span class="pareto-cum">累计</span>
+          <span class="pareto-ask"></span></div>
+        <div class="pareto-list">${rows}</div></div>`;
+    };
+
+    const toolbar = `<div class="pareto-toolbar">
+      <label class="pareto-select"><span>产品分类</span>
+        <select data-p-pcat>
+          <option value=""${st.pcat ? "" : " selected"}>全部</option>
+          ${pcats.map((p) => `<option value="${UI.esc(p)}"${
+            st.pcat === p ? " selected" : ""}>${UI.esc(p)}</option>`).join("")}
+        </select></label>
+      <div class="chip-row">
+        <span class="chip-row-label">工段</span>
+        ${chip(!st.stage, "data-p-stage", "", "全部")}
+        ${stages.map((s) => chip(st.stage === s, "data-p-stage", s, s)).join("")}
+      </div>
+      <span class="chip-row-note">· 顶部筛选同时作用于月别 / 日别两块</span>
+    </div>`;
+
+    // 底部筛选：缺陷类别（性能不良 / 外观不良）—— 只作为本柏拉图的筛选，不影响上方指标与 TOP5
+    const bottomFilter = `<div class="pareto-bottom-filter">
+      <span class="chip-row-label">缺陷类别</span>
+      ${chip(!st.cat, "data-p-cat", "", "全部")}
+      ${cats.map((c) => chip(st.cat === c, "data-p-cat", c, c)).join("")}
+      <span class="chip-row-note">· 仅作用于下方两块柏拉图</span>
+    </div>`;
+
+    const paint = () => {
+      body.innerHTML = toolbar + `<div class="pareto-dual">
+        ${paneHtml("month", "月别 · 当月", months[0] || "")}
+        ${paneHtml("day", "日别 · 当日", days[0] || "")}
+      </div>` + bottomFilter;
+      // 控件重绑（每次重绘 DOM 全换）
+      const sel = body.querySelector("[data-p-pcat]");
+      if (sel) sel.addEventListener("change", () => { st.pcat = sel.value; paint(); });
+      body.querySelectorAll("[data-p-cat]").forEach((b) => b.addEventListener("click", () => {
+        if (st.cat === b.dataset.pCat) return;
+        st.cat = b.dataset.pCat; paint();
+      }));
+      body.querySelectorAll("[data-p-stage]").forEach((b) => b.addEventListener("click", () => {
+        if (st.stage === b.dataset.pStage) return;
+        st.stage = b.dataset.pStage; paint();
+      }));
+      mfgBind(ctx, body, d);   // 行下钻（window=月/日 + 三项筛选）与行内问数重新绑定
+    };
+    paint();
+  }
+
+  /** 静态累计柏拉图卡：柱 + 累计折线 + 阈值参考线；L1（带 screen / pareto_kpi）可点击类型下钻。 */
+  function mfgParetoStaticCard(UI, d, screen) {
     const items = d.pareto || [];
     if (!items.length) return "";
     const threshold = d.pareto_threshold || 80;
@@ -3541,6 +3955,10 @@
    *  ``terminal``（不良类型下钻）为类型维度终点视图：行不再下钻实体，仅保留问数。 */
   function mfgDrillL2Body(UI, d) {
     const term = !!d.terminal;
+    // 趋势列表头随所选口径：当日 1 点 / 当月 15 点 / 最近7天 7 点 / 不限窗口按数据日
+    const wkey = (d.window || {}).key;
+    const trendCol = wkey === "day" ? "当日" : (wkey === "month" ? "当月趋势"
+      : (wkey === "all" ? "窗口趋势" : "7 日趋势"));
     const rows = (d.rows || []).map((r) => {
       const tone = MFG_TONE[r.status] || "blue";
       const ent = drillEntity(r);
@@ -3575,10 +3993,10 @@
         </div>
         ${rows ? `<div class="drill-scroll"><table class="std-table drill-table">
           <thead><tr><th>序号</th><th>${UI.esc(d.dimension)}</th><th>值</th><th>目标</th>
-            <th>状态</th><th>分子 ÷ 分母</th><th>7 日趋势</th><th>操作</th></tr></thead>
+            <th>状态</th><th>分子 ÷ 分母</th><th>${trendCol}</th><th>操作</th></tr></thead>
           <tbody>${rows}</tbody></table></div>`
         : `<div class="empty">${UI.icon("warn", 22)}<div style="margin-top:8px">${term
-          ? "该不良类型在统计窗口内无明细记录" : "该指标暂无分组明细"}</div></div>`}
+          ? "该不良类型在当前筛选范围内无明细记录" : "该指标暂无分组明细"}</div></div>`}
         <div class="drill-def">${UI.icon("info", 12)}<span>口径：${UI.esc(d.definition || "")}</span></div>
       </div>`;
   }
@@ -3750,24 +4168,98 @@
     const cur = st.boardDrill;
     if (!cur) return;
     const host = cur.host || "";   // 保留宿主（我的看板内联下钻 / 看板内下钻）
+    const win = cur.window;        // 保留时间口径（当日/当月/最近7天/all），返回后仍同口径
     const lvl = cur.level || 2;
     if (lvl >= 5) {
       st.boardDrill = { level: 4, host: host, screen: cur.screen, kpi: cur.kpi,
-                        entity: cur.entity, step: cur.step };
+                        entity: cur.entity, step: cur.step, window: win };
     } else if (lvl === 4) {
-      st.boardDrill = { level: 3, host: host, screen: cur.screen, kpi: cur.kpi, entity: cur.entity };
+      st.boardDrill = { level: 3, host: host, screen: cur.screen, kpi: cur.kpi,
+                        entity: cur.entity, window: win };
     } else if (lvl === 3) {
-      st.boardDrill = { level: 2, host: host, screen: cur.screen, kpi: cur.kpi };
+      st.boardDrill = { level: 2, host: host, screen: cur.screen, kpi: cur.kpi, window: win };
     } else {
       st.boardDrill = null;
     }
     ctx.refreshScreen();
   }
 
+  /** 标准三率 1 级 → 2 级：点工段卡把下钻状态挂到 ``boardDrill``（level=2 + stdStage），
+   *  走与其它看板下钻同一条 refreshScreen 路径——面包屑 / 返回 / 口径切换都复用同一套，
+   *  不在卡片下方就地展开（二级看板是独立下钻页，含汇总 + 班组明细）。 */
+  function mfgStdBind(ctx, box) {
+    const cards = box.querySelectorAll("[data-std-stage]");
+    if (!cards.length) return;
+    const go = (name) => {
+      ctx.state.screenState.boardDrill = {
+        level: 2, screen: "quality", stdStage: name,
+        window: ctx.state.screenState.mfgWindow || "window",
+      };
+      ctx.refreshScreen();
+    };
+    cards.forEach((card) => {
+      const fn = (ev) => {
+        if (ev) ev.stopPropagation();   // 不进 mfgBind 的下钻/问数分支
+        go(card.dataset.stdStage);
+      };
+      card.addEventListener("click", fn);
+      card.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); go(card.dataset.stdStage); }
+      });
+    });
+  }
+
+  /** 标准三率 2 级看板加载：优先复用 1 级已下发的同口径数据（零网络往返）；
+   *  换口径（当日/当月）或有下钻但缓存失效时按同口径补取一次，失败回落演示数据。 */
+  async function loadStdDrill(ctx, drill) {
+    const UI = ctx.UI;
+    const st = ctx.state.screenState;
+    const box = document.getElementById("mfg-body");
+    if (!box) return;
+    const win = ["day", "month", "window"].indexOf(drill.window) >= 0
+      ? drill.window : (st.mfgWindow || "window");
+    let d = (st.stdPayload && st.stdPayload.key === win) ? st.stdPayload.data : null;
+    if (!d) {
+      if (ctx.api.online()) {
+        try {
+          const r = await ctx.api.qualityDashboard(win);
+          if (r && !r.degraded && r.standard_three_rates) d = r;
+        } catch (err) { /* 降级演示数据，不阻断 */ }
+      }
+      if (!d) d = (ctx.DEMO.DASHBOARD || {}).quality || null;
+      st.stdPayload = d ? { key: win, data: d } : null;
+    }
+    const crumbEl = document.getElementById("mfg-crumb");
+    if (crumbEl) {
+      crumbEl.innerHTML = `<div class="mfg-crumb">
+        <button class="crumb-back" data-crumb-back>${UI.icon("arrow", 12)} 返回标准三率</button>
+        <span class="crumb-path"><span class="crumb-node">品质看板</span>
+          <span class="crumb-sep">›</span><span class="crumb-node">标准三率 · 符合率</span>
+          <span class="crumb-sep">›</span><span class="crumb-node crumb-cur">${UI.esc(drill.stdStage)}</span></span>
+      </div>`;
+      const back = crumbEl.querySelector("[data-crumb-back]");
+      if (back) back.addEventListener("click", () => backDrill(ctx));
+    }
+    const stage = (((d || {}).standard_three_rates || {}).by_stage || [])
+      .find((x) => x.stage === drill.stdStage);
+    if (!stage) {
+      box.innerHTML = `<div class="empty">${UI.icon("warn", 28)}
+        <div style="margin-top:8px">该工段在当前口径下暂无审核数据</div></div>`;
+      return;
+    }
+    box.innerHTML = stdL2Body(UI, d, stage);
+    mfgBind(ctx, box, d);   // 行内「问数」等通用交互
+  }
+
   /** 绑定看板下钻交互：data-kpi → L2；data-drill-entity → L3；
    *  data-drill-step → L4（带 data-drill-station 则 L5）；行内「问数」→ 协同问数。 */
   function mfgBind(ctx, box, payload, host) {
     const h = host || "";   // 宿主透传：我的看板内联下钻时回写 dashboard，保证返回/再下钻不串屏
+    // 板级时间口径：下钻与所看档位同口径（当日/当月/最近7天）。
+    // 订单履约看板自带独立口径状态，其余看板（制造/品质/SPC/我的看板）沿用 mfgWindow。
+    const st = ctx.state.screenState || {};
+    const win = (((payload && payload.screen) === "orders")
+      ? st.ordersWindow : st.mfgWindow) || "window";
     box.querySelectorAll("[data-ask]").forEach((btn) => {
       btn.addEventListener("click", (ev) => {
         ev.stopPropagation();
@@ -3781,22 +4273,31 @@
       try { return JSON.parse(el.dataset.drillEntity || "{}"); } catch (e) { return {}; }
     };
     const goL2 = (el) => () => setDrill(ctx, {
-      level: 2, host: h, screen: el.dataset.screen, kpi: el.dataset.kpi,
+      level: 2, host: h, screen: el.dataset.screen, kpi: el.dataset.kpi, window: win,
     });
     const goL3 = (el) => () => setDrill(ctx, {
-      level: 3, host: h, screen: el.dataset.screen, kpi: el.dataset.kpi, entity: entOf(el),
+      level: 3, host: h, screen: el.dataset.screen, kpi: el.dataset.kpi,
+      entity: entOf(el), window: win,
     });
     const goL4L5 = (el) => () => {
       const station = el.dataset.drillStation || "";
       setDrill(ctx, {
         level: station ? 5 : 4, host: h, screen: el.dataset.screen, kpi: el.dataset.kpi,
         entity: entOf(el), step: el.dataset.drillStep || "", station: station,
+        window: win,
       });
     };
-    // L1 累计不良柏拉图 → 不良类型下钻（类型维度 L2，行不再下钻实体）
+    // L1 累计不良柏拉图 → 不良类型下钻（类型维度 L2，行不再下钻实体）。
+    // 交互式柏拉图行带 data-drill-window（本块期间：月别 "month" / 日别 "day"）+
+    // stage/category/prod-cat（与当前「工段/类别/产品分类」筛选同口径）；
+    // 静态柏拉图行缺省走板级口径。
     const goPareto = (el) => () => setDrill(ctx, {
       level: 2, host: h, screen: el.dataset.screen, kpi: el.dataset.kpi,
       defectType: el.dataset.drillPareto || "",
+      window: el.dataset.drillWindow || win,
+      stage: el.dataset.drillStage || "",
+      category: el.dataset.drillCategory || "",
+      prodCat: el.dataset.drillProdCat || "",
     });
     const keyGo = (fn) => (ev) => {
       if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); fn(); }
@@ -3841,12 +4342,22 @@
     const step = lvl >= 4 ? (drill.step || "") : "";
     const station = lvl >= 5 ? (drill.station || "") : "";
     const defectType = lvl === 2 ? (drill.defectType || "") : "";
+    // 时间口径与所看板级一致；不良类型下钻可为 "all"（不限窗口）或本块期间（月别 month /
+    // 日别 day）+ stage/category/prod_category 筛选。
+    // 订单履约看板自带独立口径状态，其余看板沿用制造综合看板的 mfgWindow。
+    const ss = ctx.state.screenState || {};
+    const fallbackWin = (drill.screen === "orders") ? ss.ordersWindow : ss.mfgWindow;
+    const windowKey = drill.window || fallbackWin || "window";
+    const stage = drill.stage || "";
+    const category = drill.category || "";
+    const prodCat = drill.prodCat || "";
     let payload = null, source = "real", reason = "";
 
     if (ctx.api.online()) {
       try {
         const d = await ctx.api.dashboardDrill(drill.screen, drill.kpi, entity, step,
-                                               station, defectType);
+                                               station, defectType, windowKey,
+                                               stage, category, prodCat);
         // 不良类型下钻：后端权威（空行也是有效答案），不因 0 行退回演示数据
         const okLvl = d && d.level === lvl
           && (lvl === 2 ? ((d.rows || []).length > 0 || !!d.defect_type) : !!d.entity);
@@ -3905,12 +4416,29 @@
     const st = ctx.state.screenState;
     const tab = st.mfgTab === "quality" ? "quality" : "manufacturing";
     const isQ = tab === "quality";
+    // 板级时间口径：当日 / 当月 / 最近7天（默认最近7天，与后端 resolve_window 同键）
+    const WINDOW_KEYS = ["day", "month", "window"];
+    const winKey = WINDOW_KEYS.indexOf(st.mfgWindow) >= 0 ? st.mfgWindow : "window";
+    const WINDOW_CN = { day: "当日", month: "当月", window: "最近7天" };
     // 下钻状态只在同 Tab 内有效；换 Tab / 换屏复位
     let drill = st.boardDrill;
     // 仅本屏下钻有效；其它看板/工作台内联下钻残留一律复位
     if (drill && (drill.screen !== tab || drill.host === "dashboard")) {
       drill = null; st.boardDrill = null;
     }
+
+    // 报告中心「就地生成报告」载荷：把当前看板口径 + 模块作为溯源引用归档
+    const scopeCn = isQ ? mfgScopeCn({ stage: st.mfgStage, category: st.mfgCat }) : "";
+    const rpBoardPayload = UI.esc(JSON.stringify({
+      source_module: "kpi",
+      context: {
+        title: `${isQ ? "品质" : "制造"}看板快照报告 · ${WINDOW_CN[winKey]}`,
+        summary: `看板口径：${WINDOW_CN[winKey]}`
+          + (scopeCn ? `｜汇总范围：${scopeCn}` : "")
+          + `｜模块：${isQ ? "品质" : "制造"}综合看板`,
+        refs: [isQ ? "dashboard:quality" : "dashboard:manufacturing"],
+      },
+    }));
 
     root.innerHTML = `
       <div class="content-inner">
@@ -3919,11 +4447,20 @@
             ${isQ ? UI.badge("品质看板", "badge-purple") : UI.badge("制造看板", "badge-blue")}</div>
           <div class="page-desc">制造 + 品质双看板 · TOP5 突出重点（最需关注的最差 5 名）。
             <span id="mfg-window">统计窗口加载中…</span>
-            <span id="mfg-flag"></span><span id="mfg-gen" class="mfg-gen"></span></div>
+            <span id="mfg-flag"></span><span id="mfg-gen" class="mfg-gen"></span>
+            <button class="btn btn-outline btn-sm" style="margin-left:10px" data-report-gen="${rpBoardPayload}"
+              title="把当前看板口径与模块归档为报告（可继续走审定 / 派发）">${UI.icon("report", 12)}生成报告</button></div>
         </div>
         <div class="chip-row mfg-tabs" id="mfg-tabs" style="margin-bottom:14px">
           <button class="chip${isQ ? "" : " active"}" data-tab="manufacturing">${UI.icon("cpu", 14)}制造看板</button>
           <button class="chip${isQ ? " active" : ""}" data-tab="quality">${UI.icon("shield", 14)}品质看板</button>
+        </div>
+        <div class="chip-row mfg-windows" id="mfg-windows" style="margin-bottom:14px">
+          <span class="chip-row-label">统计口径</span>
+          ${WINDOW_KEYS.map((k) => `<button class="chip${k === winKey ? " active" : ""}"
+            data-window="${k}">${UI.icon("clock", 13)}${WINDOW_CN[k]}</button>`).join("")}
+          <span class="chip-row-note">· KPI / TOP5 均按所选口径</span>
+          ${isQ ? mfgScopeChips(UI, st) : ""}
         </div>
         <div id="mfg-crumb"></div>
         <div id="mfg-body">
@@ -3940,8 +4477,39 @@
       });
     });
 
-    if (drill) loadMfgDrill(ctx, drill);
-    else loadMfgDashboard(ctx, tab);
+    root.querySelectorAll("#mfg-windows [data-window]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        if (winKey === btn.dataset.window) return;
+        st.mfgWindow = btn.dataset.window;
+        // 换口径保持当前下钻层级（L2–L5）：只把下钻对象的窗口改成新口径，不退回看板首页。
+        if (drill) drill.window = btn.dataset.window;
+        else st.boardDrill = null;
+        ctx.refreshScreen();
+      });
+    });
+
+    // 品质看板板级「工段 / 类别」筛选：改的是 KPI 汇总口径，与「统计口径」同法复位下钻层级——
+    // 否则卡片说 SMT、下钻却是全厂分解，两个口径对不上。
+    root.querySelectorAll("#mfg-windows [data-stage]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        if ((st.mfgStage || "") === btn.dataset.stage) return;
+        st.mfgStage = btn.dataset.stage;
+        st.boardDrill = null;
+        ctx.refreshScreen();
+      });
+    });
+    root.querySelectorAll("#mfg-windows [data-cat]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        if ((st.mfgCat || "") === btn.dataset.cat) return;
+        st.mfgCat = btn.dataset.cat;
+        st.boardDrill = null;
+        ctx.refreshScreen();
+      });
+    });
+
+    if (drill && drill.stdStage) loadStdDrill(ctx, drill);
+    else if (drill) loadMfgDrill(ctx, drill);
+    else loadMfgDashboard(ctx, tab, winKey);
   }
 
   /**
@@ -3950,17 +4518,24 @@
    * 2) 后端离线 / 返回 degraded / kpis 为空 / 请求异常 → 用演示数据（demoFlag + 原因）。
    * 演示数据与接口逐字段同构，由同一聚合口径（seed_v3 明细）预先算出。
    */
-  async function loadMfgDashboard(ctx, tab) {
+  async function loadMfgDashboard(ctx, tab, windowKey) {
     const UI = ctx.UI;
     const box = document.getElementById("mfg-body");
     if (!box) return;
     const isQ = tab === "quality";
     const tabLabel = isQ ? "品质看板" : "制造综合看板";
+    // 时间口径：默认最近 7 天（与后端 resolve_window 同键），非法值回落 "window"
+    const win = ["day", "month", "window"].indexOf(windowKey) >= 0 ? windowKey : "window";
+    // 板级「工段 / 缺陷类别」筛选（仅品质看板有该维度；制造看板不参与）
+    const st = ctx.state.screenState || {};
+    const stage = isQ ? (st.mfgStage || "") : "";
+    const category = isQ ? (st.mfgCat || "") : "";
     let payload = null, source = "real", reason = "", scopeMeta = null;
 
     if (ctx.api.online()) {
       try {
-        const d = isQ ? await ctx.api.qualityDashboard() : await ctx.api.manufacturingDashboard();
+        const d = isQ ? await ctx.api.qualityDashboard(win, stage, category)
+                      : await ctx.api.manufacturingDashboard(win);
         if (d && !d.degraded && (d.kpis || []).length) {
           payload = d;
           scopeMeta = d.scope || null;
@@ -3983,6 +4558,11 @@
     if (!payload) {
       source = "demo";
       payload = (ctx.DEMO.DASHBOARD || {})[tab];
+      // 演示数据是静态快照，没有工段 / 类别维度的分母，无法按筛选重算 → 如实标注，
+      // 不让「选了筛选、值却是全厂」看起来像真实汇总。
+      if (payload && (stage || category)) {
+        reason = `${reason || "演示数据"} · 离线演示数据不支持工段/类别筛选`;
+      }
     }
     if (!payload) {
       box.innerHTML = `<div class="empty">${UI.icon("warn", 28)}<div style="margin-top:8px">暂无看板数据</div></div>`;
@@ -4006,6 +4586,16 @@
     box.innerHTML = isQ ? mfgQualityBody(UI, payload) : mfgManufacturingBody(UI, payload);
     // 主体点击 = 就地看明细（L2/L3）；卡内/行内「问数」按钮 = 跳协同问数
     mfgBind(ctx, box, payload);
+    // 品质看板交互式柏拉图（日别/月别 + 期间 + 类别/工段本地筛选）—— 独立于板级口径
+    mfgParetoBind(ctx, box, payload);
+    // 标准三率两级看板（1 级工段 → 点卡下钻 2 级班组）
+    if (isQ) {
+      // 缓存本口径的整份载荷：下钻 2 级时直接就地切片，不再回后端取一遍
+      if (payload.standard_three_rates && st) {
+        st.stdPayload = { key: win, data: payload };
+      }
+      mfgStdBind(ctx, box);
+    }
   }
 
   /* ============================================================

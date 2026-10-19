@@ -62,8 +62,13 @@ slots:
     name: 接单评审会签
     scene: order_review_v2
     available_permissions: [hitl.order_review.propose, hitl.order_review.cosign, hitl.order_review.approve]
+  # 报告中心：报告审定与派发（propose=编制/发起审定 / cosign=对客口径与数据复核 / approve=最终放行）
+  - key: report_publish
+    name: 报告审定与派发
+    scene: report_center
+    available_permissions: [hitl.report_publish.propose, hitl.report_publish.cosign, hitl.report_publish.approve]
 
-# ---------- 权限目录（27 条 = 9 slot × 3 verb） ----------
+# ---------- 权限目录（30 条 = 10 slot × 3 verb） ----------
 permissions:
   # 复线决策
   - {key: hitl.restart.propose,            name: 发起复线决策,     scope: hitl, description: "提出按建议/暂缓/分批试产复线的处置动作"}
@@ -101,6 +106,10 @@ permissions:
   - {key: hitl.order_review.propose,       name: 发起接单评审,     scope: hitl, description: "接单评审提出处置动作（接受 / 有条件接受 / 退回重议）"}
   - {key: hitl.order_review.cosign,        name: 接单评审会签,     scope: hitl, description: "对工艺可行性与排产产能做会签背书（工程 / 计划）"}
   - {key: hitl.order_review.approve,       name: 接单评审终批,     scope: hitl, description: "接单评审最终放行（业务经理）"}
+  # 报告审定与派发（报告中心）
+  - {key: hitl.report_publish.propose,     name: 发起报告审定,     scope: hitl, description: "发起报告审定/驳回（报告编制与责任岗位）"}
+  - {key: hitl.report_publish.cosign,      name: 报告审定会签,     scope: hitl, description: "对报告结论与对客口径一致性会签（质量 / 业务 / 客服）"}
+  - {key: hitl.report_publish.approve,     name: 报告审定终批,     scope: hitl, description: "报告审定与对外派发最终放行（总经理 / 质量总监）"}
 
 # ---------- 角色（Role = 命名权限集合） ----------
 # key 为英文稳定标识；aliases 覆盖场景 YAML / 演示前端 / 用户上下文里的各种写法。
@@ -120,6 +129,7 @@ roles:
       - hitl.complaint_reply.approve
       - hitl.delivery_commit.approve
       - hitl.maintenance_window.approve
+      - hitl.report_publish.approve
 
   - key: quality_director
     name: 质量总监
@@ -134,6 +144,9 @@ roles:
       - hitl.maintenance_window.approve
       - hitl.spc_action.cosign
       - hitl.spc_action.approve
+      - hitl.report_publish.propose
+      - hitl.report_publish.cosign
+      - hitl.report_publish.approve
 
   - key: qa_manager
     name: QA经理
@@ -144,6 +157,7 @@ roles:
       - hitl.disposition.approve
       - hitl.d8_close.propose
       - hitl.d8_close.approve
+      - hitl.report_publish.propose
 
   - key: qa
     name: QA
@@ -220,6 +234,7 @@ roles:
       - hitl.spc_action.propose
       - hitl.spc_action.cosign
       - hitl.spc_action.approve
+      - hitl.report_publish.propose
 
   - key: equipment
     name: 设备工程
@@ -245,6 +260,8 @@ roles:
       - hitl.delivery_commit.approve
       - hitl.order_review.propose
       - hitl.order_review.approve
+      - hitl.report_publish.propose
+      - hitl.report_publish.cosign
 
   - key: warehouse
     name: 仓库
@@ -375,6 +392,7 @@ roles:
       - hitl.restart.cosign
       - hitl.delivery_commit.cosign
       - hitl.maintenance_window.cosign
+      - hitl.report_publish.propose
 
   - key: test_engineer
     name: 工程测试工程师
@@ -424,6 +442,7 @@ roles:
     aliases: [客服, 客户服务, 售后, 售后服务, 客服专员, customer_service]
     permissions:
       - hitl.complaint_reply.cosign
+      - hitl.report_publish.cosign
 
   - key: maintenance_tech
     name: 设备维保技师

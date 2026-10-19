@@ -33,12 +33,15 @@ _SRC = Path(__file__).resolve().parents[2] / "src" / "mfg_agents"
 _UI = _SRC / "v2" / "demo" / "ui"
 
 #: 角色 → 治理槽位（改这里 = 改授权口径，必须过评审）
+#: 2026-10-20 同步：报告中心新增第 10 个槽位 ``report_publish``（报告审定与派发），
+#: 授权 gm（终批）/ 质量总监 / QA经理 / 业务 / 制造 / 客服 / 项目经理——
+#: 因此 gm 与 qa_manager 的槽位集合各多一项，属配置的合法扩张。
 _EXPECTED_SLOTS = {
     "gm": {"restart", "eta", "disposition", "d8_close", "complaint_reply",
-           "delivery_commit", "maintenance_window"},
+           "delivery_commit", "maintenance_window", "report_publish"},
     "admin_hr": set(),
     "warehouse": {"delivery_commit"},
-    "qa_manager": {"d8_close", "disposition"},
+    "qa_manager": {"d8_close", "disposition", "report_publish"},
 }
 
 
