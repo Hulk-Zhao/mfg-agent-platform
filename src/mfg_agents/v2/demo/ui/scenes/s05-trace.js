@@ -79,6 +79,40 @@
     ".s05-path li { font-size: 12.6px; color: var(--text-2); line-height: 1.9; }",
     ".s05-path li b { color: var(--text); }",
     ".s05-degrade-note { font-size: 11.5px; color: var(--text-3); margin-top: 6px; }",
+    /* T18 智能体层：取证书签 / 案例卡 / 检索轨迹 / 治理卡 */
+    ".s05-badges { margin-top: 12px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }",
+    ".s05-badges-title { flex-basis: 100%; font-size: 12.4px; color: var(--text-2); font-weight: 600; }",
+    ".s05-badges-extra { margin-left: 8px; font-weight: 400; color: var(--text-3); }",
+    ".s05-badge { display: inline-flex; flex-direction: column; gap: 2px; text-align: left;"
+      + " border: 1px dashed var(--border-strong); background: var(--card); border-radius: 8px;"
+      + " padding: 6px 10px; cursor: pointer; font-size: 12px; color: var(--text); }",
+    ".s05-badge:hover { border-color: var(--primary); color: var(--primary); }",
+    ".s05-badge-label { font-weight: 600; }",
+    ".s05-badge-agent { color: var(--text-2); font-size: 11.4px; }",
+    ".s05-case-list { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }",
+    ".s05-case { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; background: var(--card); }",
+    ".s05-case-head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }",
+    ".s05-case-id { font-size: 11.6px; color: var(--text-3); }",
+    ".s05-case-title { font-weight: 600; font-size: 13.2px; color: var(--text); }",
+    ".s05-case-score { margin-left: auto; font-size: 11.6px; color: var(--text-2); }",
+    ".s05-case-meta { margin-top: 4px; font-size: 12.2px; color: var(--text-2); }",
+    ".s05-case-reason { margin-top: 3px; font-size: 12px; color: var(--text-3); }",
+    ".s05-trace-title { margin-top: 12px; font-size: 12.4px; font-weight: 600; color: var(--text-2); }",
+    ".s05-trace-steps { margin: 6px 0 0 0; padding-left: 20px; }",
+    ".s05-trace-steps li { font-size: 12.4px; color: var(--text-2); line-height: 1.9; }",
+    ".s05-trace-steps li b { color: var(--text); }",
+    ".s05-explain { margin-top: 10px; font-size: 12.4px; color: var(--text-2); }",
+    ".s05-explain summary { cursor: pointer; color: var(--text); font-weight: 600; }",
+    ".s05-explain ul { margin: 6px 0 0 0; padding-left: 20px; }",
+    ".s05-explain li { line-height: 1.9; }",
+    ".s05-hitl { margin-top: 8px; }",
+    ".s05-hitl-head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }",
+    ".s05-hitl-slot { font-size: 11.6px; color: var(--primary); background: var(--primary-light);"
+      + " border-radius: 999px; padding: 1px 8px; }",
+    ".s05-hitl-vis { margin-left: auto; font-size: 11.8px; color: var(--text-2); }",
+    ".s05-hitl-meta { margin-top: 5px; font-size: 12.2px; color: var(--text-2); }",
+    ".s05-hitl-ro { margin-top: 5px; font-size: 11.8px; color: var(--text-3); }",
+    ".s05-d8-node text { pointer-events: none; }",
   ].join("\n");
 
   /**
@@ -323,6 +357,152 @@
         "report_id": "DEMO-8D-001"
       },
       "source": "spec-v1.md §4 支线 B · events.jsonl（S5 · complaint / hitl）"
+    },
+    "agent_layer": {
+      "replays": {
+        "agent": "s05_complaint_8d",
+        "cases": "s05_same_root_cause_cases"
+      },
+      "panel_title": "客诉 8D 智能体协同（DEMO-CC-001）",
+      "d8": {
+        "canvas": {
+          "w": 1040,
+          "h": 128
+        },
+        "current_stage": "D8",
+        "root_cause_case": "DEMO-CASE-006",
+        "note": "D1–D8 由 qa_lead 规则模板确定性合成（spec-v1 §4 支线 B）；当前 D8 待 8D 关闭会签。",
+        "steps": [
+          {
+            "key": "D1",
+            "label": "成立小组",
+            "agent": "quality",
+            "x": 8,
+            "y": 8,
+            "w": 120,
+            "h": 54
+          },
+          {
+            "key": "D2",
+            "label": "问题描述",
+            "agent": "quality",
+            "x": 137,
+            "y": 8,
+            "w": 120,
+            "h": 54
+          },
+          {
+            "key": "D3",
+            "label": "临时对策",
+            "agent": "quality",
+            "x": 266,
+            "y": 8,
+            "w": 120,
+            "h": 54
+          },
+          {
+            "key": "D4",
+            "label": "根因分析",
+            "agent": "rd_engineering",
+            "x": 395,
+            "y": 8,
+            "w": 120,
+            "h": 54
+          },
+          {
+            "key": "D5",
+            "label": "纠正措施",
+            "agent": "rd_engineering",
+            "x": 524,
+            "y": 8,
+            "w": 120,
+            "h": 54
+          },
+          {
+            "key": "D6",
+            "label": "实施验证",
+            "agent": "manufacturing",
+            "x": 653,
+            "y": 8,
+            "w": 120,
+            "h": 54
+          },
+          {
+            "key": "D7",
+            "label": "预防措施",
+            "agent": "quality",
+            "x": 782,
+            "y": 8,
+            "w": 120,
+            "h": 54
+          },
+          {
+            "key": "D8",
+            "label": "结案会签",
+            "agent": "quality",
+            "x": 911,
+            "y": 8,
+            "w": 120,
+            "h": 54
+          }
+        ]
+      },
+      "graph_badges": [
+        {
+          "key": "complaint",
+          "domain": "quality",
+          "tool": "list_scenarios",
+          "branch": ""
+        },
+        {
+          "key": "lot",
+          "domain": "quality",
+          "tool": "run_registered_query",
+          "branch": ""
+        },
+        {
+          "key": "wo",
+          "domain": "quality",
+          "tool": "run_registered_query",
+          "branch": ""
+        },
+        {
+          "key": "op",
+          "domain": "quality",
+          "tool": "run_registered_query",
+          "branch": "pqe_process"
+        },
+        {
+          "key": "equipment",
+          "domain": "rd_engineering",
+          "tool": "run_registered_query",
+          "branch": "engineering"
+        },
+        {
+          "key": "shift",
+          "domain": "quality",
+          "tool": "run_registered_query",
+          "branch": ""
+        },
+        {
+          "key": "stock",
+          "domain": "supply_chain",
+          "tool": "run_registered_query",
+          "branch": "business_sales"
+        }
+      ],
+      "cases": {
+        "title": "同根因历史案例（Agentic RAG 回放）",
+        "trace_title": "检索轨迹（术语归一 → 本体扩展 → 授权过滤 → 引用校验）",
+        "explain_title": "为什么看到这几条 / 为什么看不到"
+      },
+      "hitl": {
+        "title": "8D 与对客回复 · 治理工单（只读）",
+        "empty": "仅展示演示种子工单（当前无可见种子）",
+        "invisible": "本岗位不参与该槽位审批（按权限矩阵不可见）",
+        "readonly_note": "操作只读：真实会签在治理窗口（审批确认中心）执行"
+      },
+      "source_note": "回放轨迹与真实链路同构（AgenticStep 六键）；来源徽标「演示回放」不可去除。"
     },
     "value_lines": [
       "任一客诉 15 分钟内定位到批次、工序、设备和库存位置",
@@ -1047,6 +1227,292 @@
     }).join("") + "</div>";
   }
 
+  /* ============================================================
+   * 五·五、智能体层（T18）：协同面板 / 取证书签 / 同根因案例 / 8D 知识图 / 治理卡
+   *
+   * 纪律：全部数据经 SceneKit.replay()（永不 reject）与 ctx.api.workflowPending()
+   * 现取；取不到就整块降级，不编造步骤与数字。回放包字段与真实链路同构
+   * （steps 六键 = AgenticStep.to_dict()），来源徽标由 SceneKit.agentPanel 强制渲染。
+   * ============================================================ */
+
+  function agentLayerOf(S) {
+    return (S && S.agent_layer && typeof S.agent_layer === "object") ? S.agent_layer : {};
+  }
+
+  function agentDegrade(text) {
+    const K = kit();
+    return '<div class="card"><div class="card-pad sk-degrade" data-sk-s05-agent-degrade="1">'
+      + "<b>" + K.esc(text || "演示回放数据未就绪，不展示编造内容") + "</b>"
+      + '<div class="sk-degrade-sub">按上线纪律：取不到回放就不渲染半块，也不显示编造数字。</div>'
+      + "</div></div>";
+  }
+
+  function summaryOf(pkg, branch) {
+    const bag = (pkg && pkg.node_steps) || {};
+    let list = (branch && bag[branch]) || null;
+    if (!list || !list.length) list = (pkg && pkg.steps) || [];
+    if (!list.length) return "";
+    const last = list[list.length - 1] || {};
+    return String(last.summary || "");
+  }
+
+  function agentNameOf(pkg, domain) {
+    const list = (pkg && pkg.agents) || [];
+    for (let i = 0; i < list.length; i += 1) {
+      if (list[i] && list[i].domain === domain) {
+        return String(list[i].abbr || "") + " · " + String(list[i].name || "");
+      }
+    }
+    return String(domain || "");
+  }
+
+  function graphBadgesHtml(S, pkg) {
+    const K = kit();
+    const layer = agentLayerOf(S);
+    const badges = layer.graph_badges || [];
+    if (!badges.length || !pkg) return "";
+    const byKey = {};
+    (S.nodes || []).forEach(function (n) { byKey[n.key] = n; });
+    let html = '<div class="s05-badges" data-sk-s05-badges="1">'
+      + '<div class="s05-badges-title">取证节点书签 · 谁取的证 / 用什么工具 / 得出什么'
+      + '<span class="s05-badges-extra">' + K.esc(layer.source_note || "") + "</span></div>";
+    badges.forEach(function (b) {
+      const node = byKey[b.key];
+      if (!node) return;
+      html += '<button type="button" class="s05-badge" data-sk-s05-badge="' + K.esc(b.key) + '"'
+        + ' data-sk-s05-agent="' + K.esc(b.domain) + '" data-sk-s05-tool="' + K.esc(b.tool) + '"'
+        + ' data-sk-s05-branch="' + K.esc(b.branch || "") + '">'
+        + '<span class="s05-badge-label">' + K.esc(node.label) + "</span>"
+        + '<span class="s05-badge-agent">' + K.esc(agentNameOf(pkg, b.domain)) + "</span>"
+        + "</button>";
+    });
+    return html + "</div>";
+  }
+
+  function bindGraphBadges(root, S, pkg) {
+    const K = kit();
+    if (!root) return;
+    const buttons = root.querySelectorAll("[data-sk-s05-badge]");
+    for (let i = 0; i < buttons.length; i += 1) {
+      buttons[i].addEventListener("click", function () {
+        const key = this.getAttribute("data-sk-s05-badge");
+        const domain = this.getAttribute("data-sk-s05-agent");
+        const tool = this.getAttribute("data-sk-s05-tool");
+        const branch = this.getAttribute("data-sk-s05-branch");
+        const node = (S.nodes || []).filter(function (n) { return n.key === key; })[0] || {};
+        K.openDrill({
+          title: String(node.label || key) + " · 取证书签",
+          subtitle: "回放轨迹与真实链路同构（来源徽标「演示回放」）",
+          html: kv([
+            ["图谱节点", String(node.label || key)],
+            ["取证智能体", agentNameOf(pkg, domain)],
+            ["调用工具", String(tool || "")],
+            ["取证结论", summaryOf(pkg, branch) || "（该节点无独立回放步骤，沿用主链结论）"],
+            ["关联原始记录", String(node.record || "")],
+            ["口径来源", String(node.value_from || "")],
+          ]),
+        });
+      });
+    }
+  }
+
+  function casesHtml(S, pkg) {
+    const K = kit();
+    const conf = agentLayerOf(S).cases || {};
+    if (!pkg) return agentDegrade("同根因案例回放数据未就绪");
+    const hits = pkg.hits || [];
+    let html = '<div class="section-title">' + K.esc(conf.title || "同根因历史案例")
+      + '<span class="section-extra">' + K.esc(pkg.query || "") + "</span></div>";
+    if (!hits.length) return html + agentDegrade("本次检索无命中（不编造案例凑数）");
+    html += '<div class="s05-case-list">' + hits.map(function (h) {
+      return '<div class="s05-case"><div class="s05-case-head">'
+        + '<span class="s05-case-id">' + K.esc(h.case_id) + "</span>"
+        + '<span class="s05-case-title">' + K.esc(h.title) + "</span>"
+        + '<span class="s05-case-score">相似度 ' + K.esc(String(h.score)) + "</span></div>"
+        + '<div class="s05-case-meta">根因：' + K.esc(h.root_cause) + " · 部门：" + K.esc(h.dept)
+        + (h.redacted ? " · 已脱敏" : "") + "</div>"
+        + '<div class="s05-case-reason">' + K.esc(h.reason || "") + "</div></div>";
+    }).join("") + "</div>";
+    const trace = pkg.trace || [];
+    if (trace.length) {
+      html += '<div class="s05-trace-title">' + K.esc(conf.trace_title || "检索轨迹") + "</div>"
+        + '<ol class="s05-trace-steps">' + trace.map(function (t) {
+          return "<li><b>" + K.esc(t.title) + "</b> — " + K.esc(t.detail) + "</li>";
+        }).join("") + "</ol>";
+    }
+    const explain = pkg.filter_explain || [];
+    if (explain.length) {
+      html += '<details class="s05-explain"><summary>'
+        + K.esc(conf.explain_title || "为什么看到这几条 / 为什么看不到") + "</summary><ul>"
+        + explain.map(function (line) { return "<li>" + K.esc(line) + "</li>"; }).join("")
+        + "</ul></details>";
+    }
+    if (pkg.ontology_gain) {
+      html += smallNote("本体增益：" + String(pkg.ontology_gain.before) + " → "
+        + String(pkg.ontology_gain.after) + " 条 · " + String(pkg.ontology_gain.detail || ""));
+    }
+    return html;
+  }
+
+  function d8Svg(S) {
+    const K = kit();
+    const d8 = agentLayerOf(S).d8 || {};
+    const canvas = d8.canvas || { w: 1040, h: 128 };
+    const steps = d8.steps || [];
+    const current = String(d8.current_stage || "");
+    const parts = ['<svg viewBox="0 0 ' + canvas.w + " " + canvas.h
+      + '" role="img" aria-label="8D 结构图" style="width:100%;height:auto;display:block">'];
+    steps.forEach(function (st) {
+      const active = st.key === current;
+      parts.push('<g class="s05-d8-node" id="s05-d8-' + K.esc(st.key) + '"'
+        + ' data-sk-kc-node="' + K.esc(st.key) + '">'
+        + '<rect x="' + st.x + '" y="' + st.y + '" width="' + st.w + '" height="' + st.h + '" rx="8"'
+        + ' fill="' + (active ? "var(--primary-light,#E7F0FA)" : "var(--card,#fff)") + '"'
+        + ' stroke="' + (active ? "var(--primary,#185FA5)" : "var(--border-strong,#D3DBE6)") + '"'
+        + ' stroke-width="' + (active ? "2.2" : "1.3") + '"></rect>'
+        + '<text x="' + (st.x + st.w / 2) + '" y="' + (st.y + 22) + '" text-anchor="middle"'
+        + ' font-size="12.5" font-weight="600" fill="var(--text,#1F2328)">' + K.esc(st.key) + "</text>"
+        + '<text x="' + (st.x + st.w / 2) + '" y="' + (st.y + 40) + '" text-anchor="middle"'
+        + ' font-size="11" fill="var(--text-2,#57606A)">' + K.esc(st.label) + "</text></g>");
+    });
+    parts.push("</svg>");
+    return parts.join("");
+  }
+
+  function d8PanelHtml(S, pkg, D) {
+    const K = kit();
+    const d8 = agentLayerOf(S).d8 || {};
+    const caseId = String(d8.root_cause_case || "");
+    const cases = (D && D.rows && D.rows.cases) || [];
+    let rootCause = "";
+    for (let i = 0; i < cases.length; i += 1) {
+      if (caseId && cases[i].case_id === caseId) rootCause = String(cases[i].root_cause || "");
+    }
+    const nodes = (d8.steps || []).map(function (st) {
+      let conclusion = "";
+      if (st.key === "D4") conclusion = "根因：" + (rootCause || "见同根因案例");
+      else if (st.key === "D8") conclusion = "待 d8_close 会签（演示回放）";
+      else conclusion = "该阶段由 " + agentNameOf(pkg, st.agent) + " 承接";
+      return {
+        id: st.key, label: st.label, agent: agentNameOf(pkg, st.agent),
+        tool: "回放轨迹", conclusion: conclusion, refs: [],
+      };
+    });
+    return '<div class="section-title">8D 结构图 · 知识图片卡<span class="section-extra">'
+      + K.esc(d8.note || "") + "</span></div>"
+      + K.knowledgeCard({
+        title: "8D 闭环（D1–D8）· 当前阶段高亮",
+        svg: d8Svg(S),
+        nodes: nodes,
+        caption: "图中节点结论与智能体协同面板同源（回放包 node_steps / 案例根因），可逐条对回。",
+      });
+  }
+
+  function hitlPanelHtml(S, tasks) {
+    const K = kit();
+    const conf = agentLayerOf(S).hitl || {};
+    if (!tasks || !tasks.length) {
+      return agentDegrade(conf.empty || "仅展示演示种子工单（当前无可见种子）");
+    }
+    let html = '<div class="section-title">' + K.esc(conf.title || "治理工单（只读）")
+      + '<span class="section-extra">按权限矩阵可见 · 零写操作</span></div>';
+    tasks.forEach(function (t) {
+      const vis = String(t.visibility || "");
+      const visText = vis === "mine" ? "我的待办（会签席）"
+        : vis === "domain" ? "域内可见（只读）" : (conf.invisible || "不可见");
+      const st = t.signoff_status || {};
+      const progress = String(st.progress || (String(st.done || 0) + "/" + String(st.total || 0)));
+      const ctx = t.context || {};
+      html += '<div class="s05-hitl card"><div class="card-pad">'
+        + '<div class="s05-hitl-head"><b>' + K.esc(t.title || "") + "</b>"
+        + '<span class="s05-hitl-slot">' + K.esc(ctx.slot || "") + "</span>"
+        + '<span class="s05-hitl-vis">' + K.esc(visText) + "</span></div>"
+        + '<div class="s05-hitl-meta">状态：' + K.esc(t.status || "") + " · 会签进度："
+        + K.esc(progress) + " · 归属：" + K.esc(ctx.complaint_id || "演示种子") + "</div>"
+        + '<div class="s05-hitl-ro">' + K.esc(conf.readonly_note || "只读演示") + "</div>"
+        + "</div></div>";
+    });
+    return html;
+  }
+
+  function hydrateAgentLayer(root, ctx, D, S) {
+    const K = kit();
+    if (!root) return;
+    const layer = agentLayerOf(S);
+    const replays = layer.replays || {};
+    const panelBox = root.querySelector("#s05-agent-panel");
+    const badgeBox = root.querySelector("#s05-graph-badges");
+    const caseBox = root.querySelector("#s05-case-panel");
+    const hitlBox = root.querySelector("#s05-hitl-panel");
+    const d8Box = root.querySelector("#s05-d8-panel");
+    const pending = (ctx && ctx.api && typeof ctx.api.workflowPending === "function")
+      ? ctx.api.workflowPending().then(function (res) { return (res && res.data) || []; })
+        .catch(function () { return null; })
+      : Promise.resolve(null);
+
+    K.replay(replays.agent).then(function (res) {
+      if (!panelBox || !panelBox.parentNode) return;
+      if (!res || !res.ok || !res.package) {
+        const why = String((res && res.error) || "回放数据未就绪");
+        panelBox.innerHTML = agentDegrade("演示回放数据未就绪（" + why + "）");
+        if (badgeBox) badgeBox.innerHTML = "";
+        if (hitlBox) hitlBox.innerHTML = agentDegrade("治理待办与回放同源，回放未就绪时整块降级");
+        if (d8Box) d8Box.innerHTML = "";
+        return;
+      }
+      const pkg = res.package;
+      pending.then(function (tasks) {
+        if (!panelBox.parentNode) return;
+        const seeds = (tasks || []).filter(function (t) {
+          const c = (t && t.context) || {};
+          return c.origin === "demo_seed"
+            && (c.slot === "d8_close" || c.slot === "complaint_reply");
+        });
+        const first = seeds[0] || null;
+        const st = (first && first.signoff_status) || {};
+        const hitlTask = first ? {
+          title: first.title,
+          slot: (first.context || {}).slot,
+          status: first.status,
+          visibility: first.visibility,
+          progress: String(st.progress || (String(st.done || 0) + "/" + String(st.total || 0))),
+          required: true,
+          my_action: first.my_action,
+          readonly_note: (agentLayerOf(S).hitl || {}).readonly_note || "",
+        } : null;
+        panelBox.innerHTML = K.agentPanel({
+          title: pkg.title,
+          agents: pkg.agents,
+          dag: pkg.dag,
+          steps: pkg.steps,
+          node_steps: pkg.node_steps,
+          conclusion: pkg.conclusion,
+          source: "replay",
+          hitl_task: hitlTask,
+        });
+        if (badgeBox) {
+          badgeBox.innerHTML = graphBadgesHtml(S, pkg);
+          bindGraphBadges(root, S, pkg);
+        }
+        if (d8Box) d8Box.innerHTML = d8PanelHtml(S, pkg, D);
+        if (hitlBox) {
+          hitlBox.innerHTML = (tasks === null)
+            ? agentDegrade("治理待办读取失败，不展示编造工单")
+            : hitlPanelHtml(S, seeds);
+        }
+      });
+    });
+
+    K.replay(replays.cases).then(function (res) {
+      if (!caseBox || !caseBox.parentNode) return;
+      if (!res || !res.ok || !res.package) {
+        caseBox.innerHTML = casesHtml(S, null);
+        return;
+      }
+      caseBox.innerHTML = casesHtml(S, res.package);
+    });
+  }
+
   function bodyHtml(S, D) {
     const K = kit();
     const model = buildDrills(D, S);
@@ -1054,18 +1520,23 @@
       ? smallNote("以下对象未取到、已就地静默降级：" + D.missing.join(" / ")
         + "（口径：" + STORY_OBJECTS.map(sourceLabel).join("、") + "）。")
       : smallNote("取数口径：" + STORY_OBJECTS.map(sourceLabel).join("、") + "。");
-    return '<div class="sk-block">'
+    return '<div class="sk-block" id="s05-agent-panel">' + K.spinner("lg")
+      + "正在读取智能体回放轨迹…</div>"
+      + '<div class="sk-block">'
       + '<div class="section-title">客诉与批次定位<span class="section-extra">'
       + K.esc("支线 B · 8D 闭环入口") + "</span></div>"
       + overviewCards(model)
       + locateRow(model)
       + graphSvg(S, model)
+      + '<div id="s05-graph-badges"></div>'
       + stepsHtml(S, model)
       + "</div>"
       + '<div class="sk-block">'
       + '<div class="section-title">定位结论（五段回指）</div>'
       + '<div id="s05-trace-cards">' + traceCards(model) + "</div>"
       + "</div>"
+      + '<div class="sk-block" id="s05-case-panel">' + K.spinner("lg")
+      + "正在读取同根因案例回放…</div>"
       + '<div class="sk-block">'
       + K.eventFlow(s5Events(D).map(function (ev) {
         return {
@@ -1079,12 +1550,15 @@
       })
       + "</div>"
       + '<div class="sk-block">' + signoffBlock(model, D, S) + "</div>"
+      + '<div class="sk-block" id="s05-hitl-panel">' + K.spinner("lg")
+      + "正在读取治理待办…</div>"
       + '<div class="sk-block">'
       + '<div class="section-title">同批库存位置<span class="section-extra">影响面</span></div>'
       + stockBlock(model, D) + "</div>"
       + '<div class="sk-block">'
       + '<div class="section-title">OQC 放行与发货状态</div>'
       + shipmentBlock(model) + "</div>"
+      + '<div class="sk-block" id="s05-d8-panel"></div>'
       + '<div class="sk-block">' + customerBlock(model) + "</div>"
       + pathBlock(S)
       + '<div class="sk-block">' + degrade
@@ -1160,6 +1634,8 @@
       body.innerHTML = bodyHtml(S, D);
       K.bindDrills(body, openDrillByKey);
       bindLocate(body, buildModel(D, S));
+      // T18：智能体层（回放协同面板 / 取证书签 / 同根因案例 / 8D 知识图 / 治理卡）
+      hydrateAgentLayer(body, ctx, D, S);
     }).catch(function () {
       if (!body || !body.parentNode) return;
       body.innerHTML = degradeHtml(null);

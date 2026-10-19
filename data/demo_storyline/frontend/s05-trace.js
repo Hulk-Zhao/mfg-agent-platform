@@ -263,6 +263,152 @@
       },
       "source": "spec-v1.md §4 支线 B · events.jsonl（S5 · complaint / hitl）"
     },
+    "agent_layer": {
+      "replays": {
+        "agent": "s05_complaint_8d",
+        "cases": "s05_same_root_cause_cases"
+      },
+      "panel_title": "客诉 8D 智能体协同（DEMO-CC-001）",
+      "d8": {
+        "canvas": {
+          "w": 1040,
+          "h": 128
+        },
+        "current_stage": "D8",
+        "root_cause_case": "DEMO-CASE-006",
+        "note": "D1–D8 由 qa_lead 规则模板确定性合成（spec-v1 §4 支线 B）；当前 D8 待 8D 关闭会签。",
+        "steps": [
+          {
+            "key": "D1",
+            "label": "成立小组",
+            "agent": "quality",
+            "x": 8,
+            "y": 8,
+            "w": 120,
+            "h": 54
+          },
+          {
+            "key": "D2",
+            "label": "问题描述",
+            "agent": "quality",
+            "x": 137,
+            "y": 8,
+            "w": 120,
+            "h": 54
+          },
+          {
+            "key": "D3",
+            "label": "临时对策",
+            "agent": "quality",
+            "x": 266,
+            "y": 8,
+            "w": 120,
+            "h": 54
+          },
+          {
+            "key": "D4",
+            "label": "根因分析",
+            "agent": "rd_engineering",
+            "x": 395,
+            "y": 8,
+            "w": 120,
+            "h": 54
+          },
+          {
+            "key": "D5",
+            "label": "纠正措施",
+            "agent": "rd_engineering",
+            "x": 524,
+            "y": 8,
+            "w": 120,
+            "h": 54
+          },
+          {
+            "key": "D6",
+            "label": "实施验证",
+            "agent": "manufacturing",
+            "x": 653,
+            "y": 8,
+            "w": 120,
+            "h": 54
+          },
+          {
+            "key": "D7",
+            "label": "预防措施",
+            "agent": "quality",
+            "x": 782,
+            "y": 8,
+            "w": 120,
+            "h": 54
+          },
+          {
+            "key": "D8",
+            "label": "结案会签",
+            "agent": "quality",
+            "x": 911,
+            "y": 8,
+            "w": 120,
+            "h": 54
+          }
+        ]
+      },
+      "graph_badges": [
+        {
+          "key": "complaint",
+          "domain": "quality",
+          "tool": "list_scenarios",
+          "branch": ""
+        },
+        {
+          "key": "lot",
+          "domain": "quality",
+          "tool": "run_registered_query",
+          "branch": ""
+        },
+        {
+          "key": "wo",
+          "domain": "quality",
+          "tool": "run_registered_query",
+          "branch": ""
+        },
+        {
+          "key": "op",
+          "domain": "quality",
+          "tool": "run_registered_query",
+          "branch": "pqe_process"
+        },
+        {
+          "key": "equipment",
+          "domain": "rd_engineering",
+          "tool": "run_registered_query",
+          "branch": "engineering"
+        },
+        {
+          "key": "shift",
+          "domain": "quality",
+          "tool": "run_registered_query",
+          "branch": ""
+        },
+        {
+          "key": "stock",
+          "domain": "supply_chain",
+          "tool": "run_registered_query",
+          "branch": "business_sales"
+        }
+      ],
+      "cases": {
+        "title": "同根因历史案例（Agentic RAG 回放）",
+        "trace_title": "检索轨迹（术语归一 → 本体扩展 → 授权过滤 → 引用校验）",
+        "explain_title": "为什么看到这几条 / 为什么看不到"
+      },
+      "hitl": {
+        "title": "8D 与对客回复 · 治理工单（只读）",
+        "empty": "仅展示演示种子工单（当前无可见种子）",
+        "invisible": "本岗位不参与该槽位审批（按权限矩阵不可见）",
+        "readonly_note": "操作只读：真实会签在治理窗口（审批确认中心）执行"
+      },
+      "source_note": "回放轨迹与真实链路同构（AgenticStep 六键）；来源徽标「演示回放」不可去除。"
+    },
     "value_lines": [
       "任一客诉 15 分钟内定位到批次、工序、设备和库存位置",
       "一键说清：定位结论附数据来源，可逐段回指原始记录",

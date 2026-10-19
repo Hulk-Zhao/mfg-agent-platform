@@ -812,14 +812,33 @@
     }
 
     // T04 真实路由：GET /api/v2/demo/objects/{name} → { is_demo, label, data_dir, object, rows }
-    const url = base + "/api/v2/demo/objects/" + encodeURIComponent(name);
-    return fetchJson(url, 6000).then(function (payload) {
-      const rows = pickRows(payload);
-      if (rows) return { ok: true, rows: rows, source: "api" };
-      return degrade("接口返回结构不符合 rows 约定");
-    }).catch(function () {
-      return degrade("接口不可用（T04 装载层端点未就绪或无权限）");
-    }).catch(function () {
+    // 同源优先（与 replay() 同口径）：故事数据属于**当前这份 UI 宿主**；probe() 竞速
+    // 可能选中本机旧实例（旧实例没有新对象/新端点 → 404），故先打同源、失败再退回 base()。
+    let sameOrigin = "";
+    try {
+      if (typeof location !== "undefined" && /^https?:$/.test(location.protocol)) {
+        sameOrigin = location.origin || "";
+      }
+    } catch (err) {
+      sameOrigin = "";
+    }
+    const bases = [];
+    if (sameOrigin) bases.push(sameOrigin);
+    if (base && base !== sameOrigin) bases.push(base);
+    const attempt = function (idx) {
+      if (idx >= bases.length) {
+        return Promise.resolve(degrade("接口不可用（T04 装载层端点未就绪或无权限）"));
+      }
+      const url = bases[idx] + "/api/v2/demo/objects/" + encodeURIComponent(name);
+      return fetchJson(url, 6000).then(function (payload) {
+        const rows = pickRows(payload);
+        if (rows) return { ok: true, rows: rows, source: "api" };
+        return attempt(idx + 1);
+      }).catch(function () {
+        return attempt(idx + 1);
+      });
+    };
+    return attempt(0).catch(function () {
       return { ok: false, rows: [], error: "演示装载层未就绪" };
     });
   }
@@ -1156,14 +1175,36 @@
     // T16 端点口径：GET /api/v2/demo/replays/{replay_id} → {...demo_banner, package}。
     // T16 路由已落地，双引号整串端点进入 T05 对账
     // （test_scene_kit_endpoint_matches_backend_route ↔ api.py 路由表）。
-    const url = base + "/api/v2/demo/replays/" + encodeURIComponent(id);
-    return fetchJson(url, 6000).then(function (payload) {
-      const pkg = (payload && typeof payload === "object") ? payload.package : null;
-      if (pkg && typeof pkg === "object") return accept(pkg, "api");
-      return degrade("接口返回结构不符合回放包约定");
-    }).catch(function () {
-      return degrade("接口不可用（T16 回放端点未就绪或无权限）");
-    }).catch(function () {
+    //
+    // 同源优先：回放包是**当前这份 UI 宿主**的演示数据，理应同源取。probe() 是
+    // 「候选基址竞速、先到先得」，当本机还挂着一份**旧实例**（8004）时，旧实例的
+    // health 可能先返回，`base()` 就指向旧实例——那里没有 replays 路由，会 404。
+    // 故先打同源，失败再退回 `base()`；两端都不可用才降级。
+    let sameOrigin = "";
+    try {
+      if (typeof location !== "undefined" && /^https?:$/.test(location.protocol)) {
+        sameOrigin = location.origin || "";
+      }
+    } catch (err) {
+      sameOrigin = "";
+    }
+    const bases = [];
+    if (sameOrigin) bases.push(sameOrigin);
+    if (base && base !== sameOrigin) bases.push(base);
+    const attempt = function (idx) {
+      if (idx >= bases.length) {
+        return Promise.resolve(degrade("接口不可用（T16 回放端点未就绪或无权限）"));
+      }
+      const url = bases[idx] + "/api/v2/demo/replays/" + encodeURIComponent(id);
+      return fetchJson(url, 6000).then(function (payload) {
+        const pkg = (payload && typeof payload === "object") ? payload.package : null;
+        if (pkg && typeof pkg === "object") return accept(pkg, "api");
+        return attempt(idx + 1);
+      }).catch(function () {
+        return attempt(idx + 1);
+      });
+    };
+    return attempt(0).catch(function () {
       return { ok: false, error: "演示回放数据未就绪" };
     });
   }
