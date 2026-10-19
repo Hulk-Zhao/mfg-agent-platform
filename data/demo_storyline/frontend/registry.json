@@ -336,6 +336,38 @@
         "inspections"
       ],
       "note": "S3 阶段门会签：EVT/DVT/PVT 记分卡（良率·CPK·直通率·问题闭环数）四维现算 / 门禁机械判定 / 会签留痕"
+    },
+    {
+      "id": "s05",
+      "module": "scenes/s05-trace.js",
+      "data": "frontend/s05-trace.js",
+      "owner": "T06",
+      "label": "出货与质量追溯",
+      "title": "S5 · 出货与质量追溯",
+      "sub": "客诉 15 分钟定位批次/工序/设备 · 同批库存影响面 · 8D 会签闭环",
+      "icon": "truck",
+      "order": 50,
+      "globals": [
+        "SCENE_DATA"
+      ],
+      "objects": [
+        "events",
+        "lots",
+        "work_orders",
+        "equipment",
+        "inspections",
+        "sales_orders",
+        "customers"
+      ],
+      "roles": [
+        "gm",
+        "biz",
+        "qa",
+        "mfg",
+        "sales",
+        "manufacturing"
+      ],
+      "note": "S5 出货与质量追溯：OQC 放行 / 发货 / 开票三事件闭环 + 客诉受理（EV-0024）→ 批次定位（EV-0025：批次/工单/工序/设备/当班/同批库存六段，SVG 图谱逐段点亮）→ 同批库存影响面（lots 同库位明细）→ 8D 会签闭环（EV-0026，槽位取自载荷 slots）；全部数字现取装载层，逐项可下钻"
     }
   ]
 }
