@@ -96,6 +96,9 @@ class V2Runtime:
             SQLiteDataSource(db_path, name="dev", queries={
                 name: str(spec["sql"])
                 for name, spec in queries._queries.items()},
+                # 行数上限：数据速查四块各 200+ 行（材料 248 / 成品 241 / 来料 250），
+                # 默认 200 会按 ORDER BY 截断尾部（如料号 U–Z 丢失）。仍保留上限防全表拉取。
+                row_cap=500,
                 meta={
                     "system": "演示制造数据集（init.sql）",
                     "domain": "生产/质量/供应链/设备/客诉",
@@ -506,6 +509,7 @@ class V2Orchestrator:
         "customer_complaint_v2": "华为投诉BATCH-A-1008",
         "delivery_status_v2": "A型号能发多少货",
         "equipment_warning_v2": "SMT-1设备参数异常吗",
+        "order_change_impact_v2": "订单交期提前两周是否可行",
         "spc_anomaly_v2": "回流焊峰值温度过程能力Cpk是否越限",
     }
 

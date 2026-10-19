@@ -5,7 +5,7 @@
 [![tests](https://github.com/Hulk-Zhao/mfg-agent-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/Hulk-Zhao/mfg-agent-platform/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![tests](https://img.shields.io/badge/tests-1157%20offline-brightgreen)
+![tests](https://img.shields.io/badge/tests-1204%20offline-brightgreen)
 
 <p float="left">
   <img src="docs/images/screen-dashboard.png" width="24.5%" />
@@ -183,12 +183,12 @@ uv run uvicorn mfg_agents.v2.demo.api:app --port 8004
 | ![制造案例检索](docs/images/screen-cases.png) | ![订单履约看板](docs/images/screen-orders.png) |
 | **制造综合看板** | **预警中心** |
 | ![制造综合看板](docs/images/screen-mfgboard.png) | ![预警中心](docs/images/screen-alerts.png) |
-| **报告中心** | **企业咨询助手（RAG 结论带出处）** |
-| ![报告中心](docs/images/screen-reports.png) | ![企业咨询助手](docs/images/screen-kbqa.png) |
-| **企业助手（Agentic 工具循环）** | **登录选岗（31 岗位 5 组）** |
-| ![企业助手](docs/images/screen-office.png) | ![登录选岗](docs/images/screen-login.png) |
-| **帮助中心（架构与职责说明）** | |
-| ![帮助中心](docs/images/screen-help.png) | |
+| **报告中心** | **企业制度问答（RAG 结论带出处）** |
+| ![报告中心](docs/images/screen-reports.png) | ![企业制度问答](docs/images/screen-kbqa.png) |
+| **OA 协同（会议室 / 订餐 · 高影响先人工确认）** | **数据速查（库存只读 · 岗位约束）** |
+| ![OA 协同](docs/images/screen-oa.png) | ![数据速查](docs/images/screen-data.png) |
+| **登录选岗（31 岗位 5 组）** | **帮助中心（架构与职责说明）** |
+| ![登录选岗](docs/images/screen-login.png) | ![帮助中心](docs/images/screen-help.png) |
 
 ## LLM 接入
 
@@ -202,13 +202,13 @@ uv run uvicorn mfg_agents.v2.demo.api:app --port 8004
 
 ## 测试
 
-1157 条离线确定性测试（探针恒 False、不发外网请求），CI 在 Python 3.11 / 3.12 / 3.13 三个版本执行：
+1204 条离线确定性测试（探针恒 False、不发外网请求），CI 在 Python 3.11 / 3.12 / 3.13 三个版本执行：
 
 ```bash
 uv run pytest tests/ -q
 ```
 
-覆盖：治理链（权限目录自检、会签幂等、越权拦截）、Text2SQL 防线（红队用例）、场景端到端、看板下钻、SPC 内核、**案例域安全检索**（两段式授权 / 引用校验 / RBAC-ABAC 策略 / 审计链对账 / 限流）、MCP / A2A 协议、企微加解密、飞书适配；以及**架构守卫**（治理库拒绝非 SQLite、方言判定不乱猜、健康探针不抛异常、导航按岗位收敛——见 `tests/v2/test_架构守卫.py`）、**数据范围守卫**（看板按岗位裁决 / 403 不降级成演示数据 / 脱敏与下钻键成对处理——见 `tests/v2/test_数据范围.py`）和**待办可见性守卫**（令牌为准 / 跨域 404 / 三条通道同一口径——见 `tests/v2/test_待办可见性.py`）。
+覆盖：治理链（权限目录自检、会签幂等、越权拦截）、Text2SQL 防线（红队用例）、场景端到端、看板下钻、SPC 内核、**案例域安全检索**（两段式授权 / 引用校验 / RBAC-ABAC 策略 / 审计链对账 / 限流 / 顶部统计卡同源 / 总经理跨部门通行）、MCP / A2A 协议、企微加解密、飞书适配；以及**架构守卫**（治理库拒绝非 SQLite、方言判定不乱猜、健康探针不抛异常、导航按岗位收敛——见 `tests/v2/test_架构守卫.py`）、**数据范围守卫**（看板按岗位裁决 / 403 不降级成演示数据 / 脱敏与下钻键成对处理——见 `tests/v2/test_数据范围.py`）、**待办可见性守卫**（令牌为准 / 跨域 404 / 三条通道同一口径——见 `tests/v2/test_待办可见性.py`）和 **FAQ 前置层守卫**（L1 双闸 / 意图路由分流 / how_to 让位 RAG——见 `tests/v2/test_kbqa_faq_tier.py`、`tests/v2/test_kbqa_intent.py`）。
 
 ## 项目结构
 
@@ -221,17 +221,18 @@ mfg-agent-platform/
 │   ├── core/                     #   编排内核：两级路由 / YAML→LangGraph 子图 / 共享上下文 / SPC 内核 / 缓存
 │   ├── agents/                   #   域 Agent（quality / supply_chain / engineering / hitl / office / agentic）
 │   ├── intent/                   #   意图分类器与路由策略
-│   ├── services/                 #   Text2SQL 服务链 / 工作流引擎 / 通知 / 看板 / 认证 / 数据范围 / 待办可见性 / 案例检索问答 / 飞书日历
+│   ├── services/                 #   Text2SQL 服务链 / 工作流引擎 / 通知 / 看板 / 认证 / 数据范围 / 待办可见性 / 数据访问 / 案例检索问答 / 飞书日历
 │   ├── security/                 #   案例域安全：RBAC / ABAC 策略编译与求值 / 过滤翻译 / 限流
 │   ├── scenarios/                #   7 个场景 YAML（新场景零代码新增）
 │   ├── mcp_tools/                #   ToolRegistry + 自实现 MCP server（stdio JSON-RPC）
 │   ├── a2a.py                    #   A2A 协议（Agent Card / message/send / tasks/get）
 │   └── demo/                     #   FastAPI 入口 / CLI / 演示门户（纯静态零构建）
-├── data/                         # 演示数据种子 SQL + 知识库 JSONL + 案例种子
+├── data/                         # 演示数据种子 SQL + 知识库 JSONL + 案例种子 + 制度语料（kbqa_corpus）
 ├── deploy/                       # Milvus standalone 内嵌 etcd 配置
-├── tests/                        # 1157 条离线测试（治理 / 红队 / 端到端 / 协议 / 架构守卫 / 数据范围 / 待办可见性 / 案例域）
-├── docs/                         # 架构 / 接口 / HITL 设计 / 部署指南
-└── scripts/                      # Windows 一键启动脚本（本地 / Docker / 公网隧道）
+├── tests/                        # 1204 条离线测试（治理 / 红队 / 端到端 / 协议 / 架构守卫 / 数据范围 / 待办可见性 / 案例域 / FAQ 前置层）
+├── tools/                        # 数据扩充 / 阈值校准 / 案例评测等运维脚本
+├── docs/                         # 架构 / 接口 / HITL 设计 / 案例助手 / 优化设计（images/ 为门户截图）
+└── scripts/                      # Windows 一键启动脚本（本地 / Docker / 公网隧道 / 健康看门狗）
 ```
 
 ## 生产化清单
@@ -249,10 +250,14 @@ mfg-agent-platform/
 
 ## 文档
 
+- [docs/README.md](docs/README.md) — 文档索引
 - [docs/ARCHITECTURE-V2.md](docs/ARCHITECTURE-V2.md) — 总架构（契约层 / 编排内核 / 治理层设计详述）
 - [docs/V2-接口文档.md](docs/V2-接口文档.md) — API 文档（统一入口 / SSE / HITL 回写 / 错误码）
 - [docs/V2-HITL-角色协作设计.md](docs/V2-HITL-角色协作设计.md) — 人工在环与会签设计
-- [docs/PUBLIC-ACCESS.md](docs/PUBLIC-ACCESS.md) — 内网 / 公网访问部署指南
+- [docs/case-assistant-demo-readme.md](docs/case-assistant-demo-readme.md) — 制造案例检索（本地增强 Agentic RAG）交付说明
+- [docs/case-assistant-ontology-vector-auth-architecture.md](docs/case-assistant-ontology-vector-auth-architecture.md) — 案例域本体 / 向量授权架构
+- [docs/adr/ADR-001-企业问答助手检索架构.md](docs/adr/ADR-001-企业问答助手检索架构.md) — 企业制度问答三层检索架构决策
+- [docs/edrag-optimization/](docs/edrag-optimization/) — 制度问答 / 意图路由 / FAQ 边界优化设计（DESIGN / DELIVERY / TASK）
 
 ## License
 
