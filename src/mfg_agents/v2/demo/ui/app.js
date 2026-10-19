@@ -288,7 +288,7 @@
           <div class="login-stats">
             <div class="login-stat"><b>18</b><span>智能体角色</span></div>
             <div class="login-stat"><b>7</b><span>协同场景</span></div>
-            <div class="login-stat"><b>41</b><span>平台工具</span></div>
+            <div class="login-stat"><b>42</b><span>平台工具</span></div>
             <div class="login-stat"><b>1157</b><span>自动化测试</span></div>
           </div>
           <div class="login-brand-foot">演示环境 · 免密码 · 选择岗位身份进入对应数据视图</div>

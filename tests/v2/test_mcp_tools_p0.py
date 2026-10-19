@@ -52,9 +52,9 @@ def test_domain_toolsets_split(orch):
     assert set(toolsets) == _DOMAINS
 
     expect = {
-        "data": ["platform.describe", "data.list_queries", "data.run_query",
-                 "data.metric", "data.sql_readonly", "metric.dict",
-                 "schedule.what_if"],
+        "data": ["platform.describe", "platform.now", "data.list_queries",
+                 "data.run_query", "data.metric", "data.sql_readonly",
+                 "metric.dict", "schedule.what_if"],
         "asset": ["asset.status", "inventory.atp", "equipment.predict",
                   "supply.risk"],
         "quality": ["quality.trace", "quality.8d"],
@@ -79,8 +79,8 @@ def test_domain_toolsets_split(orch):
     assert flat == {t.name for t in build_platform_tools(orch)}
     # 既有工具（10）+ P0 增量（6）= 16，+ P1 增量（7）= 23，+ 办公助手域（10）= 33，
     # + SPC 域（capability/pareto/ingest = 3）+ spc.report（knowledge 域）= 37，
-    # + OA 自助办理（报销/请假/补卡/我的申请 = 4）= 41
-    assert len(flat) == 41 == len(build_platform_tools(orch))
+    # + OA 自助办理（报销/请假/补卡/我的申请 = 4）= 41，+ 平台时钟（platform.now）= 42
+    assert len(flat) == 42 == len(build_platform_tools(orch))
 
 
 def test_register_domain_toolsets(orch):
@@ -120,6 +120,22 @@ def test_tier_semantics_exposed_in_mcp_dict(registry):
     entry = next(t for t in registry.list_mcp() if t["name"] == "workflow.create")
     assert entry["tier"] == 1
     assert "inputSchema" in entry
+
+
+def test_platform_now_tool(registry):
+    """平台时钟工具：只读 tier=0、无参调用即回本地当前日期（相对时间换算基准）。"""
+    from datetime import datetime
+
+    tool = registry.get("platform.now")
+    assert tool.readonly is True and tool.tier == 0
+    assert tool.input_schema["properties"] == {}
+
+    out = registry.call("platform.now", {})
+    now = datetime.now().astimezone()
+    assert out["date"] == now.strftime("%Y-%m-%d")
+    assert out["weekday"] == "星期" + "一二三四五六日"[now.weekday()]
+    assert out["datetime"].startswith(out["date"])
+    assert "date+1" in out["note"]
 
 
 # ============================================================
@@ -274,4 +290,4 @@ def test_server_default_exposes_all_and_legacy_name(orch):
     assert resps[0]["result"]["serverInfo"]["name"] == "mfg-agent-platform"
     names = {t["name"] for t in resps[1]["result"]["tools"]}
     assert names == {t.name for t in build_platform_tools(orch)}
-    assert len(names) == 41
+    assert len(names) == 42
