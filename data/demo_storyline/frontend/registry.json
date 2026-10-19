@@ -18,7 +18,8 @@
   "api": {
     "loaderObject": "/api/v2/demo/objects/{name}",
     "sceneAsset": "/demo-story/{file}",
-    "timeline": "/api/v2/demo/timeline?scene={S1..S6}"
+    "timeline": "/api/v2/demo/timeline?scene={S1..S6}",
+    "replay": "/api/v2/demo/replays/{replay_id}"
   },
   "storyline_source": {
     "primary": "GET /api/v2/demo/objects/{object}",
@@ -260,6 +261,84 @@
         ]
       },
       "spec_ref": "spec-v1.md §2.6"
+    },
+    "agent_replays": {
+      "file": "agent_replays.jsonl",
+      "key": "replay_id",
+      "fields": [
+        "agents",
+        "conclusion",
+        "dag",
+        "hitl_slots",
+        "kind",
+        "node_steps",
+        "replay_id",
+        "scenario_key",
+        "scene",
+        "schema_version",
+        "source",
+        "steps",
+        "title",
+        "trigger"
+      ],
+      "nested": {
+        "agents": [
+          "abbr",
+          "domain",
+          "name",
+          "role"
+        ],
+        "steps": [
+          "args",
+          "ok",
+          "step",
+          "summary",
+          "thought",
+          "tool"
+        ]
+      },
+      "spec_ref": "架构设计 §2.1（T16 回放包；steps 六键与 AgenticStep.to_dict() 同构；dag 为对象非数组，不进 nested）"
+    },
+    "rag_replays": {
+      "file": "rag_replays.jsonl",
+      "key": "replay_id",
+      "fields": [
+        "agents",
+        "conclusion",
+        "filter_explain",
+        "hidden_count",
+        "hidden_count_unit",
+        "hits",
+        "kind",
+        "ontology_gain",
+        "query",
+        "replay_id",
+        "restricted",
+        "scene",
+        "schema_version",
+        "source",
+        "steps",
+        "title",
+        "trace"
+      ],
+      "nested": {
+        "hits": [
+          "case_id",
+          "dept",
+          "reason",
+          "redacted",
+          "root_cause",
+          "score",
+          "title"
+        ],
+        "trace": [
+          "detail",
+          "items",
+          "step",
+          "title"
+        ]
+      },
+      "spec_ref": "架构设计 §2.1（T16 RAG 回放包；case_search / kbqa 字段同构）"
     }
   },
   "sceneDataGlobal": "SCENE_DATA",

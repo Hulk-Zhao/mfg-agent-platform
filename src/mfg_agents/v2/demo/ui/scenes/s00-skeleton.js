@@ -23,8 +23,8 @@
    * 上的 jsonl 文件，任一处漂移都会让测试变红。
    */
   const STORY_OBJECTS = [
-    "boms", "cases", "customers", "equipment", "events", "faqs", "inspections",
-    "lots", "materials", "purchase_orders", "quotes", "sales_orders",
+    "agent_replays", "boms", "cases", "customers", "equipment", "events", "faqs", "inspections",
+    "lots", "materials", "purchase_orders", "quotes", "rag_replays", "sales_orders",
     "spc_series", "suppliers", "work_orders",
   ];
 

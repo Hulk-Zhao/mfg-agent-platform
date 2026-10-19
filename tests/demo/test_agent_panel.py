@@ -267,17 +267,14 @@ def test_replay_endpoint_string_present():
 def test_replay_endpoint_reconciles_with_backend_route():
     """T05 端点对账模式：前端端点字符串 ↔ api.py 路由表。
 
-    T16 路由落地前本用例**跳过**（待 T16 端点落地后启用）；T16 提交
-    ``@app.get("/api/v2/demo/replays/{replay_id}")`` 后自动生效，与
+    T16 已落地 ``@app.get("/api/v2/demo/replays/{replay_id}")``，本用例与
     test_t05_contract.py::test_scene_kit_endpoint_matches_backend_route 同口径。
     """
     api_src = DEMO_API.read_text(encoding="utf-8")
     routes = re.findall(r'@app\.(?:get|post)\("(/api/v2/demo/[^"]*)"\)', api_src)
     hit = [route for route in routes if route.startswith(REPLAY_ENDPOINT)]
-    if not hit:
-        pytest.skip("待 T16 端点落地后启用：api.py 尚未注册 "
-                    "GET /api/v2/demo/replays/{replay_id}")
-    assert hit, "后端已注册路由但对账未命中（前端字符串被改？）"
+    assert hit, ("后端未注册 GET /api/v2/demo/replays/{replay_id}"
+                 f"（现有演示路由：{sorted(routes)}）")
 
 
 def test_replay_never_rejects_and_validates_schema():

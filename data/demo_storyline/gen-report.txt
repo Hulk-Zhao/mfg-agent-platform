@@ -12,5 +12,7 @@ lots: 4
 purchase_orders: 2
 spc_series: 30
 events: 43
-faqs: 10
+faqs: 11
 cases: 20
+agent_replays: 4
+rag_replays: 7

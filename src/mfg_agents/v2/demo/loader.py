@@ -13,11 +13,13 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[4]
 DATA_DIR = ROOT / "data" / "demo_storyline"
 
-# 装载层支持的对象清单（与 spec-v1.md 第 2 节一一对应）
+# 装载层支持的对象清单（与 spec-v1.md 第 2 节一一对应；
+# T16 追加 agent_replays / rag_replays：智能体轨迹与 RAG 检索的演示回放包）
 OBJECTS = (
     "customers", "materials", "boms", "suppliers", "equipment", "sales_orders",
     "quotes", "work_orders", "inspections", "lots", "purchase_orders",
     "spc_series", "events", "faqs", "cases",
+    "agent_replays", "rag_replays",
 )
 
 
@@ -49,6 +51,20 @@ def get_one(name: str, key: str, value: str) -> dict[str, Any]:
         if row.get(key) == value:
             return row
     raise DemoDataError(f"{name} 中不存在 {key}={value}")
+
+
+def get_replay(replay_id: str) -> dict[str, Any]:
+    """按 replay_id 取回放包（T16）。
+
+    回放包分两个文件存放（智能体轨迹 / RAG 检索），对外是同一命名空间：
+    先查 ``agent_replays`` 再查 ``rag_replays``，未命中抛 ``DemoDataError``
+    （端点转 404，不泄漏内部结构）。
+    """
+    for name in ("agent_replays", "rag_replays"):
+        for package in get_object(name):
+            if package.get("replay_id") == replay_id:
+                return package
+    raise DemoDataError(f"回放包不存在: {replay_id}")
 
 
 def story_timeline(scene: str | None = None) -> list[dict[str, Any]]:

@@ -1154,11 +1154,9 @@
     }
 
     // T16 端点口径：GET /api/v2/demo/replays/{replay_id} → {...demo_banner, package}。
-    // 单引号是**过渡写法**：T05 的 test_scene_kit_endpoint_matches_backend_route 只抓
-    // 双引号整串端点与 api.py 路由表对账；T16 路由落地前，双引号整串会弄红该对账
-    // （tests/demo 必须全绿）。T16 提交路由后，把这里改回双引号整串端点路径，
-    // 即自动进入 T05 对账（零测试改动）。
-    const url = base + '/api/v2/demo/replays/' + encodeURIComponent(id);
+    // T16 路由已落地，双引号整串端点进入 T05 对账
+    // （test_scene_kit_endpoint_matches_backend_route ↔ api.py 路由表）。
+    const url = base + "/api/v2/demo/replays/" + encodeURIComponent(id);
     return fetchJson(url, 6000).then(function (payload) {
       const pkg = (payload && typeof payload === "object") ? payload.package : null;
       if (pkg && typeof pkg === "object") return accept(pkg, "api");

@@ -49,6 +49,7 @@ from .loader import (
     DemoDataError,
     demo_banner,
     get_object,
+    get_replay,
     load_all,
     story_timeline,
 )
@@ -275,6 +276,35 @@ def demo_object(name: str) -> dict[str, Any]:
 def demo_timeline(scene: str = Query(default="")) -> dict[str, Any]:
     """演示事件流时间轴，可按场景过滤（S1..S6）。"""
     return {**demo_banner(), "events": story_timeline(scene or None)}
+
+
+@app.get("/api/v2/demo/replays/{replay_id}")
+def demo_replay(replay_id: str) -> dict[str, Any]:
+    """按 replay_id 取智能体 / RAG 回放包（T16，只读）。
+
+    与 ``/api/v2/demo/objects/{name}`` 同一信封口径（``is_demo/label/data_dir``，
+    无 code 信封）；额外带 ``schema_version`` 做前向兼容——前端
+    ``SceneKit.replay()`` 校验版本，缺失或不符整块降级，不渲染半包。
+
+    畸形包不喂给前端：形状预检不过时仍 200，但带 ``notice`` 说明降级原因。
+    """
+    try:
+        package = get_replay(replay_id)
+    except DemoDataError:
+        raise HTTPException(status_code=404, detail="demo replay not found")
+    notice = ""
+    if package.get("schema_version") != "1.0":
+        notice = "回放包 schema 版本不符，前端应按降级处理"
+    elif not package.get("steps") or not package.get("conclusion"):
+        notice = "回放包形状不完整（steps/conclusion 缺失），前端应按降级处理"
+    payload: dict[str, Any] = {
+        **demo_banner(), "replay": replay_id,
+        "schema_version": str(package.get("schema_version") or ""),
+        "package": package,
+    }
+    if notice:
+        payload["notice"] = notice
+    return payload
 
 
 # ---------- 企业咨询助手（独立轻量 RAG：Milvus enterprise_faq + 统一 LLM） ----------
@@ -695,6 +725,93 @@ def _ensure_order_review_seed() -> None:
     _order_review_seeded = True
 
 
+# S5 客诉 8D 双 HITL（T16）：工单预置幂等守卫（进程内只查库一次）
+_8d_seeded = False
+#: 种子标记（架构 A3）：工单库存在 416 条 hitl_d8_close / 211 条 hitl_complaint_reply
+#: 的**存量夹具**，按 wf_id 判幂等会被误判「已存在」而跳过；标记判定精确锚定本种子。
+_8D_SEED_MARK = "s5_8d_v1"
+
+# 与 scenarios/customer_complaint_v2.yaml 的 hitl_d8_close.actions 同构（单一事实源）
+_8D_CLOSE_ACTIONS: list[dict[str, Any]] = [
+    {"key": "close", "label": "关闭 8D", "propose": ["质量总监", "QA经理"],
+     "cosign": ["PQE", "SQE", "工程"], "require_comment": True,
+     "impact": "结案 · 措施需已验证", "followup": "归档 / 更新经验库"},
+    {"key": "return_supplement", "label": "退回补充", "propose": ["质量总监", "QA经理"],
+     "require_comment": True, "impact": "闭环延期 · 需补验证",
+     "followup": "退回责任部门 / 重新提交"},
+    {"key": "extend", "label": "延期关闭", "propose": ["质量总监"],
+     "require_comment": True, "impact": "客户等待 · 需沟通",
+     "followup": "对客说明 / 设定新期限"},
+]
+
+# 与 customer_complaint_v2.yaml 的 hitl_complaint_reply.actions 同构
+_COMPLAINT_REPLY_ACTIONS: list[dict[str, Any]] = [
+    {"key": "reply_8d", "label": "按 8D 结论回复", "propose": ["业务经理"],
+     "cosign": ["QA"], "impact": "口径需与 8D 一致", "followup": "发送客户 / 留痕"},
+    {"key": "reply_buffered", "label": "加严承诺回复", "propose": ["业务经理"],
+     "cosign": ["QA"], "impact": "承诺升级 · 需内部保障",
+     "followup": "内部保障措施 / 发送客户"},
+    {"key": "escalate", "label": "升级处理", "propose": ["业务经理"],
+     "impact": "重大客诉 · 高层介入", "followup": "升级工单"},
+]
+
+
+def _ensure_8d_seed() -> None:
+    """幂等预置 S5「客诉 8D」双 HITL 工单（T16，参照 T15 模式）。
+
+    PRD P0-5：S5 屏的 8D 卡要展示**真实治理工单**按槽位可见，而不是纯事件回放。
+    本函数在演示建单库（``WorkflowEngine`` 实际使用的 SQLite，默认
+    ``data/mfg_agent.db``）预置两条 ``waiting_hitl`` 工单：
+    ``d8_close``（质量总监发起关闭、工程侧待会签）与 ``complaint_reply``
+    （业务发起对客回复、QA 待会签）。内容全部虚构（DEMO-CC-001 / 演示人名），
+    仅动演示库，不改任何治理配置（槽位在 ``GOVERNANCE_SLOTS`` 已存在）。
+
+    **幂等**：按 ``context.demo_seed_id == s5_8d_v1`` 判定，存在即跳过；
+    进程内再加一次内存守卫，避免每次请求都查库。
+    """
+    global _8d_seeded
+    if _8d_seeded:
+        return
+    engine = _workflow_engine()
+    seeded = {str((t.context or {}).get("demo_seed_id") or "")
+              for t in engine.list_tasks()}
+    if _8D_SEED_MARK not in seeded:
+        d8_task = engine.create_task(
+            wf_id="hitl_d8_close",
+            title="客诉 8D 报告关闭确认（DEMO-CC-001 · 演示种子）",
+            context={"slot": "d8_close", "scene": "S5", "origin": "demo_seed",
+                     "demo_seed_id": _8D_SEED_MARK,
+                     "complaint_id": "DEMO-CC-001", "lot_id": "DEMO-LOT-002",
+                     "actions": _8D_CLOSE_ACTIONS},
+            assignees=["质量总监", "QA经理", "PQE", "SQE", "工程"],
+            priority="P1", sla_hours=72, hitl=True,
+            hitl_prompt="8D 报告关闭确认：D4 根因（烧录站静电接地失效）与 "
+                        "D5–D7 措施已验证，请按岗位会签",
+        )
+        engine.select_action(
+            d8_task.task_uid, "close", actor="质量总监（演示）",
+            user_ctx={"user_id": "u-qd-demo", "roles": ["quality_director"]},
+            comment="D4–D7 证据链完整，按关闭口径发起会签")
+        reply_task = engine.create_task(
+            wf_id="hitl_complaint_reply",
+            title="对客回复确认（DEMO-CC-001 · 演示种子）",
+            context={"slot": "complaint_reply", "scene": "S5", "origin": "demo_seed",
+                     "demo_seed_id": _8D_SEED_MARK,
+                     "complaint_id": "DEMO-CC-001",
+                     "actions": _COMPLAINT_REPLY_ACTIONS},
+            assignees=["业务经理", "QA"],
+            priority="P1", sla_hours=72, hitl=True,
+            hitl_prompt="对客回复确认：按 8D 结论回复口径，请业务发起、QA 会签一致性",
+        )
+        engine.select_action(
+            reply_task.task_uid, "reply_8d", actor="业务经理（演示）",
+            user_ctx={"user_id": "u-sales-demo", "roles": ["sales"]},
+            comment="按 8D 结论回复，请 QA 会签口径一致性")
+        logger.info("[demo] 预置 S5 客诉 8D 双 HITL 工单 %s / %s",
+                    d8_task.task_uid, reply_task.task_uid)
+    _8d_seeded = True
+
+
 def _raise_workflow_http(exc: Exception) -> None:
     """治理异常 → HTTP 状态码统一映射（403/404/409/400）。
 
@@ -743,6 +860,7 @@ def api_workflow_pending(request: Request,
     """
     identity = _require_identity(request)
     _ensure_order_review_seed()  # T15：S1 接单评审工单幂等预置（存在即跳过）
+    _ensure_8d_seed()            # T16：S5 客诉 8D 双 HITL 工单幂等预置（标记判定）
     engine = _workflow_engine()
     registry = engine.permission_registry
 
