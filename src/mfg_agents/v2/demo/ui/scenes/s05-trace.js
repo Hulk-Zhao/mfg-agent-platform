@@ -1446,7 +1446,12 @@
     const hitlBox = root.querySelector("#s05-hitl-panel");
     const d8Box = root.querySelector("#s05-d8-panel");
     const pending = (ctx && ctx.api && typeof ctx.api.workflowPending === "function")
-      ? ctx.api.workflowPending().then(function (res) { return (res && res.data) || []; })
+      ? ctx.api.workflowPending().then(function (res) {
+        // app.js::_get 已解包：workflowPending() 直接返回任务数组（信封 {code,data}
+        // 在 API 层拆掉了）。两种形状都认，避免「接口有数据、屏上恒为空」。
+        if (Array.isArray(res)) return res;
+        return (res && res.data) || [];
+      })
         .catch(function () { return null; })
       : Promise.resolve(null);
 

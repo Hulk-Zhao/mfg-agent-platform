@@ -173,6 +173,17 @@ def test_d4_root_cause_is_derived_not_hardcoded():
         "业务对象号只放场景数据镜像块（已由 test_s05 的禁抄数断言守护）")
 
 
+def test_screen_accepts_unwrapped_pending_array():
+    """app.js::_get 已把信封解开，workflowPending() 直接返回数组。
+
+    防御的是「接口有数据、屏上恒为空」这类接线级事故：
+    只按 `{code,data}` 信封取 `res.data` 会永远得到空数组。
+    """
+    src = _src()
+    assert "Array.isArray(res)" in src, (
+        "任务队列取数必须同时接受数组与被解包的对象（app.js::_get 已解包）")
+
+
 def test_js_delimiters_are_balanced():
     """本机无 node：用括号/引号闭合巡检兜住「多一个括号」类事故。"""
     src = _src()
