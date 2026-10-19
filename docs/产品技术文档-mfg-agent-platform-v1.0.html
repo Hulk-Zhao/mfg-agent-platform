@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>制造业多智能体协同平台 · 产品技术文档 v1.0</title>
+<style>
+  :root{
+    --ink:#1c2430; --ink-2:#3d4a5c; --ink-3:#6b7a8d;
+    --line:#dde5ee; --bg:#ffffff; --bg-soft:#f5f8fc; --bg-soft2:#eef3f9;
+    --brand:#0f4c81; --brand-soft:#e3eef8; --accent:#c25e00; --accent-soft:#fdf0e3;
+    --ok:#1a7f37; --ok-soft:#e6f4ea; --warn:#9a6700; --warn-soft:#fff8e6;
+    --crit:#b42318; --crit-soft:#fdecea;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:"PingFang SC","Microsoft YaHei","Segoe UI",system-ui,sans-serif;
+    font-size:15px;line-height:1.8;}
+  .cover{background:linear-gradient(135deg,#eaf2fa 0%,#f7fafd 60%,#ffffff 100%);
+    border-bottom:1px solid var(--line);padding:56px 32px 40px;}
+  .wrap{max-width:1060px;margin:0 auto;padding:0 24px;}
+  .cover .kicker{color:var(--brand);font-weight:600;letter-spacing:.12em;font-size:13px;}
+  .cover h1{font-size:32px;margin:10px 0 6px;line-height:1.3;}
+  .cover .sub{color:var(--ink-2);font-size:16px;max-width:760px;}
+  .meta{display:flex;flex-wrap:wrap;gap:10px 28px;margin-top:22px;font-size:13px;color:var(--ink-3);}
+  .meta b{color:var(--ink-2);font-weight:600;}
+  .layout{display:flex;gap:36px;padding:32px 0 80px;}
+  nav.toc{width:250px;flex:none;position:sticky;top:24px;align-self:flex-start;
+    max-height:calc(100vh - 48px);overflow:auto;font-size:13px;}
+  nav.toc .t{font-weight:700;color:var(--ink);margin-bottom:8px;font-size:13px;}
+  nav.toc a{display:block;color:var(--ink-3);text-decoration:none;padding:3px 8px;border-radius:6px;}
+  nav.toc a:hover{background:var(--bg-soft2);color:var(--brand);}
+  nav.toc .sub a{padding-left:22px;font-size:12.5px;}
+  main{flex:1;min-width:0;}
+  h2{font-size:22px;margin:44px 0 14px;padding-bottom:8px;border-bottom:2px solid var(--brand-soft);}
+  h2 .no{color:var(--brand);font-size:14px;vertical-align:2px;margin-right:8px;font-weight:700;}
+  h3{font-size:17px;margin:26px 0 10px;}
+  h4{font-size:15px;margin:18px 0 6px;color:var(--ink-2);}
+  p{margin:8px 0;}
+  table{width:100%;border-collapse:collapse;margin:12px 0;font-size:13.5px;}
+  th{background:var(--bg-soft2);text-align:left;padding:8px 10px;border:1px solid var(--line);font-weight:600;white-space:nowrap;}
+  td{padding:7px 10px;border:1px solid var(--line);vertical-align:top;}
+  tr:nth-child(even) td{background:#fafcfe;}
+  code{background:var(--bg-soft2);border-radius:4px;padding:1px 6px;font-size:12.5px;
+    font-family:Consolas,"Courier New",monospace;color:#0b3d66;}
+  pre{background:#0e2233;color:#dbe7f3;border-radius:10px;padding:14px 16px;overflow:auto;
+    font-size:12.5px;line-height:1.6;}
+  pre code{background:none;color:inherit;padding:0;}
+  .note,.warn,.crit{border-radius:8px;padding:12px 16px;margin:14px 0;font-size:14px;}
+  .note{background:var(--brand-soft);border-left:4px solid var(--brand);}
+  .warn{background:var(--warn-soft);border-left:4px solid var(--warn);}
+  .crit{background:var(--crit-soft);border-left:4px solid var(--crit);}
+  .note b,.warn b,.crit b{display:block;margin-bottom:2px;}
+  .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;}
+  .card{background:var(--bg-soft);border:1px solid var(--line);border-radius:10px;padding:14px 16px;}
+  .card .h{font-weight:700;font-size:14px;margin-bottom:4px;color:var(--brand);}
+  .card .d{font-size:13px;color:var(--ink-2);}
+  .fig{margin:16px 0;border:1px solid var(--line);border-radius:10px;padding:10px;background:#fff;}
+  .fig .cap{font-size:12.5px;color:var(--ink-3);text-align:center;margin-top:6px;}
+  ul,ol{margin:8px 0;padding-left:24px;}
+  li{margin:3px 0;}
+  .footer{margin-top:56px;padding:18px 0 40px;border-top:1px solid var(--line);
+    color:var(--ink-3);font-size:12.5px;}
+  @media (max-width:900px){.layout{display:block;}nav.toc{position:static;width:auto;max-height:none;}
+    .grid3{grid-template-columns:1fr;}}
+  @media print{nav.toc{display:none;}.layout{display:block;}}
+</style>
+</head>
+<body>
+<div class="cover">
+  <div class="wrap">
+    <div class="kicker">内部资料 · 技术文档</div>
+    <h1>制造业多智能体协同平台 · 产品技术文档</h1>
+    <div class="sub">以 mfg-agent-platform 代码为唯一事实源，讲清楚产品是什么、怎么搭的、哪些现在能用、哪些还不能上生产。目的是让新来的研发和测试不靠口头传承就能上手。</div>
+    <div class="meta">
+      <span><b>文档版本</b> v1.0</span>
+      <span><b>发布日期</b> 2026-10-19</span>
+      <span><b>产品版本</b> API/页面 2.0.0（对外统一 2.x）</span>
+      <span><b>读者</b> 研发 · 测试 · 运维 · 解决方案</span>
+    </div>
+  </div>
+</div>
+<div class="wrap layout">
+<nav class="toc">
+  <div class="t">目录</div>
+  <a href="#s1">1 文档信息</a>
+  <a href="#s2">2 产品概述</a>
+  <a href="#s3">3 总体架构</a>
+  <a href="#s4">4 功能清单</a>
+  <a class="sub" href="#s4-1">4.1 七大协同场景</a>
+  <a class="sub" href="#s4-2">4.2 演示门户 12 屏</a>
+  <a class="sub" href="#s4-3">4.3 智能体与能力服务</a>
+  <a href="#s5">5 核心子系统设计</a>
+  <a class="sub" href="#s5-1">5.1 编排内核</a>
+  <a class="sub" href="#s5-2">5.2 智能体体系</a>
+  <a class="sub" href="#s5-3">5.3 治理层</a>
+  <a class="sub" href="#s5-4">5.4 AI 能力</a>
+  <a class="sub" href="#s5-5">5.5 协议接入</a>
+  <a href="#s6">6 数据架构</a>
+  <a href="#s7">7 接口清单</a>
+  <a href="#s8">8 部署架构</a>
+  <a href="#s9">9 测试与质量保障</a>
+  <a href="#s10">10 安全设计</a>
+  <a href="#s11">11 性能与可观测</a>
+  <a href="#s12">12 已知限制与生产化清单</a>
+  <a href="#s13">13 附录</a>
+</nav>
+<main>
+
+<h2 id="s1"><span class="no">1</span>文档信息</h2>
+<table>
+  <tr><th style="width:110px">项</th><th>内容</th></tr>
+  <tr><td>事实来源</td><td>仓库 README.md、docs/ARCHITECTURE-V2.md、docs/V2-接口文档.md、src/mfg_agents/v2/data/permissions.yaml，以及 src/mfg_agents/v2/ 目录实测（2026-10-19）</td></tr>
+  <tr><td>阅读前提</td><td>了解 Python 3.11+、FastAPI、LangGraph 的基本概念即可，不要求制造业背景</td></tr>
+  <tr><td>维护方式</td><td>随代码 PR 同步更新；架构变更先改 ARCHITECTURE-V2.md，再回写本文</td></tr>
+</table>
+<p>文中功能描述均可在代码中断言。标「估算」的数值是规划口径；第 12 章的缺口清单不是缺陷隐瞒，是上线前要逐条关闭的待办。</p>
+
+<h2 id="s2"><span class="no">2</span>产品概述</h2>
+<h3>2.1 定位</h3>
+<p>mfg-agent-platform 是一个跑在厂里的多智能体协同平台。它要解决的事情很具体：现场一出异常——停线、来料不合格、客诉——信息散在五六个系统和无数个微信群里，凑情况靠打电话，跨部门对一个口径要半天。</p>
+<p>平台的做法是把「提问 → 路由 → 多域并行取证 → 工单 → 人工会签 → 对客报告」这条链路固化下来：18 个智能体分工取证，人只在会签点出现，每个数字都能溯源到 SQL。基本盘是 18 个智能体（17 个领域 + 1 个办公）、7 个声明式协同场景、31 个演示岗位 / 12 屏门户、1204 个离线确定性测试（CI 跑 Python 3.11/3.12/3.13 三个版本）。</p>
+<div class="grid3">
+  <div class="card"><div class="h">演示门户</div><div class="d">原生 HTML/CSS/JS 零构建，31 岗位免密选登，12 屏按岗位收敛，SSE 实时事件流驱动</div></div>
+  <div class="card"><div class="h">统一 API</div><div class="d">FastAPI：query / events / workflow / dashboard / im 回调，统一响应信封 + SSE 事件流</div></div>
+  <div class="card"><div class="h">双协议接入</div><div class="d">MCP Server（stdio JSON-RPC 2.0）与 A2A（Agent Card + message/send），治理链同源</div></div>
+</div>
+<h3>2.2 解决的三个问题</h3>
+<p><b>进度散落。</b>订单到哪一步了，答案在 ERP、MES 和各个部门群里各有一份，跨部门同步以天计。平台的做法是多域 Agent 并行取证，SSE 事件流实时呈现，秒级触达。</p>
+<p><b>取数靠人。</b>问数目前的常态是问人、导 Excel、写 SQL，口径还不统一。平台提供 Text2SQL 八道防线加指标库口径统一，数字带 SQL 溯源。</p>
+<p><b>跨部门取证靠打电话。</b>停线、缺料、客诉的闭环周期长，是因为取证本身是人工接力。平台用 YAML 场景 DAG 自动编排多域取证，工作流引擎驱动工单与会签。</p>
+<h3>2.3 目标用户</h3>
+<table>
+  <tr><th>用户群</th><th>典型岗位（31 岗位示例）</th><th>核心价值</th></tr>
+  <tr><td>管理层</td><td>总经理、生产副总、质量总监</td><td>全厂经营/制造/质量看板，风险订单与异常一屏统览</td></tr>
+  <tr><td>业务与供应链</td><td>业务经理、计划、物控、采购、仓库、物流</td><td>订单履约、ATP 承诺、缺料预警、来料处置</td></tr>
+  <tr><td>质量</td><td>SQE / PQE / QA</td><td>客诉 8D 闭环、SPC/CPK 判定、SCAR 处置会签</td></tr>
+  <tr><td>制造与设备</td><td>制造工程师、设备工程师、工艺</td><td>停线应急、复线 ETA、设备预警、停机窗口</td></tr>
+  <tr><td>职能</td><td>行政、人事、财务</td><td>OA 协同、制度问答、空队列待办（无治理职责）</td></tr>
+</table>
+
+<h2 id="s3"><span class="no">3</span>总体架构</h2>
+<div class="fig">
+<svg viewBox="0 0 1000 640" xmlns="http://www.w3.org/2000/svg" font-family="PingFang SC, Microsoft YaHei, sans-serif">
+  <defs><marker id="ar" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 z" fill="#6b7a8d"/></marker></defs>
+  <rect x="0" y="0" width="1000" height="640" fill="#ffffff"/>
+  <!-- L1 access -->
+  <rect x="40" y="20" width="920" height="64" rx="10" fill="#e3eef8" stroke="#0f4c81" stroke-width="1"/>
+  <text x="60" y="42" font-size="13" font-weight="700" fill="#0f4c81">接入层</text>
+  <text x="60" y="64" font-size="12" fill="#3d4a5c">Web 门户 /demo-ui · 企微回调(AES-CBC) · A2A · MCP · CLI · 定时任务</text>
+  <line x1="500" y1="84" x2="500" y2="102" stroke="#6b7a8d" stroke-width="1.5" marker-end="url(#ar)"/>
+  <!-- L2 api -->
+  <rect x="40" y="104" width="920" height="60" rx="10" fill="#f5f8fc" stroke="#dde5ee"/>
+  <text x="60" y="126" font-size="13" font-weight="700" fill="#1c2430">统一入口层（FastAPI + SSE 事件流）</text>
+  <text x="60" y="148" font-size="12" fill="#3d4a5c">POST /api/v2/query · GET /api/v2/events（请求级隔离）· workflow · dashboard · im/wecom/callback · 岗位令牌（HMAC，8h TTL）</text>
+  <line x1="500" y1="164" x2="500" y2="182" stroke="#6b7a8d" stroke-width="1.5" marker-end="url(#ar)"/>
+  <!-- L3 router -->
+  <rect x="40" y="184" width="920" height="60" rx="10" fill="#f5f8fc" stroke="#dde5ee"/>
+  <text x="60" y="206" font-size="13" font-weight="700" fill="#1c2430">TwoLevelRouter（两级路由）</text>
+  <text x="60" y="228" font-size="12" fill="#3d4a5c">L0 规则快路径（毫秒级）· L1 LLM 闭集分类（5 域组）· 模糊兜底（manual_ticket 人工工单，非错误）</text>
+  <line x1="500" y1="244" x2="500" y2="262" stroke="#6b7a8d" stroke-width="1.5" marker-end="url(#ar)"/>
+  <!-- L4 orchestration -->
+  <rect x="40" y="264" width="920" height="76" rx="10" fill="#fdf0e3" stroke="#c25e00"/>
+  <text x="60" y="286" font-size="13" font-weight="700" fill="#c25e00">场景编排内核（YAML 声明式 → LangGraph StateGraph 子图）</text>
+  <text x="60" y="308" font-size="12" fill="#3d4a5c">节点：agent / fan_out / fan_in / workflow / hitl · 每节点 timeout_s + on_error: degrade · 7 个场景（新场景零代码新增）</text>
+  <text x="60" y="328" font-size="12" fill="#3d4a5c">总控边界纪律：不直接查库 · 不直接发通知 · 不做审批判断 · 不存业务状态</text>
+  <line x1="250" y1="340" x2="250" y2="358" stroke="#6b7a8d" stroke-width="1.5" marker-end="url(#ar)"/>
+  <line x1="500" y1="340" x2="500" y2="358" stroke="#6b7a8d" stroke-width="1.5" marker-end="url(#ar)"/>
+  <line x1="750" y1="340" x2="750" y2="358" stroke="#6b7a8d" stroke-width="1.5" marker-end="url(#ar)"/>
+  <!-- L5 domains -->
+  <rect x="40" y="360" width="920" height="72" rx="10" fill="#f5f8fc" stroke="#dde5ee"/>
+  <text x="60" y="380" font-size="13" font-weight="700" fill="#1c2430">域 Agent 组（多域并行取证）</text>
+  <rect x="60" y="390" width="200" height="30" rx="6" fill="#ffffff" stroke="#0f4c81"/>
+  <text x="160" y="409" font-size="12" fill="#1c2430" text-anchor="middle">品质域 QMS</text>
+  <rect x="275" y="390" width="200" height="30" rx="6" fill="#ffffff" stroke="#0f4c81"/>
+  <text x="375" y="409" font-size="12" fill="#1c2430" text-anchor="middle">供应链 SCM</text>
+  <rect x="490" y="390" width="200" height="30" rx="6" fill="#ffffff" stroke="#0f4c81"/>
+  <text x="590" y="409" font-size="12" fill="#1c2430" text-anchor="middle">研发工程 RD</text>
+  <rect x="705" y="390" width="215" height="30" rx="6" fill="#ffffff" stroke="#0f4c81"/>
+  <text x="812" y="409" font-size="12" fill="#1c2430" text-anchor="middle">制造 MFG + 办公 STF</text>
+  <line x1="500" y1="432" x2="500" y2="450" stroke="#6b7a8d" stroke-width="1.5" marker-end="url(#ar)"/>
+  <!-- L6 services -->
+  <rect x="40" y="452" width="920" height="76" rx="10" fill="#e6f4ea" stroke="#1a7f37"/>
+  <text x="60" y="472" font-size="13" font-weight="700" fill="#1a7f37">能力服务层（无状态，被所有域复用）</text>
+  <text x="60" y="494" font-size="12" fill="#3d4a5c">Text2SQL（八道防线）· WorkflowEngine（状态机+SLA+分级通知）· HITL 会签（propose→N×cosign→approve）</text>
+  <text x="60" y="514" font-size="12" fill="#3d4a5c">Dashboard（数据范围裁决）· kbqa 制度问答 · 案例检索问答（Agentic RAG）· SPC 内核 · Notification · Redaction</text>
+  <line x1="500" y1="528" x2="500" y2="546" stroke="#6b7a8d" stroke-width="1.5" marker-end="url(#ar)"/>
+  <!-- L7 data -->
+  <rect x="40" y="548" width="920" height="72" rx="10" fill="#eef3f9" stroke="#6b7a8d"/>
+  <text x="60" y="568" font-size="13" font-weight="700" fill="#1c2430">数据与治理底座</text>
+  <text x="60" y="590" font-size="12" fill="#3d4a5c">DataSource 契约（SQLite 只读 / MySQL 8.0）· VectorStore 契约（Milvus / ChromaDB）· 治理库（sqlite3）· Redis（会话/结果/限流）</text>
+  <text x="60" y="610" font-size="12" fill="#3d4a5c">permissions.yaml（8 槽位×3 动词×32 角色）· data_scope.yaml · 审计链（只追加）</text>
+</svg>
+<div class="cap">图 3-1 总体分层架构（自下而上：数据底座 → 能力服务 → 域 Agent → 编排内核 → 路由 → 统一入口 → 接入）</div>
+</div>
+<h3>3.1 技术栈</h3>
+<table>
+  <tr><th>层</th><th>选型</th><th>说明</th></tr>
+  <tr><td>语言 / 运行时</td><td>Python 3.11+（CI 3.11 / 3.12 / 3.13）</td><td>uv 管理依赖</td></tr>
+  <tr><td>Web 框架</td><td>FastAPI + uvicorn</td><td>SSE 事件流；企微 XML 回调</td></tr>
+  <tr><td>编排内核</td><td>LangGraph StateGraph</td><td>YAML 场景加载期编译为子图，非静态 add_node</td></tr>
+  <tr><td>数据访问</td><td>SQLAlchemy 2.0（业务库）</td><td>本地 SQLite 零依赖；生产切 MySQL 8.0</td></tr>
+  <tr><td>治理库</td><td>直连 sqlite3（WORKFLOW_DB）</td><td>fail-fast 拒绝非 SQLite 地址（见第 12 章）</td></tr>
+  <tr><td>向量检索</td><td>Milvus standalone / ChromaDB / 内存</td><td>BGE-M3 稠密+稀疏混合召回 + BGE-Reranker-v2-M3 重排</td></tr>
+  <tr><td>缓存 / 限流</td><td>Redis 7（可选）</td><td>连接失败自动降级为无缓存</td></tr>
+  <tr><td>LLM</td><td>可插拔 ChatModel 抽象</td><td>Ollama 本地 / 任意 OpenAI 兼容网关 / 留空离线降级</td></tr>
+  <tr><td>前端</td><td>原生 HTML/CSS/JS（零构建零 npm）</td><td>挂载于 FastAPI，静态资源动态注入版本号</td></tr>
+  <tr><td>协议</td><td>MCP（stdio JSON-RPC 2.0）/ A2A（最小自实现，零第三方依赖）</td><td>治理链与 HTTP 端点同一套</td></tr>
+</table>
+<h3>3.2 三条设计主线</h3>
+<ol>
+  <li>确定性流程走工作流引擎，LLM 只做理解、推理、分析、生成、汇总。审批、通知、升级、状态流转这些动作，永不由 LLM 触发。</li>
+  <li>数据质量优先于智能能力。没有数据来源时输出 <code>data_gap</code> 并强制人工确认——缺数据也要人拍板，而不是编一个结论。</li>
+  <li>所有智能体行为可审计。每次检索、问答、SQL、审批都落审计，数字结论强制 provenance 溯源。</li>
+</ol>
+
+<h2 id="s4"><span class="no">4</span>功能清单</h2>
+<h3 id="s4-1">4.1 七大协同场景</h3>
+<p>场景以 YAML 声明于 <code>src/mfg_agents/v2/scenarios/</code>，加载期编译为 LangGraph 子图。新场景等于一份新 YAML 加复用现有节点，不用写代码。</p>
+<table>
+  <tr><th>场景 key</th><th>触发词（L0 示例）</th><th>节点序列（简化）</th><th>HITL 槽位</th><th>核心输出物</th></tr>
+  <tr><td><code>line_stop_v2</code></td><td>停线 / 何时复线</td><td>intake → 制造确认 → [品质‖供应链‖设备] fan_out → fan_in → FA 分析 → workflow → hitl → report</td><td>复线决策 / 对客 ETA</td><td>内部简报 + 对客脱敏报告 + 影响评估工单</td></tr>
+  <tr><td><code>incoming_quality_v2</code></td><td>来料 / IQC / 锡膏 / 批次有问题 / 不合格</td><td>intake → sqe_assess → [采购‖计划‖物控] → fan_in → scar_wf → hitl → report</td><td>来料处置（退换货/特采）</td><td>SCAR 单 + 处置方案 + 计划调整建议</td></tr>
+  <tr><td><code>customer_complaint_v2</code></td><td>投诉 / 客诉 / 8D / 围堵</td><td>intake → qa_lead → [pqe‖sqe‖工程‖业务] → fan_in → capa_flow → hitl×2 → report</td><td>8D 关闭 / 对客回复</td><td>8D 报告（D0-D8）+ CAPA + PPM 更新</td></tr>
+  <tr><td><code>delivery_status_v2</code></td><td>能发 / 发货 / 交期 / ATP / 在途</td><td>intake → [业务‖计划‖物控‖仓库‖制造‖物流] → fan_in → atp_analysis → delivery_risk_wf → hitl → report</td><td>交期承诺</td><td>OTD 看板 + 风险订单清单 + ATP 承诺</td></tr>
+  <tr><td><code>equipment_warning_v2</code></td><td>设备 / 参数 / 预警 / 维保</td><td>intake → equipment_check → [维护‖计划窗口‖工程参数‖备件] → fan_in → maintenance_flow → hitl → report</td><td>停机窗口</td><td>设备健康摘要 + 维护工单</td></tr>
+  <tr><td><code>order_change_impact_v2</code></td><td>订单变更 / 交期提前</td><td>制造与供应链联合评估产能与交期 → workflow → hitl</td><td>变更承诺</td><td>变更影响评估 + 交期承诺</td></tr>
+  <tr><td><code>spc_anomaly_v2</code></td><td>Cpk / 过程异常 / 要不要介入</td><td>能力指数判定（纯函数）+ 不良柏拉图取证 → workflow → hitl</td><td>过程异常处置</td><td>SPC 判定 + 处置工单</td></tr>
+</table>
+<p>同一个问题，不同岗位看到的视野不一样。比如 PQE 查来料时供应商字段脱敏，采购可见原文——表级 ACL 与字段脱敏由登录角色驱动，服务端裁决，前端只如实呈现，带「已脱敏 N 项」角标。</p>
+<h3 id="s4-2">4.2 演示门户 12 屏</h3>
+<p>侧边栏四段：运营视图 → 智能协同 → 流程治理 → 复盘沉淀。导航 <code>NAV_ITEMS[].roles</code> 与服务端权限目录交叉校验：审批确认中心可见的岗位，必须等于持有 HITL 槽位权限的岗位，防止两边各自漂移。</p>
+<table>
+  <tr><th>段</th><th>屏</th><th>核心内容</th></tr>
+  <tr><td rowspan="3">运营视图</td><td>制造综合看板 / 订单履约看板 / 质量看板 / SPC 看板</td><td>按岗位数据范围裁决 + 字段脱敏 + L2-L5 下钻同源</td></tr>
+  <tr><td>预警中心</td><td>异常预警聚合与分级</td></tr>
+  <tr><td>我的看板</td><td>岗位个性化指标卡</td></tr>
+  <tr><td rowspan="3">智能协同</td><td>智能问询（对话）</td><td>统一查询入口 + SSE 事件流 + SQL 溯源展示</td></tr>
+  <tr><td>企业制度问答（kbqa）</td><td>RAG 结论带出处，FAQ 前置层</td></tr>
+  <tr><td>制造案例检索</td><td>Agentic RAG，授权发生在检索之前</td></tr>
+  <tr><td rowspan="2">流程治理</td><td>审批确认中心</td><td>HITL 待办（mine 可动作 / domain 域内只读）</td></tr>
+  <tr><td>OA 协同</td><td>会议室 / 订餐（高影响先人工确认）</td></tr>
+  <tr><td rowspan="2">复盘沉淀</td><td>报告中心</td><td>对客/对内报告归档与导出</td></tr>
+  <tr><td>数据速查 + 帮助中心</td><td>库存只读 · 岗位约束；架构与职责说明</td></tr>
+</table>
+<h3 id="s4-3">4.3 智能体与能力服务</h3>
+<table>
+  <tr><th>类别</th><th>清单</th><th>说明</th></tr>
+  <tr><td>域 Agent（源码 <code>v2/agents/</code>）</td><td>quality · supply_chain · engineering · manufacturing · office · agentic · hitl · report · workflow_nodes · case_access</td><td>17 个领域智能体按域分组，域组内由调度器自选</td></tr>
+  <tr><td>能力服务（源码 <code>v2/services/</code>）</td><td>text2sql · workflow · workflow_scope · notification · dashboard · data_scope · data_access · redaction · kbqa（+faq_match/intent/store）· case_search/qa/index/ingest/store/access/audit · spc_store · auth · health · office · feishu_calendar · principal_resolver</td><td>无状态、可复用、可独立测试；Agent 数量膨胀由架构评审约束</td></tr>
+</table>
+
+<h2 id="s5"><span class="no">5</span>核心子系统设计</h2>
+<h3 id="s5-1">5.1 编排内核</h3>
+<h4>两级路由（TwoLevelRouter）</h4>
+<table>
+  <tr><th>级</th><th>机制</th><th>时延量级</th><th>失败行为</th></tr>
+  <tr><td>L0 规则快路径</td><td>关键词/实体正则命中即走</td><td>毫秒级</td><td>未命中降级 L1</td></tr>
+  <tr><td>L1 LLM 闭集分类</td><td>小模型分类到 5 个域组（闭集）</td><td>百毫秒级</td><td>LLM 不可用 → 规则兜底 + degraded 标记</td></tr>
+  <tr><td>模糊兜底</td><td>低于阈值 → <code>fallback=manual_ticket</code></td><td>—</td><td>设计的一部分，非错误：转人工工单</td></tr>
+</table>
+<h4>场景声明式编排</h4>
+<pre><code># scenarios/line_stop_v2.yaml（结构示意）
+version: 1
+scenario_id: line_stop_v2
+steps:
+  - {id: intake,   agent: orchestrator}
+  - {id: mfg_confirm, agent: manufacturing}
+  - {id: evidence, type: fan_out, branches: [quality, supply_chain, equipment], join: all}
+  - {id: fa,       agent: quality, capability: rag}
+  - {id: impact,   type: workflow, workflow: impact_assessment_wf}
+  - {id: confirm,  type: hitl, slot: restart}     # 复线决策必须人工
+outputs: [internal_brief, customer_report, tickets]
+# 每节点 timeout_s + on_error: degrade：任一域超时标记 degraded 继续，不阻断整链</code></pre>
+<p>总控（V2Orchestrator）守住边界，避免长成上帝对象：不直接查库（必须经 Text2SQLService）、不直接发通知（必须经 NotificationService）、不做审批判断（必须经 WorkflowEngine）、不存业务状态（只存编排上下文）。</p>
+<h3 id="s5-2">5.2 智能体体系</h3>
+<h4>域组划分（16 部门 → 5 域组）</h4>
+<p>分组的依据是价值流聚类，不是组织架构的镜像——按部门照搬会把协同场景绑死在现有编制上。</p>
+<table>
+  <tr><th>域组</th><th>部门</th><th>核心价值流</th><th>典型交互</th></tr>
+  <tr><td>供应链 SCM</td><td>业务/计划/物控/采购/仓库/物流</td><td>订单交付流 OTD</td><td>收 IQC 拒绝 → 冻结+替代料评估；发缺料预测</td></tr>
+  <tr><td>研发工程 RD</td><td>硬件/软结构/工程/测试</td><td>NPI 导入流 + ECN 变更流</td><td>发 ECN 发布 → 供应链处置在途、制造执行切换</td></tr>
+  <tr><td>质量 QMS</td><td>SQE/PQE/QA</td><td>质量流 IQC→OQC→8D→CAPA</td><td>发客诉创建 → 8D 工作流启动</td></tr>
+  <tr><td>制造 MFG</td><td>制造/设备</td><td>生产执行与设备</td><td>发停线确认 → 停线应急 DAG 启动</td></tr>
+  <tr><td>职能 STF</td><td>行政/财务</td><td>支撑流程</td><td>OA 审批、开票状态、制度问答</td></tr>
+</table>
+<h4>分级 LLM</h4>
+<table>
+  <tr><th>级</th><th>用途</th><th>模型</th><th>部署原则</th></tr>
+  <tr><td>L0</td><td>规则/正则/统计计算（SPC 等）</td><td>无 LLM</td><td>能不用就不用，&lt;10ms</td></tr>
+  <tr><td>L1</td><td>意图分类、SQL 初版、实体抽取</td><td>qwen3.5:4b（Ollama）</td><td>本地优先，高频低敏</td></tr>
+  <tr><td>L2</td><td>分析推理、RAG 答案、FA 评级、报告</td><td>qwen3.5:9b→32b / DeepSeek 兜底</td><td>涉 BOM/价格/客户必须本地（数据不出厂）</td></tr>
+</table>
+<p>LLM 不可用时全链路降级：路由走规则、结论用模板、显式标 <code>degraded</code>。数字始终取自 SQL，不编造。</p>
+<h3 id="s5-3">5.3 治理层</h3>
+<p>治理层是这个产品花力气最多的地方，也是和「套壳问答」拉开差距的部分。分五块讲。</p>
+<h4>5.3.1 声明式权限目录</h4>
+<p><code>v2/data/permissions.yaml</code> 对标 Huly controlled-documents 范式：8 个 HITL 槽位 × 3 个动词（propose 发起 / cosign 会签 / approve 终批）= 24 条权限，32 个治理角色，全部声明在 YAML，业务代码零硬编码。</p>
+<ul>
+  <li>构造期自检：Agent 身份角色只允许 <code>*.propose</code>，持有 <code>*.approve</code> 直接启动失败。</li>
+  <li>会签纪律：一人一签、并发幂等，缺一不可，绝不自动放行。</li>
+  <li>未识别角色或权限一律 fail-closed。</li>
+</ul>
+<h4>5.3.2 待办可见性（同源于权限目录）</h4>
+<table>
+  <tr><th>规则</th><th>行为</th></tr>
+  <tr><td>令牌为准</td><td>Bearer 令牌裁决角色；<code>role</code> 查询参数只能收窄不能扩宽，传他人角色 → 403</td></tr>
+  <tr><td>mine / domain 二分</td><td>mine = 当前轮到我（可动作）；domain = 治理域内待观察（只读）</td></tr>
+  <tr><td>无治理职责岗位</td><td>返回空队列 HTTP 200——「本来就没有你的活」≠「无权查看」（403），两种状态可区分</td></tr>
+  <tr><td>跨域工单详情</td><td>返回 404 而非 403（403 会确认工单存在，404 不泄漏 ID 空间）</td></tr>
+  <tr><td>MCP / A2A 同口径</td><td>工具参数里的 <code>roles</code> 无法覆盖真实身份</td></tr>
+</table>
+<h4>5.3.3 数据范围与脱敏</h4>
+<p><code>v2/data/data_scope.yaml</code> 声明式裁决四个 <code>/dashboard/*</code> 加 <code>/dashboard/drill</code>：无令牌 401、未登记看板 403（fail-closed，谁也用不了，刻意如此）、岗位不在 allow_roles 403（不返回 200 空数据）。订单看板客户身份按岗位脱敏（客户 A/B 稳定代号），排行与下钻同源脱敏；被脱敏的行会移除下钻实体并标 <code>masked</code>——只藏名字留下钻键等于没脱敏。</p>
+<h4>5.3.4 Text2SQL 八道防线</h4>
+<table>
+  <tr><th>#</th><th>防线</th><th>#</th><th>防线</th></tr>
+  <tr><td>1</td><td>仅 SELECT</td><td>5</td><td>敏感字段按角色脱敏</td></tr>
+  <tr><td>2</td><td>多语句拦截</td><td>6</td><td>provenance 全溯源（SQL + 命中行）</td></tr>
+  <tr><td>3</td><td>sqlglot AST 提取表名</td><td>7</td><td>人工兜底（超范围 → manual_ticket）</td></tr>
+  <tr><td>4</td><td>表级 ACL（fail-closed）</td><td>8</td><td>行数上限 + 只读账号</td></tr>
+</table>
+<h4>5.3.5 制造案例检索（本地增强 Agentic RAG）</h4>
+<ul>
+  <li><b>两段式安全检索</b>：服务端按身份编译过滤条件（ABAC：显式 deny &gt; 全局硬门禁 &gt; 维度 AND &gt; RBAC &gt; 默认拒绝）并下推向量库，过滤在召回前生效；返回前再用关系库 ACL 做第二次授权，走独立代码路径。候选不足时绝不放宽过滤重试：<code>hits == 0</code> 返回空 + <code>hidden_count</code>，宁可少给。</li>
+  <li><b>最小泄漏面</b>：无权案例统一 <code>404 CASE_NOT_FOUND_OR_NOT_VISIBLE</code>，不泄漏存在性。</li>
+  <li><b>无引用不输出</b>：每条结论挂 <code>(case_id, chunk_id, content_version)</code> 三元组，引用校验器回查，版本不一致即丢弃；相关度低于阈值直接拒答——问「食堂几点开饭」不会得到锡膏印刷答案。</li>
+  <li><b>受控词表本体增强</b>：缺陷模式/根因/对策受控编码（DM-SMT / RC-EQP…）归一「同一现象不同叫法」，混合检索 + 确定性重排（状态权重×新鲜度×有效性）。</li>
+  <li><b>导出默认拒绝、外发恒定拒绝</b>：可看 ≠ 可带走；CaseAccessAgent 只按受控词表路由申请并留痕，推断不出就明说。</li>
+  <li><b>审计链可对账</b>：每次检索/问答落审计（主体/动作/命中数/查询哈希/过滤哈希），只记哈希不记正文，提供一键校验。</li>
+</ul>
+<h3 id="s5-4">5.4 AI 能力</h3>
+<p>SPC 统计内核的 Cpk / Pp / Ppk / 柏拉图由 <code>core/spc.py</code> 纯函数计算，不经过 LLM；没有测量数据时输出 <code>data_gap=True</code> 并强制走人工确认。</p>
+<table>
+  <tr><th>层</th><th>机制</th><th>要点</th></tr>
+  <tr><td>L0 缓存</td><td>Redis（faq_version）</td><td>测试必须隔离 6380 缓存</td></tr>
+  <tr><td>L1 FAQ 前置</td><td>双闸 0.70 / 0.15 + 维度衰减</td><td>高频问题秒回，未命中进意图路由</td></tr>
+  <tr><td>意图路由</td><td>124 域内词 + 21 拉丁缩写</td><td>how_to 让位 RAG</td></tr>
+  <tr><td>L2 RAG</td><td>kbqa_policy 64 条政策语料</td><td>结论必须带出处</td></tr>
+</table>
+<h3 id="s5-5">5.5 协议接入</h3>
+<table>
+  <tr><th>协议</th><th>形态</th><th>治理边界</th></tr>
+  <tr><td>MCP Server</td><td>stdio JSON-RPC 2.0，MCP 2024-11-05 工具子集；ToolRegistry 单一事实源，按域分治（data / asset / quality / workflow / knowledge，单 server ≤15 工具）</td><td>任何 MCP 客户端可挂载；工具调用同样过 ACL / 脱敏 / 审计</td></tr>
+  <tr><td>A2A</td><td>GET /.well-known/agent.json Agent Card + POST /a2a（message/send / tasks/get）</td><td>外部智能体拿到结构化 Task + Artifact；治理链与 HTTP 端点同一套——A2A 不是绕过治理的后门</td></tr>
+  <tr><td>企微回调</td><td>自建应用 URL 校验 + AES-CBC 解密 + 签名验证</td><td>5s 内被动回复「已受理」，结果异步推送；HITL 审批卡片回写 workflow.advance()</td></tr>
+</table>
+
+<h2 id="s6"><span class="no">6</span>数据架构</h2>
+<h3>6.1 持久化三轨（非统一，改动前必读）</h3>
+<table>
+  <tr><th>轨</th><th>落点</th><th>约束</th></tr>
+  <tr><td>① 业务数据读路径</td><td><code>contracts/data_source.py::DataSource</code>（SQLAlchemy 抽象）</td><td>可换 SQLite / MySQL；新数据源实现三方法（list_tables / run_query / execute_readonly_sql）+ 注册进 DataSourceRegistry</td></tr>
+  <tr><td>② 治理数据写路径</td><td><code>v2/services/workflow.py</code> 直连 sqlite3</td><td>不继承 DB_URL；显式传入非 SQLite 地址启动抛 WorkflowBackendError（fail-fast）</td></tr>
+  <tr><td>③ kbqa</td><td><code>v2/services/kbqa_store.py</code> 自带 SQLAlchemy</td><td>管 kbqa_faq / kbqa_faq_draft / kbqa_query_log；只读 kbqa_policy；不走 DataSourceRegistry</td></tr>
+</table>
+<h3>6.2 核心数据对象</h3>
+<table>
+  <tr><th>对象</th><th>关键字段 / 结构</th><th>说明</th></tr>
+  <tr><td>工单（WorkflowInstance）</td><td>task_uid / wf_id / status / context / history[]</td><td>status 单向往复，非法迁移返回 409</td></tr>
+  <tr><td>HITL 卡片</td><td>kind / status=waiting_hitl / prompt / approver_roles / sla_due_at / visibility / my_action</td><td>绝不自动放行</td></tr>
+  <tr><td>provenance 项</td><td>channel / query_name / sql / row_count / masked / tables / domain</td><td>channel ∈ registered / metric / detail / compute / template / data_gap / report / workflow / hitl / rag</td></tr>
+  <tr><td>审计记录</td><td>主体 / 动作 / 命中数 / 查询哈希 / 过滤哈希</td><td>只追加不可改，只记哈希不记正文</td></tr>
+  <tr><td>案例域</td><td>案例 / chunk / content_version / 受控词表标签 / 可见状态白名单</td><td>未结案与已撤权永不进索引</td></tr>
+</table>
+<h3>6.3 向量检索</h3>
+<p>双路召回（BGE-M3 dense + sparse）加 BGE-Reranker-v2-M3 重排；后端三实现（内存默认 / ChromaDB / Milvus），<code>VECTOR_BACKEND</code> / <code>CASE_VECTOR_BACKEND</code> 一键切换，零代码改动。</p>
+<h3>6.4 缓存与降级</h3>
+<p>Redis 承担会话上下文缓存、查询结果缓存与单 IP 限流；连接失败自动降级为无缓存（探针标记 <code>disabled</code>，不计入 degraded）。</p>
+
+<h2 id="s7"><span class="no">7</span>接口清单</h2>
+<h3>7.1 端点目录</h3>
+<table>
+  <tr><th>端点</th><th>方法</th><th>鉴权</th><th>说明</th></tr>
+  <tr><td><code>/api/v2/health</code></td><td>GET</td><td>无</td><td>结构化依赖探针，不触发编排器初始化，可供 Docker HEALTHCHECK</td></tr>
+  <tr><td><code>/api/v2/query</code></td><td>POST</td><td>演示无（生产应填充 user_ctx）</td><td>统一查询入口：路由 → 场景 DAG → 聚合结果</td></tr>
+  <tr><td><code>/api/v2/events</code></td><td>GET</td><td>无</td><td>SSE 事件流（request_id 订阅，wait_s 上限 300）</td></tr>
+  <tr><td><code>/api/v2/events/open</code></td><td>POST</td><td>无</td><td>预开事件队列，消除「先查询后订阅」时序竞态</td></tr>
+  <tr><td><code>/api/v2/workflow/pending</code></td><td>GET</td><td>Bearer</td><td>HITL 待办队列（令牌为准，role 只能收窄）</td></tr>
+  <tr><td><code>/api/v2/workflow/{task_id}</code></td><td>GET</td><td>Bearer</td><td>工单详情，跨域 404</td></tr>
+  <tr><td><code>/api/v2/workflow/{task_id}/approve|reject</code></td><td>POST</td><td>Bearer</td><td>HITL 回写；非法迁移 409</td></tr>
+  <tr><td><code>/api/v2/im/wecom/callback</code></td><td>GET/POST</td><td>验签</td><td>URL 校验 / 消息处理</td></tr>
+  <tr><td><code>/api/v2/dashboard/{manufacturing,quality,orders,spc}</code></td><td>GET</td><td>Bearer</td><td>看板聚合（数据范围裁决 + 脱敏）</td></tr>
+  <tr><td><code>/api/v2/dashboard/drill</code></td><td>GET</td><td>Bearer</td><td>L2-L5 下钻，与看板同源裁决</td></tr>
+  <tr><td><code>/api/v2/datasources</code></td><td>GET</td><td>Bearer</td><td>数据源就绪度总览（健康/表清单/注册查询数）</td></tr>
+  <tr><td><code>/demo-ui/*</code></td><td>GET</td><td>无</td><td>演示前端静态资源</td></tr>
+</table>
+<h3>7.2 错误码</h3>
+<table>
+  <tr><th>HTTP</th><th>场景</th><th>设计意图</th></tr>
+  <tr><td>200 / code=0</td><td>成功或业务兜底</td><td>超范围问题 <code>fallback=manual_ticket</code> 是设计的一部分，非错误</td></tr>
+  <tr><td>400</td><td>参数非法 / 下钻层级跳级</td><td>回显 unknown 便于定位</td></tr>
+  <tr><td>401</td><td>缺令牌 / 令牌非法或过期</td><td>看板/下钻/待办/详情一律 fail-closed</td></tr>
+  <tr><td>403</td><td>无数据权限 / 验签失败</td><td>detail 给出谁能看，不返回 200 空数据</td></tr>
+  <tr><td>404</td><td>资源不存在<b>或跨治理域不可见</b></td><td>刻意不区分：避免确认 ID 存在</td></tr>
+  <tr><td>409</td><td>非法状态迁移</td><td>状态机拒绝（如 closed→running）</td></tr>
+  <tr><td>500</td><td>服务端错误（如企微密钥未配置）</td><td>SQL 拦截/越权/LLM 生成 DDL 等<b>不返回 5xx</b>，降级为兜底 + warnings</td></tr>
+</table>
+<h3>7.3 SSE 事件枚举（与 V1 兼容，前端零改动）</h3>
+<p><code>agent_start</code> / <code>tool_start</code> / <code>tool_end</code> / <code>llm_start</code> / <code>agent_end</code>（status ∈ ok/degraded）/ <code>fan_in</code> / <code>error</code>；收到 <code>final</code> / <code>error</code> 后结束。</p>
+
+<h2 id="s8"><span class="no">8</span>部署架构</h2>
+<h3>8.1 三种形态</h3>
+<table>
+  <tr><th>形态</th><th>业务库</th><th>治理库</th><th>向量库</th><th>缓存</th><th>适用</th></tr>
+  <tr><td>本地开发</td><td>SQLite（默认）</td><td>同一 SQLite 文件</td><td>ChromaDB 默认 / 可接 Milvus</td><td>无（自动降级）</td><td>跑通全链路、跑测试</td></tr>
+  <tr><td>Docker 单容器</td><td>同上（app_data 卷）</td><td>同上</td><td>同上</td><td>同上</td><td>快速演示</td></tr>
+  <tr><td>中间件栈</td><td>MySQL 8.0</td><td><b>仍为 SQLite</b>（WORKFLOW_DB）</td><td>Milvus standalone + BGE 全家</td><td>Redis 7</td><td>单实例生产</td></tr>
+</table>
+<p>治理库为什么不跟着切 MySQL：WorkflowEngine 直连 sqlite3，约 1025 行，没接进 SQLAlchemy 抽象，重写的风险高于收益。所以 <code>WORKFLOW_DB</code> 不继承 <code>DB_URL</code>——DB_URL 指向 MySQL 时它自动回落本地 SQLite 文件，显式传入非 SQLite 地址则启动即抛错。多实例部署前必须先抽 WorkflowRepository 契约，见第 12 章 P1。</p>
+<h3>8.2 端口与容器视角</h3>
+<table>
+  <tr><th>组件</th><th>宿主机端口</th><th>容器内默认</th></tr>
+  <tr><td>MySQL</td><td>3307</td><td><code>CONTAINER_DB_URL=mysql+pymysql://root:demo123@mysql:3306/mfg_agent</code></td></tr>
+  <tr><td>Milvus</td><td>19531</td><td><code>CONTAINER_MILVUS_URI=http://milvus:19530</code></td></tr>
+  <tr><td>Redis</td><td>6380</td><td><code>CONTAINER_REDIS_URL=redis://redis:6379/0</code></td></tr>
+</table>
+<p>组合启动用两个 compose 挂同一 project，网络自动合并，app 与中间件走服务名，不需要 host.docker.internal 跳转：</p>
+<pre><code>docker compose -f docker-compose.yml -f docker-compose.infra.yml up -d
+# .env 设：DB_URL=mysql+pymysql://... · VECTOR_BACKEND=milvus · MILVUS_URI=... · REDIS_URL=...
+# 业务读路径零代码改动；治理库另设 WORKFLOW_DB 指向 SQLite</code></pre>
+<h3>8.3 快速开始</h3>
+<pre><code>git clone https://github.com/Hulk-Zhao/mfg-agent-platform.git
+cd mfg-agent-platform
+cp .env.example .env           # LLM 全部留空 = 离线降级模式，可跑通全链路
+uv sync
+uv run python -m mfg_agents.common.init_db
+uv run uvicorn mfg_agents.v2.demo.api:app --port 8004
+# 打开 http://127.0.0.1:8004/demo-ui/ ，选岗位进入
+# 不起 UI：uv run python -m mfg_agents.v2.demo.cli "A型号在SMT-1停线，何时复线？"</code></pre>
+
+<h2 id="s9"><span class="no">9</span>测试与质量保障</h2>
+<table>
+  <tr><th>类别</th><th>覆盖</th><th>纪律</th></tr>
+  <tr><td>治理链</td><td>权限目录自检、会签幂等、越权拦截、Agent 不得持 approve</td><td>构造期断言，启动即失败</td></tr>
+  <tr><td>Text2SQL 红队</td><td>DDL/DML 注入、多语句、越表访问</td><td>100% 拦截为发布门槛</td></tr>
+  <tr><td>场景端到端</td><td>7 场景主流程 + 降级路径</td><td>provenance 断言</td></tr>
+  <tr><td>案例域安全</td><td>两段式授权 / 引用校验 / RBAC-ABAC / 审计对账 / 限流 / 统计卡同源 / 跨部门通行</td><td>过滤下推而非召回后筛选</td></tr>
+  <tr><td>协议</td><td>MCP / A2A / 企微加解密 / 飞书适配</td><td>治理链与 HTTP 同源断言</td></tr>
+  <tr><td><b>架构守卫</b></td><td>治理库拒绝非 SQLite / 方言判定不乱猜 / 健康探针不抛异常 / 导航按岗位收敛</td><td>改坏一个字母启动即失败</td></tr>
+  <tr><td><b>数据范围守卫</b></td><td>看板按岗位裁决 / 403 不降级成演示数据 / 脱敏与下钻键成对处理</td><td>改 yaml 让快照变红=刻意</td></tr>
+  <tr><td><b>待办可见性守卫</b></td><td>令牌为准 / 跨域 404 / 三条通道同一口径</td><td>扫 api.py 兜漏鉴权</td></tr>
+  <tr><td><b>FAQ 前置层守卫</b></td><td>L1 双闸 / 意图路由分流 / how_to 让位 RAG</td><td>kbqa 测试隔离 6380 Redis</td></tr>
+</table>
+<p>执行：<code>uv run pytest tests/ -q</code>。CI 在 Python 3.11 / 3.12 / 3.13 三版本运行；测试探针恒 False、不发外网请求，全离线确定性。</p>
+
+<h2 id="s10"><span class="no">10</span>安全设计</h2>
+<table>
+  <tr><th>面</th><th>机制</th></tr>
+  <tr><td>认证</td><td>演示门户 31 岗位免密选登；写接口凭 HMAC 签名的岗位访问令牌（8h TTL）；<code>AUTH_SECRET</code> 未配置时生成进程级随机密钥并告警</td></tr>
+  <tr><td>权限三层（正交）</td><td>菜单层 <code>NAV_ITEMS[].roles</code>（只管可见性）/ 待办层 <code>workflow_scope.py</code>（HITL 槽位判据）/ 数据层 <code>data_scope.yaml</code>（看板裁决）——三者独立，都在服务端；前端不做权限判断</td></tr>
+  <tr><td>脱敏</td><td>字段级脱敏策略 + 排行/下钻同源 + 报告出口禁词表兜底；前端展示「已脱敏 N 项」角标</td></tr>
+  <tr><td>审计</td><td>每次 LLM 调用、SQL、审批、通知全量入审计表，只追加不可改</td></tr>
+  <tr><td>fail-closed</td><td>未登记看板 403、未识别角色拒绝、无权案例 404、治理库拒非 SQLite</td></tr>
+  <tr><td>数据主权</td><td>LLM 与数据组件私有化部署；涉敏推理强制本地；外部 API 仅限脱敏后非敏场景</td></tr>
+</table>
+
+<h2 id="s11"><span class="no">11</span>性能与可观测</h2>
+<h3>11.1 健康探针</h3>
+<p><code>/api/v2/health</code> 跑 5 项探针（业务库 / 治理库 / Redis / 向量库 / LLM），并行执行，总耗时等于最慢一项；TCP 探测共用 0.6s 总预算，localhost 双地址族不翻倍。返回 <code>ok</code> / <code>degraded</code> 加逐项明细。探针不触发编排器初始化，可以给 Docker HEALTHCHECK 高频调用；任一探针抛异常一律收敛为 <code>down</code>，健康检查自身不允许 500。</p>
+<h3>11.2 降级矩阵</h3>
+<table>
+  <tr><th>故障</th><th>行为</th></tr>
+  <tr><td>LLM 不可用</td><td>规则路由 + 模板结论 + degraded 标记，数字仍来自 SQL</td></tr>
+  <tr><td>Redis 不可用</td><td>自动降级无缓存，探针标 disabled（不计 degraded）</td></tr>
+  <tr><td>向量库不可用</td><td>案例检索降级（RAG 通道标 degraded），Text2SQL 主链不受影响</td></tr>
+  <tr><td>单域超时</td><td>该域标 degraded 继续 fan_in，不阻断整链</td></tr>
+  <tr><td>数据无来源</td><td><code>data_gap</code> 通道显式提示，前端必须渲染提示条（架构诚实性）</td></tr>
+</table>
+<h3>11.3 事件流与耗时</h3>
+<p>SSE 请求级隔离，消除全局队列并发串话；<code>/api/v2/query</code> 响应含 <code>timings</code>（各节点耗时 ms）与 <code>elapsed_ms</code>，provenance 含每条 SQL 的耗时。</p>
+
+<h2 id="s12"><span class="no">12</span>已知限制与生产化清单</h2>
+<p>以下条目是上线前必须关闭的缺口，按 README「生产化清单」与本文实测口径逐条列出，不是缺陷隐瞒。</p>
+<table>
+  <tr><th>#</th><th>缺口</th><th>影响</th><th>关闭路径</th></tr>
+  <tr><td>P1</td><td>治理库固定 SQLite 单文件单实例</td><td>多实例部署不可用</td><td>抽 WorkflowRepository 契约 + SQLAlchemy 后端；与 P2 一并做（多实例前提是签名落库）</td></tr>
+  <tr><td>P2</td><td>会签并发用进程内 RLock 串行化</td><td>多副本下会签并发风险</td><td>签名拆独立表 + 唯一索引 (task_uid, role_key, actor, verb) 幂等</td></tr>
+  <tr><td>P3</td><td>数据范围为角色维度，缺<b>行级</b>（组织/产线）</td><td>同一看板内无法按辖区过滤</td><td>data_scope.yaml 从角色维度扩展到组织维度</td></tr>
+  <tr><td>P4</td><td>待办行级缺口 + 未纳管历史工单进「无主池」</td><td>同槽位内按组织归属过滤缺失</td><td>工单归属回填 + 组织维度裁决</td></tr>
+  <tr><td>P5</td><td>A2A 任务进程内保留 1 小时</td><td>外部智能体长任务查询受限</td><td>tasks/get 持久化</td></tr>
+  <tr><td>P6</td><td>登录本身免密（31 岗位任选即入）</td><td>「链接即权限」风险</td><td>对外正式提供前替换为 SSO</td></tr>
+  <tr><td>P7</td><td>企微回调缺重放防护</td><td>重放攻击面</td><td>timestamp 窗口验重 + nonce 缓存</td></tr>
+  <tr><td>P8</td><td>超时代签入口未开放（字段位已预留）</td><td>代理/委托场景不可用</td><td>on_behalf_of / overdue_signoff 入口开放 + 权限声明</td></tr>
+</table>
+
+<h2 id="s13"><span class="no">13</span>附录</h2>
+<h3>13.1 术语表</h3>
+<table>
+  <tr><th>术语</th><th>含义</th></tr>
+  <tr><td>HITL</td><td>Human-in-the-Loop，人工在环：propose → N×cosign → approve，绝不自动放行</td></tr>
+  <tr><td>fan_out / fan_in</td><td>多域并行取证 / 结果汇聚（LangGraph 子图节点类型）</td></tr>
+  <tr><td>provenance</td><td>溯源链：数字来自哪张表哪条 SQL 命中哪几行，全程可审计</td></tr>
+  <tr><td>data_gap</td><td>该数据当前无来源的显式标记，替代「编一个结论」</td></tr>
+  <tr><td>degraded</td><td>依赖降级运行状态（如 LLM 离线），结论仍要求数字可溯源</td></tr>
+  <tr><td>ABAC</td><td>基于属性的访问控制：显式 deny &gt; 全局硬门禁 &gt; 维度 AND &gt; RBAC &gt; 默认拒绝</td></tr>
+  <tr><td>A2A / MCP</td><td>Agent 间通信协议 / 模型上下文协议，均最小自实现，治理链同源</td></tr>
+</table>
+<h3>13.2 参考文档</h3>
+<ul>
+  <li><code>docs/ARCHITECTURE-V2.md</code> — 总架构（契约层 / 编排内核 / 治理层设计详述，架构唯一权威源）</li>
+  <li><code>docs/V2-接口文档.md</code> — API 文档（统一入口 / SSE / HITL 回写 / 错误码）</li>
+  <li><code>docs/V2-HITL-角色协作设计.md</code> — 人工在环与会签设计</li>
+  <li><code>docs/case-assistant-demo-readme.md</code> — 制造案例检索交付说明</li>
+  <li><code>docs/adr/ADR-001-企业问答助手检索架构.md</code> — kbqa 三层检索架构决策</li>
+</ul>
+<div class="footer">
+  <p>制造业多智能体协同平台 · 产品技术文档 v1.0 · 2026-10-19 · 以 mfg-agent-platform 代码基线为准，随 PR 更新</p>
+</div>
+</main>
+</div>
+</body>
+</html>

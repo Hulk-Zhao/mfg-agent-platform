@@ -1,11 +1,11 @@
 # mfg-agent-platform
 
-制造业多智能体协同平台。18 个智能体（17 个领域智能体 + 1 个办公智能体）、7 大协同场景，LangGraph 子图编排、人工在环会签、Text2SQL 只读治理、本地增强 Agentic RAG 案例检索、A2A / MCP 双协议接入。
+制造业多智能体协同平台。18 个智能体（17 个领域智能体 + 1 个办公智能体）、7 大协同场景，LangGraph 子图编排、人工在环会签、Text2SQL 只读治理、本地增强 Agentic RAG 案例检索、A2A / MCP 双协议接入；另设**生态链演示门户**——一条主线订单驱动六个场景屏，全链路只读、数据合成可复现。
 
 [![tests](https://github.com/Hulk-Zhao/mfg-agent-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/Hulk-Zhao/mfg-agent-platform/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![tests](https://img.shields.io/badge/tests-1204%20offline-brightgreen)
+![tests](https://img.shields.io/badge/tests-1385%20offline-brightgreen)
 
 <p float="left">
   <img src="docs/images/screen-dashboard.png" width="24.5%" />
@@ -63,7 +63,7 @@
 
 新数据源实现三个方法、注册进 `DataSourceRegistry`，即刻出现在 `/api/v2/datasources` 就绪度总览——健康状态、表清单、注册查询数。
 
-**治理层**。声明式权限目录（对标 Huly controlled-documents 范式）：8 个 HITL 槽位 × 3 个动词（propose / cosign / approve）= 24 条权限、32 个治理角色，全部声明在 YAML。`PermissionRegistry` 构造期自检：Agent 身份只允许 `*.propose`，持有 `*.approve` 直接启动失败。会签一人一签、并发幂等。
+**治理层**。声明式权限目录（对标 Huly controlled-documents 范式）：9 个 HITL 槽位 × 3 个动词（propose / cosign / approve）= 27 条权限、32 个治理角色，全部声明在 YAML（第 9 槽位 `order_review` 为接单评审会签，propose=业务 / cosign=工程+计划 / approve=业务经理）。`PermissionRegistry` 构造期自检：Agent 身份只允许 `*.propose`，持有 `*.approve` 直接启动失败。会签一人一签、并发幂等。
 
 **待办可见性同源于权限目录**。`/workflow/pending` 不再接受任何形式的口头身份：角色一律由 Bearer 令牌裁决，`role` 参数只能收窄不能扩宽；可见范围 = 我持有权限的 HITL 槽位（`mine` 可动作 / `domain` 域内只读）。**行政人事这类无治理职责的岗位拿到的是空队列**——不是"没资格看"，而是"本来就没有你的活"，两种状态在响应里可区分。详情接口同理，跨域返回 404 而非 403（403 会确认工单存在）。MCP / A2A 通道走同一套判据，工具参数里的 `roles` 无法覆盖真实身份。
 
@@ -104,7 +104,7 @@
 
 **健康检查**。`/api/v2/health` 是结构化依赖探针（业务库 / 治理库 / Redis / 向量库 / LLM），返回 `ok` / `degraded` 与逐项明细，前端顶栏据此显示绿 / 黄 / 红三色；探针**不触发编排器初始化**，可供 Docker `HEALTHCHECK` 高频调用。
 
-**前端**。原生 HTML/CSS/JS，零构建零 npm 依赖，挂载于 FastAPI，SSE 实时事件流驱动。
+**前端**。原生 HTML/CSS/JS，零构建零 npm 依赖，挂载于 FastAPI，SSE 实时事件流驱动。内置可拖动的**悬浮帮助助手**（`float-help.js`，随场景切换会话、答疑静态预置不调后端），演示门户另有「生态链场景」分组承载六个场景屏。
 
 ## 部署形态
 
@@ -176,6 +176,23 @@ uv run uvicorn mfg_agents.v2.demo.api:app --port 8004
 
 同一问题不同岗位可见范围不同：PQE 查来料时供应商字段脱敏，采购可见原文——表级 ACL 与字段脱敏由登录角色驱动。
 
+## 生态链演示（主线订单 · 六场景屏）
+
+面向公网 / 客户演示的**一条主线订单故事**：固定随机种子（20261019）合成 15 类对象 / 43 事件，主线 `SO-DEMO-001` 串起「接单 → 立项 → 阶段门 → 批量与 ECN → 出货追溯 → 采购执行」六屏，另有 ECN 换料（支线 A）与客诉 8D（支线 B）两条支线。数据由服务端装载层提供（`/api/v2/demo/objects/{name}`、`/api/v2/demo/timeline`），屏内**不落散数**，全部经 `SceneKit.story()` 现取。
+
+| 场景屏 | 演示主线 |
+|---|---|
+| S1 · 接单评审 | ATP 初评三来源（在库 / 在制 / 安全库存）+ 报价区间三分量现算对账 + 接单评审一次会签（真实 HITL 工单） |
+| S2 · 立项 | 立项材料自动汇总 + 相似历史案例检索 + 立项会签 |
+| S3 · 阶段门 | EVT / DVT / PVT 记分卡四维现算 + 门禁机械判定 + 会签留痕 |
+| S4 · 批量监控与 ECN | SPC 判异处置会签 + 支线 A 换料影响面四象限（在制 / 库存 / 在途 / 未发） |
+| S5 · 出货与质量追溯 | 批次 → 工单 → 工序 → 设备 → 当班 SVG 追溯图谱 + 同批库存位置 + 8D 时间线 |
+| S6 · 采购执行 | 交期确认 + 缺料预警 + 自动催料待办 + 延期升级链 |
+
+**五访客角色**（`gm / biz / rd / qa / mfg`）登录各见不同屏与数据范围，可见性由 `roles` 机械判定；`cs / hr / fin` 等岗位不出现「生态链场景」分组。**框架级演示纪律**：所有场景屏首帧必须带「演示数据」徽标——`SceneKit.installBadgeGuard()` 包装 `SceneRegistry.register`，漏挂即拒绝渲染并 `console.error`；所有接口响应带 `X-Demo-Mode` / `X-Demo-Label` 头（纯 ASGI `DemoMarkerMiddleware`，对 SSE 零影响）；另有静态层隔离自检 `tools/demo_gen/check_isolation.py`（连接串 / 凭据 / 真实企业名词三类，扫演示实例范围内文件）。
+
+**悬浮帮助助手**（`float-help.js`）：可拖动、位置存 `localStorage`；随 `state.screen` 切换场景即开新会话，点击预置问题后答案流式输出；答疑为**静态预置、不调后端**，与帮助中心同纪律——改屏内交互 / 链路 / 权限口径时必须同步改其 KB。
+
 ## 门户一览
 
 | 制造案例检索（本地增强 Agentic RAG） | 订单履约看板 |
@@ -202,13 +219,13 @@ uv run uvicorn mfg_agents.v2.demo.api:app --port 8004
 
 ## 测试
 
-1204 条离线确定性测试（探针恒 False、不发外网请求），CI 在 Python 3.11 / 3.12 / 3.13 三个版本执行：
+1385 条离线测试（1380 通过 · 5 跳过；探针恒 False、不发外网请求），CI 在 Python 3.11 / 3.12 / 3.13 三个版本执行：
 
 ```bash
 uv run pytest tests/ -q
 ```
 
-覆盖：治理链（权限目录自检、会签幂等、越权拦截）、Text2SQL 防线（红队用例）、场景端到端、看板下钻、SPC 内核、**案例域安全检索**（两段式授权 / 引用校验 / RBAC-ABAC 策略 / 审计链对账 / 限流 / 顶部统计卡同源 / 总经理跨部门通行）、MCP / A2A 协议、企微加解密、飞书适配；以及**架构守卫**（治理库拒绝非 SQLite、方言判定不乱猜、健康探针不抛异常、导航按岗位收敛——见 `tests/v2/test_架构守卫.py`）、**数据范围守卫**（看板按岗位裁决 / 403 不降级成演示数据 / 脱敏与下钻键成对处理——见 `tests/v2/test_数据范围.py`）、**待办可见性守卫**（令牌为准 / 跨域 404 / 三条通道同一口径——见 `tests/v2/test_待办可见性.py`）和 **FAQ 前置层守卫**（L1 双闸 / 意图路由分流 / how_to 让位 RAG——见 `tests/v2/test_kbqa_faq_tier.py`、`tests/v2/test_kbqa_intent.py`）。
+覆盖：治理链（权限目录自检、会签幂等、越权拦截）、Text2SQL 防线（红队用例）、场景端到端、看板下钻、SPC 内核、**案例域安全检索**（两段式授权 / 引用校验 / RBAC-ABAC 策略 / 审计链对账 / 限流 / 顶部统计卡同源 / 总经理跨部门通行）、MCP / A2A 协议、企微加解密、飞书适配、**生态链演示**（屏 / 数据 / 组件三契约、六场景屏数字现取、演示徽标强制、演示标识中间件、接单评审工单化、隔离自检——见 `tests/demo/`）；以及**架构守卫**（治理库拒绝非 SQLite、方言判定不乱猜、健康探针不抛异常、导航按岗位收敛——见 `tests/v2/test_架构守卫.py`）、**数据范围守卫**（看板按岗位裁决 / 403 不降级成演示数据 / 脱敏与下钻键成对处理——见 `tests/v2/test_数据范围.py`）、**待办可见性守卫**（令牌为准 / 跨域 404 / 三条通道同一口径——见 `tests/v2/test_待办可见性.py`）和 **FAQ 前置层守卫**（L1 双闸 / 意图路由分流 / how_to 让位 RAG——见 `tests/v2/test_kbqa_faq_tier.py`、`tests/v2/test_kbqa_intent.py`）。
 
 ## 项目结构
 
@@ -223,14 +240,14 @@ mfg-agent-platform/
 │   ├── intent/                   #   意图分类器与路由策略
 │   ├── services/                 #   Text2SQL 服务链 / 工作流引擎 / 通知 / 看板 / 认证 / 数据范围 / 待办可见性 / 数据访问 / 案例检索问答 / 飞书日历
 │   ├── security/                 #   案例域安全：RBAC / ABAC 策略编译与求值 / 过滤翻译 / 限流
-│   ├── scenarios/                #   7 个场景 YAML（新场景零代码新增）
+│   ├── scenarios/                #   8 个场景 YAML（7 个对话路由 + 接单评审会签；新场景零代码新增）
 │   ├── mcp_tools/                #   ToolRegistry + 自实现 MCP server（stdio JSON-RPC）
 │   ├── a2a.py                    #   A2A 协议（Agent Card / message/send / tasks/get）
-│   └── demo/                     #   FastAPI 入口 / CLI / 演示门户（纯静态零构建）
-├── data/                         # 演示数据种子 SQL + 知识库 JSONL + 案例种子 + 制度语料（kbqa_corpus）
+│   └── demo/                     #   FastAPI 入口 / CLI / 演示门户（纯静态零构建 · 生态链场景屏 scenes/ + 悬浮帮助助手）
+├── data/                         # 演示数据种子 SQL + 知识库 JSONL + 案例种子 + 制度语料（kbqa_corpus）+ 生态链演示数据（demo_storyline：15 类 jsonl / 43 事件 + 六屏数据契约）
 ├── deploy/                       # Milvus standalone 内嵌 etcd 配置
-├── tests/                        # 1204 条离线测试（治理 / 红队 / 端到端 / 协议 / 架构守卫 / 数据范围 / 待办可见性 / 案例域 / FAQ 前置层）
-├── tools/                        # 数据扩充 / 阈值校准 / 案例评测等运维脚本
+├── tests/                        # 1385 条离线测试（治理 / 红队 / 端到端 / 协议 / 架构守卫 / 数据范围 / 待办可见性 / 案例域 / FAQ 前置层）；tests/demo/ 为生态链演示冒烟与六屏契约
+├── tools/                        # 数据扩充 / 阈值校准 / 案例评测 / 演示数据生成与隔离自检（demo_gen）
 ├── docs/                         # 架构 / 接口 / HITL 设计 / 案例助手 / 优化设计（images/ 为门户截图）
 └── scripts/                      # Windows 一键启动脚本（本地 / Docker / 公网隧道 / 健康看门狗）
 ```
@@ -258,6 +275,8 @@ mfg-agent-platform/
 - [docs/case-assistant-ontology-vector-auth-architecture.md](docs/case-assistant-ontology-vector-auth-architecture.md) — 案例域本体 / 向量授权架构
 - [docs/adr/ADR-001-企业问答助手检索架构.md](docs/adr/ADR-001-企业问答助手检索架构.md) — 企业制度问答三层检索架构决策
 - [docs/edrag-optimization/](docs/edrag-optimization/) — 制度问答 / 意图路由 / FAQ 边界优化设计（DESIGN / DELIVERY / TASK）
+- [docs/产品技术文档-mfg-agent-platform-v1.0.html](docs/产品技术文档-mfg-agent-platform-v1.0.html) — 产品技术文档（自包含 HTML）
+- [docs/制造生态链-产品价值速览-v1.0.html](docs/制造生态链-产品价值速览-v1.0.html) — 制造生态链产品价值速览（高管版）
 
 ## License
 

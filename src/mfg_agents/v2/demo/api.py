@@ -43,6 +43,15 @@ from ..core.orchestrator import V2Orchestrator, create_default_orchestrator
 from ..services import kbqa as kbqa_service
 from ..services import kbqa_store
 from ..services import workflow_scope
+from .config_demo import DEMO_LABEL, DEMO_MODE, assert_isolated
+from .loader import (
+    OBJECTS,
+    DemoDataError,
+    demo_banner,
+    get_object,
+    load_all,
+    story_timeline,
+)
 from ..services.auth import AuthError, get_codec, resolve_login_roles
 from ..services.data_scope import get_data_scope
 from ..services.workflow import (
@@ -58,6 +67,7 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def _lifespan(_: FastAPI):
     """启动钩子：后台预热 KB 检索（消首问冷启动），不阻塞服务就绪。"""
+    assert_isolated()  # 演示实例隔离自检：配置含外部连接特征即拒绝启动
     threading.Thread(target=_preheat_kb, name="kbqa-preheat", daemon=True).start()
     yield
 
@@ -99,7 +109,7 @@ def demo_ui_index() -> _HTMLResponse:
     保证清单内资源必定带上 ``?v=<mtime>``——文件一改，缓存自动失效。
     """
     html = (_UI_DIR / "index.html").read_text(encoding="utf-8")
-    for f in ("demo-data.js", "terms.js", "app.js", "screens.js", "help-screen.js", "kb-screen.js", "office-screen.js", "case-screen.js", "app.css"):
+    for f in ("demo-data.js", "terms.js", "app.js", "screens.js", "help-screen.js", "kb-screen.js", "office-screen.js", "case-screen.js", "float-help.js", "app.css"):
         fp = _UI_DIR / f
         v = int(fp.stat().st_mtime) if fp.exists() else 0
         # 仅替换引号内的资源引用（允许 ./、子目录等路径前缀），不动 HTML 其余部分；
@@ -136,6 +146,41 @@ try:
     app.add_middleware(GZipMiddleware, minimum_size=800)
 except Exception:  # pragma: no cover - 旧版 Starlette 无 GZip 时降级
     logger.warning("[perf] GZipMiddleware 不可用，静态资源未压缩")
+
+
+# ---------- 演示标识：所有响应统一带演示运行头（T12 演示标识与隔离验证） ----------
+class DemoMarkerMiddleware:
+    """纯 ASGI 中间件：给每个响应的起始消息追加演示运行标识头。
+
+    为什么用纯 ASGI 而不是 ``@app.middleware("http")``：``/api/v2/events`` 是
+    SSE ``StreamingResponse``，BaseHTTPMiddleware 会包裹并缓存响应体，历史上
+    对长连接有已知副作用；这里只在 ``http.response.start`` 阶段 append 两个头，
+    **不碰响应体、不改状态码**，对 SSE / 静态资源 / 普通 JSON 一律零影响。
+
+    头值一律 ASCII（``demo-data``），避免非 ASCII 头值在部分反代/隧道下损坏；
+    中文标签仍在响应体 ``is_demo`` / ``label`` 字段里（见 ``demo_banner()``）。
+    """
+
+    def __init__(self, app: Any) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Mapping[str, Any], receive: Any, send: Any) -> None:
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+
+        async def send_with_marker(message: Mapping[str, Any]) -> None:
+            if message.get("type") == "http.response.start":
+                headers = list(message.get("headers") or [])
+                headers.append((b"x-demo-mode", b"1" if DEMO_MODE else b"0"))
+                headers.append((b"x-demo-label", b"demo-data"))
+                message = {**message, "headers": headers}
+            await send(message)
+
+        await self.app(scope, receive, send_with_marker)
+
+
+app.add_middleware(DemoMarkerMiddleware)
 
 _orchestrator: Optional[V2Orchestrator] = None
 
@@ -199,6 +244,37 @@ def health() -> dict[str, Any]:
     from ..services.health import build_health_report
 
     return build_health_report()
+
+
+# ---------- 演示数据装载层（T04：合成故事数据只读 API，全部响应带演示标识） ----------
+
+
+@app.get("/api/v2/demo/banner")
+def demo_banner_api() -> dict[str, Any]:
+    """演示标识与装载层状态；前端强制渲染「演示数据」徽标。"""
+    return {**demo_banner(), "demo_mode": DEMO_MODE}
+
+
+@app.get("/api/v2/demo/objects")
+def demo_objects() -> dict[str, Any]:
+    """演示对象清单（与 data/demo_storyline/spec-v1.md 第 2 节对应）。"""
+    return {**demo_banner(), "objects": list(OBJECTS)}
+
+
+@app.get("/api/v2/demo/objects/{name}")
+def demo_object(name: str) -> dict[str, Any]:
+    """按对象取演示数据；未知对象返回 404（不泄漏内部结构）。"""
+    try:
+        rows = get_object(name)
+    except DemoDataError:
+        raise HTTPException(status_code=404, detail="demo object not found")
+    return {**demo_banner(), "object": name, "rows": rows}
+
+
+@app.get("/api/v2/demo/timeline")
+def demo_timeline(scene: str = Query(default="")) -> dict[str, Any]:
+    """演示事件流时间轴，可按场景过滤（S1..S6）。"""
+    return {**demo_banner(), "events": story_timeline(scene or None)}
 
 
 # ---------- 企业咨询助手（独立轻量 RAG：Milvus enterprise_faq + 统一 LLM） ----------
@@ -566,6 +642,59 @@ def _workflow_engine() -> WorkflowEngine:
     return get_orchestrator().runtime.workflow
 
 
+# S1 接单评审会签（T15）：工单预置幂等守卫（进程内只查库一次）
+_order_review_seeded = False
+
+# 与 scenarios/order_review_v2.yaml 的 hitl_order_review.actions 同构（保持单一事实源）
+_ORDER_REVIEW_ACTIONS: list[dict[str, Any]] = [
+    {"key": "accept", "label": "接受订单并按期承诺", "propose": ["业务"],
+     "cosign": ["工程", "计划"], "impact": "按 ATP 初评口径接单",
+     "followup": "锁定产能 / 通知计划排产"},
+    {"key": "conditional", "label": "有条件接受", "propose": ["业务"],
+     "cosign": ["工程", "计划"], "impact": "工艺/产能经确认后方可接单",
+     "require_comment": True, "followup": "补齐评审意见 / 重排产"},
+    {"key": "reject", "label": "退回业务重议", "propose": ["业务"],
+     "impact": "价格/交期/产能不匹配 · 退回重议",
+     "require_comment": True, "followup": "退回业务重新报价"},
+]
+
+
+def _ensure_order_review_seed() -> None:
+    """幂等预置 S1「接单评审会签」工单（T15）。
+
+    背景：平台此前没有 order_review 治理工作流，S1 屏只能回放事件流、无法展示
+    真实待办。本函数在建单库（``WorkflowEngine`` 实际使用的 SQLite，默认
+    ``data/mfg_agent.db``）预置一条 ``waiting_hitl`` 工单，使 S1 屏可改为
+    「真实工单驱动」，并天然演示「按槽位可见的不同待办」（业务=发起人视角，
+    工程/计划=会签人待办，其余岗位不可见）。
+
+    **幂等**：按 ``wf_id == hitl_order_review`` 判定，存在即跳过；进程内再加
+    一次内存守卫，避免每次请求都查库。副作用仅限演示库，不改动既有工单。
+    """
+    global _order_review_seeded
+    if _order_review_seeded:
+        return
+    engine = _workflow_engine()
+    existing = [t for t in engine.list_tasks() if t.wf_id == "hitl_order_review"]
+    if not existing:
+        task = engine.create_task(
+            wf_id="hitl_order_review",
+            title="接单评审会签工单（S1 · 主线订单）",
+            context={"slot": "order_review", "scene": "S1",
+                     "actions": _ORDER_REVIEW_ACTIONS},
+            assignees=["业务经理", "工程", "计划"],
+            priority="P1", sla_hours=8, hitl=True,
+            hitl_prompt="接单评审：订单已过 ATP 与报价初评，请按岗位职责完成会签与终批",
+        )
+        # 预置「已发起 · 待会签」：业务经理已选定「接受」动作，工程 / 计划待会签。
+        engine.select_action(
+            task.task_uid, "accept", actor="业务经理（演示）",
+            user_ctx={"user_id": "u-sales-demo", "roles": ["sales"]},
+            comment="订单已过 ATP 与报价初评，按接受口径发起一次会签")
+        logger.info("[demo] 预置 S1 接单评审会签工单 %s", task.task_uid)
+    _order_review_seeded = True
+
+
 def _raise_workflow_http(exc: Exception) -> None:
     """治理异常 → HTTP 状态码统一映射（403/404/409/400）。
 
@@ -613,6 +742,7 @@ def api_workflow_pending(request: Request,
     不引入第二份配置——详见 ``services/workflow_scope.py``。
     """
     identity = _require_identity(request)
+    _ensure_order_review_seed()  # T15：S1 接单评审工单幂等预置（存在即跳过）
     engine = _workflow_engine()
     registry = engine.permission_registry
 
@@ -2106,6 +2236,16 @@ if _UI_DIR.is_dir():
     # 不可达时进入演示模式（页面完整渲染 + 明确降级提示）。
     app.mount("/demo-ui", StaticFiles(directory=str(_UI_DIR), html=True),
               name="demo-ui")
+
+# ---------- 演示场景数据挂载（T10 追加：/demo-story → data/demo_storyline/frontend） ----------
+# 场景数据文件按 T05 数据契约放 data/demo_storyline/frontend/，而它不在 /demo-ui 静态目录内，
+# 浏览器无法用相对路径取到。这里补一条**只读**挂载把该目录暴露给演示前端：
+# 仅静态文件、无写接口、不引用任何真实库（隔离红线见 config_demo.assert_isolated）。
+_STORY_FRONTEND_DIR = Path(__file__).resolve().parents[4] / "data" / "demo_storyline" / "frontend"
+
+if _STORY_FRONTEND_DIR.is_dir():
+    app.mount("/demo-story", StaticFiles(directory=str(_STORY_FRONTEND_DIR)),
+              name="demo-story")
 
 
 __all__ = ["app", "get_orchestrator", "EventHub"]

@@ -28,6 +28,12 @@ logs/*.log
 logs/*.txt
 logs/*.xml
 
+# ---- Local QA screenshots / probe scripts / browser snapshots (never publish) ----
+logs/*.png
+logs/*.py
+logs/*.err
+/nav.yaml
+
 # ---- Scratch / QA temp dirs ----
 .tmp-qa/
 .tmp-test/
@@ -85,6 +91,7 @@ docs/V2-前端展示应用-说明.md
 docs/办公助手Agent-竞品调研与植入评估.md
 docs/我的看板-竞品调研与下钻设计.md
 docs/订单履约看板-竞品调研与L2L3设计.md
+docs/制造生态链-demo-AIGC开发顺序计划-v1.0.md
 
 # ---- Local debug scratch (QA runs, temp probes, logs) ----
 # 一律锚定仓库根目录（/ 前缀）：src/ 下的 _helper.py 之类是正常文件，不能误伤

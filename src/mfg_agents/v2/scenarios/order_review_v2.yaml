@@ -1,0 +1,34 @@
+# S1 接单评审会签（T15）：把「接单评审一次会签」从事件流回放补齐为真实 HITL 工单。
+#
+# 定位说明（为什么 triggers 为空）：
+#   本场景**不作为对话路由入口**——接单评审由 S1 演示屏（demo/ui/scenes/s01-intake.js）
+#   呈现，不走 TwoLevelRouter 的 L0/L1 路由。刻意留空 triggers，使其不被路由命中，
+#   因此也无需在 core/node_registry.py 注册 hitl_order_review 执行 handler。
+#   本场景存在的意义：为 order_review 槽位在 ScenarioRegistry 建立声明式登记，
+#   并在加载期获得「槽位 ∈ permissions.yaml 白名单」的双注册表校验。
+key: order_review_v2
+name: 接单评审会签
+version: 1
+domains: [sales, rd_engineering, planning]
+triggers: []
+entry: hitl_order_review
+outputs: [order_review_ticket]
+
+hitl:
+  - {step: hitl_order_review, approver_roles: [业务, 工程, 计划]}
+
+steps:
+  # 唯一节点：接单评审会签（槽位 order_review）。
+  # 槽位岗位归属（人裁决）：propose=业务 / cosign=工程+计划 / approve=业务经理。
+  - id: hitl_order_review
+    type: hitl
+    agent: hitl_order_review
+    approver_roles: [业务, 工程, 计划]
+    prompt: "接单评审：订单已通过 ATP 与报价初评，请按岗位职责完成会签与终批"
+    actions:
+      - {key: accept, label: 接受订单并按期承诺, propose: [业务], cosign: [工程, 计划], impact: "按 ATP 初评口径接单", followup: "锁定产能 / 通知计划排产"}
+      - {key: conditional, label: 有条件接受, propose: [业务], cosign: [工程, 计划], impact: "工艺/产能经确认后方可接单", require_comment: true, followup: "补齐评审意见 / 重排产"}
+      - {key: reject, label: 退回业务重议, propose: [业务], impact: "价格/交期/产能不匹配 · 退回重议", require_comment: true, followup: "退回业务重新报价"}
+    sla_hours: 8
+    timeout_s: 5
+    on_error: degrade

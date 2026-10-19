@@ -1,0 +1,4 @@
+{"batch_id": "DEMO-IB-IQC-001", "defect_qty": 1, "inspector": "刘强", "result": "pass", "sample_qty": 50, "stage": "IQC", "ts": "2026-11-27T09:00:00", "wo_id": "-"}
+{"batch_id": "DEMO-IB-IPQC-001", "defect_qty": 3, "inspector": "王倩", "result": "pass", "sample_qty": 100, "stage": "IPQC", "ts": "2026-11-29T09:00:00", "wo_id": "DEMO-WO-001"}
+{"batch_id": "DEMO-IB-OQC-001", "defect_qty": 1, "inspector": "王倩", "result": "pass", "sample_qty": 80, "stage": "OQC", "ts": "2026-12-18T09:00:00", "wo_id": "DEMO-WO-001"}
+{"batch_id": "DEMO-IB-IPQC-002", "defect_qty": 6, "inspector": "王倩", "result": "concession", "sample_qty": 100, "stage": "IPQC", "ts": "2026-12-13T09:00:00", "wo_id": "DEMO-WO-002"}

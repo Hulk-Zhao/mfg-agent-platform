@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>制造生态链 · 产品价值速览（高管版）</title>
+<style>
+  :root{
+    --ink:#1c2430; --ink-2:#3d4a5c; --ink-3:#6b7a8d;
+    --line:#dde5ee; --bg:#ffffff; --bg-soft:#f5f8fc; --bg-soft2:#eef3f9;
+    --brand:#0f4c81; --brand-soft:#e3eef8; --accent:#c25e00; --accent-soft:#fdf0e3;
+    --ok:#1a7f37; --ok-soft:#e6f4ea; --warn:#9a6700; --warn-soft:#fff8e6;
+    --crit:#b42318; --crit-soft:#fdecea; --purple:#5b3df5; --purple-soft:#efeafd;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:"PingFang SC","Microsoft YaHei","Segoe UI",system-ui,sans-serif;
+    font-size:15.5px;line-height:1.85;}
+  .cover{background:linear-gradient(135deg,#eaf2fa 0%,#f7fafd 60%,#ffffff 100%);
+    border-bottom:1px solid var(--line);padding:60px 32px 44px;}
+  .wrap{max-width:980px;margin:0 auto;padding:0 24px;}
+  .cover .kicker{color:var(--brand);font-weight:600;letter-spacing:.14em;font-size:13px;}
+  .cover h1{font-size:34px;margin:12px 0 10px;line-height:1.3;}
+  .cover .sub{color:var(--ink-2);font-size:17px;max-width:780px;}
+  .meta{margin-top:24px;font-size:13px;color:var(--ink-3);}
+  .meta b{color:var(--ink-2);font-weight:600;}
+  main{padding:36px 0 70px;}
+  h2{font-size:21px;margin:52px 0 12px;padding-bottom:8px;border-bottom:2px solid var(--brand-soft);}
+  h2 .no{color:var(--brand);font-size:14px;vertical-align:2px;margin-right:8px;font-weight:700;}
+  p{margin:9px 0;}
+  table{width:100%;border-collapse:collapse;margin:14px 0;font-size:14px;}
+  th{background:var(--bg-soft2);text-align:left;padding:9px 12px;border:1px solid var(--line);font-weight:600;}
+  td{padding:9px 12px;border:1px solid var(--line);vertical-align:top;}
+  tr:nth-child(even) td{background:#fafcfe;}
+  .big{font-size:19px;line-height:1.7;font-weight:600;color:var(--brand);margin:14px 0;}
+  .note,.warn,.crit{border-radius:8px;padding:12px 16px;margin:14px 0;font-size:14.5px;}
+  .note{background:var(--brand-soft);border-left:4px solid var(--brand);}
+  .warn{background:var(--warn-soft);border-left:4px solid var(--warn);}
+  .note b,.warn b{display:block;margin-bottom:2px;}
+  .vs{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:16px 0;}
+  .vs .col{border-radius:10px;padding:14px 18px;border:1px solid var(--line);background:var(--bg-soft);}
+  .vs .col.no{background:var(--bg-soft2);}
+  .vs .h{font-weight:700;font-size:15px;margin-bottom:8px;}
+  .vs .yes .h{color:var(--ok);}
+  .vs .no .h{color:var(--ink-3);}
+  .vs ul{margin:0;padding-left:20px;}
+  .vs li{margin:5px 0;font-size:14px;}
+  .fig{margin:18px 0;border:1px solid var(--line);border-radius:10px;padding:12px;background:#fff;}
+  .fig .cap{font-size:12.5px;color:var(--ink-3);text-align:center;margin-top:8px;}
+  ul,ol{margin:8px 0;padding-left:24px;}
+  li{margin:4px 0;}
+  .qa{border:1px solid var(--line);border-radius:10px;padding:14px 18px;margin:12px 0;background:var(--bg-soft);}
+  .qa .q{font-weight:700;margin-bottom:4px;}
+  .footer{margin-top:60px;padding:18px 0 40px;border-top:1px solid var(--line);
+    color:var(--ink-3);font-size:12.5px;}
+  @media (max-width:820px){.vs{grid-template-columns:1fr;}}
+  @media print{nav{display:none;}}
+</style>
+</head>
+<body>
+<div class="cover">
+  <div class="wrap">
+    <div class="kicker">高管速览 · 五分钟版</div>
+    <h1>制造生态链：从接单到出货，一条数据打通的路</h1>
+    <div class="sub">这份材料不讲技术，只讲三件事：我们在解决什么问题、这件事做成了对业务意味着什么、接入贵公司需要动什么。完整的技术与实施方案另有文档，本篇不涉及。</div>
+    <div class="meta">
+      <span><b>版本</b> v1.1 · 2026-10-19</span>
+      <span><b>读者</b> 制造企业决策者：总经理 / COO / CIO / 业务域负责人</span>
+      <span><b>体验方式</b> 支持先登录演示环境亲手操作，再决定是否进入适配评估</span>
+    </div>
+  </div>
+</div>
+<div class="wrap main">
+
+<h2><span class="no">1</span>一句话说清这件事</h2>
+<p class="big">让客户的一张订单，从接单、设计、试产、量产到出货，全程在一套受治理的系统里流转——每个环节的数据自动到位，每个人在同一个页面上看同一份事实，需要人拍板的地方清清楚楚地留给该拍板的人。</p>
+<p>今天这件事做不到。我们的 ERP、PLM、MES、QMS、WMS 各管一段，中间的数据靠人搬：班后手工报工、微信里问进度、Excel 里查影响面、开会来对口径。系统都买了，钱都花了，但链路是断的。</p>
+
+<h2><span class="no">2</span>断掉的链路，代价是什么</h2>
+<p>不用讲概念，看每天都在发生的事：</p>
+<table>
+  <tr><th style="width:170px">场景</th><th>今天的实际做法</th><th>代价</th></tr>
+  <tr><td>对客承诺交期</td><td>销售问计划、计划问车间、车间说差不多</td><td>OTD 说不准，加急靠人情，延期才发现</td></tr>
+  <tr><td>工程变更（ECN）</td><td>工程师出一张变更单，计划员用 Excel 翻订单和在制，几天才能说清影响面</td><td>该停的没停、该切的没切，错料和返工</td></tr>
+  <tr><td>新产品试产</td><td>试产数据散在各工程师电脑里，阶段评审靠做 PPT 汇报</td><td>评审看不出真实成熟度，量产后良率问题才暴露</td></tr>
+  <tr><td>制程质量</td><td>IPQC 巡检按频次走，SPC 图挂在系统里没人盯；参数跑偏靠老师傅耳朵和眼睛，首件检验记录在纸单上</td><td>判异到处置隔半天甚至隔天，不良流出才发现；CPK 到月度汇总才算，过程里已经造了一批风险品</td></tr>
+  <tr><td>缺料与采购</td><td>供应商交期靠邮件和微信确认，催料靠采购员记性</td><td>停线前才发现料没到；催了没催、谁承诺的交期，事后查无凭据</td></tr>
+  <tr><td>设备停机</td><td>停机靠班组上报，OEE 月底用报表倒推</td><td>非计划停机后知后觉，设备问题到不了排产和成本决策</td></tr>
+  <tr><td>月底盘账</td><td>ERP 的账和 MES 的产出靠手工对</td><td>差异率常年两位数，成本核算带脏数据</td></tr>
+  <tr><td>客诉响应</td><td>客诉单从 CRM 转发到质量，追溯靠翻批次记录本</td><td>定位批次以天计，客户等回复，8D 拖成月</td></tr>
+  <tr><td>信息层层传递</td><td>一个现场问题从班组到主管到经理再到能拍板的人，靠口头、电话、微信群一层层转；上面的指令下来也要过同样的层级</td><td>问题传到能解决的人手里时已经过了几小时甚至几天；每过一层信息就衰减一层，到顶层时事实已经变形</td></tr>
+</table>
+<div class="warn"><b>最贵的一种浪费：一群人围着问题，却产生不了价值</b>制程异常一旦发生、尤其可能影响交期时，常见场面是这样的：计划来问进度、销售来问能不能按时交、品质来问影响范围、领导来问处理得怎么样——真正能解决问题的人，一半时间花在回答各路询问上。围着问题的人很多，干活的人只有一两个，协调成本远高于处置成本。这不是谁的态度问题，是信息不通的结构性问题：大家看不见同一份事实，就只能围着当事人问。链路通了之后，这件事的形态会变成：异常一发生，受影响范围、当前处置动作、预计恢复时间自动挂在事件页上，相关人订阅即可，不用问；该会签的人材料送到手上，不该打扰的人不再打扰。</div>
+<p>这不是某个系统不好，是「系统之间没有人」。行业里 76% 的企业上完平台后的评价是「能看不能控」——约 90% 的平台只做大屏和告警，数据采集上来了，动作还是靠人。这也是我们要避开的第一大坑。</p>
+
+<h2><span class="no">3</span>是什么，不是什么</h2>
+<div class="vs">
+  <div class="col yes">
+    <div class="h">这件事是</div>
+    <ul>
+      <li>在现有系统之上加一层「协同层」，让数据按契约自动流动</li>
+      <li>每个环节的决策点自动送到该决策的人手上，带齐背景材料</li>
+      <li>每个数字都能回答「从哪张表、哪条 SQL、哪几行来的」</li>
+      <li>先从最痛的一段链路跑起来，再一段段接，不推倒重来</li>
+    </ul>
+  </div>
+  <div class="col no">
+    <div class="h">这件事不是</div>
+    <ul>
+      <li>不是再买一套 ERP/MES/大屏——现有系统继续当各自数据的权威源</li>
+      <li>不是「全面替代人工」——审批、承诺、放行永远是人签字，系统只负责把材料备齐</li>
+      <li>不是大爆炸式改造——不从「全厂上线」开始</li>
+      <li>不是纯 AI 演示——所有结论可溯源，算不出的就明说缺数据</li>
+    </ul>
+  </div>
+</div>
+
+<h2><span class="no">4</span>做成了是什么样</h2>
+<div class="fig">
+<svg viewBox="0 0 1000 420" xmlns="http://www.w3.org/2000/svg" font-family="PingFang SC, Microsoft YaHei, sans-serif">
+  <rect x="0" y="0" width="1000" height="420" fill="#ffffff"/>
+  <text x="20" y="24" font-size="14" font-weight="700" fill="#1c2430">五个阶段，同一条数据线</text>
+  <!-- stage row -->
+  <g>
+    <rect x="16" y="36" width="184" height="64" rx="10" fill="#e3eef8" stroke="#0f4c81" stroke-width="1.2"/>
+    <text x="108" y="60" font-size="13.5" font-weight="700" fill="#0f4c81" text-anchor="middle">① 业务接单</text>
+    <text x="108" y="80" font-size="11" fill="#3d4a5c" text-anchor="middle">询价 → 可行性初评 → 承诺</text>
+    <rect x="216" y="36" width="184" height="64" rx="10" fill="#e3eef8" stroke="#0f4c81" stroke-width="1.2"/>
+    <text x="308" y="60" font-size="13.5" font-weight="700" fill="#0f4c81" text-anchor="middle">② 立项</text>
+    <text x="308" y="80" font-size="11" fill="#3d4a5c" text-anchor="middle">评审放行 → 设计 → 工艺预审</text>
+    <rect x="416" y="36" width="184" height="64" rx="10" fill="#fdf0e3" stroke="#c25e00" stroke-width="1.2"/>
+    <text x="508" y="60" font-size="13.5" font-weight="700" fill="#c25e00" text-anchor="middle">③ 制样</text>
+    <text x="508" y="80" font-size="11" fill="#3d4a5c" text-anchor="middle">EVT → DVT → PVT 阶段门</text>
+    <rect x="616" y="36" width="184" height="64" rx="10" fill="#e6f4ea" stroke="#1a7f37" stroke-width="1.2"/>
+    <text x="708" y="60" font-size="13.5" font-weight="700" fill="#1a7f37" text-anchor="middle">④ 批量</text>
+    <text x="708" y="80" font-size="11" fill="#3d4a5c" text-anchor="middle">排产 → 监控 → 变更 → 处置</text>
+    <rect x="816" y="36" width="168" height="64" rx="10" fill="#e6f4ea" stroke="#1a7f37" stroke-width="1.2"/>
+    <text x="900" y="60" font-size="13.5" font-weight="700" fill="#1a7f37" text-anchor="middle">⑤ 出货</text>
+    <text x="900" y="80" font-size="11" fill="#3d4a5c" text-anchor="middle">放行 → 发货 → 签收 → 追溯</text>
+    <line x1="200" y1="68" x2="214" y2="68" stroke="#6b7a8d" stroke-width="1.5"/>
+    <line x1="400" y1="68" x2="414" y2="68" stroke="#6b7a8d" stroke-width="1.5"/>
+    <line x1="600" y1="68" x2="614" y2="68" stroke="#6b7a8d" stroke-width="1.5"/>
+    <line x1="800" y1="68" x2="814" y2="68" stroke="#6b7a8d" stroke-width="1.5"/>
+  </g>
+  <!-- change row -->
+  <text x="20" y="126" font-size="12" font-weight="700" fill="#6b7a8d">每个阶段实际发生的变化</text>
+  <text x="28" y="146" font-size="11.5" fill="#1c2430">① 承诺有据：库存、产能、料期自动摆到桌面上，承诺附数据来源</text>
+  <text x="28" y="166" font-size="11.5" fill="#1c2430">② 设计可造：历史问题库 + 相似案例自动推给评审人，长周期料提前暴露</text>
+  <text x="28" y="186" font-size="11.5" fill="#1c2430">③ 用数据说话：良率、CPK、问题闭环数自动汇成记分卡，评审会从「汇报会」变「看板会签」</text>
+  <text x="28" y="206" font-size="11.5" fill="#1c2430">④ 异常不过夜：判异、缺料、停线自动拉群取证，处置方案带着成本影响送到会签人</text>
+  <text x="28" y="226" font-size="11.5" fill="#1c2430">⑤ 一键说清：任一客诉 15 分钟内定位到批次、工序、设备和库存位置</text>
+  <!-- shared bar -->
+  <rect x="16" y="248" width="968" height="58" rx="10" fill="#efeafd" stroke="#5b3df5" stroke-width="1.2"/>
+  <text x="108" y="272" font-size="12.5" font-weight="700" fill="#5b3df5" text-anchor="middle">贯穿五阶段的底座</text>
+  <text x="108" y="292" font-size="11" fill="#3d4a5c" text-anchor="middle">（已在运行）</text>
+  <text x="200" y="272" font-size="11.5" fill="#3d4a5c">一条受治理的数据线：物料、客户、供应商、设备统一编码，一处一个权威源</text>
+  <text x="200" y="290" font-size="11.5" fill="#3d4a5c">一套会签治理：谁能批什么写在明处，全程留痕可审计；一套只读取数：数字带出处，算不出就承认缺数据</text>
+  <!-- feedback -->
+  <path d="M 900 306 L 900 356 Q 900 374 860 374 L 140 374 Q 100 374 100 356 L 100 320" fill="none" stroke="#c25e00" stroke-width="1.5" stroke-dasharray="6 4"/>
+  <text x="500" y="368" font-size="11.5" fill="#c25e00" text-anchor="middle">客诉与变更的教训自动回流，变成下一轮设计和筛选供应商的依据</text>
+  <text x="500" y="404" font-size="11.5" fill="#6b7a8d" text-anchor="middle">现有 ERP / PLM / MES / QMS / WMS 全部保留，谁也不推翻谁</text>
+</svg>
+<div class="cap">图：五阶段协同全景。系统不替换，断掉的地方用一条受治理的数据线接上</div>
+</div>
+
+<h2><span class="no">5</span>能带来什么</h2>
+<p>下面每一行都能在试点里测出来，测不出来就是没做到——这是我们对这条链路的基本态度。</p>
+<table>
+  <tr><th style="width:130px">对谁</th><th>变化</th><th>行业对标</th></tr>
+  <tr><td>对销售</td><td>接单评审从「多人多次会」变「一次会签」，材料自动备齐；报价有成本基线参考，承诺交期有库存与产能数据兜底</td><td>承诺有据，OTD 看得住</td></tr>
+  <tr><td>对研发/工艺</td><td>变更影响面从几天缩短到小时级；历史失效模式自动推送到评审环节；长周期料在立项时提前暴露</td><td>同类实践：变更响应 72h → 4.8h，BOM 准确率升至 99.7%（行业平均约 82%）</td></tr>
+  <tr><td>对制程质量</td><td>SPC 判异实时推送到处置人并拉会签，不再等巡检发现；首件检验、IPQC 结果实时入账；CPK、直通率、不良分布随批次即时可查；同一参数超限自动关联同设备同模具的历史批次</td><td>判异到处置从半天缩到分钟级；不良拦截在工序内，不流到客户</td></tr>
+  <tr><td>对客诉与体系质量</td><td>任一客诉 15 分钟内定位到批次、工序、设备、库存位置；8D 全程线上流转，每个动作留痕；阶段门记分卡自动汇总，评审看数据不听汇报</td><td>同类实践：8D 周期缩短 30–50%</td></tr>
+  <tr><td>对采购/供应链</td><td>PO 下发与交期确认线上留痕；缺料提前预警并自动生成催料任务挂到采购员待办；延期、短装、拒收按规则升级；供应商准交率有据可查</td><td>缺料从「停线后发现」变「到期前预警」；催料过程可追溯</td></tr>
+  <tr><td>对制造/计划</td><td>订单进度实时可见，排产看真实在制不靠猜；缺料预警挂在工单上；账实日对账，差异当天归因</td><td>同类实践：库存差异率 12% → 0.3%</td></tr>
+  <tr><td>对设备/精益</td><td>停机与参数异常即时进事件流，OEE 按班次出，非计划停机直接关联受影响的工单与交期</td><td>设备数据从「HMI 上看看」变成经营决策输入</td></tr>
+  <tr><td>对财务</td><td>月结用的不再是手工对出来的脏数据；开票、应收与出货放行自动对账；成本归因能追到工序和设备</td><td>对账差异率目标从两位数降到 0.3%</td></tr>
+  <tr><td>对管理层</td><td>一个订单从头到尾的状态、风险、责任人，一屏看完；每个数字点得进去看来源</td><td>数字线程市场 2025–2030 年 CAGR 21.5%，超六成离散制造企业已在试点或扩展——这是同行的起跑线，不是超前消费</td></tr>
+  <tr><td>对组织协同</td><td>信息不再层层传递：事件直达该处理的人，进展自动同步给该知道的人；异常页面上影响范围、处置动作、预计恢复一目了然，围观变订阅，解决问题的人不再花时间答问</td><td>问题从发生到责任人到手的时延从小时级降到分钟级；协调会、追问电话大幅减少</td></tr>
+</table>
+<p>必须说清楚的风险一面：这些数字是行业对标值，我们自己的基线还没测。Phase 0 的第一件事就是测基线（现在的 OTD、8D 周期、对账差异率到底是多少），没有基线，一切收益承诺都是空话。</p>
+
+<h2><span class="no">6</span>凭什么这套东西能落地</h2>
+<p>这不是从零开始的构想。协同内核已经在真实生产环境里跑起来了：18 个智能体分工取证，7 个异常场景（停线、来料、客诉、交期、设备、变更、过程异常）在治理规则下日常运转——谁能批什么写在明处、全程留痕、每个数字能溯源到取数语句。</p>
+<p>对外交付按产品化框架组织，不按定制项目组织。框架分三层，变与不变分得很清楚：</p>
+<table>
+  <tr><th style="width:140px">层</th><th>内容</th><th>接入贵公司时</th></tr>
+  <tr><td>协同内核</td><td>事件总线、数据底座、会签治理、取数与审计</td><td>不动，统一版本</td></tr>
+  <tr><td>接口契约层</td><td>按 ISA-95 标准对象定义的事件与数据契约（订单/BOM/工单/检验/设备）</td><td>不动，贵司系统按契约对表</td></tr>
+  <tr><td>企业适配层</td><td>字段映射、编码映射、角色配置、报表样式</td><td>全部差异收在这里，配置完成，不改内核</td></tr>
+</table>
+<p>所以「接入」这件事的实质是：<b>框架已经存在，贵司只需为差异部分做适配</b>——不是又一个从零写起的集成项目。行业里这类项目六到七成的工作量耗在集成上，我们把它从写代码变成填契约与映射表。</p>
+<div class="note"><b>一个诚实的边界</b>有三件事需要提前讲明：跨组织的数据流通（供应商/客户互相看得见彼此数据）放到最后阶段；多工厂复制依赖治理库的生产化改造完成；没有数据接口的老设备仍要人工录入，系统会标记「这个数是人填的」。</div>
+
+<h2><span class="no">7</span>接入大概怎么走</h2>
+<ol>
+  <li><b>先看演示，一周。</b>用各位自己的角色登录演示环境，亲手走一遍接单评审、变更影响面、客诉追溯。演示数据是合成的，看完再决定要不要往下谈。</li>
+  <li><b>再摸底，2–4 周。</b>双方一起盘系统家底：哪些数据在哪、谁说了算、现在的基线是多少。产出是一张数据地图、一份基线报告和一份适配清单——到这一步才知道准确的工作量与周期。</li>
+  <li><b>然后打一口井，8–12 周。</b>挑数据最全、痛点最直接的一段链路端到端跑通，让业务部门真用起来。不追求全厂上线。</li>
+  <li><b>再一段段接。</b>一段稳了接下一段，从厂内走到供应商和客户。每一步都有退出条件：用不起来就停，不硬推。</li>
+</ol>
+<p>周期上，第一段链路以季度计，全链路以年计。摸底报告出来之前，任何人报的日期都不算数——包括我们自己。</p>
+
+<h2><span class="no">8</span>合作时需要贵司拍什么</h2>
+<table>
+  <tr><th style="width:190px">要拍的事</th><th>为什么卡在您这</th></tr>
+  <tr><td>定数据归属</td><td>每个系统只能有一个「谁说了算」，这件事只有业务域负责人能拍。归属不定，集成必返工。</td></tr>
+  <tr><td>选试点链路和部门</td><td>从高频痛点切，不从最好做的切。选哪段，取决于您觉得哪里最疼。</td></tr>
+  <tr><td>开数据权限</td><td>只读账号、接口开通要 IT 和各系统厂商配合，老板出面几天能办成的事，基层推要几周。</td></tr>
+  <tr><td>接受「人签字」的节奏</td><td>这套系统的核心设计是把决策留给人。如果目标是「全自动无人审批」，方向就不对，不必开始。</td></tr>
+</table>
+
+<h2><span class="no">9</span>最常被问到的三个问题</h2>
+<div class="qa"><div class="q">「是不是要把 ERP / MES 换掉？」</div>不换。现有系统继续当各自数据的权威源，协同层架在上面。哪天真要换某个系统，那是独立的 IT 决策，与这件事无关。</div>
+<div class="qa"><div class="q">「接入要动我们现有的系统吗？周期多久？」</div>不动系统本身，只要求开接口或只读账号。框架与接口是现成的，贵司要做的集中在适配层：字段映射、编码对表、角色配置。周期以第一段链路为准——摸底 2–4 周、适配与打通 8–12 周，这个估算是从已验证的接入路径来的，摸底后会校准成准数。</div>
+<div class="qa"><div class="q">「AI 说的数能信吗？错了谁负责？」</div>系统自己算的数（良率、CPK、影响面）是代码算的，不经过 AI；AI 只负责理解和汇总，且每个数字都能点开看出处。算不出来源的，系统会明说「没有这个数据」，而不是编一个。最终决策人签字，责任在签字的人——这套设计本来就是为人留的权。</div>
+<div class="qa"><div class="q">「多久能看到效果？投入多大？」</div>第一段链路跑通后，用基线对比说话：OTD、8D 周期、变更影响面时效，这几个数动了就是效果。投入分两笔：摸底期主要是双方人力，试点期才开始有实质投入——具体数字等适配清单出来再谈，现在给不了负责的答案。</div>
+
+<div class="footer">
+  <p>制造生态链 · 产品价值速览（高管版） v1.1 · 2026-10-19（对外版） · 配套材料：《产品技术文档》《制造生态链全链路协同规划文档》 · v1.1 变更：新增三层框架与适配模式、演示体验入口与接入路径、FAQ 补充接入周期问答 · v1.1b：痛点表扩至 9 项（补制程质量/缺料采购/设备停机/客诉响应/信息层层传递），新增「一群人围着问题却产生不了价值」专项框，价值表质量拆为制程质量与客诉体系两行并补采购、设备、组织协同视角</p>
+</div>
+</div>
+</body>
+</html>

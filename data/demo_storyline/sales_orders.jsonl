@@ -1,0 +1,3 @@
+{"actual_ship_date": null, "customer_id": "DEMO-CUS-001", "lines": [{"material_id": "DEMO-MAT-5001", "promise_date": "2027-01-02", "qty": 5000, "unit_price": 86.5}], "order_id": "DEMO-SO-001", "promise_date": "2027-01-02", "status": "approved"}
+{"actual_ship_date": null, "customer_id": "DEMO-CUS-001", "lines": [{"material_id": "DEMO-MAT-5001", "promise_date": "2026-12-29", "qty": 800, "unit_price": 85.0}], "order_id": "DEMO-SO-101", "promise_date": "2026-12-29", "status": "in_production"}
+{"actual_ship_date": null, "customer_id": "DEMO-CUS-001", "lines": [{"material_id": "DEMO-MAT-5001", "promise_date": "2026-12-30", "qty": 1600, "unit_price": 85.0}], "order_id": "DEMO-SO-102", "promise_date": "2026-12-30", "status": "in_production"}

@@ -25,6 +25,7 @@ from mfg_agents.v2.agents.office import (
     _find_amount,
     _find_dates,
     _find_enum,
+    _find_relative_dates,
     _find_time,
     _known_values,
 )
@@ -227,6 +228,62 @@ def test_agent_leave_assignee_is_dept_manager(orch, backend):
     assert any(t.task_uid == out["hitl_task"]["task_uid"] for t in pending)
 
 
+def test_agent_get_current_time_tool(orch, backend):
+    """办公助手内置时钟工具：无参调用即回当前日期（含星期）——相对时间的换算基准。"""
+    agent = _agent(orch, backend, [_final("ok")])
+    tools = agent._tools()
+    assert "get_current_time" in tools
+    now = tools["get_current_time"][0]()
+    assert now["ok"] is True and len(now["date"]) == 10 and now["date"][4] == "-"
+    assert now["weekday"].startswith("星期")
+
+
+def test_agent_resolves_relative_date_with_time_tool(orch, backend):
+    """'帮我给明天请假'：先调 get_current_time 换算 → 弹窗预填明天的具体日期。"""
+    from datetime import date, timedelta
+
+    tomorrow = (date.today() + timedelta(days=1)).isoformat()
+    script = [
+        _Resp(tool_calls=[{"name": "get_current_time", "id": "c1", "args": {}}]),
+        _Resp(tool_calls=[{"name": "ask_user", "id": "c2", "args": {
+            "question": "日期已按'明天'预填，请补充假期类型与事由。",
+            "fields": [
+                {"key": "leave_type", "label": "请假类型", "type": "select"},
+                {"key": "start_date", "label": "开始日期", "type": "date",
+                 "value": tomorrow},
+                {"key": "end_date", "label": "结束日期", "type": "date",
+                 "value": tomorrow},
+                {"key": "reason", "label": "请假事由", "type": "text"}]}}]),
+    ]
+    out = _agent(orch, backend, script).run(
+        "帮我给明天请假", user_ctx={"user_id": "u1", "name": "张三"})
+
+    assert [s["tool"] for s in out["steps"]] == ["get_current_time", "ask_user"]
+    assert out["steps"][0]["ok"] is True
+    f = {x["key"]: x for x in out["clarify"]["fields"]}
+    assert f["start_date"]["value"] == tomorrow        # "明天"已换算为具体日期
+    assert f["end_date"]["value"] == tomorrow
+    assert f["leave_type"]["options"]                  # 下拉选项兜底
+    assert backend.list_leaves("张三") == []           # 未补齐前不落单据
+
+
+def test_agent_enriches_relative_date_when_llm_only_asks_reason(orch, backend):
+    """LLM 只问事由：原话'明天'仍确定性换算并并入弹窗（半填，无需用户算日期）。"""
+    from datetime import date, timedelta
+
+    tomorrow = (date.today() + timedelta(days=1)).isoformat()
+    script = [_Resp(tool_calls=[{"name": "ask_user", "id": "c1", "args": {
+        "question": "请补充请假事由。",
+        "fields": [{"key": "reason", "label": "请假事由", "type": "text"}]}}])]
+    out = _agent(orch, backend, script).run(
+        "帮我给明天请假", user_ctx={"user_id": "u1", "name": "张三"})
+
+    f = {x["key"]: x for x in out["clarify"]["fields"]}
+    assert f["start_date"]["value"] == tomorrow
+    assert f["end_date"]["value"] == tomorrow
+    assert "value" not in f["reason"]
+
+
 # ============================================================
 # 2b. 反问防死循环 + 下拉选项兜底（回归：请假无限弹框 / 没有下拉选项）
 # ============================================================
@@ -355,6 +412,57 @@ def test_find_time(text, expected):
 def test_find_enum_matches_first_option():
     assert _find_enum("我要请年假", _LEAVE_TYPES) == "年假"
     assert _find_enum("随便说说", _LEAVE_TYPES) == ""
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("明天", ["2026-10-20"]),
+    ("大后天", ["2026-10-22"]),          # 长词优先：不被"后天"截断
+    ("昨天", ["2026-10-18"]),
+    ("明天到后天", ["2026-10-20", "2026-10-21"]),
+    ("明天 明天", ["2026-10-20"]),        # 去重
+    ("没有相对时间", []),
+])
+def test_find_relative_dates(text, expected):
+    from datetime import date
+
+    assert _find_relative_dates(text, date(2026, 10, 19)) == expected
+
+
+def test_known_values_relative_leave_single_day():
+    """'明天请假'=当天一天 → 起止同日预填（不再追问"明天是哪天"）。"""
+    from datetime import date, timedelta
+
+    tomorrow = (date.today() + timedelta(days=1)).isoformat()
+    known = _known_values("leave", "帮我给明天请假")
+    assert known["start_date"] == tomorrow
+    assert known["end_date"] == tomorrow
+    assert "leave_type" not in known
+
+
+def test_known_values_relative_leave_range():
+    from datetime import date, timedelta
+
+    today = date.today()
+    known = _known_values("leave", "明天到后天请假")
+    assert known["start_date"] == (today + timedelta(days=1)).isoformat()
+    assert known["end_date"] == (today + timedelta(days=2)).isoformat()
+
+
+def test_known_values_relative_expense_and_attendance_dates():
+    from datetime import date, timedelta
+
+    today = date.today()
+    assert _known_values("expense", "昨天打车花了 200 元")["expense_date"] == (
+        today - timedelta(days=1)).isoformat()
+    assert _known_values("attendance", "今天忘了打上班卡 09:05")["work_date"] == (
+        today.isoformat())
+
+
+def test_known_values_explicit_date_wins_over_relative():
+    """原话同时有显式日期与相对词：显式日期优先，且单显式日不替用户定结束日。"""
+    known = _known_values("leave", "2026-10-20 到 2026-10-21 请假（今天提的）")
+    assert known["start_date"] == "2026-10-20"
+    assert known["end_date"] == "2026-10-21"
 
 
 def test_known_values_leave_type_and_dates():

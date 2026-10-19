@@ -238,6 +238,11 @@
         <div class="section-title">协同架构 <span class="section-extra">分层视图 · 与代码现状对齐</span></div>
         <div class="card" style="padding:14px">${architectureSvg()}</div>
 
+        <div class="section-title">悬浮帮助助手 <span class="section-extra">场景识别 · 预置答疑 · 可拖动</span></div>
+        <div class="card" style="padding:13px;font-size:12.5px;line-height:2;color:var(--text-2)">
+          屏幕右侧的<b style="color:var(--text)">悬浮帮助助手</b>（<code>float-help.js</code>）：按住按钮或面板顶栏可拖到任意位置，位置存 <code>localStorage</code>，首次打开默认在最右边；助手定时识别 <code>state.screen</code>（含生态链场景屏），<b style="color:var(--text)">切换场景即开新会话</b>——历史问答清空，换成当前场景的问候语与预置答疑选项（同场景内关闭再打开则保留会话）；点击选项后，预置答案以约 120 字/秒流式输出，答完后选项保留并自动收起，点「＋」重新展开。<b style="color:var(--text)">答疑内容为静态预置、不调后端</b>，与帮助中心同一纪律：改屏内交互 / 链路 / 权限口径时，必须同步改 <code>float-help.js</code> 里的 KB，否则助手会失真。
+        </div>
+
         <div class="section-title">路由：一句话进来，先判断代价 <span class="section-extra">TwoLevelRouter · 五步判定</span></div>
         <div class="grid grid-2">
           <div class="card" style="padding:13px"><b style="color:var(--primary)">五步判定，命中即返回</b>

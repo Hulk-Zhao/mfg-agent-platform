@@ -1,0 +1,25 @@
+{
+  "industry": "electronics",
+  "base_date": "2026-10-19",
+  "main_order": {
+    "order_id": "DEMO-SO-001",
+    "customer_id": "DEMO-CUS-001",
+    "customer_name": "华骏电子",
+    "material_id": "DEMO-MAT-5001",
+    "material_name": "控制板 PCB-A5",
+    "qty": 5000,
+    "unit_price": 86.5,
+    "promise_offset_days": 75
+  },
+  "ops": [
+    {"op_no": "10", "name": "SMT 贴片", "std_hours": 0.012, "equipment_id": "DEMO-EQ-001"},
+    {"op_no": "20", "name": "DIP 插件", "std_hours": 0.018, "equipment_id": "DEMO-EQ-004"},
+    {"op_no": "30", "name": "ICT 测试", "std_hours": 0.006, "equipment_id": "DEMO-EQ-006"}
+  ],
+  "spc": {"days": 30, "anomaly_points": 2, "target": 245.0, "tolerance": 6.0},
+  "background_orders": 2,
+  "suppliers": 5,
+  "equipment_count": 8,
+  "faq_count": 10,
+  "case_count": 20
+}

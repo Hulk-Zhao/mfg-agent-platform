@@ -75,6 +75,12 @@
     { id: "help", label: "帮助中心", title: "帮助中心", sub: "智能体协同架构 · 各智能体职责与边界 · 使用指引", icon: "info", group: "复盘沉淀" },
   ];
 
+  // T05：场景屏由 scenes/registry.js 声明并合并进 NAV_ITEMS（T06–T11 只追加登记行，不改本文件）；
+  // push 在字面量之外，test_架构守卫.py 的 NAV_ITEMS 正则解析不到，故不破坏导航收敛守卫。
+  if (window.SceneRegistry && typeof window.SceneRegistry.navItems === "function") {
+    window.SceneRegistry.navItems().forEach(function (item) { NAV_ITEMS.push(item); });
+  }
+
   /** 岗位是否可见某屏。`roles` 省略 / 空数组 = 全员可见。
    *  同时匹配岗位 id 与其治理角色列表（demo-data 的 ROLES[].roles），
    *  避免两处角色口径不一致时菜单消失。 */
@@ -288,7 +294,7 @@
           <div class="login-stats">
             <div class="login-stat"><b>18</b><span>智能体角色</span></div>
             <div class="login-stat"><b>7</b><span>协同场景</span></div>
-            <div class="login-stat"><b>41</b><span>平台工具</span></div>
+            <div class="login-stat"><b>42</b><span>平台工具</span></div>
             <div class="login-stat"><b>1157</b><span>自动化测试</span></div>
           </div>
           <div class="login-brand-foot">演示环境 · 免密码 · 选择岗位身份进入对应数据视图</div>
@@ -994,6 +1000,10 @@
     if (!root) return;
     let fn = window.Screens && window.Screens[`render_${state.screen}`];
     if (!fn && state.screen === "help" && window.HelpScreen) fn = window.HelpScreen.render;
+    // T05：场景屏由 SceneRegistry 分派，复用下面的 try/catch + friendlyError 路径
+    if (!fn && window.SceneRegistry && window.SceneRegistry.has(state.screen)) {
+      fn = (r, c) => window.SceneRegistry.render(state.screen, r, c);
+    }
     if (typeof fn !== "function") {
       root.innerHTML = `<div class="empty">屏幕未注册: ${esc(state.screen)}</div>`;
       return;

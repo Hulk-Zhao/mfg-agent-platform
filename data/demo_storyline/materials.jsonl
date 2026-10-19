@@ -1,0 +1,6 @@
+{"kind": "finished", "material_id": "DEMO-MAT-5001", "name": "控制板 PCB-A5", "std_cost": 52.0, "supplier_id": "DEMO-SUP-001"}
+{"kind": "raw", "material_id": "DEMO-MAT-2201", "name": "电源芯片 U2201", "std_cost": 6.8, "supplier_id": "DEMO-SUP-002"}
+{"kind": "raw", "material_id": "DEMO-MAT-0402", "name": "贴片电阻 0402", "std_cost": 0.012, "supplier_id": "DEMO-SUP-002"}
+{"kind": "raw", "material_id": "DEMO-MAT-470U", "name": "铝电解电容 470uF", "std_cost": 0.35, "supplier_id": "DEMO-SUP-003"}
+{"kind": "raw", "material_id": "DEMO-MAT-JST4", "name": "连接器 JST-4P", "std_cost": 0.9, "supplier_id": "DEMO-SUP-003"}
+{"kind": "raw", "material_id": "DEMO-MAT-2202", "name": "电源芯片 U2202（替代）", "std_cost": 7.1, "supplier_id": "DEMO-SUP-004"}

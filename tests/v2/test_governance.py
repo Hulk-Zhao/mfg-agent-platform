@@ -45,9 +45,9 @@ from mfg_agents.v2.services.workflow import (
 
 SCENARIO_DIR = Path(v2_pkg.__file__).resolve().parent / "scenarios"
 
-# 8 个合法 HITL 槽位（与 permissions.yaml 的 slots 一致；V3.6 增 spc_action）
+# 9 个合法 HITL 槽位（与 permissions.yaml 的 slots 一致；V3.6 增 spc_action，T15 增 order_review）
 LEGAL_SLOTS = ["restart", "eta", "disposition", "d8_close", "complaint_reply",
-               "delivery_commit", "maintenance_window", "spc_action"]
+               "delivery_commit", "maintenance_window", "spc_action", "order_review"]
 
 # ---------- 演示身份（user_ctx.roles 为权威角色来源） ----------
 SQE_CTX: dict[str, Any] = {"user_id": "u-sqe", "dept": "quality",
@@ -117,17 +117,17 @@ def _select_concession(engine: WorkflowEngine, uid: str) -> Any:
 
 
 def test_permission_catalog_shape():
-    """目录规模：24 条权限（8 slot × 3 verb）/ 15 角色 / 8 槽位。"""
+    """目录规模：27 条权限（9 slot × 3 verb）/ 15 角色 / 9 槽位。"""
     registry = get_permission_registry()
     describe = registry.describe()
-    assert len(describe["permissions"]) == 24
-    assert len(describe["slots"]) == 8
+    assert len(describe["permissions"]) == 27
+    assert len(describe["slots"]) == 9
     assert len(describe["roles"]) >= 14
     assert {p["key"] for p in describe["permissions"]} == {
         f"hitl.{slot}.{verb}"
         for slot in ("restart", "eta", "disposition", "d8_close",
                      "complaint_reply", "delivery_commit", "maintenance_window",
-                     "spc_action")
+                     "spc_action", "order_review")
         for verb in ("propose", "cosign", "approve")
     }
     assert DEFAULT_PERMISSIONS_PATH.is_file()
@@ -730,9 +730,10 @@ def test_api_governance_permissions_endpoint(api_client):
     resp = api_client.get("/api/v2/governance/permissions")
     assert resp.status_code == 200
     data = resp.json()["data"]
-    assert len(data["permissions"]) == 24
+    assert len(data["permissions"]) == 27
     assert {"restart", "eta", "disposition", "d8_close", "complaint_reply",
-            "delivery_commit", "maintenance_window", "spc_action"} == {
+            "delivery_commit", "maintenance_window", "spc_action",
+            "order_review"} == {
         s["key"] for s in data["slots"]}
 
 
@@ -809,7 +810,7 @@ def test_write_endpoint_ignores_forged_body_roles(api_client, engine):
 
 
 def test_all_scenario_hitl_actions_are_governable():
-    """8 个已纳管 HITL 节点的每个动作：propose/cosign 角色必须可识别且持有对应权限。
+    """9 个已纳管 HITL 节点的每个动作：propose/cosign 角色必须可识别且持有对应权限。
 
     场景 YAML 的逐动作 propose/cosign 角色必须与 ``permissions.yaml`` 的槽位授权一致，
     否则运行期会因「角色缺权限」而无法推进；本用例作为两套定义（场景 × 权限目录）
@@ -825,6 +826,7 @@ def test_all_scenario_hitl_actions_are_governable():
         "hitl_delivery_commit": "delivery_commit",
         "hitl_maintenance_window": "maintenance_window",
         "hitl_spc_action": "spc_action",
+        "hitl_order_review": "order_review",
     }
     seen: set[str] = set()
     for yaml_file in sorted(SCENARIO_DIR.glob("*.yaml")):
@@ -1034,7 +1036,7 @@ def test_registry_rejects_agent_role_with_approve(tmp_path):
 
 
 def test_every_slot_declares_available_permissions():
-    """8 个槽位必须显式声明 3 个权限，且都存在于目录、归属本槽位。"""
+    """9 个槽位必须显式声明 3 个权限，且都存在于目录、归属本槽位。"""
     registry = get_permission_registry()
     assert sorted(registry.slot_keys()) == sorted(LEGAL_SLOTS)
     for slot_key in LEGAL_SLOTS:
@@ -1062,14 +1064,14 @@ def test_slot_with_undeclared_permission_fails_at_load(tmp_path):
 
 
 def test_all_scenarios_hitl_slots_are_whitelisted():
-    """7 个真实场景的 9 个 HITL 节点，槽位全部落在白名单内。"""
+    """8 个真实场景的 10 个 HITL 节点，槽位全部落在白名单内。"""
     registry = get_permission_registry()
     scenario_registry = ScenarioRegistry(SCENARIO_DIR)
     loaded = scenario_registry.load()
     nodes: list[dict[str, str]] = []
     for meta in loaded.values():
         nodes.extend(scenario_registry.hitl_nodes(meta))
-    assert len(nodes) == 9, f"HITL 节点数应为 9，实际 {len(nodes)}: {nodes}"
+    assert len(nodes) == 10, f"HITL 节点数应为 10，实际 {len(nodes)}: {nodes}"
     for node in nodes:
         assert node["slot"] in registry.slot_keys(), node
     assert {n["slot"] for n in nodes} == set(LEGAL_SLOTS)

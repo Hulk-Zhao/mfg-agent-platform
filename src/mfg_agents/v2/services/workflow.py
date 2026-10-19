@@ -128,10 +128,12 @@ TRANSITIONS: dict[str, set[str]] = {
 
 TERMINAL_STATUSES = {"done", "closed"}
 
-# 治理层支持的 8 个 HITL 槽位（与 v2/data/permissions.yaml 的 slots 对齐）
+# 治理层支持的 9 个 HITL 槽位（与 v2/data/permissions.yaml 的 slots 对齐）
 GOVERNANCE_SLOTS: frozenset[str] = frozenset({
     "restart", "eta", "disposition", "d8_close", "complaint_reply",
     "delivery_commit", "maintenance_window", "spc_action",
+    # T15：接单评审会签（S1）——propose=业务 / cosign=工程+计划 / approve=业务经理
+    "order_review",
 })
 
 

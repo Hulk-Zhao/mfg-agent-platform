@@ -75,10 +75,27 @@
        无需额外引导脚本。公网隧道下白屏从 ~12s 降到 ~4s（GZipMiddleware 生效后更短）。 -->
   <script defer src="demo-data.js?v=perf2"></script>
   <script defer src="terms.js?v=perf2"></script>
+  <script defer src="./scenes/registry.js"></script>
+  <script defer src="./scenes/scene-kit.js"></script>
+  <script defer src="./scenes/s00-skeleton.js"></script>
+  <!-- T09：S4 批量监控与 ECN 场景屏（自注册到 SceneRegistry，不改 app.js） -->
+  <script defer src="./scenes/s04-batch-ecn.js"></script>
+  <!-- T11：S3 阶段门会签场景屏（自注册到 SceneRegistry，不改 app.js） -->
+  <script defer src="./scenes/s03-stage-gate.js"></script>
+  <!-- T10：S2 立项场景屏（自注册到 SceneRegistry，不改 app.js） -->
+  <script defer src="./scenes/s02-npi-kickoff.js"></script>
+  <!-- T07：S1 接单评审场景屏（自注册到 SceneRegistry，不改 app.js） -->
+  <script defer src="./scenes/s01-intake.js"></script>
+  <!-- T06：S5 出货与质量追溯场景屏（自注册到 SceneRegistry，不改 app.js） -->
+  <script defer src="./scenes/s05-trace.js"></script>
+  <!-- T08：S6 采购执行场景屏（自注册到 SceneRegistry，不改 app.js） -->
+  <script defer src="./scenes/s06-procurement.js"></script>
   <script defer src="app.js?v=perf3"></script>
   <script defer src="screens.js?v=perf2"></script>
   <script defer src="./case-screen.js?v=perf4"></script>
   <script defer src="./help-screen.js?v=perf3"></script>
+  <!-- 悬浮帮助助手：自包含（不依赖加载顺序，运行时只读 window.App.state）-->
+  <script defer src="./float-help.js"></script>
   <script defer src="./kb-screen.js?v=perf2"></script>
   <script defer src="./office-screen.js?v=perf2"></script>
 </body>

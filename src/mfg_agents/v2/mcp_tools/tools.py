@@ -82,6 +82,28 @@ def _h_platform_describe(orch: V2Orchestrator) -> Callable[..., dict]:
     return handler
 
 
+_WEEKDAY_CN = "一二三四五六日"
+
+
+def _h_platform_now() -> Callable[..., dict]:
+    """当前本地日期时间：把"今天/明天/后天/下周"等相对时间换算成具体日期的基准。
+
+    纯时钟查询——不依赖运行时、不做任何业务推理（换算是调用方/LLM 依返回的
+    ``date`` 做确定性加减，工具只给事实，绝不臆造日期）。因此不接 orchestrator。
+    """
+    def handler(args: dict, user_ctx: dict) -> dict:
+        now = datetime.now().astimezone()
+        return {
+            "date": now.strftime("%Y-%m-%d"),
+            "time": now.strftime("%H:%M:%S"),
+            "datetime": now.strftime("%Y-%m-%d %H:%M:%S"),
+            "weekday": f"星期{_WEEKDAY_CN[now.weekday()]}",
+            "timezone": str(now.tzinfo or "本地时区"),
+            "note": "相对时间换算基准：今天=date；明天=date+1；以此类推",
+        }
+    return handler
+
+
 def _h_data_run_query(orch: V2Orchestrator) -> Callable[..., dict]:
     def handler(args: dict, user_ctx: dict) -> dict:
         rt = _runtime(orch)
@@ -1489,6 +1511,12 @@ def build_platform_tools(orchestrator: V2Orchestrator) -> list[Tool]:
              description="平台能力总览：已注册场景、数据源（含健康状态与表清单）、待办总量",
              input_schema={"type": "object", "properties": {}},
              handler=_h_platform_describe(orchestrator), domain="platform"),
+        Tool(name="platform.now",
+             description="当前日期时间（本地时区，含星期）：把'今天/明天/后天/大后天/昨天/"
+                         "下周'等相对时间表达换算为具体日期时先调用；只给事实、不臆造",
+             input_schema={"type": "object", "properties": {}},
+             handler=_h_platform_now(), domain="platform",
+             readonly=True, tier=0),
         Tool(name="data.list_queries",
              description="列出某数据源可用的预注册查询名（参数化查询，优先于裸 SQL）",
              input_schema={"type": "object", "properties": {
@@ -1892,8 +1920,9 @@ def build_platform_tools(orchestrator: V2Orchestrator) -> list[Tool]:
 
 # 各 server 的工具归属（每域 ≤ 15；不是按 Tool.domain 直接切，而是按暴露面归组）
 DOMAIN_TOOLSETS: dict[str, list[str]] = {
-    "data": ["platform.describe", "data.list_queries", "data.run_query",
-             "data.metric", "data.sql_readonly", "metric.dict", "schedule.what_if"],
+    "data": ["platform.describe", "platform.now", "data.list_queries",
+             "data.run_query", "data.metric", "data.sql_readonly", "metric.dict",
+             "schedule.what_if"],
     "asset": ["asset.status", "inventory.atp", "equipment.predict", "supply.risk"],
     "quality": ["quality.trace", "quality.8d"],
     # SPC 域（V3.6 新增）：过程能力 / 柏拉图（只读）+ 测量值导入（写），纯统计内核 core/spc.py

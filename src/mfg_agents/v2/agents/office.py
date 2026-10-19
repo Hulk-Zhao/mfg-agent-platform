@@ -25,6 +25,7 @@ import logging
 import re
 import time
 from dataclasses import dataclass
+from datetime import date, datetime, timedelta
 from typing import Any, Optional
 
 from ..services.office import (
@@ -139,6 +140,30 @@ def _find_dates(text: str) -> list[str]:
     return [f"{y}-{int(m):02d}-{int(d):02d}" for y, m, d in found]
 
 
+# 相对时间词表（长词在前：'大后天' 必须先于 '后天' 匹配）
+_RELATIVE_DAY_WORDS: list[tuple[str, int]] = [
+    ("大后天", 3), ("后天", 2), ("明天", 1), ("今天", 0),
+    ("昨天", -1), ("前天", -2),
+]
+_RELATIVE_DAY_OFFSET: dict[str, int] = dict(_RELATIVE_DAY_WORDS)
+_RELATIVE_DAY_RE = re.compile("|".join(w for w, _ in _RELATIVE_DAY_WORDS))
+
+
+def _find_relative_dates(text: str, today: Optional[date] = None) -> list[str]:
+    """抽取"今天/明天/后天/大后天/昨天/前天"，按出现顺序换算为 YYYY-MM-DD（去重）。
+
+    "明天"这类相对时间**本身不定**在哪一天，必须以当前日期为基准换算——Agent 亦可
+    先调 ``get_current_time`` 取基准。换算只做确定性加减，不做业务推理。
+    """
+    base = today or datetime.now().date()
+    out: list[str] = []
+    for m in _RELATIVE_DAY_RE.finditer(text):
+        d = (base + timedelta(days=_RELATIVE_DAY_OFFSET[m.group()])).isoformat()
+        if d not in out:
+            out.append(d)
+    return out
+
+
 def _find_amount(text: str) -> str:
     m = re.search(r"(\d+(?:\.\d+)?)\s*元", text)
     if not m:
@@ -152,9 +177,17 @@ def _find_time(text: str) -> str:
 
 
 def _known_values(flow: str, text: str) -> dict[str, str]:
-    """按事项类别从用户原话抽取已知字段值（仅抽确定可识别的）。"""
+    """按事项类别从用户原话抽取已知字段值（仅抽确定可识别的）。
+
+    日期优先取原话里的显式日期；没有显式日期时，把"明天/后天"等相对时间按当前日期
+    确定性换算（否则弹窗里日期一直空着，用户会被反复追问"明天是哪天"）。
+    """
     known: dict[str, str] = {}
-    dates = _find_dates(text)
+    explicit = _find_dates(text)
+    dates = explicit or _find_relative_dates(text)
+    # 相对单日（"明天请假"/"后天请假"）语义明确=当天一天 → 起止同日预填；
+    # 显式单日（"10-20 开始"）语义可为多天起点，只填开始日期、不替用户定结束日。
+    relative_single = bool(dates) and not explicit and len(dates) == 1
     if flow == "leave":
         t = _find_enum(text, _LEAVE_TYPES)
         if t:
@@ -163,6 +196,8 @@ def _known_values(flow: str, text: str) -> dict[str, str]:
             known["start_date"] = dates[0]
         if len(dates) > 1:
             known["end_date"] = dates[1]
+        elif relative_single:
+            known["end_date"] = dates[0]
     elif flow == "expense":
         cat = _find_enum(text, _EXPENSE_CATEGORIES)
         if cat:
@@ -225,6 +260,7 @@ OFFICE_TOOLS_META: list[dict[str, str]] = [
     {"name": "place_order", "desc": "下单订餐（按菜单计价，返回订单号与金额）", "kind": "写/留痕"},
     {"name": "cancel_order", "desc": "取消本人订餐订单", "kind": "写/留痕"},
     # ---- OA 自助办理（报销/请假/补考勤；三类均走人工确认） ----
+    {"name": "get_current_time", "desc": "查当前日期与时间（含星期）；把'今天/明天/后天'等相对时间换算为具体日期时先调它", "kind": "只读·时间"},
     {"name": "submit_expense", "desc": "提交费用报销单（类别/金额/日期/事由，返回报销号）", "kind": "写/HITL"},
     {"name": "list_my_expenses", "desc": "查我的报销单与状态", "kind": "只读"},
     {"name": "apply_leave", "desc": "提交请假申请（类型/起止日期/事由，返回请假单号）", "kind": "写/HITL"},
@@ -262,7 +298,10 @@ OFFICE_AGENT_CONFIG: dict[str, str] = {
                  "数据如实告知无权限。办公写操作你只能在**本人**名下预订/取消/申请；"
                  "不得代他人下单、取消、报销或请假。会议室时段冲突时不得静默覆盖，"
                  "必须改选并如实告知冲突原因。报销/请假/补卡单**禁止臆造**金额、"
-                 "日期、事由或类型——关键字段缺失时先用 ask_user 反问补齐，再提交。"),
+                 "日期、事由或类型——关键字段缺失时先用 ask_user 反问补齐，再提交。"
+                 "相对时间（今天/明天/后天/大后天/昨天/下周等）**必须先调 get_current_time**"
+                 "取回当前日期再换算成具体 YYYY-MM-DD 后办理；「明天是哪一天」不是缺失"
+                 "信息，禁止因此反问用户，也禁止臆造日期。"),
     "hitl_rule": ("HITL 准则：当预订的是**需授权资源**（报告厅/培训室等 capacity≥20 "
                   "或后端标记 need_approval）、或下单的是**商务客餐/宴请**、或订单"
                   "金额达到或超过 500 元时，你必须停下调 request_approval 发起人工"
@@ -291,6 +330,7 @@ _SYSTEM_TEMPLATE = """{role}
 - list_my_orders()：查我的订单
 
 ### OA 自助办理（报销/请假/补考勤；提交后一律走人工确认）
+- get_current_time()：查当前日期与时间（含星期）——把"今天/明天/后天/大后天/昨天/下周"等相对时间换算为具体日期时**先调它**取基准
 - submit_expense(category, amount, expense_date, note, invoice_no?)：提交报销单（category∈{{差旅/招待/办公用品/交通/其他}}，返回报销号）
 - list_my_expenses()：查我的报销单与状态
 - apply_leave(leave_type, start_date, end_date, reason, days?)：提交请假单（leave_type∈{{年假/事假/病假/调休/婚假/产假}}；days 缺省按自然日含端点，返回请假号）
@@ -311,13 +351,14 @@ _SYSTEM_TEMPLATE = """{role}
 
 ## 工作方式（ReAct）
 1. 先判断需要什么：订会议室先查可用（find_available_rooms），订餐先看菜单（get_menu）；查数据先选对工具（材料/成品/来料/库龄/缺料/追溯）；报销/请假/补卡先确认关键字段是否齐全；
+   - **相对时间先换算（重要）**：用户说"今天/明天/后天/大后天/昨天/下周/本周末"等相对时间时，必须先调 get_current_time() 取当前日期，再换算成具体 YYYY-MM-DD（如"明天"=返回日期的次日）；单日请假（"明天请假"）的 start_date 与 end_date 填同一天。反问预填与最终办理一律使用换算后的具体日期；**不得**因"明天不具体"反问用户"哪天"，也不得臆造日期；回答中回显日期（如"2026-10-20（明天，周二）"）；
 2. **关键信息缺失时必须先用 ask_user 反问**（弹窗式补齐），不要臆造日期、金额、类型或事由，也不要直接把缺失项写进最终回答——反问是一次独立工具调用，调用后即结束本轮，等用户补齐再继续；
    - 报销缺什么就问什么：类别、金额、发生日期、事由；
    - 请假缺什么就问什么：假期类型、开始日期、结束日期、事由；
    - 补卡缺什么就问什么：补卡类型（上班/下班）、补卡日期、补卡时间、事由；
    - 会议室的日期/时段缺失、订餐日期缺失同样可用 ask_user 反问；
    - **一次反问必须把该事项的全部缺失字段一次列全**（禁止挤牙膏式多轮追问）；类型/类别类字段一律用 type="select" 并给出 options（请假类型 options=["年假","事假","病假","调休","婚假","产假"]、报销类别 options=["差旅","招待","办公用品","交通","其他"]、补卡类型 options=["上班补卡","下班补卡"]）；
-   - **能解析出的字段必须预填**：调用 ask_user 时，凡能从用户原话中解析出的字段值，一律写进该 field 的 `value`（弹窗据此自动填入，用户只补真正缺失项）；例：用户说"我要请年假 3 天"→ leave_type.value="年假"，并从已有日期/默认近日推算 start_date/end_date 的 value，只让用户补事由；
+   - **能解析出的字段必须预填**：调用 ask_user 时，凡能从用户原话中解析出的字段值，一律写进该 field 的 `value`（弹窗据此自动填入，用户只补真正缺失项）；例：用户说"我要请年假 3 天"→ leave_type.value="年假"，并从已有日期/默认近日推算 start_date/end_date 的 value，只让用户补事由；用户说"帮我给明天请假"→ 先 get_current_time 换算"明天"的具体日期，start_date/end_date 都预填该日期（单日），只让用户补假期类型与事由；
    - **若用户原话已给出全部关键字段，就直接调用对应工具办理，不要弹窗**（自然语言一步到位）；
    - **若用户回复中已含"补充信息："**，说明反问已补齐：严禁再次调用 ask_user，必须直接用已有信息调用对应工具办理（确仍不足时在回答里说明，而不是再弹窗）；
 3. 写操作前想清楚参数；冲突/失败时读工具返回的原因并换时段或换房间再试；
@@ -493,6 +534,19 @@ class OfficeAssistantAgent:
             return {"orders": items, "count": len(items)}
 
         # ---- OA 自助办理：报销 / 请假 / 补考勤（写/留痕/HITL） ----
+
+        def get_current_time() -> dict:
+            """当前日期时间（含星期）：把"明天/后天"等相对时间换算为具体日期的基准。
+
+            只读时钟查询——Agent 自身不掌握"今天是哪天"，涉及相对时间（请假/报销/
+            补卡的日期）时必须先调它取基准，再换算成具体 YYYY-MM-DD。
+            """
+            now = datetime.now()
+            return {"ok": True, "date": now.strftime("%Y-%m-%d"),
+                    "time": now.strftime("%H:%M"),
+                    "datetime": now.strftime("%Y-%m-%d %H:%M"),
+                    "weekday": f"星期{'一二三四五六日'[now.weekday()]}",
+                    "note": "今天=date；明天=date+1；后天=date+2"}
 
         def submit_expense(category: str, amount: float, expense_date: str,
                            note: str = "", invoice_no: str = "") -> dict:
@@ -716,6 +770,7 @@ class OfficeAssistantAgent:
                 "type": "object", "properties": {"order_id": {"type": "string"}},
                 "required": ["order_id"]}),
             "list_my_orders": (list_my_orders, {"type": "object", "properties": {}}),
+            "get_current_time": (get_current_time, {"type": "object", "properties": {}}),
             "submit_expense": (submit_expense, {
                 "type": "object",
                 "properties": {"category": {"type": "string",

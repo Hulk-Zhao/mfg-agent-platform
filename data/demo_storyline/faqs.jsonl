@@ -1,0 +1,10 @@
+{"answer": "在预警中心选择来料异常预警，点「发起处置」，系统按槽位生成会签单。", "faq_id": "DEMO-FAQ-001", "question": "来料异常怎么发起处置？"}
+{"answer": "判异发生后 2 小时内由 PQE 发起处置会签，超时升级。", "faq_id": "DEMO-FAQ-002", "question": "SPC 判异后多久必须处置？"}
+{"answer": "受理后 5 个工作日内提交 D4，10 个工作日内闭环。", "faq_id": "DEMO-FAQ-003", "question": "客诉 8D 多久闭环？"}
+{"answer": "SQE 发起，质量经理终批，影响订单交期的加会计划。", "faq_id": "DEMO-FAQ-004", "question": "特采需要谁批？"}
+{"answer": "制造经理与 EQ 共同确认设备状态后，由制造经理发起复线会签。", "faq_id": "DEMO-FAQ-005", "question": "停线复线怎么决策？"}
+{"answer": "系统自动产出四象限清单，PE 确认后交研发会签。", "faq_id": "DEMO-FAQ-006", "question": "ECN 影响面谁出？"}
+{"answer": "良率、CPK、直通率、问题闭环数四项记分卡全部达标且无未决高风险。", "faq_id": "DEMO-FAQ-007", "question": "阶段门 Go 的条件？"}
+{"answer": "缺料预警自动生成催料任务挂采购员待办，超 48 小时升级采购主管。", "faq_id": "DEMO-FAQ-008", "question": "催料任务谁来跟进？"}
+{"answer": "支持导出，导出文件带水印与操作留痕。", "faq_id": "DEMO-FAQ-009", "question": "报表数字能导出吗？"}
+{"answer": "访客角色只读演示数据，无任何写操作权限。", "faq_id": "DEMO-FAQ-010", "question": "访客能看哪些数据？"}

@@ -1,7 +1,7 @@
 """P1 工具层落地测试：7 个新工具（37 个工具 / 多 server 分治）。
 
 覆盖点：
-- 各域归组：键恰为 data/asset/quality/spc/workflow/knowledge/office、各域工具数与归属正确（含 P1 增量 7 个、办公助手域 14 个、SPC 域 3 个）、展平 == 41、单域 ≤ 15；
+- 各域归组：键恰为 data/asset/quality/spc/workflow/knowledge/office、各域工具数与归属正确（含 P1 增量 7 个、办公助手域 14 个、SPC 域 3 个、平台时钟 1 个）、展平 == 42、单域 ≤ 15；
 - 7 个新工具的 tier/readonly 标记（quality.8d 为 tier=1/readonly=False，其余 tier=0/readonly=True）；
 - equipment.predict：固定输入 → 确定性打分；输出"草稿/未确认"标记；无数据诚实降级不编造分数；
 - quality.8d：匿名 403 且零工单；合法身份生成 8D 草稿；关闭会签只发起（工单可被 workflow.pending 查到）；
@@ -52,14 +52,14 @@ def registry(orch) -> ToolRegistry:
 
 
 def test_domain_toolsets_split_p1(orch):
-    """键恰为各域；各域工具数/归属正确；展平全集 == 41；每域 ≤ 15。"""
+    """键恰为各域；各域工具数/归属正确；展平全集 == 42；每域 ≤ 15。"""
     toolsets = build_domain_toolsets(orch)
     assert set(toolsets) == _DOMAINS
 
     expect = {
-        "data": ["platform.describe", "data.list_queries", "data.run_query",
-                 "data.metric", "data.sql_readonly", "metric.dict",
-                 "schedule.what_if"],
+        "data": ["platform.describe", "platform.now", "data.list_queries",
+                 "data.run_query", "data.metric", "data.sql_readonly",
+                 "metric.dict", "schedule.what_if"],
         "asset": ["asset.status", "inventory.atp", "equipment.predict",
                   "supply.risk"],
         "quality": ["quality.trace", "quality.8d"],
@@ -82,10 +82,10 @@ def test_domain_toolsets_split_p1(orch):
 
     flat = {t.name for domain in toolsets.values() for t in domain}
     assert flat == {t.name for t in build_platform_tools(orch)}
-    assert len(flat) == 41 == len(build_platform_tools(orch))
-    # 各域工具数：7 / 4 / 2 / 3 / 7 / 4 / 14（office 本次 +4：报销/请假/补卡/我的申请）
+    assert len(flat) == 42 == len(build_platform_tools(orch))
+    # 各域工具数：8 / 4 / 2 / 3 / 7 / 4 / 14（data 本次 +1：platform.now 平台时钟）
     assert {d: len(toolsets[d]) for d in toolsets} == {
-        "data": 7, "asset": 4, "quality": 2, "spc": 3, "workflow": 7,
+        "data": 8, "asset": 4, "quality": 2, "spc": 3, "workflow": 7,
         "knowledge": 4, "office": 14}
     # P1 增量 7 个全部落地且归组
     assert _P1_NEW <= flat

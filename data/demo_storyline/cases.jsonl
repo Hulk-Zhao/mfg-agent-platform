@@ -1,0 +1,20 @@
+{"case_id": "DEMO-CASE-001", "dept": "制造", "redacted": true, "root_cause": "回流焊炉温区漂移，未按点检周期校准", "title": "炉温波动导致虚焊"}
+{"case_id": "DEMO-CASE-002", "dept": "质量", "redacted": true, "root_cause": "供应商来料批次容舞超差", "title": "电容容舞引发啸叫"}
+{"case_id": "DEMO-CASE-003", "dept": "质量", "redacted": true, "root_cause": "模具磨损未及时更换", "title": "连接器插拔力不足"}
+{"case_id": "DEMO-CASE-004", "dept": "研发", "redacted": true, "root_cause": "测试程序版本与 MBOM 不一致", "title": "ICT 误判批量停机"}
+{"case_id": "DEMO-CASE-005", "dept": "制造", "redacted": true, "root_cause": "钢网张力衰减未点检", "title": "贴片偏移批量不良"}
+{"case_id": "DEMO-CASE-006", "dept": "制造", "redacted": true, "root_cause": "烧录站静电接地失效", "title": "烧录异常客诉"}
+{"case_id": "DEMO-CASE-007", "dept": "制造", "redacted": true, "root_cause": "助焊剂喷涂压力偏低", "title": "波峰焊锡量不足"}
+{"case_id": "DEMO-CASE-008", "dept": "制造", "redacted": true, "root_cause": "料站与 MBOM 映射表未更新", "title": "上料错贴片"}
+{"case_id": "DEMO-CASE-009", "dept": "质量", "redacted": true, "root_cause": "检测阈值设置过宽", "title": "AOI 漏检批次流出"}
+{"case_id": "DEMO-CASE-010", "dept": "制造", "redacted": true, "root_cause": "干燥剂投放量与包装环境不匹配", "title": "包装受潮客诉"}
+{"case_id": "DEMO-CASE-011", "dept": "制造", "redacted": true, "root_cause": "回流焊炉温区漂移，未按点检周期校准", "title": "炉温波动导致虚焊"}
+{"case_id": "DEMO-CASE-012", "dept": "质量", "redacted": true, "root_cause": "供应商来料批次容舞超差", "title": "电容容舞引发啸叫"}
+{"case_id": "DEMO-CASE-013", "dept": "质量", "redacted": true, "root_cause": "模具磨损未及时更换", "title": "连接器插拔力不足"}
+{"case_id": "DEMO-CASE-014", "dept": "研发", "redacted": true, "root_cause": "测试程序版本与 MBOM 不一致", "title": "ICT 误判批量停机"}
+{"case_id": "DEMO-CASE-015", "dept": "制造", "redacted": true, "root_cause": "钢网张力衰减未点检", "title": "贴片偏移批量不良"}
+{"case_id": "DEMO-CASE-016", "dept": "制造", "redacted": true, "root_cause": "烧录站静电接地失效", "title": "烧录异常客诉"}
+{"case_id": "DEMO-CASE-017", "dept": "制造", "redacted": true, "root_cause": "助焊剂喷涂压力偏低", "title": "波峰焊锡量不足"}
+{"case_id": "DEMO-CASE-018", "dept": "制造", "redacted": true, "root_cause": "料站与 MBOM 映射表未更新", "title": "上料错贴片"}
+{"case_id": "DEMO-CASE-019", "dept": "质量", "redacted": true, "root_cause": "检测阈值设置过宽", "title": "AOI 漏检批次流出"}
+{"case_id": "DEMO-CASE-020", "dept": "制造", "redacted": true, "root_cause": "干燥剂投放量与包装环境不匹配", "title": "包装受潮客诉"}
