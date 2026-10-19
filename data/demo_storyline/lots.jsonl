@@ -1,0 +1,4 @@
+{"location": "成品库-A03", "lot_id": "DEMO-LOT-001", "material_id": "DEMO-MAT-5001", "op_no": "10", "qty": 1976, "wo_id": "DEMO-WO-001"}
+{"location": "成品库-A03（客诉同批）", "lot_id": "DEMO-LOT-002", "material_id": "DEMO-MAT-5001", "op_no": "30", "qty": 1976, "wo_id": "DEMO-WO-001"}
+{"location": "原料仓-B01", "lot_id": "DEMO-LOT-003", "material_id": "DEMO-MAT-2201", "op_no": "-", "qty": 1400, "wo_id": "-"}
+{"location": "在途（PO-002）", "lot_id": "DEMO-LOT-004", "material_id": "DEMO-MAT-2202", "op_no": "-", "qty": 600, "wo_id": "-"}

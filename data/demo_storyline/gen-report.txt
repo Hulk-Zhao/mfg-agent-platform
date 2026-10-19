@@ -1,0 +1,16 @@
+演示数据生成报告（固定种子，可重跑复现）
+customers: 1
+materials: 6
+boms: 3
+suppliers: 5
+equipment: 8
+sales_orders: 3
+quotes: 1
+work_orders: 5
+inspections: 4
+lots: 4
+purchase_orders: 2
+spc_series: 30
+events: 43
+faqs: 10
+cases: 20

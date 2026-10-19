@@ -1,0 +1,43 @@
+{"event_id": "DEMO-EV-0001", "object_ref": "DEMO-SO-001", "payload": {"atp_on_hand": 1200, "atp_safety": 500, "atp_wip": 3000, "note": "ATP 初评三来源", "status": "reviewing"}, "scene": "S1", "ts": "2026-10-19T09:00:00", "type": "order_status"}
+{"event_id": "DEMO-EV-0002", "object_ref": "DEMO-SO-001", "payload": {"note": "报价区间产出", "price_high": 182854.37, "price_low": 169309.6, "quote_id": "DEMO-QT-001", "status": "reviewing"}, "scene": "S1", "ts": "2026-10-20T09:00:00", "type": "order_status"}
+{"event_id": "DEMO-EV-0003", "object_ref": "DEMO-SO-001", "payload": {"note": "订单评审一次会签", "result": "approved", "slots": ["biz", "rd", "pln"]}, "scene": "S1", "ts": "2026-10-21T09:00:00", "type": "hitl"}
+{"event_id": "DEMO-EV-0004", "object_ref": "DEMO-SO-001", "payload": {"note": "立项材料汇总完成", "status": "in_production"}, "scene": "S2", "ts": "2026-10-23T09:00:00", "type": "order_status"}
+{"event_id": "DEMO-EV-0005", "object_ref": "DEMO-PRJ-001", "payload": {"note": "立项会签放行", "result": "approved", "slots": ["rd", "pe"]}, "scene": "S2", "ts": "2026-10-24T09:00:00", "type": "hitl"}
+{"event_id": "DEMO-EV-0006", "object_ref": "DEMO-STG-EVT", "payload": {"cpk": 1.42, "fpy": 0.93, "stage": "EVT", "verdict": "Go"}, "scene": "S3", "ts": "2026-10-31T09:00:00", "type": "inspection"}
+{"event_id": "DEMO-EV-0007", "object_ref": "DEMO-STG-EVT", "payload": {"note": "EVT 阶段门会签", "result": "Go", "slots": ["rd", "pqe", "pln"]}, "scene": "S3", "ts": "2026-10-31T09:00:00", "type": "hitl"}
+{"event_id": "DEMO-EV-0008", "object_ref": "DEMO-STG-DVT", "payload": {"cpk": 1.36, "fpy": 0.955, "stage": "DVT", "verdict": "Go"}, "scene": "S3", "ts": "2026-11-12T09:00:00", "type": "inspection"}
+{"event_id": "DEMO-EV-0009", "object_ref": "DEMO-STG-DVT", "payload": {"note": "DVT 阶段门会签", "result": "Go", "slots": ["rd", "pqe", "pln"]}, "scene": "S3", "ts": "2026-11-12T09:00:00", "type": "hitl"}
+{"event_id": "DEMO-EV-0010", "object_ref": "DEMO-STG-PVT", "payload": {"cpk": 1.34, "fpy": 0.982, "stage": "PVT", "verdict": "Go"}, "scene": "S3", "ts": "2026-11-24T09:00:00", "type": "inspection"}
+{"event_id": "DEMO-EV-0011", "object_ref": "DEMO-STG-PVT", "payload": {"note": "PVT 阶段门会签", "result": "Go", "slots": ["rd", "pqe", "pln"]}, "scene": "S3", "ts": "2026-11-24T09:00:00", "type": "hitl"}
+{"event_id": "DEMO-EV-0012", "object_ref": "DEMO-WO-001", "payload": {"fpy": 0.988, "note": "WO-001 三道工序报工完成"}, "scene": "S4", "ts": "2026-11-28T09:00:00", "type": "report"}
+{"event_id": "DEMO-EV-0013", "object_ref": "DEMO-EQ-002", "payload": {"kind": "spc", "note": "SPC 判异：SMT 炉温偏离", "param": "炉温", "target": 245.0, "tolerance": 6.0, "value": 258.4}, "scene": "S4", "ts": "2026-12-02T09:00:00", "type": "alert"}
+{"event_id": "DEMO-EV-0014", "object_ref": "DEMO-ALERT-001", "payload": {"note": "判异处置会签发起", "result": "处置中", "slots": ["pqe", "pe"]}, "scene": "S4", "ts": "2026-12-02T09:00:00", "type": "hitl"}
+{"event_id": "DEMO-EV-0015", "object_ref": "DEMO-ALERT-001", "payload": {"kind": "closed", "note": "判异处置闭环"}, "scene": "S4", "ts": "2026-12-03T09:00:00", "type": "alert"}
+{"event_id": "DEMO-EV-0016", "object_ref": "DEMO-ECN-001", "payload": {"impact_open_lines": 1, "impact_stock_lots": 1, "impact_transit_lots": 1, "impact_wos": ["DEMO-WO-002", "DEMO-WO-003"], "note": "ECN 影响面四象限产出", "reason": "U2201 停产风险换料"}, "scene": "S4", "ts": "2026-12-05T09:00:00", "type": "ecn"}
+{"event_id": "DEMO-EV-0017", "object_ref": "DEMO-ECN-001", "payload": {"note": "ECN 切换会签", "result": "approved", "slots": ["rd", "pe", "pqe"]}, "scene": "S4", "ts": "2026-12-06T09:00:00", "type": "hitl"}
+{"event_id": "DEMO-EV-0018", "object_ref": "DEMO-ECN-001", "payload": {"note": "切换执行，MBOM v1.1 生效"}, "scene": "S4", "ts": "2026-12-07T09:00:00", "type": "ecn"}
+{"event_id": "DEMO-EV-0019", "object_ref": "DEMO-EQ-006", "payload": {"kind": "spc", "note": "SPC 判异：ICT 误判率异常", "param": "ICT 误判率", "target": 0.01, "tolerance": 0.005, "value": 0.031}, "scene": "S4", "ts": "2026-12-10T09:00:00", "type": "alert"}
+{"event_id": "DEMO-EV-0020", "object_ref": "DEMO-ALERT-002", "payload": {"kind": "closed", "note": "判异处置闭环"}, "scene": "S4", "ts": "2026-12-11T09:00:00", "type": "alert"}
+{"event_id": "DEMO-EV-0021", "object_ref": "DEMO-IB-OQC-001", "payload": {"defect_qty": 1, "note": "OQC 放行", "result": "pass", "sample_qty": 80, "stage": "OQC"}, "scene": "S5", "ts": "2026-12-18T09:00:00", "type": "inspection"}
+{"event_id": "DEMO-EV-0022", "object_ref": "DEMO-SO-001", "payload": {"actual_ship_date": "2026-12-18", "note": "发货确认", "status": "shipped"}, "scene": "S5", "ts": "2026-12-18T09:00:00", "type": "order_status"}
+{"event_id": "DEMO-EV-0023", "object_ref": "DEMO-SO-001", "payload": {"note": "开票", "status": "invoiced"}, "scene": "S5", "ts": "2026-12-20T09:00:00", "type": "order_status"}
+{"event_id": "DEMO-EV-0024", "object_ref": "DEMO-CC-001", "payload": {"lot_id": "DEMO-LOT-002", "note": "客诉受理", "qty": 12, "symptom": "烧录异常"}, "scene": "S5", "ts": "2027-01-07T09:00:00", "type": "complaint"}
+{"event_id": "DEMO-EV-0025", "object_ref": "DEMO-CC-001", "payload": {"note": "批次定位完成（演示口径 15 分钟内）", "stage": "located", "trace": {"equipment": "DEMO-EQ-006", "lot": "DEMO-LOT-002", "op": "30", "shift": "夜班", "stock_lots": 2, "wo": "DEMO-WO-001"}}, "scene": "S5", "ts": "2027-01-07T09:00:00", "type": "complaint"}
+{"event_id": "DEMO-EV-0026", "object_ref": "DEMO-8D-001", "payload": {"note": "8D 会签", "result": "8D 闭环", "slots": ["pqe", "cs"]}, "scene": "S5", "ts": "2027-01-08T09:00:00", "type": "hitl"}
+{"event_id": "DEMO-EV-0027", "object_ref": "DEMO-PO-002", "payload": {"gap_qty": 2000, "kind": "shortage", "material": "DEMO-MAT-2202", "note": "缺料预警：料期 vs 工排计划比对触发"}, "scene": "S6", "ts": "2026-11-26T09:00:00", "type": "alert"}
+{"event_id": "DEMO-EV-0028", "object_ref": "DEMO-PO-002", "payload": {"note": "催料任务自动生成，挂采购员待办"}, "scene": "S6", "ts": "2026-11-26T09:00:00", "type": "order_status"}
+{"event_id": "DEMO-EV-0029", "object_ref": "DEMO-PO-002", "payload": {"kind": "escalated", "note": "延期升级至采购主管"}, "scene": "S6", "ts": "2026-11-28T09:00:00", "type": "alert"}
+{"event_id": "DEMO-EV-0030", "object_ref": "DEMO-WO-101", "payload": {"note": "背景订单报工"}, "scene": "S4", "ts": "2026-11-09T09:00:00", "type": "report"}
+{"event_id": "DEMO-EV-0031", "object_ref": "DEMO-IB-BG-001", "payload": {"defect_qty": 2, "note": "背景订单巡检", "result": "pass", "sample_qty": 50, "stage": "IPQC"}, "scene": "S4", "ts": "2026-11-11T09:00:00", "type": "inspection"}
+{"event_id": "DEMO-EV-0032", "object_ref": "DEMO-WO-102", "payload": {"note": "背景订单报工"}, "scene": "S4", "ts": "2026-11-10T09:00:00", "type": "report"}
+{"event_id": "DEMO-EV-0033", "object_ref": "DEMO-IB-BG-002", "payload": {"defect_qty": 2, "note": "背景订单巡检", "result": "pass", "sample_qty": 50, "stage": "IPQC"}, "scene": "S4", "ts": "2026-11-12T09:00:00", "type": "inspection"}
+{"event_id": "DEMO-EV-0034", "object_ref": "DEMO-EQ-001", "payload": {"kind": "daily_check", "note": "高速贴片机 日常点检完成"}, "scene": "S4", "ts": "2026-11-18T09:00:00", "type": "report"}
+{"event_id": "DEMO-EV-0035", "object_ref": "DEMO-EQ-002", "payload": {"kind": "daily_check", "note": "回流焊炉 日常点检完成"}, "scene": "S4", "ts": "2026-11-18T09:00:00", "type": "report"}
+{"event_id": "DEMO-EV-0036", "object_ref": "DEMO-EQ-003", "payload": {"kind": "daily_check", "note": "波峰焊机 日常点检完成"}, "scene": "S4", "ts": "2026-11-18T09:00:00", "type": "report"}
+{"event_id": "DEMO-EV-0037", "object_ref": "DEMO-EQ-004", "payload": {"kind": "daily_check", "note": "插件线 日常点检完成"}, "scene": "S4", "ts": "2026-11-18T09:00:00", "type": "report"}
+{"event_id": "DEMO-EV-0038", "object_ref": "DEMO-BG-000", "payload": {"note": "背景工单会签关闭", "result": "closed", "slots": ["pqe"]}, "scene": "S4", "ts": "2026-11-13T09:00:00", "type": "hitl"}
+{"event_id": "DEMO-EV-0039", "object_ref": "DEMO-BG-001", "payload": {"note": "背景工单会签关闭", "result": "closed", "slots": ["pqe"]}, "scene": "S4", "ts": "2026-11-14T09:00:00", "type": "hitl"}
+{"event_id": "DEMO-EV-0040", "object_ref": "DEMO-BG-002", "payload": {"note": "背景工单会签关闭", "result": "closed", "slots": ["pqe"]}, "scene": "S4", "ts": "2026-11-15T09:00:00", "type": "hitl"}
+{"event_id": "DEMO-EV-0041", "object_ref": "DEMO-BG-003", "payload": {"note": "背景工单会签关闭", "result": "closed", "slots": ["pqe"]}, "scene": "S4", "ts": "2026-11-16T09:00:00", "type": "hitl"}
+{"event_id": "DEMO-EV-0042", "object_ref": "DEMO-BG-004", "payload": {"note": "背景工单会签关闭", "result": "closed", "slots": ["pqe"]}, "scene": "S4", "ts": "2026-11-17T09:00:00", "type": "hitl"}
+{"event_id": "DEMO-EV-0043", "object_ref": "DEMO-BG-005", "payload": {"note": "背景工单会签关闭", "result": "closed", "slots": ["pqe"]}, "scene": "S4", "ts": "2026-11-18T09:00:00", "type": "hitl"}

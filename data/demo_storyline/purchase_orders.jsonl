@@ -1,0 +1,2 @@
+{"actual_date": "2026-11-28", "material_id": "DEMO-MAT-2201", "po_id": "DEMO-PO-001", "promise_date": "2026-11-27", "qty": 6000, "status": "confirmed", "supplier_id": "DEMO-SUP-002"}
+{"actual_date": null, "material_id": "DEMO-MAT-2202", "po_id": "DEMO-PO-002", "promise_date": "2026-12-08", "qty": 2000, "status": "delayed", "supplier_id": "DEMO-SUP-004"}
