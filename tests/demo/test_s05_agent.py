@@ -134,9 +134,10 @@ def test_screen_mounts_agent_layer():
 
 
 def test_screen_filters_demo_seed_tasks_only():
-    """治理卡只展示演示种子工单（按 origin/slot 过滤，不混存量夹具）。"""
+    """治理卡只展示演示种子工单（按 demo_seed_id 标记过滤，不混存量夹具）。"""
     src = _src()
-    assert 'c.origin === "demo_seed"' in src
+    assert 'c.demo_seed_id === "s5_8d_v1"' in src, (
+        "过滤判据必须是种子标记 demo_seed_id（与 api._ensure_8d_seed 幂等键同源）")
     assert '"d8_close"' in src and '"complaint_reply"' in src
 
 

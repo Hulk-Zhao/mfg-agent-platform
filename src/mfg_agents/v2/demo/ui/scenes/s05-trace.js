@@ -1465,7 +1465,9 @@
         if (!panelBox.parentNode) return;
         const seeds = (tasks || []).filter(function (t) {
           const c = (t && t.context) || {};
-          return c.origin === "demo_seed"
+          // 判据用 demo_seed_id 标记（与 api._ensure_8d_seed 的幂等键同源）：
+          // 不按 origin 猜（origin 是来源说明，未来新增 demo_seed 工单可能混入）。
+          return c.demo_seed_id === "s5_8d_v1"
             && (c.slot === "d8_close" || c.slot === "complaint_reply");
         });
         const first = seeds[0] || null;
