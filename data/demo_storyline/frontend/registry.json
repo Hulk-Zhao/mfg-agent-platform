@@ -1,0 +1,323 @@
+{
+  "version": "1.0",
+  "contract": "T05",
+  "updated": "2026-10-19",
+  "note": "演示前端数据契约（T05 定义）。objects 键必须与 data/demo_storyline/*.jsonl 文件名一一对应；scenes 登记各场景屏的屏文件与数据文件，字段顺序即加载顺序。",
+  "notes": "场景数据文件一律放 data/demo_storyline/frontend/sNN-*.js，导出挂到 window.SCENE_DATA['sNN']；公共故事数据经 SceneKit.story() 从 T04 装载层（GET /api/v2/demo/objects/{object}）读取，禁止复制散数。追加规则：只追加自己名下条目，不改他人条目——T06–T11 各自往 scenes 数组追加自己的 sNN 条目（并新增自己的 objects 条目，若对象已登记则复用、不得改字段口径），禁止整文件重写。objects 的 key / fields 均从 data/demo_storyline/*.jsonl 首行实读，禁止臆造。",
+  "conventions": {
+    "scene_script_dir": "src/mfg_agents/v2/demo/ui/scenes/",
+    "scene_data_dir": "data/demo_storyline/frontend/",
+    "scene_script_naming": "sNN-<slug>.js",
+    "scene_id_pattern": "^s\\d{2}$",
+    "scene_entry_keys": "屏文件键 = file 或 module（等价，消费方两者都认）；数据文件键 = data_file 或 data（等价）。T05 用 file/data_file，T09–T11 用 module/data，均可。",
+    "scene_globals": "场景数据文件必须挂到 window.SCENE_DATA['sNN']，且不得覆盖他人键；组件层用 SceneKit.sceneData('sNN') 读取，缺失时抛中文可读错误。",
+    "scene_roles": "场景 def 的 roles 同时列业务岗位 id（gm/biz/rd/qa/mfg）与治理角色 key（sales/rd_engineering/manufacturing）：五访客的 roles 必须命中治理 key 才能换取后端令牌，navVisible() 判定的是 [role.id].concat(role.roles)，两套口径缺一访客就看不到场景屏。业务侧统一用 window.SceneRegistry.BUSINESS_ROLES。",
+    "scene_register": "只调用 window.SceneRegistry.register({...})，不修改 app.js。group 统一用 window.SceneRegistry.GROUP_NAME。",
+    "no_duplicate_data": "公共故事数据（订单/工单/事件…）只允许经 SceneKit.story(objectName) 读取；场景自有派生数据才放 frontend/sNN-*.js。"
+  },
+  "api": {
+    "loaderObject": "/api/v2/demo/objects/{name}",
+    "sceneAsset": "/demo-story/{file}",
+    "timeline": "/api/v2/demo/timeline?scene={S1..S6}"
+  },
+  "storyline_source": {
+    "primary": "GET /api/v2/demo/objects/{object}",
+    "list": "GET /api/v2/demo/objects",
+    "timeline": "GET /api/v2/demo/timeline?scene={S1..S6}",
+    "banner": "GET /api/v2/demo/banner",
+    "response_shape": "{ is_demo, label, data_dir, object, rows }（无 code 信封，直接读 rows）",
+    "not_found": "404 { detail: \"demo object not found\" }",
+    "fallback": "window.DEMO_STORY[{object}]",
+    "degraded_ui": "装载层未就绪时显示降级提示，不显示编造数字",
+    "loader_module": "src/mfg_agents/v2/demo/loader.py（OBJECTS 共 15 个，与本站 objects 键一致）",
+    "spec_ref": "data/demo_storyline/spec-v1.md",
+    "history": "旧稿曾写 GET /api/v2/demo/storyline/{object}，T04 实际交付为 /objects/{name}（commit dd00115），已改正并由 tests/demo 的端点对账断言守护。"
+  },
+  "objects": {
+    "boms": {
+      "file": "boms.jsonl",
+      "key": "bom_id",
+      "fields": [
+        "bom_id",
+        "kind",
+        "lines",
+        "material_id",
+        "version"
+      ],
+      "nested": {
+        "lines": [
+          "material_id",
+          "qty",
+          "ref_des"
+        ]
+      },
+      "spec_ref": "spec-v1.md §2.3"
+    },
+    "cases": {
+      "file": "cases.jsonl",
+      "key": "case_id",
+      "fields": [
+        "case_id",
+        "dept",
+        "redacted",
+        "root_cause",
+        "title"
+      ],
+      "nested": {},
+      "spec_ref": "spec-v1.md §1（脱敏合成案例）"
+    },
+    "customers": {
+      "file": "customers.jsonl",
+      "key": "customer_id",
+      "fields": [
+        "credit_grade",
+        "customer_id",
+        "name",
+        "quality_profile"
+      ],
+      "nested": {},
+      "spec_ref": "spec-v1.md §2.1"
+    },
+    "equipment": {
+      "file": "equipment.jsonl",
+      "key": "equipment_id",
+      "fields": [
+        "equipment_id",
+        "name",
+        "status"
+      ],
+      "nested": {},
+      "spec_ref": "spec-v1.md §2.8"
+    },
+    "events": {
+      "file": "events.jsonl",
+      "key": "event_id",
+      "fields": [
+        "event_id",
+        "object_ref",
+        "payload",
+        "scene",
+        "ts",
+        "type"
+      ],
+      "nested": {},
+      "spec_ref": "spec-v1.md §2.10",
+      "notes": "payload 为事件快照对象，键随 type 变化（首行为 order_status，含 atp_on_hand / atp_safety / atp_wip / note / status），消费方不得假定固定键集。"
+    },
+    "faqs": {
+      "file": "faqs.jsonl",
+      "key": "faq_id",
+      "fields": [
+        "answer",
+        "faq_id",
+        "question"
+      ],
+      "nested": {},
+      "spec_ref": "spec-v1.md §1（制度问答 FAQ）"
+    },
+    "inspections": {
+      "file": "inspections.jsonl",
+      "key": "batch_id",
+      "fields": [
+        "batch_id",
+        "defect_qty",
+        "inspector",
+        "result",
+        "sample_qty",
+        "stage",
+        "ts",
+        "wo_id"
+      ],
+      "nested": {},
+      "spec_ref": "spec-v1.md §2.7"
+    },
+    "lots": {
+      "file": "lots.jsonl",
+      "key": "lot_id",
+      "fields": [
+        "location",
+        "lot_id",
+        "material_id",
+        "op_no",
+        "qty",
+        "wo_id"
+      ],
+      "nested": {},
+      "spec_ref": "spec-v1.md §2.9"
+    },
+    "materials": {
+      "file": "materials.jsonl",
+      "key": "material_id",
+      "fields": [
+        "kind",
+        "material_id",
+        "name",
+        "std_cost",
+        "supplier_id"
+      ],
+      "nested": {},
+      "spec_ref": "spec-v1.md §2.2"
+    },
+    "purchase_orders": {
+      "file": "purchase_orders.jsonl",
+      "key": "po_id",
+      "fields": [
+        "actual_date",
+        "material_id",
+        "po_id",
+        "promise_date",
+        "qty",
+        "status",
+        "supplier_id"
+      ],
+      "nested": {},
+      "spec_ref": "spec-v1.md §3（S6 采购）"
+    },
+    "quotes": {
+      "file": "quotes.jsonl",
+      "key": "quote_id",
+      "fields": [
+        "labor_cost",
+        "material_cost",
+        "order_id",
+        "price_high",
+        "price_low",
+        "quote_id",
+        "tool_amort"
+      ],
+      "nested": {},
+      "spec_ref": "spec-v1.md §2.5"
+    },
+    "sales_orders": {
+      "file": "sales_orders.jsonl",
+      "key": "order_id",
+      "fields": [
+        "actual_ship_date",
+        "customer_id",
+        "lines",
+        "order_id",
+        "promise_date",
+        "status"
+      ],
+      "nested": {
+        "lines": [
+          "material_id",
+          "promise_date",
+          "qty",
+          "unit_price"
+        ]
+      },
+      "spec_ref": "spec-v1.md §2.4"
+    },
+    "spc_series": {
+      "file": "spc_series.jsonl",
+      "key": "equipment_id",
+      "fields": [
+        "equipment_id",
+        "flag",
+        "param",
+        "ts",
+        "value"
+      ],
+      "nested": {},
+      "spec_ref": "spec-v1.md §5（CPK 按 SPC 序列重算）",
+      "notes": "时间序列点无单列主键，唯一性由 composite_key（设备 + 参数 + 时间戳）保证。",
+      "composite_key": [
+        "equipment_id",
+        "param",
+        "ts"
+      ]
+    },
+    "suppliers": {
+      "file": "suppliers.jsonl",
+      "key": "supplier_id",
+      "fields": [
+        "name",
+        "otd_rate",
+        "supplier_id"
+      ],
+      "nested": {},
+      "spec_ref": "spec-v1.md §1（5 家供应商）"
+    },
+    "work_orders": {
+      "file": "work_orders.jsonl",
+      "key": "wo_id",
+      "fields": [
+        "material_id",
+        "ops",
+        "order_id",
+        "qty_good",
+        "qty_planned",
+        "status",
+        "wo_id"
+      ],
+      "nested": {
+        "ops": [
+          "equipment_id",
+          "name",
+          "op_no",
+          "std_hours"
+        ]
+      },
+      "spec_ref": "spec-v1.md §2.6"
+    }
+  },
+  "sceneDataGlobal": "SCENE_DATA",
+  "scenes": [
+    {
+      "id": "s00",
+      "module": "scenes/s00-skeleton.js",
+      "data": null,
+      "owner": "T05",
+      "note": "契约验收样本屏，不含业务结论",
+      "label": "场景骨架占位屏",
+      "file": "scenes/s00-skeleton.js",
+      "data_file": null,
+      "globals": [],
+      "objects": [
+        "sales_orders"
+      ],
+      "roles": [
+        "gm",
+        "biz",
+        "rd",
+        "qa",
+        "mfg",
+        "sales",
+        "rd_engineering",
+        "manufacturing"
+      ],
+      "status": "skeleton"
+    },
+    {
+      "id": "s02",
+      "module": "scenes/s02-npi-kickoff.js",
+      "data": "frontend/s02-npi-kickoff.js",
+      "owner": "T10",
+      "objects": [
+        "sales_orders",
+        "customers",
+        "boms",
+        "materials",
+        "suppliers",
+        "purchase_orders",
+        "events",
+        "cases"
+      ],
+      "note": "S2 立项：立项材料自动汇总 / 相似历史案例检索 / 立项会签"
+    },
+    {
+      "id": "s03",
+      "module": "scenes/s03-stage-gate.js",
+      "data": "frontend/s03-stage-gate.js",
+      "owner": "T11",
+      "objects": [
+        "events",
+        "sales_orders",
+        "work_orders",
+        "inspections"
+      ],
+      "note": "S3 阶段门会签：EVT/DVT/PVT 记分卡（良率·CPK·直通率·问题闭环数）四维现算 / 门禁机械判定 / 会签留痕"
+    }
+  ]
+}
