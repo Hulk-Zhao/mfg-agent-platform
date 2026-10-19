@@ -82,7 +82,7 @@
         "faq": "s06_urge_faq"
       },
       "title": "采购智能体（缺口判定 → 供应商案例 → 催料制度）",
-      "source": "purchase_orders / cases / faqs（回放与 T08 缺口机械口径同源）",
+      "source": "采购单 / 案例库 / 制度库（与 T08 缺口机械口径同源）",
       "degrade": "采购智能体回放未就绪，不展示编造结论"
     }
   };
@@ -680,13 +680,13 @@
             + (h.redacted ? " · 已脱敏" : "") + "</div></div>";
         }).join("");
         if (hits) {
-          el.innerHTML = html + '<div class="section-title">供应商来料案例（Agentic RAG 回放）</div>'
+          el.innerHTML = html + '<div class="section-title">供应商来料案例（智能体检索回放）</div>'
             + '<div class="s06-cases">' + hits + "</div>";
         }
         K.replay(a.replays.faq).then(function (fres) {
           if (!el.parentNode || !fres || !fres.ok || !fres.package) return;
           const fp = fres.package;
-          el.innerHTML = el.innerHTML + '<div class="section-title">催料制度问答（kbqa 回放）</div>'
+          el.innerHTML = el.innerHTML + '<div class="section-title">催料制度问答（制度库直答）</div>'
             + K.agentPanel({
               title: fp.title, agents: fp.agents, steps: fp.steps,
               conclusion: fp.conclusion, source: "replay",

@@ -145,7 +145,7 @@ def test_kbqa_replays_are_faq_channel(sid):
     pkg = [p for p in packages if p["replay_id"] == rid][0]
     assert pkg["channel"] == "faq"
     assert pkg["answer"] == faqs[pkg["faq_id"]]["answer"]
-    assert "channel=faq" in _screen_src(slug), f"{sid} 屏未标注来源通道"
+    assert 'data-channel="faq"' in _screen_src(slug), f"{sid} 屏未标注来源通道"
 
 
 def test_s02_keyword_fallback_kept():

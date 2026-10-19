@@ -222,7 +222,7 @@
         "cases": "s04_spc_similar_cases"
       },
       "title": "SPC 判异智能体（判异 → 取证 → 相似不良）",
-      "source": "spc_series / cases（控制限口径回指 EV-0013 载荷）",
+      "source": "SPC 序列 / 案例库（控制限口径回指判异事件载荷）",
       "degrade": "判异智能体回放未就绪，不展示编造结论"
     }
   };

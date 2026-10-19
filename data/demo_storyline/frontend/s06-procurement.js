@@ -71,7 +71,7 @@
         "faq": "s06_urge_faq"
       },
       "title": "采购智能体（缺口判定 → 供应商案例 → 催料制度）",
-      "source": "purchase_orders / cases / faqs（回放与 T08 缺口机械口径同源）",
+      "source": "采购单 / 案例库 / 制度库（与 T08 缺口机械口径同源）",
       "degrade": "采购智能体回放未就绪，不展示编造结论"
     }
   };

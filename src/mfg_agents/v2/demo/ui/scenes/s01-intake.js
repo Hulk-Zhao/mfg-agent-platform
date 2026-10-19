@@ -176,8 +176,8 @@
     "agent_layer": {
       "replay": "s01_intake_faq",
       "kind": "kbqa",
-      "title": "接单制度问答（kbqa 回放）",
-      "source": "faqs.jsonl · DEMO-FAQ-011（L1 命中直答，channel=faq）",
+      "title": "接单制度问答（制度库直答）",
+      "source": "制度库 FAQ · DEMO-FAQ-011（命中即直答，不调生成模型）",
       "degrade": "制度问答回放未就绪，不展示编造答案"
     }
   };
@@ -1434,11 +1434,11 @@
     return '<div id="s01-root">' + head
       + (supportWarn ? '<div class="sk-block">' + supportWarn + "</div>" : "")
       + block1 + block2 + block3 + block4 + blockLive + block5 + block6 + block7
-      + '<div class="sk-block" id="s01-agent"></div>' + footer
+      + '<div class="sk-block" id="s01-agent" data-channel="faq"></div>' + footer
       + "</div>";
   }
 
-  /* ---------- T19：接单制度问答（kbqa 回放，轻形态，不编造答案） ---------- */
+  /* ---------- T19：接单制度问答（制度库直答，轻形态，不编造答案） ---------- */
   function hydrateAgentBlock(box, cfg) {
     const kit = K();
     const el = box ? box.querySelector("#s01-agent") : null;
@@ -1458,8 +1458,8 @@
           title: pkg.title, agents: pkg.agents, steps: pkg.steps,
           conclusion: pkg.conclusion, source: "replay",
         })
-        + '<div class="sk-note">来源徽标「演示回放」不可去除；答案取自 faqs.jsonl 原文'
-        + "（channel=faq），未命中时照实说「未收录该问题」。</div>";
+        + '<div class="sk-note">来源徽标「演示回放」不可去除；答案取自制度库原文'
+        + "（命中即直答），未命中时照实说「未收录该问题」。</div>";
     });
   }
 

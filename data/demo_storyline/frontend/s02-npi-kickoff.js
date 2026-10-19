@@ -118,7 +118,7 @@
         "agent": "s02_case_rag",
         "cases": "s02_case_search"
       },
-      "title": "立项案例检索智能体（Agentic RAG 回放）",
+      "title": "立项案例检索智能体（检索过程回放）",
       "fallback": "回放未就绪时回落关键词检索（现有关键词版保留为降级路径）",
       "degrade": "检索智能体回放未就绪，已回落关键词检索"
     }

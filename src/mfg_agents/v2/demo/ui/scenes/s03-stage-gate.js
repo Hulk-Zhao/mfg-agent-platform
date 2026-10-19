@@ -83,8 +83,8 @@
     "agent_layer": {
       "replay": "s03_gate_faq",
       "kind": "kbqa",
-      "title": "门禁准则问答（kbqa 回放）",
-      "source": "faqs.jsonl · DEMO-FAQ-007（Go 的四项条件）",
+      "title": "门禁准则问答（制度库直答）",
+      "source": "制度库 FAQ · DEMO-FAQ-007（Go 的四项条件）",
       "degrade": "制度问答回放未就绪，不展示编造答案"
     }
   };
@@ -539,11 +539,11 @@
           + d.s3.filter(function (e) { return e.type === "hitl"; }).length + " 条）。"
           + "事件字段口径见 spec-v1.md §2.10。",
       })
-      + '<div class="sk-block" id="s03-agent"></div>'
+      + '<div class="sk-block" id="s03-agent" data-channel="faq"></div>'
       + "</div>";
   }
 
-  /* ---------- T19：门禁准则问答（kbqa 回放，轻形态） ---------- */
+  /* ---------- T19：门禁准则问答（制度库直答，轻形态） ---------- */
   function hydrateAgentBlock(box) {
     const K = window.SceneKit;
     const el = box ? box.querySelector("#s03-agent") : null;
@@ -564,7 +564,7 @@
           conclusion: pkg.conclusion, source: "replay",
         })
         + '<div class="sk-note">来源徽标「演示回放」不可去除；门禁阈值口径见记分卡，'
-        + "制度出处见 FAQ 编号（channel=faq，L1 命中直答）。</div>";
+        + "制度出处见 FAQ 编号（命中即直答）。</div>";
     });
   }
 

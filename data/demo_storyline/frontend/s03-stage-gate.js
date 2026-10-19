@@ -65,8 +65,8 @@
     "agent_layer": {
       "replay": "s03_gate_faq",
       "kind": "kbqa",
-      "title": "门禁准则问答（kbqa 回放）",
-      "source": "faqs.jsonl · DEMO-FAQ-007（Go 的四项条件）",
+      "title": "门禁准则问答（制度库直答）",
+      "source": "制度库 FAQ · DEMO-FAQ-007（Go 的四项条件）",
       "degrade": "制度问答回放未就绪，不展示编造答案"
     }
   };

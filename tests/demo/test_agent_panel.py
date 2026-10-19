@@ -374,8 +374,8 @@ def test_hitl_card_actions_are_readonly():
 def test_hitl_visibility_is_rendered_as_is():
     """可见性照实呈现 mine/domain/不可见（不为叙事好看而点亮）。"""
     src = _src()
-    assert "我的会签（mine）" in src and "域内可见（domain）" in src, (
-        "HITL 可见性口径缺失（mine / domain 照实呈现）")
+    assert "我的待办（可会签）" in src and "域内可见（只读）" in src, (
+        "HITL 可见性口径缺失（mine / domain 照实呈现，文案按 2026-10-20 去英文裁决中文化）")
 
 
 # ============================================================

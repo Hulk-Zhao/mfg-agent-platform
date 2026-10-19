@@ -167,8 +167,8 @@
     "agent_layer": {
       "replay": "s01_intake_faq",
       "kind": "kbqa",
-      "title": "接单制度问答（kbqa 回放）",
-      "source": "faqs.jsonl · DEMO-FAQ-011（L1 命中直答，channel=faq）",
+      "title": "接单制度问答（制度库直答）",
+      "source": "制度库 FAQ · DEMO-FAQ-011（命中即直答，不调生成模型）",
       "degrade": "制度问答回放未就绪，不展示编造答案"
     }
   };

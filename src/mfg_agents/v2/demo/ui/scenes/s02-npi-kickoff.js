@@ -582,7 +582,7 @@
     return hits;
   }
 
-  /* ---------- T19：立项案例检索智能体（Agentic RAG 回放，关键词版保留为降级） ---------- */
+  /* ---------- T19：立项案例检索智能体（检索过程回放，关键词版保留为降级） ---------- */
   function hydrateAgentBlock(box, meta) {
     const K = window.SceneKit;
     const el = box ? box.querySelector('[data-sk-slot="agent"]') : null;
@@ -619,7 +619,7 @@
             + '<ol style="margin:8px 0 0 18px;font-size:12.4px;line-height:1.9;'
             + 'color:var(--text-2,#57606A)">' + trace + "</ol>" : "")
           + (hits ? '<div class="section-title">命中案例（回放）</div>' + hits : "")
-          + '<div class="sk-note">回放与真实链路同构（trace 五步 / filter_explain）；'
+          + '<div class="sk-note">回放与真实链路同字段同构（检索轨迹五步 / 过滤判定链）；'
           + "下方关键词检索保留为降级路径。</div>";
       });
     });
@@ -790,7 +790,7 @@
         "agent": "s02_case_rag",
         "cases": "s02_case_search"
       },
-      "title": "立项案例检索智能体（Agentic RAG 回放）",
+      "title": "立项案例检索智能体（检索过程回放）",
       "fallback": "回放未就绪时回落关键词检索（现有关键词版保留为降级路径）",
       "degrade": "检索智能体回放未就绪，已回落关键词检索"
     }
@@ -908,7 +908,7 @@
       }
       runSearch();
 
-      // T19：检索智能体（Agentic RAG 回放）——回放未就绪时保留上面的关键词版为降级路径
+      // T19：检索智能体（检索过程回放）——回放未就绪时保留上面的关键词版为降级路径
       hydrateAgentBlock(box, meta);
 
       // 会签留痕

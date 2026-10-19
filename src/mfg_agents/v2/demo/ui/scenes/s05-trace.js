@@ -492,7 +492,7 @@
         }
       ],
       "cases": {
-        "title": "同根因历史案例（Agentic RAG 回放）",
+        "title": "同根因历史案例（智能体检索回放）",
         "trace_title": "检索轨迹（术语归一 → 本体扩展 → 授权过滤 → 引用校验）",
         "explain_title": "为什么看到这几条 / 为什么看不到"
       },
@@ -502,7 +502,7 @@
         "invisible": "本岗位不参与该槽位审批（按权限矩阵不可见）",
         "readonly_note": "操作只读：真实会签在治理窗口（审批确认中心）执行"
       },
-      "source_note": "回放轨迹与真实链路同构（AgenticStep 六键）；来源徽标「演示回放」不可去除。"
+      "source_note": "回放轨迹与真实链路同字段同构；来源徽标「演示回放」不可去除。"
     },
     "value_lines": [
       "任一客诉 15 分钟内定位到批次、工序、设备和库存位置",
@@ -1260,7 +1260,7 @@
     const list = (pkg && pkg.agents) || [];
     for (let i = 0; i < list.length; i += 1) {
       if (list[i] && list[i].domain === domain) {
-        return String(list[i].abbr || "") + " · " + String(list[i].name || "");
+        return String(list[i].name || "");
       }
     }
     return String(domain || "");
@@ -1306,7 +1306,7 @@
           html: kv([
             ["图谱节点", String(node.label || key)],
             ["取证智能体", agentNameOf(pkg, domain)],
-            ["调用工具", String(tool || "")],
+            ["调用工具", K.toolLabel ? K.toolLabel(tool) : String(tool || "")],
             ["取证结论", summaryOf(pkg, branch) || "（该节点无独立回放步骤，沿用主链结论）"],
             ["关联原始记录", String(node.record || "")],
             ["口径来源", String(node.value_from || "")],
@@ -1391,7 +1391,7 @@
     const nodes = (d8.steps || []).map(function (st) {
       let conclusion = "";
       if (st.key === "D4") conclusion = "根因：" + (rootCause || "见同根因案例");
-      else if (st.key === "D8") conclusion = "待 d8_close 会签（演示回放）";
+      else if (st.key === "D8") conclusion = "待 8D 报告关闭会签（演示回放）";
       else conclusion = "该阶段由 " + agentNameOf(pkg, st.agent) + " 承接";
       return {
         id: st.key, label: st.label, agent: agentNameOf(pkg, st.agent),
@@ -1404,7 +1404,7 @@
         title: "8D 闭环（D1–D8）· 当前阶段高亮",
         svg: d8Svg(S),
         nodes: nodes,
-        caption: "图中节点结论与智能体协同面板同源（回放包 node_steps / 案例根因），可逐条对回。",
+        caption: "图中节点结论与智能体协同面板同源（回放轨迹 / 案例根因），可逐条对回。",
       });
   }
 
@@ -1418,16 +1418,17 @@
       + '<span class="section-extra">按权限矩阵可见 · 零写操作</span></div>';
     tasks.forEach(function (t) {
       const vis = String(t.visibility || "");
-      const visText = vis === "mine" ? "我的待办（会签席）"
+      const visText = vis === "mine" ? "我的待办（可会签）"
         : vis === "domain" ? "域内可见（只读）" : (conf.invisible || "不可见");
       const st = t.signoff_status || {};
       const progress = String(st.progress || (String(st.done || 0) + "/" + String(st.total || 0)));
       const ctx = t.context || {};
+      const statusText = t.status === "waiting_hitl" ? "待人工会签" : String(t.status || "");
       html += '<div class="s05-hitl card"><div class="card-pad">'
         + '<div class="s05-hitl-head"><b>' + K.esc(t.title || "") + "</b>"
-        + '<span class="s05-hitl-slot">' + K.esc(ctx.slot || "") + "</span>"
+        + '<span class="s05-hitl-slot">' + K.esc(K.slotLabel ? K.slotLabel(ctx.slot) : (ctx.slot || "")) + "</span>"
         + '<span class="s05-hitl-vis">' + K.esc(visText) + "</span></div>"
-        + '<div class="s05-hitl-meta">状态：' + K.esc(t.status || "") + " · 会签进度："
+        + '<div class="s05-hitl-meta">状态：' + K.esc(statusText) + " · 会签进度："
         + K.esc(progress) + " · 归属：" + K.esc(ctx.complaint_id || "演示种子") + "</div>"
         + '<div class="s05-hitl-ro">' + K.esc(conf.readonly_note || "只读演示") + "</div>"
         + "</div></div>";

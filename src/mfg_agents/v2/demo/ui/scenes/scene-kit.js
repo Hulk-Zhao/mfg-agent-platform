@@ -1061,6 +1061,68 @@
     workflow: "工作流",
   };
 
+  /* ---------- 观众可读词典（T20 去英文）：工具 / 槽位 / 对象名 → 中文 ----------
+   * 纪律：只做**展示层**翻译，回放包数据保持与真实链路同构（不改 jsonl）；
+   * 词典漏项时回落原文，不编造。 */
+  const TOOL_LABELS = {
+    run_registered_query: "参数化取数",
+    explore_data: "数据探查",
+    list_scenarios: "协同场景匹配",
+    run_scenario: "触发协同场景",
+    search_knowledge: "知识检索",
+    query_metric: "指标查询",
+    list_available_queries: "查询清单",
+    query_project_milestones: "里程碑查询",
+    query_test_records: "测试记录查询",
+    create_hitl_task: "发起人工确认",
+  };
+  const SLOT_LABELS = {
+    disposition: "来料处置",
+    restart: "复线决策",
+    eta: "交期承诺",
+    d8_close: "8D 报告关闭",
+    complaint_reply: "对客回复确认",
+    delivery_commit: "发货协同",
+    maintenance_window: "停机窗口",
+    spc_action: "SPC 判异处置",
+    order_review: "接单评审",
+    report_publish: "报告审定",
+  };
+  const OBJECT_LABELS = {
+    events: "事件流", cases: "案例库", faqs: "制度库", lots: "批次",
+    work_orders: "工单", inspections: "检验批", equipment: "设备",
+    sales_orders: "销售订单", purchase_orders: "采购单", customers: "客户档案",
+    materials: "物料", suppliers: "供应商", spc_series: "SPC 序列",
+    boms: "BOM 清单", quotes: "报价单",
+  };
+  // 事件类型中文标签复用本文件既有的 EVENT_TYPE_LABELS（文件头 L31），不重复声明。
+
+  function toolLabel(tool) {
+    const key = safeToken(tool);
+    return TOOL_LABELS[key] || String(tool || "");
+  }
+
+  function slotLabel(slot) {
+    const key = safeToken(slot);
+    return SLOT_LABELS[key] || String(slot || "");
+  }
+
+  function zhAgentText(text) {
+    return String(text === undefined || text === null ? "" : text)
+      .replace(/\bAgent\b/g, "智能体");
+  }
+
+  function zhText(text) {
+    let out = String(text === undefined || text === null ? "" : text);
+    Object.keys(OBJECT_LABELS).forEach(function (key) {
+      out = out.replace(new RegExp("\\b" + key + "\\b", "g"), OBJECT_LABELS[key]);
+    });
+    Object.keys(EVENT_TYPE_LABELS).forEach(function (key) {
+      out = out.replace(new RegExp("\\b" + key + "\\b", "g"), EVENT_TYPE_LABELS[key]);
+    });
+    return out;
+  }
+
   /** W3C 命名空间声明（标识符，不是网络请求——内联 SVG 放行）。 */
   const SVG_NS_RE = /https?:\/\/www\.w3\.org\/\d{4}\/svg/g;
 
@@ -1257,8 +1319,7 @@
           ? "未命名智能体" : String(ag.name);
         const role = (ag.role === undefined || ag.role === null || ag.role === "")
           ? "" : String(ag.role);
-        return '<span class="sk-agent-chip">'
-          + '<span class="sk-agent-abbr">' + esc(abbr) + "</span>"
+        return '<span class="sk-agent-chip" title="' + esc(abbr) + '">'
           + '<span class="sk-agent-name">' + esc(name) + "</span>"
           + (role ? '<span class="sk-agent-role">' + esc(role) + "</span>" : "")
           + "</span>";
@@ -1300,7 +1361,7 @@
       html += '<div class="sk-agent-sub-title">数据出处</div>'
         + (used.length
           ? '<ul class="sk-agent-list">' + used.map(function (item) {
-            return "<li>" + esc(String(item === null || item === undefined ? "" : item)) + "</li>";
+            return "<li>" + esc(zhText(String(item === null || item === undefined ? "" : item))) + "</li>";
           }).join("") + "</ul>"
           : '<div class="sk-agent-empty">未记录数据出处</div>');
       const gaps = Array.isArray(conclusion.data_gaps) ? conclusion.data_gaps : [];
@@ -1314,7 +1375,7 @@
         html += '<div class="sk-agent-hitl-line">需人工会签：'
           + esc(String(conclusion.hitl_title || "未命名工单"))
           + (conclusion.hitl_slot
-            ? "（治理槽位 " + esc(String(conclusion.hitl_slot)) + "）"
+            ? "（治理环节：" + esc(slotLabel(conclusion.hitl_slot)) + "）"
             : "")
           + "</div>";
       }
@@ -1326,21 +1387,21 @@
     // 7. HITL 卡（hitl_task 存在时；操作位一律「只读演示」，零写按钮）
     if (hitl) {
       const visibility = String(hitl.visibility || "未标注");
-      const visLabel = visibility === "mine" ? "我的会签（mine）"
-        : visibility === "domain" ? "域内可见（domain）"
+      const visLabel = visibility === "mine" ? "我的待办（可会签）"
+        : visibility === "domain" ? "域内可见（只读）"
           : visibility;
-      html += '<div class="sk-agent-section-title">HITL 工单（只读回放）</div>'
+      html += '<div class="sk-agent-section-title">人工确认工单（只读回放）</div>'
         + '<div class="sk-agent-hitl" data-sk-agent-hitl="1">'
         + '<div class="sk-agent-hitl-head">'
         + '<span class="sk-agent-hitl-title">' + esc(String(hitl.title || "未命名工单")) + "</span>"
         + badge(String(hitl.status || "状态未标注"), "badge-amber")
         + "</div>"
         + agentKv([
-          ["治理槽位", hitl.slot],
+          ["治理环节", slotLabel(hitl.slot)],
           ["会签进度", hitl.progress],
           ["本岗位可见性", visLabel],
           ["是否必须会签", hitl.required === true ? "是" : (hitl.required === false ? "否" : "—")],
-          ["本岗位动作", hitl.my_action],
+          ["本岗位动作", hitl.my_action === "cosign" ? "会签" : (hitl.my_action || "—")],
         ])
         + '<div class="sk-agent-hitl-act">'
         + '<span class="sk-readonly">只读演示</span>'
@@ -1377,7 +1438,7 @@
         + ' aria-pressed="false" title="点击查看该节点的回放步骤"'
         : ' type="button" disabled title="该节点无独立回放步骤，暂不可展开"';
       return { cls: cls, attrs: attrs, expandable: expandable,
-        label: esc(String((n || {}).label || id || "未命名节点")),
+        label: esc(zhAgentText(String((n || {}).label || id || "未命名节点"))),
         meta: esc(meta.join(" · ")) };
     };
     let html = '<div class="sk-dag" role="group" aria-label="智能体协同拓扑">';
@@ -1426,7 +1487,8 @@
     return '<details class="sk-agent-step' + (failed ? " is-failed" : "") + '">'
       + '<summary class="sk-agent-step-sum">'
       + '<span class="sk-agent-step-no">' + esc(stepNo) + "</span>"
-      + '<span class="sk-agent-step-tool">' + esc(tool) + "</span>"
+      + '<span class="sk-agent-step-tool" title="' + esc(tool) + '">'
+      + esc(toolLabel(tool)) + "</span>"
       + '<span class="sk-agent-step-text">' + esc(summary) + "</span>"
       + '<span class="sk-agent-step-flag">' + esc(failed ? "失败" : "成功") + "</span>"
       + "</summary>"
@@ -1495,7 +1557,7 @@
       })[0] || null;
       html += '<div class="sk-agent-converge">'
         + '<span class="sk-agent-converge-arrow" aria-hidden="true"></span>'
-        + "汇聚至：" + esc(String((join && join.label) || "fan_in 节点"))
+        + "汇聚至：" + esc(String((join && join.label) || "汇聚节点"))
         + "</div></div>";
     });
     return html;
@@ -1690,6 +1752,8 @@
     agentPanel,
     knowledgeCard,
     replay,
+    toolLabel,
+    slotLabel,
     openDrill,
     closeDrill,
     sceneData,
