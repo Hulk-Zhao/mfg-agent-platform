@@ -125,6 +125,21 @@ def _text_hash(text: str) -> str:
     return hashlib.sha256(str(text or "").encode("utf-8")).hexdigest()[:32]
 
 
+def _invalidate_relations() -> None:
+    """索引写入即让**本体关系图缓存**失效（关系图是案例元数据的派生物）。
+
+    为什么挂在这里而不是入库/审批各写一遍：本类是"唯一写索引入口"
+    （见类注释），入库、发布、授权、撤权、全量重建最终都经过它——
+    挂一处就不会漏。失效是清空字典，代价可忽略，重建在下次问答时惰性发生。
+    """
+    try:
+        from .case_relation import reset_relation_index
+
+        reset_relation_index()
+    except Exception as exc:  # noqa: BLE001 - 缓存失效失败绝不能影响索引写入
+        logger.warning("[case_index] 关系图缓存失效失败: %s", exc)
+
+
 @dataclass
 class _ChunkPlan:
     chunk_type: str
@@ -233,6 +248,7 @@ class CaseIndexService:
         Returns:
             写入索引的 chunk 数（不可见状态为 0）。
         """
+        _invalidate_relations()
         case = self._store.get_case(case_id)
         if case is None:
             self._index.delete_by_case(case_id)
@@ -266,6 +282,7 @@ class CaseIndexService:
         """撤权/删除：索引立即失效（不等定时重建，BR-04）。"""
         removed = self._index.delete_by_case(case_id)
         self._store.set_chunk_status(case_id, "stale")
+        _invalidate_relations()
         return removed
 
     def rebuild(self) -> dict[str, int]:

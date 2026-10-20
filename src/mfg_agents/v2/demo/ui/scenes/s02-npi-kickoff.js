@@ -47,7 +47,7 @@
   const STYLE_ID = "s02-style";
 
   const CSS = `
-.sk-table { width: 100%; border-collapse: collapse; font-size: 12.2px; }
+.sk-table { width: 100%; border-collapse: collapse; font-size: calc(12.2px * var(--font-scale)); }
 .sk-table th {
   text-align: left; padding: 6px 8px; color: var(--text-3); font-weight: 600;
   border-bottom: 1px solid var(--border); white-space: nowrap;
@@ -65,9 +65,9 @@
 .sk-search-icon { display: inline-flex; color: var(--text-3); flex: none; }
 .sk-search-input {
   flex: 1; min-width: 0; border: none; outline: none; background: transparent;
-  font: inherit; font-size: 12.6px; color: var(--text);
+  font: inherit; font-size: calc(12.6px * var(--font-scale)); color: var(--text);
 }
-.sk-case-hint { font-size: 11.5px; color: var(--text-3); margin-bottom: 6px; }
+.sk-case-hint { font-size: calc(11.5px * var(--font-scale)); color: var(--text-3); margin-bottom: 6px; }
 .sk-case-list { display: flex; flex-direction: column; }
 .sk-case-row {
   display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
@@ -77,9 +77,9 @@
 .sk-case-row:hover { background: var(--primary-light-2); }
 .sk-case-row:last-child { border-bottom: none; }
 .sk-case-main { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; }
-.sk-case-title { font-size: 12.8px; color: var(--text); font-weight: 600; }
-.sk-case-sub { font-size: 11.5px; color: var(--text-3); }
-.sk-case-score { flex: none; font-size: 11.5px; color: var(--text-2); }
+.sk-case-title { font-size: calc(12.8px * var(--font-scale)); color: var(--text); font-weight: 600; }
+.sk-case-sub { font-size: calc(11.5px * var(--font-scale)); color: var(--text-3); }
+.sk-case-score { flex: none; font-size: calc(11.5px * var(--font-scale)); color: var(--text-2); }
 .sk-case-more { flex: none; display: inline-flex; color: var(--text-3); }
 `;
 
@@ -616,7 +616,7 @@
         }).join("");
         el.innerHTML = head
           + (trace ? '<div class="section-title">检索轨迹（归一 → 扩展 → 过滤 → 引用）</div>'
-            + '<ol style="margin:8px 0 0 18px;font-size:12.4px;line-height:1.9;'
+            + '<ol style="margin:8px 0 0 18px;font-size: calc(12.4px * var(--font-scale));line-height:1.9;'
             + 'color:var(--text-2,#57606A)">' + trace + "</ol>" : "")
           + (hits ? '<div class="section-title">命中案例（回放）</div>' + hits : "")
           + '<div class="sk-note">回放与真实链路同字段同构（检索轨迹五步 / 过滤判定链）；'

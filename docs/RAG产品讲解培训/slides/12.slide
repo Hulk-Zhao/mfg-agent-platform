@@ -1,0 +1,70 @@
+<Slide style={{ width: 1280, height: 720, padding: 0, background: '#FFFFFF', fontFamily: '"Noto Sans SC","Source Han Sans SC","PingFang SC","Microsoft YaHei",sans-serif' }}>
+    <Box style={{ height: 120, padding: '34px 64px 0', flexDirection: 'column' }}>
+        <Text style={{ fontSize: 34, fontWeight: 'bold', color: '#0F172A', lineHeight: 1.3 }}>L2 · RAG：混合召回 + 重排 + 带出处生成</Text>
+        <Text style={{ fontSize: 16, color: '#64748B', marginTop: 8 }}>双路召回保证「找得到」，重排保证「排得对」——没有 rerank 的 RAG 是把半成品递给用户</Text>
+    </Box>
+    <Box style={{ height: 540, padding: '16px 64px 0', flexDirection: 'column', gap: 14 }}>
+        <Box style={{ height: 300, background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: 14, padding: '12px 16px' }}>
+            <svg width="1120" height="276" viewBox="0 0 1120 276">
+                <rect x="0" y="6" width="880" height="44" rx="8" fill="#EFF6FF" stroke="#BFDBFE" strokeWidth="1.5" />
+                <text x="18" y="25" fontSize="14" fontWeight="bold" fill="#1E40AF">① BGE-M3 双路编码</text>
+                <text x="18" y="42" fontSize="11" fill="#1E3A8A">dense 1024 维 + sparse 稀疏向量，双路同时召回</text>
+                <path d="M 22 50 L 22 60" stroke="#94A3B8" strokeWidth="1.5" markerEnd="url(#arr)" />
+                <rect x="0" y="64" width="740" height="44" rx="8" fill="#EFF6FF" stroke="#BFDBFE" strokeWidth="1.5" />
+                <text x="18" y="83" fontSize="14" fontWeight="bold" fill="#1E40AF">② Milvus 混合召回</text>
+                <text x="18" y="100" fontSize="11" fill="#1E3A8A">WeightedRanker 0.7 / 0.3 加权融合两路分数</text>
+                <path d="M 22 108 L 22 118" stroke="#94A3B8" strokeWidth="1.5" markerEnd="url(#arr)" />
+                <rect x="0" y="122" width="600" height="44" rx="8" fill="#ECFEFF" stroke="#A5F3FC" strokeWidth="1.5" />
+                <text x="18" y="141" fontSize="14" fontWeight="bold" fill="#0E7490">③ 候选集</text>
+                <text x="18" y="158" fontSize="11" fill="#155E75">max(12, top_k×3) 条进入重排，宁多勿漏</text>
+                <path d="M 22 166 L 22 176" stroke="#94A3B8" strokeWidth="1.5" markerEnd="url(#arr)" />
+                <rect x="0" y="180" width="460" height="44" rx="8" fill="#ECFEFF" stroke="#A5F3FC" strokeWidth="1.5" />
+                <text x="18" y="199" fontSize="14" fontWeight="bold" fill="#0E7490">④ BGE-Reranker-v2-M3 重排</text>
+                <text x="18" y="216" fontSize="11" fill="#155E75">CrossEncoder 对「查询-文档」对精细打分</text>
+                <path d="M 22 224 L 22 234" stroke="#94A3B8" strokeWidth="1.5" markerEnd="url(#arr)" />
+                <rect x="0" y="238" width="320" height="34" rx="8" fill="#0F172A" />
+                <text x="18" y="260" fontSize="13" fontWeight="bold" fill="#FFFFFF">⑤ top_n 交给出处生成</text>
+                <rect x="900" y="6" width="220" height="128" rx="8" fill="#FFF7ED" stroke="#FED7AA" strokeWidth="1.5" />
+                <text x="914" y="28" fontSize="12" fontWeight="bold" fill="#C2410C">为什么双路？</text>
+                <text x="914" y="48" fontSize="10" fill="#9A3412">dense 管「说得不一样」：</text>
+                <text x="914" y="63" fontSize="10" fill="#9A3412">同义、口语、省略都能召回；</text>
+                <text x="914" y="78" fontSize="10" fill="#9A3412">sparse 管「术语精确」：</text>
+                <text x="914" y="93" fontSize="10" fill="#9A3412">CPK、8D、ECN 一个不糊。</text>
+                <text x="914" y="116" fontSize="10" fontWeight="bold" fill="#C2410C">两路一起，才叫混合检索。</text>
+                <rect x="900" y="146" width="220" height="126" rx="8" fill="#EFF6FF" stroke="#BFDBFE" strokeWidth="1.5" />
+                <text x="914" y="168" fontSize="12" fontWeight="bold" fill="#1E40AF">为什么重排？</text>
+                <text x="914" y="188" fontSize="10" fill="#1E3A8A">双路召回是「粗筛」，</text>
+                <text x="914" y="203" fontSize="10" fill="#1E3A8A">分数来自两套不完全一致</text>
+                <text x="914" y="218" fontSize="10" fill="#1E3A8A">的度量；重排让查询和文档</text>
+                <text x="914" y="233" fontSize="10" fill="#1E3A8A">真正对打一次，再定输赢。</text>
+                <text x="914" y="256" fontSize="10" fontWeight="bold" fill="#1E40AF">没有 rerank = 递半成品。</text>
+            </svg>
+        </Box>
+        <Box style={{ flexDirection: 'row', gap: 12, flex: 1 }}>
+            <Box style={{ flex: 1, background: '#F8FAFC', border: '1px solid #E2E8F0', borderTop: '4px solid #2563EB', borderRadius: 12, padding: '12px 16px', flexDirection: 'column' }}>
+                <Text style={{ fontSize: 17, fontWeight: 'bold', color: '#0F172A' }}>chunk 策略：按段切，不硬断</Text>
+                <Text style={{ fontSize: 14, color: '#475569', lineHeight: 1.55, marginTop: 6, flex: 1 }}>按段落切块，max_len 400 字符；超长按句切。metadata 带 {'{'}dept, dept_cn, source, chunk_index{'}'}——答案里的「第 N 段」出处就来自它。语料共 16 类制造制度、48 个 md 文件、≥400 个知识块，由播种管线统一灌入。</Text>
+                <Text style={{ fontSize: 11, color: '#94A3B8', fontFamily: '"JetBrains Mono","Space Grotesk",Consolas,monospace' }}>kbqa_seed.py</Text>
+            </Box>
+            <Box style={{ flex: 1, background: '#F8FAFC', border: '1px solid #E2E8F0', borderTop: '4px solid #06B6D4', borderRadius: 12, padding: '12px 16px', flexDirection: 'column' }}>
+                <Text style={{ fontSize: 17, fontWeight: 'bold', color: '#0F172A' }}>生成约束：出处是硬要求</Text>
+                <Text style={{ fontSize: 14, color: '#475569', lineHeight: 1.55, marginTop: 6, flex: 1 }}>deepseek-flash，temperature 0.3、思考关闭、max_tokens 400；prompt 里拼 [文件名 第N段] 的 context，答案必须挂出处。压低随机性是为了可复现——同一问题，同一答案。</Text>
+                <Text style={{ fontSize: 11, color: '#94A3B8', fontFamily: '"JetBrains Mono","Space Grotesk",Consolas,monospace' }}>kbqa.py</Text>
+            </Box>
+            <Box style={{ flex: 1, background: '#F8FAFC', border: '1px solid #E2E8F0', borderTop: '4px solid #F97316', borderRadius: 12, padding: '12px 16px', flexDirection: 'column' }}>
+                <Text style={{ fontSize: 17, fontWeight: 'bold', color: '#0F172A' }}>LLM 不可用：回放原文</Text>
+                <Text style={{ fontSize: 14, color: '#475569', lineHeight: 1.55, marginTop: 6, flex: 1 }}>模型挂了就回放最相关的知识片段，并显式标注 degraded=True——宁可给原文，不给编造的答案。这一条保证 demo 在任何环境下都能完整跑完。</Text>
+                <Text style={{ fontSize: 11, color: '#94A3B8', fontFamily: '"JetBrains Mono","Space Grotesk",Consolas,monospace' }}>rag_tools.py</Text>
+            </Box>
+        </Box>
+    </Box>
+    <Box style={{ height: 60, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: '0 64px', position: 'relative' }}>
+        <Box style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            <Box style={{ width: 12, height: 12, borderRadius: 3, background: '#2563EB' }} />
+            <Box style={{ width: 9, height: 9, borderRadius: 5, background: '#06B6D4' }} />
+            <Text style={{ fontSize: 14, color: '#94A3B8' }}>mfg-agent-platform · 独立开发实践分享</Text>
+        </Box>
+        <Text style={{ fontSize: 14, color: '#94A3B8', fontFamily: '"JetBrains Mono","Space Grotesk",Consolas,monospace' }}>12 / 20</Text>
+        <Box style={{ position: 'absolute', bottom: 0, left: 0, width: 1280, height: 3, background: 'linear-gradient(90deg, #2563EB 0%, #06B6D4 55%, rgba(6,182,212,0) 100%)' }} />
+    </Box>
+</Slide>

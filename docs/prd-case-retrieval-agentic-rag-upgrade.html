@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>制造案例检索模块 · 本体增强 Agentic RAG 升级 PRD V1.0</title>
+<style>
+  :root{
+    --bg:#F4F6FA; --card:#FFFFFF; --ink:#1A2433; --ink2:#44506A; --ink3:#7C8AA5;
+    --line:#E2E8F2; --brand:#1B66CC; --brand-deep:#0F4C9E; --navy:#0D1B30; --navy2:#10233F;
+    --ok:#1A7F37; --warn:#9A6700; --danger:#C62828; --amber-bg:#FDF6E3; --blue-bg:#EEF4FD;
+    --mono:"SFMono-Regular",Consolas,"Liberation Mono",monospace;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:"Microsoft YaHei","PingFang SC",-apple-system,"Segoe UI",sans-serif;background:var(--bg);color:var(--ink);line-height:1.75;font-size:15px}
+  .layout{display:flex;max-width:1440px;margin:0 auto;align-items:flex-start}
+  /* 侧边导航 */
+  nav{position:sticky;top:0;width:240px;flex-shrink:0;height:100vh;overflow-y:auto;padding:28px 18px;background:var(--navy);color:#C9D6EC}
+  nav .nav-brand{font-size:13px;letter-spacing:.12em;color:#6E84A8;text-transform:uppercase;margin-bottom:6px}
+  nav h2{font-size:16px;color:#fff;margin-bottom:18px;line-height:1.4}
+  nav a{display:block;color:#A9BBD6;text-decoration:none;font-size:13px;padding:6px 10px;border-radius:8px;margin-bottom:2px;border-left:3px solid transparent}
+  nav a:hover{background:rgba(255,255,255,.06);color:#fff}
+  nav a .no{color:#5B7BAB;font-family:var(--mono);margin-right:6px;font-size:11px}
+  /* 主区 */
+  main{flex:1;padding:36px 44px 80px;min-width:0}
+  .doc-head{background:linear-gradient(135deg,var(--navy) 0%,var(--navy2) 60%,#14305A 100%);color:#fff;border-radius:16px;padding:34px 38px;margin-bottom:26px;position:relative;overflow:hidden}
+  .doc-head::after{content:"";position:absolute;right:-70px;top:-70px;width:260px;height:260px;border-radius:50%;background:radial-gradient(circle,rgba(59,138,232,.35),transparent 70%)}
+  .doc-head .kicker{font-size:12px;letter-spacing:.2em;color:#7FA8E0;margin-bottom:10px}
+  .doc-head h1{font-size:26px;line-height:1.4;margin-bottom:10px}
+  .doc-head p{color:#B9C9E2;font-size:14px;max-width:820px}
+  .meta-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:12px;overflow:hidden;margin-bottom:26px}
+  .meta-grid .cell{background:var(--card);padding:12px 16px}
+  .meta-grid .k{font-size:12px;color:var(--ink3);margin-bottom:2px}
+  .meta-grid .v{font-size:13.5px;color:var(--ink);font-weight:600}
+  section{margin-bottom:34px}
+  h2.sec{font-size:20px;padding-left:14px;border-left:4px solid var(--brand);margin-bottom:16px;line-height:1.4}
+  h3{font-size:16.5px;margin:22px 0 10px;color:var(--brand-deep)}
+  h4{font-size:15px;margin:16px 0 8px}
+  p{margin-bottom:10px}
+  ul,ol{margin:0 0 12px 22px}
+  li{margin-bottom:5px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px 26px;margin-bottom:16px;box-shadow:0 1px 3px rgba(13,27,48,.04)}
+  table{width:100%;border-collapse:collapse;margin:12px 0 16px;font-size:13.5px;background:var(--card)}
+  th{background:#F0F4FA;text-align:left;padding:9px 12px;border:1px solid var(--line);color:var(--ink2);font-weight:600;white-space:nowrap}
+  td{padding:9px 12px;border:1px solid var(--line);vertical-align:top}
+  tr:nth-child(even) td{background:#FAFBFE}
+  code,.mono{font-family:var(--mono);font-size:12.5px;background:#EEF2F8;padding:1.5px 6px;border-radius:5px;color:#0F4C9E}
+  .tag{display:inline-block;font-size:11.5px;font-weight:600;padding:2px 10px;border-radius:99px;margin-right:6px;white-space:nowrap}
+  .tag-p0{background:#E3F2E9;color:var(--ok)}
+  .tag-p1{background:var(--amber-bg);color:var(--warn)}
+  .tag-red{background:#FDECEA;color:var(--danger)}
+  .tag-blue{background:var(--blue-bg);color:var(--brand)}
+  .tag-gray{background:#EEF1F6;color:var(--ink2)}
+  .callout{border-left:4px solid var(--brand);background:var(--blue-bg);border-radius:0 10px 10px 0;padding:14px 18px;margin:14px 0;font-size:14px}
+  .callout.red{border-color:var(--danger);background:#FDECEA}
+  .callout.amber{border-color:#D9A400;background:var(--amber-bg)}
+  .fr{border:1px solid var(--line);border-radius:14px;background:var(--card);margin-bottom:18px;overflow:hidden}
+  .fr-head{display:flex;align-items:center;gap:12px;padding:14px 22px;background:linear-gradient(90deg,#F4F8FF,#FFFFFF);border-bottom:1px solid var(--line);flex-wrap:wrap}
+  .fr-head .fid{font-family:var(--mono);font-weight:700;color:#fff;background:var(--brand);border-radius:8px;padding:3px 10px;font-size:13px}
+  .fr-head .fname{font-size:16px;font-weight:700}
+  .fr-body{padding:18px 22px}
+  .fr-body dl{display:grid;grid-template-columns:88px 1fr;gap:6px 14px;margin-bottom:10px}
+  .fr-body dt{font-weight:700;color:var(--ink2);font-size:13.5px}
+  .fr-body dd{font-size:14px}
+  /* 流程图 */
+  .flow{display:flex;flex-direction:column;gap:0;margin:16px 0}
+  .flow-stage{display:flex;gap:14px;align-items:stretch}
+  .flow-rail{width:26px;display:flex;flex-direction:column;align-items:center;flex-shrink:0}
+  .flow-dot{width:14px;height:14px;border-radius:50%;background:var(--brand);border:3px solid #D6E6FA;flex-shrink:0;margin-top:20px}
+  .flow-dot.agentic{background:#7C3AED;border-color:#EDE4FD}
+  .flow-dot.safe{background:var(--ok);border-color:#D8F0E0}
+  .flow-line{width:2px;flex:1;background:var(--line)}
+  .flow-box{flex:1;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 18px;margin-bottom:4px}
+  .flow-box .fs{font-size:12px;color:var(--ink3);font-weight:600;letter-spacing:.05em}
+  .flow-box .ft{font-size:14.5px;font-weight:700;margin:2px 0 4px}
+  .flow-box .fd{font-size:13px;color:var(--ink2)}
+  .flow-box.agentic{border-color:#C9B3F5;background:#FBF8FF}
+  .flow-box.safe{border-color:#A9DDBD;background:#F6FCF8}
+  .loop-note{text-align:center;font-size:12.5px;color:#7C3AED;background:#F3EDFE;border:1px dashed #C9B3F5;border-radius:10px;padding:7px 14px;margin:2px 0 14px 40px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:1000px){.grid2{grid-template-columns:1fr}nav{display:none}main{padding:24px 18px}}
+  .kpi-strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin:14px 0}
+  .kpi{background:linear-gradient(135deg,#F4F8FF,#FFFFFF);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+  .kpi .n{font-size:22px;font-weight:800;color:var(--brand-deep);font-family:var(--mono)}
+  .kpi .t{font-size:12.5px;color:var(--ink2)}
+  .tbd{color:var(--warn);font-weight:700}
+  footer{color:var(--ink3);font-size:12.5px;text-align:center;padding:30px 0 10px;border-top:1px solid var(--line);margin-top:20px}
+  .small{font-size:12.5px;color:var(--ink3)}
+  .nowrap{white-space:nowrap}
+</style>
+</head>
+<body>
+<div class="layout">
+<nav>
+  <div class="nav-brand">MFG Agent Platform</div>
+  <h2>案例检索 · Agentic RAG 升级 PRD</h2>
+  <a href="#s1"><span class="no">1</span>一页式结论</a>
+  <a href="#s2"><span class="no">2</span>背景与问题</a>
+  <a href="#s3"><span class="no">3</span>目标与产品契约</a>
+  <a href="#s4"><span class="no">4</span>范围</a>
+  <a href="#s5"><span class="no">5</span>核心流程</a>
+  <a href="#s6"><span class="no">6</span>功能需求</a>
+  <a href="#s7"><span class="no">7</span>界面需求</a>
+  <a href="#s8"><span class="no">8</span>共享规则与红线</a>
+  <a href="#s9"><span class="no">9</span>验收判据</a>
+  <a href="#s10"><span class="no">10</span>开放问题</a>
+  <a href="#s11"><span class="no">11</span>实施状态</a>
+</nav>
+<main>
+
+<div class="doc-head">
+  <div class="kicker">PRODUCT REQUIREMENTS DOCUMENT</div>
+  <h1>制造案例检索模块 · 功能与界面改造升级<br>—— 本体增强 Agentic RAG 的产品化落地</h1>
+  <p>把已落地的「安全检索地基」与「本体词表资产」升级为可感知、可验证、可演示的智能体检索闭环：让大模型在受控本体与权限红线内<b>计划、检索、自检、再检索</b>，并把每一步决策做成观众看得见的证据链。</p>
+</div>
+
+<div class="meta-grid">
+  <div class="cell"><div class="k">文档版本</div><div class="v">V1.0（评审稿）</div></div>
+  <div class="cell"><div class="k">实施状态</div><div class="v">P0 七项（FR-01~FR-07）+ P1 三项（FR-08/09/10）已落地·待提交（见 §11）</div></div>
+  <div class="cell"><div class="k">产品模块</div><div class="v">制造案例检索（案例助手屏）</div></div>
+  <div class="cell"><div class="k">前置文档</div><div class="v">《本体增强 Agentic RAG 升级方案 V1.0》《案例检索界面与功能创新方案 V1.0》（docs/ 下同）</div></div>
+  <div class="cell"><div class="k">约束继承</div><div class="v">权限前置 BR-01 / 过滤器不由 LLM 生成 A10 / 无引用不输出 BR-05 / 知识层证据层分离 BR-08</div></div>
+  <div class="cell"><div class="k">目标读者</div><div class="v">产品、前端、后端、算法、测试与演示验收人员</div></div>
+  <div class="cell"><div class="k">日期</div><div class="v">2026-10-20</div></div>
+</div>
+
+<!-- ================= 1 ================= -->
+<section id="s1">
+<h2 class="sec">1. 一页式结论</h2>
+<div class="card">
+<p><b>一句话：</b>案例检索模块已把「安全」做到位（权限前置过滤 + 二次授权 + 引用三元组校验 + 审计哈希链），本次升级要补的是「聪明」与「看得见」——接入大模型作答、把固定管线升级为<b>有界 Agentic 检索闭环</b>，并把本体增强的每一步决策做成前端可回放、可对照的<b>证据链体验</b>，服务对外演示的「眼前一亮」与对内的可信度验收。</p>
+<div class="kpi-strip">
+  <div class="kpi"><div class="n">180</div><div class="t">案例库规模（例，已覆盖 SMT/插件/组包/测试/老化/整机/包装等段）</div></div>
+  <div class="kpi"><div class="n">252</div><div class="t">受控本体词条（缺陷模式 99 / 根因 89 / 对策 64）</div></div>
+  <div class="kpi"><div class="n">16 步</div><div class="t">两段式安全检索编排（召回前过滤 + 返回前二次授权，保持不变）</div></div>
+  <div class="kpi"><div class="n">≤3 跳</div><div class="t">Agentic 再检索跳数硬上限（成本与失控的刹车）</div></div>
+  <div class="kpi"><div class="n">0</div><div class="t">越权漏放容忍度（红线，红队用例全过）</div></div>
+</div>
+<table>
+<tr><th style="width:90px">判断</th><th>内容</th><th style="width:240px">对本次升级的含义</th></tr>
+<tr><td class="nowrap"><b>已具备</b></td><td>权限前置 + 二次授权、引用校验、本体词表与同义扩展、本体增强量化收益（原文 vs 归一化对照）、大对话框界面与「智能体检索」抽屉、P0/P1 界面创新（关键差异对比 / 段导航 / 关系视图 / 跨段关联 / 新鲜度）均已落地</td><td><b>不重做</b>，本次只在其上加「智能」与「呈现」</td></tr>
+<tr><td class="nowrap"><b>缺口 1</b></td><td>作答仍是<b>确定性模板</b>，未接大模型——演示时回答形态呆板，跨案例归纳能力为零</td><td>FR-01：接入 LLM 作答器（引用约束生成 + 模板兜底降级）</td></tr>
+<tr><td class="nowrap"><b>缺口 2</b></td><td>检索是<b>固定管道</b>：一次检索定生死，无查询分解、无充分性自检、无再检索；现有 5 步轨迹是过程说明，不是决策闭环</td><td>FR-02/FR-03/FR-04：有界 Agentic 循环 + 多跳关系推理 + 决策证据链</td></tr>
+<tr><td class="nowrap"><b>缺口 3</b></td><td>「本体增强 Agentic RAG」的价值当前<b>无法一眼看出</b>：缺三方对照呈现、缺实时决策过程可视化</td><td>FR-05/FR-06：智能体工作台 + 三方对照演示模式</td></tr>
+</table>
+</div>
+</section>
+
+<!-- ================= 2 ================= -->
+<section id="s2">
+<h2 class="sec">2. 背景与问题</h2>
+<div class="card">
+<h3>2.1 触发场景</h3>
+<p>平台进入<b>对外演示阶段</b>。案例检索是「AI + 制造业务」故事的主战场：观众（客户管理层、数字化负责人、评审专家）想看到的不是一个搜索框，而是「系统懂制造术语、会像工程师一样多步追查问题、且每个结论都有出处」。现状演示在三个时刻会露怯：</p>
+<table>
+<tr><th style="width:36px">#</th><th>演示时刻</th><th>现状表现</th><th>观众感知</th></tr>
+<tr><td>P1</td><td>问一个跨段问题：「整机段发现的异响，能追到插件段的波峰焊吗？」</td><td>单次向量召回，跨段关系不存在于检索链路 → 大概率拒答或答非所问</td><td>「和普通 RAG 没区别」</td></tr>
+<tr><td>P2</td><td>看回答形态</td><td>模板作答：逐条复述「案例 X 的经验（摘要）：…」，无跨案例归纳、无自然语言推理</td><td>「这不是大模型，是拼装」</td></tr>
+<tr><td>P3</td><td>追问「你刚才做了什么？」</td><td>5 步轨迹是静态说明文字，不含「为什么触发再检索、跳了几跳、终止原因」</td><td>「Agentic 是个宣传词」</td></tr>
+</table>
+<h3>2.2 现状证据（代码实证，高置信）</h3>
+<table>
+<tr><th>能力</th><th>现状</th><th>证据位置</th></tr>
+<tr><td>两段式安全检索</td><td>16 步编排；权限过滤在召回前下推向量库；返回前逐条二次授权；候选不足绝不放宽过滤</td><td><span class="mono">v2/services/case_search.py</span></td></tr>
+<tr><td>带引用问答</td><td>每条断言必须挂 <span class="mono">(case_id, chunk_id, content_version)</span>；引用校验回查知识层文本哈希；全丢即拒答</td><td><span class="mono">v2/services/case_qa.py</span></td></tr>
+<tr><td>作答器</td><td><b>确定性模板（未接 LLM）</b>；已预留 Answerer 注入协议与知识层类型闸门</td><td><span class="mono">case_qa.py · TemplateAnswerer / Answerer Protocol</span></td></tr>
+<tr><td>本体词表</td><td>3 词表 252 词条，加载期 fail-fast（同义冲突/父级非法即启动失败）；查询侧同义扩展仅覆盖缺陷模式与根因 2 个词表，<b>对策词表未参与召回</b></td><td><span class="mono">v2/contracts/ontology.py · v2/data/ontology/*.yaml</span></td></tr>
+<tr><td>检索轨迹</td><td>5 步中文轨迹（术语归一→同义扩展→本体检索→权限过滤→引用校验）由后端组装，前端只渲染——<b>是说明，不是决策记录</b></td><td><span class="mono">case_qa.py · _build_trace</span></td></tr>
+<tr><td>界面基线</td><td>大对话框形态（智能问答 / 案例检索双页签）、每轮回答挂「智能体检索」抽屉、管线逐级点亮等待动画、左栏身份卡 + 本体查看器 + 治理入口</td><td><span class="mono">v2/demo/ui/case-screen.js</span></td></tr>
+<tr><td>演示权限模式</td><td><span class="mono">CASE_DEMO_OPEN_QUERY</span>：检索全案例可见、读全文仍走访问申请（硬维度与显式拒绝独立否决）</td><td>《界面与功能创新方案》§8</td></tr>
+<tr><td>LLM 基础设施</td><td>平台已有 LLM 工厂（DeepSeek 凭据优先、Ollama 回落），本模块尚未接入</td><td><span class="mono">common/llm_factory.py</span></td></tr>
+</table>
+<div class="callout amber"><b>问题定调：</b>现状不是「没有本体增强」，而是「本体增强停在单跳同义改写 + 固定管道」。升级的本质是把「本体」从查询改写材料升级为<b>检索推理的结构先验</b>，把「Agentic」从宣传词升级为<b>有终止条件、有预算、有证据链的工程闭环</b>。</div>
+</div>
+</section>
+
+<!-- ================= 3 ================= -->
+<section id="s3">
+<h2 class="sec">3. 目标与产品契约</h2>
+<div class="card">
+<h3>3.1 产品契约</h3>
+<table>
+<tr><th style="width:130px">契约项</th><th>定义</th></tr>
+<tr><td>首要用户</td><td>① 演示观众（客户 / 评审）——通过「制造案例检索」屏观看或亲自提问；② 现场工程师 / 质量工程师——真实提问并复用案例经验；③ 演示讲解员——需要可预测、可讲解的效果</td></tr>
+<tr><td>核心任务</td><td>用自然语言描述一个制造现场问题，得到<b>有引用、有推理过程、可追问</b>的答案，并能一眼看出「本体增强 Agentic 检索」相对普通检索的差异</td></tr>
+<tr><td>触发</td><td>用户在案例助手屏选定身份后，于「智能问答」页签提交问题（或点击快捷问题 / 案例卡片追问 / 本体查看器「去提问」）</td></tr>
+<tr><td>完成条件</td><td>用户收到回答：每条结论挂可点击的引用三元组；回答下方可展开完整<b>决策证据链</b>（分解了什么、检索了几轮、为什么再检索、为什么停）；或收到带明确原因与下一步引导的<b>诚实拒答</b></td></tr>
+<tr><td>共享业务对象</td><td>案例（Case）与受控词条（OntologyTerm）——全模块唯一权威定义，沿用在库语义，本 PRD 不重新定义</td></tr>
+<tr><td>信任基线</td><td>权限前置 + 二次授权、无引用不输出、知识层/证据层分离、审计哈希链——<b>本次升级全部沿用，不削弱</b></td></tr>
+</table>
+<h3>3.2 目标（定性，可观察）</h3>
+<ul>
+<li>观众提出 <b>M1 类跨段问句</b>（「整机段的异响能追到插件段的波峰焊吗？」）时，系统沿「缺陷模式→根因→段」关系完成多跳检索并给出带引用的回答，决策过程可视化回放。</li>
+<li>复合问句（「异响 + 装配干涉」）被自动分解为子问句分别检索后归并，而非整句稀释召回。</li>
+<li>首轮召回不足时，系统沿本体邻接（同义词 / 父级 / 同根因 / 跨段相似）自动再检索，并在证据链中说明触发原因与终止原因。</li>
+<li>演示模式下可开启<b>三方对照</b>：同一问题并列「无本体 / 单跳本体 / 本体增强 Agentic」三组结果与关键数字，差异一眼可见。</li>
+<li>无关问题（「食堂几点开饭」）仍被术语闸门与相关度闸门拒答，且拒答附带「相邻概念 / 改写建议」引导——拒答也是可讲解的体验。</li>
+</ul>
+<div class="callout">本 PRD 不设编造的效果百分比承诺。量化验收沿用《升级方案》§6.2 与 §9 的口径（本体覆盖率 ≥95%、多跳命中率 ≥0.8 配人工相关集、引用可溯源率 100%、既有回归不劣化），指标值以 POC 实测校准为准。</div>
+</div>
+</section>
+
+<!-- ================= 4 ================= -->
+<section id="s4">
+<h2 class="sec">4. 范围</h2>
+<div class="card">
+<h3>4.1 P0（本次必交，构成最小完整演示旅程）</h3>
+<table>
+<tr><th style="width:70px">编号</th><th>能力</th><th>所属旅程</th></tr>
+<tr><td class="mono">FR-01</td><td>LLM 作答器接入：引用约束生成 + 无引用断言丢弃 + 模板降级兜底</td><td>提问 → 得到自然语言答案</td></tr>
+<tr><td class="mono">FR-02</td><td>有界 Agentic 检索循环：意图识别 → 查询分解 → 检索计划 → 充分性评估 → 本体邻接再检索（跳数 ≤3 / 收益阈值 / 预算上限）</td><td>复杂问题被智能地查透</td></tr>
+<tr><td class="mono">FR-03</td><td>多跳关系推理：缺陷模式 ↔ 根因 ↔ 对策 ↔ 段（载体）显式关系参与检索</td><td>跨段追溯类问题可答</td></tr>
+<tr><td class="mono">FR-04</td><td>决策证据链 trace 2.0：每步含决策类型 / 输入摘要 / 命中数 / 终止原因，全部由后端产出</td><td>「Agentic 做了什么」可验证</td></tr>
+<tr><td class="mono">FR-05</td><td>前端「智能体工作台」：提问等待期真实决策流式呈现；回答内联引用；证据链抽屉升级</td><td>过程看得见（演示高光）</td></tr>
+<tr><td class="mono">FR-06</td><td>三方对照演示模式：无本体 / 单跳本体 / 本体增强 Agentic 同题并列</td><td>价值可对照（演示高光）</td></tr>
+<tr><td class="mono">FR-07</td><td>拒答与空结果引导升级：相邻概念 + 问句改写建议（口语→受控术语）</td><td>失败路径可恢复</td></tr>
+</table>
+<h3>4.2 P1（紧随其后的增强，不阻塞 P0 验收）</h3>
+<table>
+<tr><th style="width:70px">编号</th><th>能力</th><th>说明</th></tr>
+<tr><td class="mono">FR-08</td><td>本体覆盖率看板（治理侧）</td><td>「语料中缺陷码/根因码已注册本体比例」成为可观测指标，挂入治理视图</td></tr>
+<tr><td class="mono">FR-09</td><td>知识缺口登记入口</td><td>问题未命中任何受控词条时，提示「该现象尚未登记本体词条」并给出审批登记入口</td></tr>
+<tr><td class="mono">FR-10</td><td>命中分布热力视图</td><td>「段 × 缺陷模式」分布热力（沿用界面方案 I8），标出可见范围内空白格</td></tr>
+</table>
+<h3>4.3 明确不做（承接前序 N1–N9，新增 2 条）</h3>
+<table>
+<tr><th style="width:64px">编号</th><th>不做项</th><th>理由</th></tr>
+<tr><td class="mono">N7</td><td>自动本体抽取 / 自动关系发现</td><td>沿裁定：语料规模下自动产出的是噪声；关系人工维护、显式声明</td></tr>
+<tr><td class="mono">N8</td><td>上图数据库作为前置条件</td><td>多跳 ≤3 用关系库 + 闭包表实现；图库沿用四道门槛评估</td></tr>
+<tr><td class="mono">N9</td><td>让 LLM 生成权限过滤条件</td><td>A10 铁律：LLM 只改写查询文本与决定下一步检索动作，永远碰不到过滤器</td></tr>
+<tr><td class="mono">N10</td><td>自由生成式回答（无引用散文）</td><td>BR-05：每条结论必须挂引用三元组，无引用断言一律丢弃；不接受「先答后补引用」</td></tr>
+<tr><td class="mono">N11</td><td>为演示效果放宽权限过滤或预置假数据</td><td>展示纪律：前端不编数据、候选不足不放宽、离线/拒答照实呈现——演示可信度即卖点</td></tr>
+</table>
+</div>
+</section>
+
+<!-- ================= 5 ================= -->
+<section id="s5">
+<h2 class="sec">5. 核心流程：有界 Agentic 检索闭环</h2>
+<div class="card">
+<p>一次提问的完整旅程如下。<span class="tag tag-blue">蓝色=确定性环节</span><span class="tag" style="background:#F3EDFE;color:#7C3AED">紫色=LLM 可参与的 Agentic 环节</span><span class="tag tag-p0">绿色=安全内核（不变）</span></p>
+<div class="flow">
+  <div class="flow-stage"><div class="flow-rail"><div class="flow-dot"></div><div class="flow-line"></div></div>
+    <div class="flow-box"><div class="fs">步骤 1 · 确定性</div><div class="ft">术语归一（全词表）</div><div class="fd">受控词表（缺陷模式 / 根因 / 对策 / 段）扫描问句，命中即锚定受控码；只影响查询文本，不参与权限过滤（A10）。</div></div></div>
+  <div class="flow-stage"><div class="flow-rail"><div class="flow-dot agentic"></div><div class="flow-line"></div></div>
+    <div class="flow-box agentic"><div class="fs">步骤 2 · Agentic</div><div class="ft">意图识别与查询分解</div><div class="fd">判断问句类型（单点 / 复合 / 跨段追溯 / 对策复用）；复合问句拆为 ≤3 个子问句。输出仅为查询文本片段，不含任何过滤字段。LLM 不可用时退回「整句单计划」。</div></div></div>
+  <div class="flow-stage"><div class="flow-rail"><div class="flow-dot agentic"></div><div class="flow-line"></div></div>
+    <div class="flow-box agentic"><div class="fs">步骤 3 · Agentic</div><div class="ft">检索计划</div><div class="fd">为每个子问句决定：检索动作、返回条数、是否沿本体关系多跳、跳向哪类关系（同根因 / 同缺陷跨段 / 对策复用）。计划中不存在过滤器字段。</div></div></div>
+  <div class="flow-stage"><div class="flow-rail"><div class="flow-dot safe"></div><div class="flow-line"></div></div>
+    <div class="flow-box safe"><div class="fs">步骤 4 · 安全内核（不变）</div><div class="ft">混合召回（过滤器召回前下推）</div><div class="fd">权限过滤器由安全内核按身份独立编译并下推；混合检索 + 重排 + 同案例去重，沿用 16 步编排，一行不改。</div></div></div>
+  <div class="flow-stage"><div class="flow-rail"><div class="flow-dot agentic"></div><div class="flow-line"></div></div>
+    <div class="flow-box agentic"><div class="fs">步骤 5 · 确定性规则为主</div><div class="ft">充分性评估（自检）</div><div class="fd">评估命中数、最高/中位相关度、术语覆盖率、关系覆盖（问句要求的关系链路是否都有命中）。给出「充分 / 不足 + 原因」判据。</div></div></div>
+  <div class="loop-note">不足且未触上限 → 沿本体邻接（同义词 / 父级 / 同根因 / 跨段 similarTo）扩查询，回到步骤 4 再检索；跳数 ≥3 或相对收益 &lt; 阈值或预算耗尽 → 终止，如实返回当前结果并写明终止原因</div>
+  <div class="flow-stage"><div class="flow-rail"><div class="flow-dot safe"></div><div class="flow-line"></div></div>
+    <div class="flow-box safe"><div class="fs">步骤 6 · 安全内核（不变）</div><div class="ft">二次授权</div><div class="fd">每条命中回权威 ACL 再判一次，独立代码路径；丢弃计数进入证据链。</div></div></div>
+  <div class="flow-stage"><div class="flow-rail"><div class="flow-dot agentic"></div><div class="flow-line"></div></div>
+    <div class="flow-box agentic"><div class="fs">步骤 7 · Agentic（LLM）</div><div class="ft">引用约束作答</div><div class="fd">仅接收知识层片段（类型闸门运行期断言）；每条结论必须挂引用三元组；支持跨案例归纳——归纳句同样逐句挂引用。</div></div></div>
+  <div class="flow-stage"><div class="flow-rail"><div class="flow-dot safe"></div><div class="flow-line"></div></div>
+    <div class="flow-box safe"><div class="fs">步骤 8 · 确定性（不变）</div><div class="ft">引用校验与拒答兜底</div><div class="fd">逐条回查「案例可见 + 内容版本与文本哈希双一致」；无引用 / 校验失败的断言丢弃；全丢即拒答，不编造。</div></div></div>
+  <div class="flow-stage"><div class="flow-rail"><div class="flow-dot"></div></div>
+    <div class="flow-box"><div class="fs">步骤 9 · 确定性</div><div class="ft">证据链组装与审计</div><div class="fd">全步骤决策记录（含再检索触发原因、跳数、终止原因、三方对照所需计数）由后端组装进响应；审计只记哈希。</div></div></div>
+</div>
+</div>
+</section>
+
+<!-- ================= 6 ================= -->
+<section id="s6">
+<h2 class="sec">6. 功能需求</h2>
+
+<div class="fr" id="fr01">
+  <div class="fr-head"><span class="fid">FR-01</span><span class="fname">LLM 作答器接入（引用约束生成）</span><span class="tag tag-p0">P0</span></div>
+  <div class="fr-body">
+    <p><b>目的：</b>把回答从「模板复述」升级为「大模型自然语言作答 + 跨案例归纳」，同时不让生成能力越过引用纪律。这是演示时「这是真大模型」的直觉来源。</p>
+    <dl>
+      <dt>触发</dt><dd>检索命中通过相关度闸门后进入作答环节；作答器选择由服务端配置决定，前端无感知。</dd>
+      <dt>处理规则</dt><dd>
+        ① 作答器实现既有 Answerer 协议：输入 = 问题 + 知识层片段集合，输出 = 「断言 + 引用集合」列表；<br>
+        ② 提示词约束：只允许使用输入片段中的事实；每条断言必须引用至少一个片段；禁止输出片段之外的数字、参数与结论；<br>
+        ③ 跨案例归纳允许且鼓励（这是相对模板作答的核心增量），但归纳句按句挂引用；<br>
+        ④ 输出长度限制 ≤200 字（与 KBQA 输出纪律一致，演示节奏可控）<span class="tbd">[Assumption, TBD：字数口径待评审确认]</span>；<br>
+        ⑤ LLM 不可达 / 超时 / 输出解析失败 → 自动降级为确定性模板作答，并在证据链中标注「本次为模板降级作答」。
+      </dd>
+      <dt>结果与状态</dt><dd>断言进入既有引用校验环节（无引用 / 校验失败即丢弃，全丢拒答）；响应新增作答器标识字段（llm / template），供前端徽标与演示讲解使用。</dd>
+      <dt>异常</dt><dd>LLM 超时（阈值 <span class="tbd">[TBD]</span> 秒）静默降级不报错页；生成内容含未受控数字或案例外事实且被引用校验丢弃时，若剩余断言为 0 → 按既有拒答口径返回，不二次调用 LLM 重试（防成本循环）。</dd>
+    </dl>
+    <p class="small">边界：作答器永远拿不到证据层内容（知识层类型闸门既有）；永远拿不到权限过滤器；永远拿不到未通过二次授权的案例。</p>
+  </div>
+</div>
+
+<div class="fr" id="fr02">
+  <div class="fr-head"><span class="fid">FR-02</span><span class="fname">有界 Agentic 检索循环</span><span class="tag tag-p0">P0</span></div>
+  <div class="fr-body">
+    <p><b>目的：</b>把「一次检索定生死」升级为「计划 → 检索 → 自检 → 再检索」的有界闭环，这是「Agentic」的工程定义，也是复杂问句可答的前提。</p>
+    <dl>
+      <dt>触发</dt><dd>每次智能问答自动执行；用户无额外操作。</dd>
+      <dt>处理规则</dt><dd>
+        ① 意图分类（四选一，LLM 参与、确定性规则兜底）：单点查询 / 复合查询 / 跨段追溯 / 对策复用；<br>
+        ② 查询分解：仅复合问句拆分，子问句 ≤3 个；分解产物只允许是查询文本片段；<br>
+        ③ 充分性评估（确定性规则）：命中数、相关度分布、术语覆盖率、关系链路覆盖四项判据，任一不足即给出「不足 + 缺口描述」；<br>
+        ④ 再检索策略由缺口决定：术语覆盖不足 → 同义 / 父级扩展；关系链路不足 → 沿 FR-03 关系多跳；命中不足 → 相邻段扩展；<br>
+        ⑤ <b>终止条件（硬约束）</b>：本体跳数 ≥3，或本轮相对收益低于阈值 <span class="tbd">[TBD，待 POC 校准]</span>，或检索预算（总召回次数 <span class="tbd">[TBD]</span>）耗尽 → 停止并如实返回，证据链写明终止原因；<br>
+        ⑥ 闭环内每一轮召回都完整走「过滤器下推 + 二次授权」，<b>不存在任何绕过安全内核的快路径</b>。
+      </dd>
+      <dt>结果与状态</dt><dd>响应中证据链包含每一轮的计划、命中、评估结论、扩展动作与终止原因；最终答案与普通回答形态一致（用户无需理解循环）。</dd>
+      <dt>异常</dt><dd>LLM 分解 / 计划失败 → 退回「整句单轮检索」（即现状行为），体验不劣于今天；评估规则异常 → 按「充分」处理进入作答，不阻塞主流程。</dd>
+    </dl>
+    <p class="small">红线重申：循环的自由度只在「改写查询文本与决定下一步检索动作」；过滤器由安全内核独占编译（A10）。</p>
+  </div>
+</div>
+
+<div class="fr" id="fr03">
+  <div class="fr-head"><span class="fid">FR-03</span><span class="fname">多跳关系推理（本体关系参与检索）</span><span class="tag tag-p0">P0</span></div>
+  <div class="fr-body">
+    <p><b>目的：</b>让「缺陷模式 ↔ 根因 ↔ 对策 ↔ 段」的显式关系成为检索可以行走的路，使 M1–M5 类跨段 / 跨案例问题首次可答。</p>
+    <dl>
+      <dt>触发</dt><dd>FR-02 计划层判定需要关系多跳，或充分性评估判定关系链路存在缺口时。</dd>
+      <dt>处理规则</dt><dd>
+        ① 关系数据：人工维护的显式关系表（同根因 / 同缺陷跨段相似 / 案例替代 supersedes / 缺陷-段呈现 manifestsOn），沿用词表治理纪律（加载期校验、审批留痕）；<br>
+        ② 遍历深度 ≤3 跳，典型链路：缺陷模式→根因→对策；缺陷模式→段→同段其他案例；案例→根因→跨段同根因案例；<br>
+        ③ 关系遍历产物只是「新的查询文本与候选码集合」，召回仍走安全内核；<br>
+        ④ 对策词表纳入查询扩展（现状仅缺陷模式 / 根因两表参与），使「上次这类问题怎么修」类问句享受本体增强。
+      </dd>
+      <dt>结果与状态</dt><dd>命中卡片标注「关系来源」（如「同根因 · 跨段」「对策复用」）；证据链记录每一跳走的关系类型与命中节点数。</dd>
+      <dt>异常</dt><dd>关系表缺失或为空 → 多跳步骤在证据链中如实记「无可用关系，跳过」并终止扩展，不影响单跳结果返回。</dd>
+    </dl>
+  </div>
+</div>
+
+<div class="fr" id="fr04">
+  <div class="fr-head"><span class="fid">FR-04</span><span class="fname">决策证据链 trace 2.0</span><span class="tag tag-p0">P0</span></div>
+  <div class="fr-body">
+    <p><b>目的：</b>把现有 5 步「过程说明」升级为「决策记录」——这是「Agentic 不是宣传词」的可验证证据，全部由后端产出（前端不编数据的纪律不变）。</p>
+    <dl>
+      <dt>触发</dt><dd>每次智能问答 / 检索自动产出，随响应返回。</dd>
+      <dt>处理规则</dt><dd>每步记录固定结构：步序、中文标题、决策类型（确定性 / Agentic）、输入摘要、关键数字（命中数 / 词条数 / 跳数）、输出摘要；再检索步额外记录触发原因；末步记录终止原因。同时产出三方对照所需计数（FR-06 复用同一数据源，禁止两套口径）。</dd>
+      <dt>结果与状态</dt><dd>前端抽屉与「智能体工作台」共用该数据结构渲染；审计侧只记哈希与计数（沿用既有口径）。</dd>
+      <dt>异常</dt><dd>任一步骤内部异常 → 该步记录「执行异常 + 已降级」，链路继续；绝不允许因证据链组装失败导致回答失败。</dd>
+    </dl>
+  </div>
+</div>
+
+<div class="fr" id="fr05">
+  <div class="fr-head"><span class="fid">FR-05</span><span class="fname">前端「智能体工作台」（过程可视化）</span><span class="tag tag-p0">P0</span></div>
+  <div class="fr-body">
+    <p><b>目的：</b>演示的最高光时刻——提问后观众能实时看到智能体「分解问题 → 逐轮检索 → 自检 → 沿本体再检索 → 校验引用」的工作过程，而非一个转圈等待。</p>
+    <dl>
+      <dt>触发</dt><dd>用户在智能问答页签提交问题即进入。</dd>
+      <dt>处理规则</dt><dd>
+        ① 等待期：现有「管线逐级点亮」动画升级为<b>真实步骤流式呈现</b>（流式接口不可用时，降级为响应到达后按证据链逐步回放动画，两种形态视觉一致）<span class="tbd">[Assumption, TBD：是否上流式响应待技术评审]</span>；<br>
+        ② 回答气泡内：结论句末挂<b>可点击内联引用角标</b>，点击定位到来源案例卡片（复用现有案例卡与详情弹层）；<br>
+        ③ 每轮回答下方保留「智能体检索」抽屉（默认收起）：收起态显示一行决策摘要（分解数 / 检索轮次 / 跳数 / 引用通过数）；展开态为完整证据链时间线 + 本体增强收益面板（沿用现有呈现）；<br>
+        ④ 再检索步骤在时间线上以「循环回退」视觉标识（回流箭头 + 触发原因文案），这是与普通管道的最直观差异；<br>
+        ⑤ 作答器徽标：LLM 作答 / 模板降级作答在回答头部以小徽标区分（诚实呈现，降级也是可讲解的工程决策）。
+      </dd>
+      <dt>结果与状态</dt><dd>提问 → 过程可视 → 回答 + 引用 → 抽屉可深挖；多层信息密度按「观众一眼看懂 → 专家逐步验证」递进。</dd>
+      <dt>异常</dt><dd>证据链字段缺失时前端只渲染已有字段（不编造补齐）；接口失败 / 401 / 离线沿用现有文案纪律。</dd>
+    </dl>
+  </div>
+</div>
+
+<div class="fr" id="fr06">
+  <div class="fr-head"><span class="fid">FR-06</span><span class="fname">三方对照演示模式</span><span class="tag tag-p0">P0</span><span class="tag tag-blue">演示模式</span></div>
+  <div class="fr-body">
+    <p><b>目的：</b>「本体增强 Agentic RAG 到底强在哪」不靠讲解词，靠同题三组结果并列：A 无本体（原文检索）/ B 单跳本体（现状能力）/ C 本体增强 Agentic（目标能力）。</p>
+    <dl>
+      <dt>触发</dt><dd>仅演示环境可见：顶栏或案例屏工具区提供「对照演示」开关（默认关闭）；开启后提问以三栏并列呈现。</dd>
+      <dt>处理规则</dt><dd>
+        ① 三组配置固定：A = 原文直接检索（不归一、无关系、无循环）；B = 现状单跳同义扩展 + 单次检索；C = FR-02 完整闭环；<br>
+        ② 三组跑同一问题、同一身份，权限过滤完全一致（对照的只能是检索智能，不能是可见范围）；<br>
+        ③ 每栏呈现：命中数、Top 命中标题、关键计数（术语命中数 / 跳数 / 检索轮次）；C 栏额外呈现证据链入口；<br>
+        ④ 口径纪律：命中更多不等于质量更高——界面文案沿用「少而准」的诚实口径，禁止宣称百分比提升（数字全部来自当次真实检索）。<br>
+        ⑤ 开关状态仅影响展示编排，不产生第三种检索行为；A/B 两组复用同一安全内核执行。
+      </dd>
+      <dt>结果与状态</dt><dd>观众同屏看到「同一句话，三种查法」的差异；讲解员可按栏逐步展开。</dd>
+      <dt>异常</dt><dd>任一组执行失败 → 该栏如实显示「本次执行失败」及原因，其余栏正常；禁止用缓存结果冒充当次结果。</dd>
+    </dl>
+  </div>
+</div>
+
+<div class="fr" id="fr07">
+  <div class="fr-head"><span class="fid">FR-07</span><span class="fname">拒答与空结果引导升级</span><span class="tag tag-p0">P0</span></div>
+  <div class="fr-body">
+    <p><b>目的：</b>拒答是可信度的证明，不该是死路。让「系统不会」变成「换个说法就行」，顺带展示本体词表资产。</p>
+    <dl>
+      <dt>触发</dt><dd>相关度闸门拒答 / 检索零命中 / 问题未命中任何受控词条。</dd>
+      <dt>处理规则</dt><dd>
+        ① 沿用现有「相邻概念引导」组件，扩展触发场景至拒答态；<br>
+        ② 新增问句改写建议：基于命中的受控词条（若有）生成 1–3 个规范术语问法（「你说的『雪花』是不是『锡珠』？」），点击即替换输入重新提问；改写建议只影响查询文本；<br>
+        ③ 拒答原因展示分层：默认一句话人话原因；展开可见分数 / 阈值等技术细节（服务讲解与验收）。
+      </dd>
+      <dt>结果与状态</dt><dd>拒答响应附带引导动作；用户一键重问进入正常流程。</dd>
+      <dt>异常</dt><dd>无任何受控词条可建议时，只展示原因与快捷问题，不硬编建议。</dd>
+    </dl>
+  </div>
+</div>
+
+<h3 style="margin-top:26px">P1 需求（摘要）</h3>
+<table>
+<tr><th style="width:70px">编号</th><th style="width:200px">能力</th><th>要点</th></tr>
+<tr><td class="mono">FR-08</td><td>本体覆盖率看板</td><td>治理视图新增「语料编码本体注册率」（缺陷 / 根因分列），数据源为词表与语料的真实比对；不达标项给出未注册码清单导出（供质量体系回填）。</td></tr>
+<tr><td class="mono">FR-09</td><td>知识缺口登记入口</td><td>零术语命中问题提示「该现象尚未登记本体词条」+ 登记申请入口（走既有审批，不自动入词表——防同义爆炸的正向治理手段）。</td></tr>
+<tr><td class="mono">FR-10</td><td>命中分布热力视图</td><td>案例检索页签结果区顶部「段 × 缺陷模式」分布热力，标出可见范围内空白格；数据全部来自当次结果统计，不另行编造。</td></tr>
+</table>
+</section>
+
+<!-- ================= 7 ================= -->
+<section id="s7">
+<h2 class="sec">7. 界面需求</h2>
+<div class="card">
+<h3>7.1 布局原则</h3>
+<ul>
+<li>沿用 2026-10-20 大对话框形态与左栏三卡片（身份卡 / 本体查看器 / 治理与工具），<b>不做结构性推翻</b>；本次为信息密度与过程可视化的增强。</li>
+<li>样式仅通过既有样式令牌与样式表演进，不改动既有类名契约与 JS 逻辑骨架（沿用项目前端样式纪律）。</li>
+<li>深色驾驶舱主题与个性化主题（亮/暗 × 主题色）下，新增组件必须双主题可读。</li>
+</ul>
+<h3>7.2 关键界面状态清单</h3>
+<table>
+<tr><th style="width:180px">状态</th><th>呈现要求</th></tr>
+<tr><td>提问等待中</td><td>真实步骤流式呈现（或响应后回放）；当前步骤高亮、已完成步骤打勾、再检索步骤显示回流标识；整体耗时可见。</td></tr>
+<tr><td>回答（LLM）</td><td>回答头部「大模型作答」徽标；结论句末内联引用角标可点击；下方抽屉入口显示决策摘要一行。</td></tr>
+<tr><td>回答（模板降级）</td><td>徽标「模板作答（已降级）」；其余形态一致——降级是正常状态，不做错误样式。</td></tr>
+<tr><td>证据链展开</td><td>时间线逐步骤：决策类型标签（确定性 / Agentic）、输入摘要、关键数字、输出摘要；再检索步骤含触发原因；末步含终止原因。</td></tr>
+<tr><td>三方对照开启</td><td>三栏并列（A 无本体 / B 单跳 / C Agentic），栏头标注配置；每栏命中数 + 关键计数；C 栏证据链入口。</td></tr>
+<tr><td>拒答</td><td>一句话人话原因 + 改写建议（如有）+ 相邻概念（如有）+「技术细节」展开区。</td></tr>
+<tr><td>零命中</td><td>沿用现有诚实文案 + 相邻概念引导 + 受限案例申请入口（不变）。</td></tr>
+<tr><td>接口失败 / 401 / 离线</td><td>沿用现有三类文案纪律，不编造兜底数据。</td></tr>
+</table>
+<h3>7.3 演示讲解锚点（供验收与彩排）</h3>
+<ol>
+<li><b>锚点 1（30 秒）：</b>问「整机段发现的异响，能追到插件段的波峰焊吗？」→ 观众看到分解、两轮检索、沿「同根因跨段」关系再检索、带引用回答。</li>
+<li><b>锚点 2（20 秒）：</b>展开证据链 → 指出「这一步步都是真实决策记录，不是动画」。</li>
+<li><b>锚点 3（30 秒）：</b>开三方对照 → 同题三栏，A 栏命中泛、B 栏居中、C 栏「少而准 + 跨段链路命中」。</li>
+<li><b>锚点 4（20 秒）：</b>问「食堂几点开饭」→ 拒答 + 改写引导 →「宁可拒答不编造，而且拒答也给你下一步」。</li>
+<li><b>锚点 5（20 秒）：</b>切换身份重问同题 → 命中差异 +「另有 N 条因权限不可见，可申请」→ 权限治理是地基不是开关。</li>
+</ol>
+</div>
+</section>
+
+<!-- ================= 8 ================= -->
+<section id="s8">
+<h2 class="sec">8. 共享规则与红线（全模块唯一口径）</h2>
+<div class="card">
+<table>
+<tr><th style="width:170px">规则</th><th>口径</th><th style="width:150px">本次是否变更</th></tr>
+<tr><td>BR-01 权限前置 + 二次授权</td><td>过滤器召回前下推；返回前逐条二次授权；候选不足绝不放宽重试</td><td><span class="tag tag-red">不变（红线）</span></td></tr>
+<tr><td>A10 过滤器不由 LLM 生成</td><td>LLM 只产出查询文本与检索计划动作；过滤器由安全内核按身份独占编译</td><td><span class="tag tag-red">不变（红线）</span></td></tr>
+<tr><td>BR-05 无引用不输出</td><td>每条结论挂引用三元组；校验失败丢弃；全丢拒答</td><td><span class="tag tag-red">不变（红线）</span></td></tr>
+<tr><td>BR-08 知识层 / 证据层分离</td><td>作答与展示只接触知识层；证据层不出检索侧</td><td><span class="tag tag-red">不变（红线）</span></td></tr>
+<tr><td>前端不编数据</td><td>证据链、解释、对照数字全部由后端产出，前端只渲染</td><td><span class="tag tag-red">不变（红线）</span></td></tr>
+<tr><td>演示权限模式</td><td><span class="mono">CASE_DEMO_OPEN_QUERY</span> 检索全可见、读全文走申请；硬维度独立否决</td><td><span class="tag tag-gray">不变</span></td></tr>
+<tr><td>限流与缓存</td><td>公网演示沿用 IP 限流与结果缓存口径（对齐制度问答模块纪律）</td><td><span class="tag tag-gray">沿用，按需校准</span></td></tr>
+<tr><td>审计</td><td>只记哈希与计数；新增检索轮次 / 跳数 / 作答器标识纳入计数字段</td><td><span class="tag tag-p1">增量字段</span></td></tr>
+<tr><td>成本护栏</td><td>单次提问 LLM 调用次数 ≤ <span class="tbd">[TBD]</span>；检索总召回次数 ≤ <span class="tbd">[TBD]</span>；超限即终止并写明原因</td><td><span class="tag tag-p0">新增</span></td></tr>
+</table>
+</div>
+</section>
+
+<!-- ================= 9 ================= -->
+<section id="s9">
+<h2 class="sec">9. 验收判据</h2>
+<div class="card">
+<table>
+<tr><th>判据</th><th>标准</th><th>来源口径</th></tr>
+<tr><td>功能旅程</td><td>§7.3 五个演示锚点全部可现场走通（含拒答与降级路径）</td><td>本 PRD §7.3</td></tr>
+<tr><td>多跳可答性</td><td>M1–M5 类问句可答率 ≥ 0.80（配人工相关集评审）</td><td>沿用《升级方案》§9</td></tr>
+<tr><td>引用可溯源率</td><td>100%（硬性，现状已达成，不得回退）</td><td>沿用</td></tr>
+<tr><td>越权漏放</td><td>= 0；既有红队用例全过；新增「LLM 循环内每轮召回均过安全内核」专项用例</td><td>沿用 + 新增</td></tr>
+<tr><td>降级可靠性</td><td>LLM 断连场景下提问仍返回答案（模板降级徽标可见），无 5xx、无白屏</td><td>本 PRD FR-01/FR-02</td></tr>
+<tr><td>成本护栏</td><td>超限终止路径有测试覆盖；证据链终止原因与实际上限一致</td><td>本 PRD FR-02</td></tr>
+<tr><td>回归</td><td>既有测试基线全量通过（当前基线约 1400+ 条，以仓库为准）；案例屏守卫测试同步演进</td><td>仓库基线</td></tr>
+</table>
+</div>
+</section>
+
+<!-- ================= 10 ================= -->
+<section id="s10">
+<h2 class="sec">10. 开放问题（仅保留影响决策的未决项）</h2>
+<div class="card">
+<table>
+<tr><th style="width:40px">#</th><th>问题</th><th style="width:200px">影响</th><th style="width:140px">默认假设</th></tr>
+<tr><td>Q1</td><td>智能问答是否上流式响应（SSE）以支撑等待期真实流式呈现？</td><td>FR-05 等待期形态（实时 vs 回放）</td><td><span class="tbd">[TBD]</span> 默认先「响应后回放」</td></tr>
+<tr><td>Q2</td><td>再检索收益阈值与召回预算上限的具体取值</td><td>FR-02 终止条件调优</td><td><span class="tbd">[TBD]</span> POC 校准后写入策略配置</td></tr>
+<tr><td>Q3</td><td>LLM 作答输出字数上限（现假设 ≤200 字对齐 KBQA 纪律）</td><td>FR-01 回答节奏</td><td><span class="tbd">[Assumption, TBD]</span></td></tr>
+<tr><td>Q4</td><td>三方对照模式在公网演示环境是否默认对访客可见，还是仅讲解员操作</td><td>FR-06 入口权限</td><td><span class="tbd">[TBD]</span> 默认仅讲解员</td></tr>
+</table>
+</div>
+</section>
+
+<!-- ================= 11 ================= -->
+<section id="s11">
+<h2 class="sec">11. 实施状态（已完成·待提交，2026-10-20）</h2>
+<div class="card">
+<p>P0 七项 + P1 一项已随文落地；三条红线（BR-01 / A10 / BR-05）在实现中被逐项钉住（有专项用例）。</p>
+<table>
+<tr><th style="width:66px">需求</th><th style="width:74px">状态</th><th>落地位置与要点</th></tr>
+<tr><td class="mono">FR-01</td><td><span class="tag tag-p0">已落地</span></td><td><span class="mono">services/case_qa_llm.py</span> 新增 <span class="mono">LLMAnswerer</span>：提示词只允许引用"片段编号"，编号→真实引用三元组的映射由服务端完成（<b>引用在结构上不可能编造</b>）；输出不可解析/超时/不可达 → <span class="mono">AnswererError</span> → 问答自动降级模板并在证据链标注。装配在 <span class="mono">case_qa.CaseQAService.__init__</span>，开关 <span class="mono">CASE_ANSWERER</span>。</td></tr>
+<tr><td class="mono">FR-02</td><td><span class="tag tag-p0">已落地</span></td><td><span class="mono">services/case_agentic.py</span>（计划层 + 充分性自检 + 多轮归并）+ <span class="mono">case_qa._agentic_search</span>（有界循环）。刹车三重：跳数 ≤ <span class="mono">CASE_AGENTIC_MAX_HOPS</span>、主查询轮数 ≤ <span class="mono">CASE_AGENTIC_MAX_ROUNDS</span>（关系扩展轮另计）、相对收益 &lt; <span class="mono">CASE_AGENTIC_GAIN_THRESHOLD</span>；总开关 <span class="mono">CASE_AGENTIC_ENABLED=false</span> 即回滚到单轮。</td></tr>
+<tr><td class="mono">FR-03</td><td><span class="tag tag-p0">已落地</span></td><td><span class="mono">services/case_relation.py</span> 新增 <span class="mono">CaseRelationIndex</span>：从案例元数据（缺陷模式 / 根因 / 产线→工艺段）现算关系图，问句侧识别"整机段 / 插件段"等段名 → 走 ≤3 跳 → 产出<b>可用召回词</b>；对策词表纳入查询扩展；未登记本体的编码记进 <span class="mono">skipped</span>（诚实呈现，不硬编词）。缓存挂"唯一写索引入口" <span class="mono">CaseIndexService.sync_case/delete_case/rebuild</span> 自动失效。</td></tr>
+<tr><td class="mono">FR-04</td><td><span class="tag tag-p0">已落地</span></td><td>证据链 2.0：<span class="mono">_trace_step</span> 增 <span class="mono">kind</span>（规则/模型决策/安全内核）、<span class="mono">numbers</span>（关键数字）、<span class="mono">why</span>（触发/终止原因），步序按实际轮次动态重排（<span class="mono">_renumber</span>）；全部由后端组装。</td></tr>
+<tr><td class="mono">FR-05</td><td><span class="tag tag-p0">已落地</span></td><td><span class="mono">demo/ui/case-screen.js</span>：作答器徽标（大模型 / 模板 / 模板降级）、循环摘要条（意图·轮数·跳数·终止）、抽屉内步骤三件套渲染 + 关系来源面板；等待动画步骤名与真实链路同构。流式响应（Q1）仍为 <span class="tbd">[TBD]</span>，当前为"响应后按证据链回放"。</td></tr>
+<tr><td class="mono">FR-06</td><td><span class="tag tag-p0">已落地</span></td><td><span class="mono">POST /api/v2/cases/compare</span>（<span class="mono">CASE_DEMO_MODE</span> + <span class="mono">CASE_DEMO_COMPARE</span> 双开关，默认关）返回 A/B/C 三栏 + 增益口径；前端「三方对照」页签由 <span class="mono">meta.demo_compare</span> 驱动，不自作主张开放。</td></tr>
+<tr><td class="mono">FR-07</td><td><span class="tag tag-p0">已落地</span></td><td>后端 <span class="mono">_suggestions</span>：口语法→权威术语改写 + 零命中时的字面相近候选；前端一键重问入口（<span class="mono">data-act="ask-suggest"</span>）。</td></tr>
+<tr><td class="mono">FR-08</td><td><span class="tag tag-p1">已落地</span></td><td><span class="mono">case_relation.ontology_coverage</span> + <span class="mono">GET /api/v2/cases/ontology/coverage</span> + 左栏「本体覆盖率」治理视图：语料编码注册率、未登记样例（只给码）、段分布、结论；实测缺陷 57.3% / 根因 48.1%（&lt; 95% 目标）→ <b>如实报未达标</b>，作为质量体系回填的派工依据。</td></tr>
+<tr><td class="mono">FR-09</td><td><span class="tag tag-p1">已落地</span></td><td><span class="mono">services/case_ontology_gap.py</span> + 新表 <span class="mono">case_ontology_gap</span> + 三个接口（申请 / 列表 / 裁决）：术语未登记时的正向治理入口。四条纪律：<b>批准 ≠ 写词表</b>（承接 N7，系统不存在自动入词表的路径）；已在词表里的词 409 挡回（防重复造词）；裁决需 <span class="mono">case.ingest</span> 且<b>不能批自己提的</b>（职责分离）；驳回必写理由。问答侧在"归一落空/拒答"时给出登记入口并预填问题原文。</td></tr>
+<tr><td class="mono">FR-10</td><td><span class="tag tag-p1">已落地</span></td><td><span class="mono">CaseSearchService.distribution</span> + <span class="mono">GET /api/v2/cases/distribution</span> + 案例检索页签「段 × 缺陷模式 · 分布热力」：数据源与检索<b>完全同源</b>（当前主体可见集合 → 与结果永远对得上），空白格是真实统计的 0（"该段确实没出现过这类问题"），缺陷模式按命中数取前 N 并在响应里披露总数与截断事实。</td></tr>
+<tr><td class="mono">Q1</td><td><span class="tag tag-gray">待开发</span></td><td>流式响应（SSE）：等待期目前是"响应后按证据链回放"，非真实流式。</td></tr>
+</table>
+<h3>测试与验证证据</h3>
+<table>
+<tr><th style="width:230px">文件</th><th>守护内容</th></tr>
+<tr><td class="mono">tests/v2/test_case_agentic.py</td><td>42 条：LLM 引用映射/无引用与越界编号丢弃/不可解析即抛；计划器<b>越界字段（filter/expr/sql）被丢弃并留痕</b>（A10 红队）；关系扩展跨段产出召回词/未登记码诚实跳过；循环终止原因与三件套契约；跳数/预算总开关三条刹车；LLM 挂掉仍答出（降级）；改写建议；三方对照开关与"三组可见范围一致"；覆盖率接口真实自洽且不含案例正文；<b>分布热力口径与空白格严格自洽 + 不同身份可见范围不同</b>；<b>缺口登记：只入队列不写词表、同词幂等、已在词表 409、三重裁决门禁、驳回必写理由、批准后词表仍无该词</b>。</td></tr>
+<tr><td class="mono">tests/demo/test_case_agentic_ui.py</td><td>12 条前端契约：证据链三件套取后端字段、作答器三态徽标、循环摘要条、建议可点、对照页签由 <span class="mono">meta.demo_compare</span> 驱动且不硬编码、对照打一次后端接口、覆盖率入口、<b>热力图空白格独立样式与解释文案</b>、<b>登记表单与裁决动作 + 界面上写明"系统不自动写入词表"</b>、样式类齐备、新样式只用令牌（深浅主题随动）。</td></tr>
+<tr><td class="mono">既有 89 + 187 条</td><td>案例域权限/红队/引用/跨部门/统计等全部回归通过（BR-01 / BR-05 无回归）。</td></tr>
+</table>
+<div class="callout amber"><b>已知残留（诚实说明）</b>：① 演示检索后端是字符 1-2gram（非真实向量），个别问句仍会被<b>相关度闸门</b>按既有标定值拒答——这是闸门口径问题，不属于本次改动，换真实 embedding 后需重跑 <span class="mono">tools/calibrate_answer_thresholds.py</span>；② 本体覆盖率 57.3%/48.1% 未达 95%，多跳的"覆盖广度"受此限制（已在覆盖率看板中可见，且缺口登记链路已就绪，可逐条派工回填）；③ 无流式响应（Q1），等待期是回放动画；④ 缺口登记的裁决门禁复用了 <span class="mono">case.ingest</span>（未新增 RBAC 动作点），生产若需拆分，改 <span class="mono">case_roles.yaml</span> 即可，服务端零改动。</div>
+</div>
+</section>
+
+<footer>
+制造案例检索模块 · 本体增强 Agentic RAG 升级 PRD V1.0 · 2026-10-20<br>
+前置依据：《案例助手 · 本体增强 Agentic RAG 升级方案 V1.0》《案例检索 · 界面与功能创新方案 V1.0》及代码实证（v2/services/case_search.py · case_qa.py · v2/contracts/ontology.py · v2/demo/ui/case-screen.js）
+</footer>
+
+</main>
+</div>
+</body>
+</html>

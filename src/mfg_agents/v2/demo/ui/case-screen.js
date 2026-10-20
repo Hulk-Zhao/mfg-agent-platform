@@ -39,6 +39,11 @@
  *   - 案例检索：保留关键词检索 + 案例卡片列表（原检索视图整体迁入）。
  * 提问等待期展示管线逐级点亮的动画，让"智能体在干活"可见。
  *
+ * 主区下方 = **底部条**：统计条（可见 / 受限可申请 / 我的申请·待审 / 待我审批
+ * + 按类型·密级·状态三类分布）与演示说明黄条。二者 2026-10-20 由顶部整块下移到
+ * 整页最末（随页面滚动，不吸底），让大对话框占据首屏（顺序写在 render() 的
+ * innerHTML 拼装处）。
+ *
  * 注册方式：`window.Screens.render_cases`（app.js 的 renderScreen 按
  * `render_<screenId>` 查找，无需改 screens.js）。
  */
@@ -87,8 +92,9 @@
   const ONTO_VOCABS = [
     ["defect_mode", "缺陷模式"], ["root_cause", "根因"], ["countermeasure", "对策"],
   ];
-  /** 提问等待期的管线动画步骤（与后端 trace 步骤同构，纯展示）。 */
-  const PIPE_STEPS = ["术语归一", "同义扩展", "本体检索", "权限过滤", "引用校验"];
+  /** 提问等待期的管线动画步骤（**与后端真实步骤同构**，纯展示骨架、不含数据）。 */
+  const PIPE_STEPS = ["术语归一", "意图分解", "检索计划", "混合召回", "充分性自检",
+    "本体关系", "引用校验"];
   /** 欢迎语的快捷提问（点击即问，降低冷启动门槛）。 */
   const QUICK_QS = [
     "锡膏印刷偏移通常怎么处置？",
@@ -509,14 +515,26 @@
       cite: null,
       asking: false,
       answer: null,
+      // 最近一次提问原文（供 FR-09"登记本体词条"预填；前端不推测，直接用用户问的话）
+      lastQuestion: "",
+      // 深链待提问（数据速查「问案例」带过来的问题）：有会话则自动发起，无会话则先留在输入条
+      pendingAsk: "",
       // 提问对话窗口：多轮"问-答"历史（时间序渲染，最新在底部；最多保留 8 轮）
       askLog: [],
       // 回答收缩：null = 自动（只有最新一轮展开，上方历史全部收缩成一行摘要）；
       // 字符串 = 显式展开的轮次键（手点某轮历史）；"none" = 全部收缩。
-      // 新提问会把它重置为 null —— 这就是"有新的提问后对上面的回答做收缩展示"。
+      // 新提问会把它重置为 null —— 这就是「有新的提问后对上面的回答做收缩展示」。
       askOpen: null,
       compare: null, compareA: "qa", compareB: "equipment",
       compareDeptA: null, compareDeptB: null, comparing: false,
+      // FR-06 三方对照（演示模式）：同一句话、三种查法并列
+      cmp3: null, cmp3Query: "", cmp3Loading: false,
+      // FR-08 本体覆盖率（治理视图）
+      coverage: null, coverageLoading: false,
+      // FR-09 本体缺口登记（申请 / 待审 / 裁决）
+      gapList: null, gapLoading: false, gapDraft: null,
+      // FR-10 命中分布热力（段 × 缺陷模式，可见范围）
+      heat: null, heatOpen: false, heatLoading: false,
       audit: null,
       ingestForm: null, ingestResult: null,
       // 跨部门访问申请
@@ -566,6 +584,18 @@
       }
     } catch (e) { /* 隐私模式忽略 */ }
 
+    // 深链：数据速查「问案例」写入 cases_ask_prefill → 回到大对话框问答主视图并发起提问。
+    // 消费一次即从 sessionStorage 清除；问题本体留在 S.pendingAsk，由 bind 末尾决定何时真正发问。
+    try {
+      const wantAsk = sessionStorage.getItem("cases_ask_prefill");
+      if (wantAsk) {
+        sessionStorage.removeItem("cases_ask_prefill");
+        S.tab = "";
+        S.view = "ask";
+        S.pendingAsk = wantAsk;
+      }
+    } catch (e) { /* 隐私模式忽略 */ }
+
     if (!api.online()) {
       root.innerHTML = '<div class="case-offline">'
         + '<div class="case-offline-ico">制造案例检索需要后端</div>'
@@ -579,15 +609,18 @@
     const base = api.base();
     const hasToken = !!S.token;
 
+    // 整屏版式纪律（2026-10-20）：主区（左栏 + 大对话框）占满首屏，统计条与
+    // 演示说明黄条排在整页最后——随页面滚动，**不吸底、不冻结**（用户明确不要
+    // 常驻底部）。改这里的顺序 = 改整屏版式，先看截图再动。
     root.innerHTML = ''
       + '<div class="case-root">'
       + (S.authError ? authErrorBar(UI, S) : "")
-      + statsBar(UI, S)
-      + demoWarnings(UI, S)
       + '  <div class="case-body">'
       + '    <aside class="case-side">' + sidePanel(UI, S) + "</aside>"
       + '    <section class="case-main">' + mainPanel(UI, S) + "</section>"
       + "  </div>"
+      + statsBar(UI, S)
+      + demoWarnings(UI, S)
       + (S.detail ? detailOverlay(UI, S) : "")
       + (S.accessForm ? accessFormOverlay(UI, S) : "")
       + (S.ingestForm ? ingestOverlay(UI, S) : "")
@@ -720,7 +753,8 @@
   }
 
   /**
-   * 顶部统计卡片：可见案例 / 受限可申请 / 我的申请·待审 / 待我审批 + 三类分布。
+   * 底部统计条（2026-10-20 由顶部下移）：可见案例 / 受限可申请 / 我的申请·待审 /
+   * 待我审批 + 三类分布。
    *
    * 纪律（"加载失败优化"的落地处）：
    * - 统计失败**安静降级**（一行小字 + 说明不影响检索审批），不弹 toast、不刷
@@ -1037,6 +1071,7 @@
       + '<div class="case-side-title">协同与治理</div>'
       + '<div class="case-gov-links">'
       + govLink("gov-compare", "岗位对比")
+      + govLink("gov-onto", "本体覆盖率")
       + govLink("gov-audit", "审计链校验")
       + govLink("gov-access", "访问申请待办")
       + "</div>"
@@ -1061,8 +1096,10 @@
         + '<p class="case-hint">会话建立后：主区是「智能问答 / 案例检索」大对话框，'
         + "左侧可浏览本体受控词表。</p></div>";
     }
-    // 治理视图（岗位对比 / 审计链 / 访问申请待办）占满主区
+    // 治理视图（岗位对比 / 三方对照 / 审计链 / 访问申请待办）占满主区
     if (S.tab === "compare") return '<div class="case-pane">' + comparePane(UI, S) + "</div>";
+    if (S.tab === "compare3") return compare3Pane(UI, S);
+    if (S.tab === "onto") return coveragePane(UI, S);
     if (S.tab === "audit") return '<div class="case-pane">' + auditPane(UI, S) + "</div>";
     if (S.tab === "access") return '<div class="case-pane">' + accessPane(UI, S) + "</div>";
     // 大对话框：顶部页签切换「智能问答（聊天气泡）/ 案例检索（列表）」
@@ -1072,9 +1109,15 @@
       + "</div>";
   }
 
+  /** 三方对照是否可用（服务端开关；前端只渲染，不自作主张开放）。 */
+  function compare3Enabled(S) {
+    return !!(S.meta && S.meta.demo_compare);
+  }
+
   /** 大对话框头：品牌 + 页签 + 在线徽标（复刻制度助手的顶栏结构）。 */
   function shellHead(UI, S) {
-    const govActive = S.tab === "compare" || S.tab === "audit" || S.tab === "access";
+    const govActive = S.tab === "compare" || S.tab === "audit" || S.tab === "access"
+      || S.tab === "compare3";
     return '<div class="case-shell-head">'
       + '<div class="case-shell-brand">'
       + '<div class="case-shell-logo">' + CASE_LOGO + "</div>"
@@ -1085,6 +1128,10 @@
       + '" data-act="view-ask">智能问答</button>'
       + '<button class="case-tab' + (!govActive && S.view === "search" ? " is-active" : "")
       + '" data-act="view-search">案例检索</button>'
+      + (compare3Enabled(S)
+        ? '<button class="case-tab' + (S.tab === "compare3" ? " is-active" : "")
+          + '" data-act="view-compare3" title="同一句话，三种查法并列（演示模式）">三方对照</button>'
+        : "")
       + "</div>"
       + '<div class="case-shell-status"><span class="case-online">在线</span></div>'
       + "</div>";
@@ -1095,7 +1142,11 @@
   function accessPane(UI, S) {
     if (S.tab !== "access") return "";
     if (!S.token) return '<div class="case-hint case-pad">请先建立案例会话。</div>';
-    if (S.accessLoading) return '<div class="case-loading">' + UI.spinner() + " 加载申请…</div>";
+    if (S.accessLoading) {
+      return govBack(UI, "跨部门访问申请：授权只发生在审批通过那一刻")
+        + '<div class="case-loading">' + UI.spinner() + " 加载申请…</div>";
+    }
+    const back = govBack(UI, "跨部门访问申请：授权只发生在审批通过那一刻");
     const mine = S.myRequests || [];
     const todo = S.deptRequests || [];
     const row = function (r, approver) {
@@ -1127,7 +1178,7 @@
             + "</tbody></table>"
           : '<div class="case-hint">暂无记录</div>');
     };
-    return '<div class="case-pad">'
+    return back + '<div class="case-pad">'
       + '<div class="case-hint">跨部门案例可发起访问申请；批准后由服务端写入授权'
       + "（带有效期，到期自动回收）。<b>演示模式</b>：提交后弹窗自动模拟职能部门审批通过"
       + "（仅演示，审计链以 .demo 后缀标记）；正式环境由职能部门负责人在本页「待我审批」中"
@@ -1302,9 +1353,71 @@
       + degradeBar(UI, r || {})
       + noticeBar(UI, r || {})
       + whyPanel(UI, S, r)
+      + (r ? heatPanel(UI, S) : "")
       + (r ? segmentFacet(UI, S, r) + relViewToggle(UI, S, r) : "")
       + '<div class="case-hits">' + hitList(UI, S, r) + "</div>"
       + restrictedPane(UI, S, r);
+  }
+
+  /**
+   * FR-10 命中分布热力（段 × 缺陷模式，**当前身份可见范围**）。
+   * 空白格 = 真实统计的 0（"这段确实没出现过这类问题"），不是"没查"。
+   * 数据由服务端与检索同源计算（/cases/distribution），前端只渲染。
+   */
+  function heatPanel(UI, S) {
+    const open = !!S.heatOpen;
+    let body = "";
+    if (open) {
+      if (S.heatLoading) {
+        body = '<div class="case-loading">' + UI.spinner() + " 统计可见范围的分布…</div>";
+      } else if (S.heat) {
+        const h = S.heat;
+        const modes = h.defect_modes || [];
+        const map = {};
+        (h.cells || []).forEach(function (c) {
+          map[c.segment + "|" + c.defect_mode] = c.count;
+        });
+        const head = '<tr><th class="case-heat-seg">段 \\ 缺陷模式</th>'
+          + modes.map(function (m) {
+            return '<th title="' + UI.esc(m.code) + (m.registered ? "" : "（未登记本体）") + '">'
+              + UI.esc(m.label) + '<i class="case-heat-code">' + UI.esc(m.code) + "</i></th>";
+          }).join("") + "</tr>";
+        const rows = (h.segments || []).map(function (s) {
+          return "<tr>" + '<th class="case-heat-seg">' + UI.esc(s.label)
+            + '<i class="case-heat-code">' + UI.esc(String(s.count)) + " 例</i></th>"
+            + modes.map(function (m) {
+              const n = map[s.key + "|" + m.code] || 0;
+              if (!n) {
+                return '<td class="case-heat-blank" title="该段未出现过「' + UI.esc(m.label)
+                  + '」">空</td>';
+              }
+              const alpha = Math.min(0.85, 0.18 + n * 0.14);
+              return '<td class="case-heat-cell" style="background:rgba(var(--primary-rgb),'
+                + alpha.toFixed(2) + ')" title="' + UI.esc(m.label) + " · " + n + ' 例">'
+                + n + "</td>";
+            }).join("") + "</tr>";
+        }).join("");
+        body = '<div class="case-heat-wrap"><table class="case-heat-table">'
+          + "<thead>" + head + "</thead><tbody>" + rows + "</tbody></table></div>"
+          + '<div class="case-heat-legend"><span class="case-heat-cell-swatch"></span>颜色越深=案例越多 '
+          + '<span class="case-heat-blank-swatch"></span>空=该段未出现此类问题 '
+          + '<span class="case-hint">共 ' + (h.visible_total || 0) + " 例可见案例</span></div>"
+          + '<ul class="case-trace-items">' + (h.notes || []).map(function (n) {
+            return "<li>" + UI.esc(n) + "</li>";
+          }).join("") + "</ul></div>";
+      } else {
+        body = '<div class="case-hint case-pad">点「加载分布」按钮统计。</div>';
+      }
+    }
+    return '<div class="case-heat">'
+      + '<div class="case-heat-head">'
+      + '<button class="case-mini" data-act="heat-open">'
+      + (open ? "▾ 收起分布热力" : "▸ 段 × 缺陷模式 · 分布热力") + "</button>"
+      + (open ? '<button class="case-mini" data-act="heat-load">'
+        + (S.heat ? "重新统计" : "加载分布") + "</button>" : "")
+      + '<span class="case-hint">你的可见范围内，哪一段高发、哪一段压根没出现过——'
+      + "空白格是真实统计（与检索同源口径）。</span>"
+      + "</div>" + body + "</div>";
   }
 
   function degradeBar(UI, data) {
@@ -1691,14 +1804,90 @@
     return "turn:" + String((turn && turn.ts) || 0) + "-" + qh.toString(36);
   }
 
+  /** 证据链步骤的决策类型徽标（后端 `kind` 字段；前端不猜标题）。 */
+  const STEP_KIND = {
+    deterministic: { label: "规则", cls: "is-det" },
+    agentic: { label: "模型决策", cls: "is-agent" },
+    safe: { label: "安全内核", cls: "is-safe" },
+  };
+
+  /** 作答器徽标（诚实呈现：大模型 / 模板 / 模板降级）。 */
+  function answererBadge(UI, a) {
+    const kind = String((a && a.answerer) || "template");
+    if (kind === "llm") {
+      return '<span class="case-answerer is-llm" title="由大模型在引用约束下作答'
+        + '（每条结论都挂引用三元组）">大模型作答</span>';
+    }
+    if (kind === "template(fallback)") {
+      return '<span class="case-answerer is-fb" title="'
+        + UI.esc(a.answerer_note || "大模型不可用，已降级") + '">模板作答 · 已降级</span>';
+    }
+    return '<span class="case-answerer is-tpl" title="确定性模板作答（离线可跑）">模板作答</span>';
+  }
+
+  /** 循环摘要条（意图 / 轮数 / 跳数 / 终止原因）——"Agentic 到底做了什么"一眼可见。 */
+  function agenticStrip(UI, a) {
+    const g = (a && a.agentic) || {};
+    if (!g.rounds) return "";
+    const chip = function (label, value) {
+      return '<span class="case-kpi-chip"><i>' + UI.esc(label) + "</i>"
+        + UI.esc(String(value)) + "</span>";
+    };
+    return '<div class="case-agentic-strip">'
+      + chip("意图", g.intent_label || g.intent || "-")
+      + chip("召回轮数", g.rounds)
+      + chip("关系跳数", g.hops)
+      + (g.planner && g.planner !== "deterministic"
+        ? '<span class="case-kpi-chip is-agent"><i>计划</i>' + UI.esc(g.planner) + "</span>" : "")
+      + '<span class="case-kpi-chip is-term" title="循环为什么停在这里">'
+      + '<i>终止</i>' + UI.esc(String(g.termination || "-")) + "</span>"
+      + "</div>";
+  }
+
+  /** 问句改写引导（FR-07：后端产出的建议，前端只渲染 + 一键重问）。 */
+  function suggestionBlock(UI, a) {
+    const list = (a && a.suggestions) || [];
+    if (!list.length) return "";
+    return '<div class="case-sugg"><b>换个说法再问</b>'
+      + '<div class="case-sugg-tags">' + list.map(function (s) {
+        return '<button class="case-mini case-sugg-tag" data-act="ask-suggest"'
+          + ' data-term="' + UI.esc(s.term || "") + '" data-kind="' + UI.esc(s.kind || "") + '"'
+          + ' title="' + UI.esc(s.why || "") + '">' + UI.esc(s.term || "") + "</button>";
+      }).join("") + "</div>"
+      + '<p class="case-hint">建议由服务端从受控词表推导（口语法 → 规范术语），'
+      + "点击即用它重新提问。</p></div>";
+  }
+
+  /**
+   * FR-09 入口（问答侧）：术语归一落空 / 拒答时，把"这个词还没登记"变成可行动作。
+   *
+   * 只在**建议为空或未作答**时出现——有建议时先引导改写（成本更低），
+   * 都没辙了才引导登记（这才是"知识缺口"的正向治理路径）。
+   */
+  function gapEntry(UI, S, a) {
+    const noSuggest = !((a && a.suggestions) || []).length;
+    if (!(a && !a.answered) && !noSuggest) return "";
+    const q = String(S.lastQuestion || "").slice(0, 60);
+    return '<div class="case-gap-entry">'
+      + '<span>这条也没归一到受控词表？</span>'
+      + '<button class="case-mini" data-act="gap-open" data-q="' + UI.esc(q) + '">'
+      + "登记本体词条</button>"
+      + '<span class="case-hint">登记后由质量体系审批入词表——'
+      + "让下一个问同样问题的人搜得到。</span></div>";
+  }
+
   /**
    * 智能体检索细节抽屉（每轮回答下方，**默认收起**）。
    * 收起 = 一行管线摘要（术语归一 → 同义扩展 → 本体检索 → 引用校验，带计数）；
    * 展开 = 完整轨迹时间线 + 本体增强收益面板（即"本体增强检索"详情，按需查看）。
    * 数据全部来自后端 /cases/ask 的 trace / ontology_gain，前端只渲染不编造。
+   *
+   * 证据链 2.0：每一步带 `kind`（规则 / 模型决策 / 安全内核）、`numbers`（关键数字）、
+   * `why`（再检索的触发原因或终止原因）——这三件套让"Agentic 不是宣传词"可被验证。
    */
   function agentDrawer(UI, S, a, tkey) {
     const trace = a.trace || [];
+    const g = a.agentic || {};
     if (!trace.length && !(a.ontology_gain && a.ontology_gain.summary)) return "";
     const chips = trace.map(function (st) {
       const n = (st.items || []).length;
@@ -1711,23 +1900,46 @@
       chips.push('<span class="case-pipe-step' + (dropN ? " is-warn" : " is-ok")
         + '"><i>引用校验</i>' + (dropN ? "丢弃 " + dropN : claimN + " 通过") + "</span>");
     }
+    if (g.rounds) {
+      chips.push('<span class="case-pipe-step is-loop"><i>循环</i>'
+        + UI.esc(String(g.rounds) + " 轮 / " + String(g.hops) + " 跳") + "</span>");
+    }
     const rows = trace.map(function (step) {
       const items = (step.items || []).map(function (x) {
         return "<li>" + UI.esc(x) + "</li>";
       }).join("");
-      return '<li class="case-trace-step"><span class="case-trace-no">'
-        + UI.esc(String(step.step)) + "</span>"
-        + '<div class="case-trace-body"><b>' + UI.esc(step.title || "") + "</b>"
+      const kind = STEP_KIND[step.kind] || STEP_KIND.deterministic;
+      const nums = Object.keys(step.numbers || {}).map(function (key) {
+        return '<span class="case-num-chip"><i>' + UI.esc(key) + "</i>"
+          + UI.esc(String(step.numbers[key])) + "</span>";
+      }).join("");
+      return '<li class="case-trace-step case-kind-' + kind.cls + '">'
+        + '<span class="case-trace-no">' + UI.esc(String(step.step)) + "</span>"
+        + '<div class="case-trace-body">'
+        + '<div class="case-trace-head"><b>' + UI.esc(step.title || "") + "</b>"
+        + '<span class="case-kind-badge ' + kind.cls + '">' + UI.esc(kind.label) + "</span></div>"
         + "<p>" + UI.esc(step.detail || "") + "</p>"
+        + (step.why ? '<p class="case-step-why">'
+          + (step.title && step.title.indexOf("终止") >= 0 ? "终止原因：" : "触发原因：")
+          + UI.esc(step.why) + "</p>" : "")
+        + (nums ? '<div class="case-nums">' + nums + "</div>" : "")
         + (items ? '<ul class="case-trace-items">' + items + "</ul>" : "")
         + "</div></li>";
     }).join("");
-    const g = a.ontology_gain || {};
-    const gain = g.summary
+    const rels = (g.relations || []).length
+      ? '<div class="case-trace-rel"><span class="case-trace-gain-tag">本次命中的关系来源</span>'
+        + '<ul class="case-trace-items">' + g.relations.map(function (x) {
+          return "<li>" + UI.esc(x) + "</li>";
+        }).join("") + "</ul>"
+        + '<span class="case-hint">关系来源 = 命中集合内部真实共享的受控码（缺陷模式 / 根因），'
+        + "不跨集合推断。</span></div>"
+      : "";
+    const gain = a.ontology_gain || {};
+    const gainBlock = gain.summary
       ? '<div class="case-trace-gain"><span class="case-trace-gain-tag">本体增强收益</span>'
-        + UI.esc(g.summary)
-        + ((g.items || []).length
-          ? '<ul class="case-trace-items">' + g.items.map(function (x) {
+        + UI.esc(gain.summary)
+        + ((gain.items || []).length
+          ? '<ul class="case-trace-items">' + gain.items.map(function (x) {
             return "<li>" + UI.esc(x) + "</li>";
           }).join("") + "</ul>" : "")
         + '<span class="case-hint">数字由服务端真实统计（同一句话：原文检索 vs 本体归一后），非前端估算。</span>'
@@ -1739,7 +1951,7 @@
       + '<span class="case-agent-caret">▾</span></summary>'
       + '<div class="case-agent-body">'
       + (trace.length ? '<ol class="case-trace-list case-trace-timeline">' + rows + "</ol>" : "")
-      + gain
+      + rels + gainBlock
       + "</div></details>";
   }
 
@@ -1769,7 +1981,8 @@
       if (h && !hitsById[h.case_id]) hitsById[h.case_id] = h;
     });
     // 用户气泡（右，微信绿）
-    let html = '<div class="case-msg case-msg-user"><div class="case-msg-wrap">'
+    let html = '<div class="case-msg case-msg-user" data-turn="turn-hist:' + UI.esc(tkey) + '">'
+      + '<div class="case-msg-wrap">'
       + '<div class="case-bubble case-bubble-user">' + UI.esc((turn && turn.q) || "") + "</div>"
       + (turn && turn.ts ? '<div class="case-msg-time">' + UI.esc(fmtTime(turn.ts)) + "</div>" : "")
       + "</div></div>";
@@ -1804,12 +2017,16 @@
     const notice = a.search && a.search.notice
       ? '<div class="case-hint case-notice-inline">后端提示：' + UI.esc(a.search.notice) + "</div>" : "";
     const ansBody = '<div class="case-answer' + (a.answered ? "" : " case-answer-deny") + '">'
-      + "<h4>" + (a.answered ? "结论 · 命中的案例" : "拒答") + "</h4>"
+      + '<div class="case-answer-head"><h4>'
+      + (a.answered ? "结论 · 命中的案例" : "拒答") + "</h4>" + answererBadge(UI, a) + "</div>"
+      + agenticStrip(UI, a)
       + (a.answered && items
         ? '<ul class="case-ans-list">' + items + "</ul>"
         : "<p>" + UI.esc(a.answered ? a.answer : (a.reason || "（无内容）")) + "</p>")
       + (a.dropped_claims ? '<div class="case-warn">有 ' + a.dropped_claims
         + " 条结论因引用校验失败被丢弃。</div>" : "")
+      + suggestionBlock(UI, a)
+      + gapEntry(UI, S, a)
       + "</div>";
     // 智能体气泡（左）+ 检索细节抽屉
     html += '<div class="case-msg case-msg-bot"><div class="case-msg-avatar">' + CASE_LOGO + "</div>"
@@ -1862,8 +2079,11 @@
     return '<div class="case-msg case-msg-bot"><div class="case-msg-avatar">' + CASE_LOGO + "</div>"
       + '<div class="case-msg-wrap"><div class="case-bubble case-bubble-bot">'
       + "<b>您好，我是制造案例智能体。</b><br>"
-      + "提问后我会沿「术语归一 → 同义扩展 → 本体检索 → 权限过滤 → 引用校验」的本体增强链路"
-      + "检索历史案例：每条结论都带 (案例, 片段, 版本) 引用，挂不上引用的直接丢弃——宁拒答，不编造。"
+      + "提问后我会沿「术语归一 → 意图分解 → 检索计划 → 混合召回 → 充分性自检 → "
+      + "本体关系扩展 → 引用校验」的<b>有界 Agentic 闭环</b>检索历史案例："
+      + "召回不够就沿本体关系再搜一轮（跳数 ≤3、有预算与收益刹车）；"
+      + "每条结论都带 (案例, 片段, 版本) 引用，挂不上引用的直接丢弃——宁拒答，不编造。"
+      + "展开每轮回答下方的「智能体检索」可以看到我<b>每一步为什么这么做</b>。"
       + "</div>"
       + '<div class="case-quick">' + QUICK_QS.map(function (q) {
         return '<button class="case-mini case-quick-q" data-act="chat-quick" data-q="'
@@ -1902,7 +2122,7 @@
     if (S.asking) body += pendingCard();
     return '<div class="case-chat" id="case-chat">' + body + "</div>"
       + '<div class="case-inputbar">'
-      + '<input id="case-question" class="case-input case-input-ask" placeholder="例如：锡膏印刷偏移通常怎么处置？" autocomplete="off">'
+      + '<input id="case-question" class="case-input case-input-ask" value="' + UI.esc(S.pendingAsk || "") + '" placeholder="例如：锡膏印刷偏移通常怎么处置？" autocomplete="off">'
       + '<button class="case-btn-ask case-send" id="case-ask" title="提问">' + SEND_ICON + "</button>"
       + "</div>";
   }
@@ -1917,6 +2137,13 @@
     return index === (log || []).length - 1;
   }
 
+  /** 治理视图的返回条：治理视图占满主区时不显示大对话框页签——没有这个入口就出不去。 */
+  function govBack(UI, label) {
+    return '<div class="case-gov-back">'
+      + '<button class="case-mini" data-act="gov-back">← 返回对话主视图</button>'
+      + '<span class="case-hint">' + UI.esc(label || "") + "</span></div>";
+  }
+
   function comparePane(UI, S) {
     const roles = (S.meta && S.meta.rbac && S.meta.rbac.roles) || [];
     const opts = function (sel) {
@@ -1929,7 +2156,8 @@
     const deptA = S.compareDeptA == null ? (DEFAULT_DEPT[S.compareA] || "") : S.compareDeptA;
     const deptB = S.compareDeptB == null ? (DEFAULT_DEPT[S.compareB] || "") : S.compareDeptB;
 
-    let out = '<div class="case-hint case-pad">同一句话、两个岗位、同一个索引：'
+    let out = govBack(UI, "岗位对比：同一句话、两个身份并排——差异只可能来自授权")
+      + '<div class="case-hint case-pad">同一句话、两个岗位、同一个索引：'
       + "差异只能来自授权。这是本屏最有说服力的一屏。</div>";
     if (S.comparing) out += '<div class="case-loading">' + UI.spinner() + " 两个岗位并行检索…</div>";
     if (S.compare) {
@@ -1983,9 +2211,220 @@
       + "</div>" + out;
   }
 
+  /**
+   * FR-06 三方对照（演示模式）：同一句话、同一身份、同一个安全内核，
+   * 并列「A 无本体 / B 单跳本体 / C 本体增强 Agentic」三组结果。
+   *
+   * 纪律：**三组的可见范围完全一致**——对照的只能是检索智能，绝不是能看到多少；
+   * 数字全部来自当次真实检索，页面不写任何"提升 X%"。
+   */
+  function compare3Pane(UI, S) {
+    let out = govBack(UI, "三方对照：三组可见范围完全一致，差异只来自检索智能")
+      + '<div class="case-hint case-pad">同一句话，三种查法：'
+      + "<b>A 无本体</b>（原文直搜）/ <b>B 单跳本体</b>（同义扩展）/"
+      + "<b>C 本体增强 Agentic</b>（意图分解 + 有界多跳 + 自检再检索）。"
+      + "三组<b>可见范围完全相同</b>（同一身份、同一过滤器），差异只来自检索智能。</div>";
+    if (S.cmp3Loading) {
+      out += '<div class="case-loading">' + UI.spinner() + " 三组并行检索中…</div>";
+    }
+    const d = S.cmp3;
+    if (d) {
+      const card = function (v, extra) {
+        const segs = Object.keys(v.segments || {}).map(function (k) {
+          return '<span class="case-num-chip"><i>' + UI.esc(k) + "</i>"
+            + UI.esc(String(v.segments[k])) + "</span>";
+        }).join("");
+        const rows = (v.top || []).map(function (h) {
+          return '<li><b>' + UI.esc(h.title || h.case_id) + "</b>"
+            + '<code>' + UI.esc(h.case_id) + "</code>"
+            + '<span class="case-cmp3-seg">' + UI.esc(h.segment || "-") + "</span>"
+            + '<span class="case-cmp3-score">' + (h.score || 0).toFixed(2) + "</span></li>";
+        }).join("");
+        return '<div class="case-cmp3-col' + (extra || "") + '">'
+          + '<div class="case-cmp3-head"><b>' + UI.esc(v.label) + "</b></div>"
+          + '<div class="case-cmp3-desc">' + UI.esc(v.desc || "") + "</div>"
+          + '<div class="case-cmp3-nums">'
+          + '<span class="case-cmp3-num"><b>' + (v.case_count || 0) + "</b>个案例</span>"
+          + '<span class="case-cmp3-num"><b>' + (v.hit_count || 0) + "</b>条片段</span>"
+          + '<span class="case-cmp3-num"><b>' + (v.hidden_count || 0) + "</b>条不可见</span>"
+          + "</div>"
+          + (segs ? '<div class="case-cmp3-segs">' + segs + "</div>" : "")
+          + '<ul class="case-cmp3-list">' + (rows || '<li class="case-hint">无命中</li>') + "</ul>"
+          + "</div>";
+      };
+      const v = d.variants || [];
+      out += '<div class="case-cmp3">' + v.map(function (item, i) {
+        return card(item, i === v.length - 1 ? " is-agentic" : "");
+      }).join("") + "</div>";
+      const g = d.gains || {};
+      out += '<div class="case-cmp3-gain"><b>' + UI.esc(g.summary || "") + "</b>"
+        + '<div class="case-cmp3-gain-list">'
+        + ((g.c_only || []).length
+          ? "C 相对 B 新增的案例（关系扩展补进来的）："
+            + g.c_only.map(function (id) {
+              return '<code class="case-cmp3-new">' + UI.esc(id) + "</code>";
+            }).join("")
+          : '<span class="case-hint">C 相对 B 无新增案例——说明本体关系在当前问句上没有额外可补的证据'
+            + "（这也是一种诚实结论）。</span>")
+        + "</div></div>";
+      const ag = d.agentic || {};
+      out += '<div class="case-cmp3-strip">'
+        + '<span class="case-kpi-chip"><i>循环</i>' + UI.esc(String(ag.rounds || 0) + " 轮 / "
+          + String(ag.hops || 0) + " 跳") + "</span>"
+        + '<span class="case-kpi-chip"><i>作答器</i>' + UI.esc(String(d.answerer || "-")) + "</span>"
+        + '<span class="case-kpi-chip is-term"><i>终止</i>'
+        + UI.esc(String(ag.termination || "-")) + "</span>"
+        + '<span class="case-kpi-chip"><i>归一化</i>' + UI.esc(String(d.normalized || "")) + "</span>"
+        + "</div>";
+      out += '<p class="case-hint case-pad">' + UI.esc(d.notice || "") + "</p>";
+    }
+    return '<div class="case-pane">'
+      + '<div class="case-searchbar">'
+      + '<input id="case-cmp3-q" class="case-input" value="' + UI.esc(S.cmp3Query || "") + '"'
+      + ' placeholder="例如：整机段发现的异响，能追到插件段的波峰焊吗？">'
+      + '<button class="case-btn" id="case-cmp3-run">跑对照</button>'
+      + "</div>" + out + "</div>";
+  }
+
+  /**
+   * FR-08 本体覆盖率（治理视图）：语料里出现过的受控码有多少已在词表里登记。
+   *
+   * 这一屏是"本体是资产、不是装饰"的证据：覆盖率低的编码 → 术语归一落空 →
+   * 关系扩展扩不出召回词。数据全部来自服务端真实比对（`/cases/ontology/coverage`）。
+   */
+  function coveragePane(UI, S) {
+    const d = S.coverage;
+    let out = govBack(UI, "本体覆盖率与缺口登记：覆盖率低的地方，术语归一会直接落空")
+      + '<div class="case-hint case-pad">本体覆盖率 = '
+      + "<b>语料里出现过的受控编码中，已被词表登记的比例</b>。"
+      + "覆盖不上的编码：术语归一直接落空、关系扩展也扩不出可用召回词——"
+      + "这类问题<b>换更强的模型也救不了</b>，只能靠词表回填。"
+      + "数据来自服务端对语料与词表的真实比对。</div>";
+    if (S.coverageLoading) {
+      out += '<div class="case-loading">' + UI.spinner() + " 计算覆盖率…</div>";
+    }
+    if (!d) return '<div class="case-pane">' + out + "</div>";
+    const card = function (key, label) {
+      const v = (d.vocabularies || {})[key] || {};
+      const pct = Math.round((v.rate || 0) * 1000) / 10;
+      return '<div class="case-cov-card' + (v.meets_target ? " is-ok" : " is-warn") + '">'
+        + '<div class="case-cov-head"><b>' + UI.esc(label) + "</b>"
+        + '<span class="case-cov-pct">' + pct + "%</span></div>"
+        + '<div class="case-cov-bar"><i style="width:' + Math.min(100, pct) + '%"></i></div>'
+        + '<div class="case-cov-nums">'
+        + '<span class="case-num-chip"><i>语料编码</i>' + (v.used_codes || 0) + "</span>"
+        + '<span class="case-num-chip"><i>已登记</i>' + (v.registered_codes || 0) + "</span>"
+        + '<span class="case-num-chip"><i>未登记</i>' + (v.unregistered_codes || 0) + "</span>"
+        + '<span class="case-num-chip"><i>词表规模</i>' + (v.vocab_size || 0) + "</span>"
+        + "</div>"
+        + '<div class="case-cov-target">目标 ≥ ' + Math.round((d.target_rate || 0) * 100)
+        + "%　" + (v.meets_target ? "已达标" : "未达标（需质量体系回填）") + "</div>"
+        + ((v.unregistered_sample || []).length
+          ? '<div class="case-cov-miss">未登记样例（' + v.unregistered_codes
+            + " 个）：" + v.unregistered_sample.map(function (c) {
+              return "<code>" + UI.esc(c) + "</code>";
+            }).join("") + "</div>"
+          : "")
+        + "</div>";
+    };
+    const segs = Object.keys(d.segments || {}).map(function (k) {
+      return '<span class="case-num-chip"><i>' + UI.esc(k) + "</i>"
+        + UI.esc(String(d.segments[k])) + "</span>";
+    }).join("");
+    return '<div class="case-pane">' + out
+      + '<div class="case-cov">' + card("defect_mode", "缺陷模式")
+      + card("root_cause", "根因") + "</div>"
+      + '<div class="case-cov-notes">' + (d.notes || []).map(function (n) {
+        return "<p>" + UI.esc(n) + "</p>";
+      }).join("") + "</div>"
+      + '<div class="case-side-title">工艺段案例分布（' + (d.cases || 0) + " 例）</div>"
+      + '<div class="case-cov-segs">' + (segs || '<span class="case-hint">-</span>')
+      + "</div>" + gapPanel(UI, S) + "</div>";
+  }
+
+  /**
+   * FR-09 本体缺口登记（覆盖率视图内的治理区块）。
+   *
+   * 三条纪律写在这里：
+   * 1. **批准 ≠ 写词表**：通过只是把申请置 approved，词条仍由质量体系在词表里登记
+   *    （避免自动抽词造成"同义爆炸"，承接 N7）；
+   * 2. **职责分离**：不能裁决自己提交的申请（后端强制）；
+   * 3. **驳回必须写理由**：行内输入框为空时前端不发请求（后端也会 400 兜住）。
+   */
+  function gapPanel(UI, S) {
+    const d = S.gapList || {};
+    const draft = S.gapDraft || {};
+    const vocabOptions = [["defect_mode", "缺陷模式"], ["root_cause", "根因"],
+      ["countermeasure", "对策"]].map(function (pair) {
+        return '<option value="' + pair[0] + '"'
+          + ((draft.vocab || "defect_mode") === pair[0] ? " selected" : "") + ">"
+          + pair[1] + "</option>";
+      }).join("");
+    const canDecide = !!d.can_decide;
+    const row = function (g, withDecide) {
+      const statusZh = { pending: "待审", approved: "已批准", rejected: "已驳回" }[g.status]
+        || g.status;
+      const reason = g.decision_reason
+        ? '<div class="case-hint">裁决留痕：' + UI.esc(g.decision_reason)
+          + (g.approver_id ? "（" + UI.esc(g.approver_id) + "）" : "") + "</div>" : "";
+      const decide = withDecide && canDecide
+        ? '<div class="case-gap-decide">'
+          + '<input class="case-dept-input case-gap-reason" id="gap-reason-' + UI.esc(g.gap_id)
+          + '" placeholder="裁决意见（驳回必填）">'
+          + '<button class="case-mini" data-act="gap-approve" data-gid="' + UI.esc(g.gap_id)
+          + '">同意登记</button>'
+          + '<button class="case-mini" data-act="gap-reject" data-gid="' + UI.esc(g.gap_id)
+          + '">驳回</button></div>' : "";
+      return '<div class="case-gap-row' + (g.status === "pending" ? " is-pending" : "") + '">'
+        + '<div class="case-gap-main"><b>' + UI.esc(g.term) + "</b>"
+        + '<span class="case-gap-vocab">' + UI.esc(ontologyLabelOf(g.vocab)) + "</span>"
+        + '<span class="case-num-chip"><i>状态</i>' + UI.esc(statusZh) + "</span>"
+        + (g.code_proposed
+          ? '<span class="case-num-chip"><i>建议码</i>' + UI.esc(g.code_proposed) + "</span>" : "")
+        + '<span class="case-num-chip"><i>来源</i>' + UI.esc(g.source || "-") + "</span>"
+        + "</div>"
+        + (g.phenomenon_hint ? '<div class="case-hint">现场说法：'
+          + UI.esc(g.phenomenon_hint) + "</div>" : "")
+        + '<div class="case-gap-meta">' + UI.esc(String(g.requester_id || "-"))
+        + " · " + UI.esc(String(g.created_at || "").slice(0, 19).replace("T", " ")) + "</div>"
+        + reason + decide + "</div>";
+    };
+    const mine = (d.mine || []).map(function (g) { return row(g, false); }).join("");
+    const pend = (d.pending || []).map(function (g) { return row(g, true); }).join("");
+    return '<div class="case-gap">'
+      + '<div class="case-side-title">本体缺口登记（术语没登记 → 在这里登记）</div>'
+      + '<p class="case-hint">覆盖率看板上的"未登记编码"，对应的就是这一列待办：'
+      + "审批通过只把申请置为已批准，<b>词条仍由质量体系在词表里登记</b>"
+      + "（系统不自动写入词表——自动抽词会把同义词搞爆）。</p>"
+      + '<div class="case-gap-form">'
+      + '<select id="gap-vocab" class="case-select">' + vocabOptions + "</select>"
+      + '<input id="gap-term" class="case-input" placeholder="要登记的术语或现场说法（如：雪花点）"'
+      + ' value="' + UI.esc(draft.term || "") + '">'
+      + '<input id="gap-hint" class="case-dept-input" placeholder="现场说法/触发场景（可选）"'
+      + ' value="' + UI.esc(draft.hint || "") + '">'
+      + '<button class="case-btn" id="gap-submit">提交登记申请</button>'
+      + "</div>"
+      + (S.gapLoading ? '<div class="case-loading">' + UI.spinner() + " 加载登记队列…</div>" : "")
+      + '<div class="case-gap-cols">'
+      + '<div><div class="case-gap-col-title">待我裁决（' + (d.pending_count || 0) + "）"
+      + (canDecide ? "" : '<span class="case-hint">需质量/工艺岗（case.ingest）</span>')
+      + "</div>" + (pend || '<div class="case-hint">暂无待审申请</div>') + "</div>"
+      + '<div><div class="case-gap-col-title">我提交的</div>'
+      + (mine || '<div class="case-hint">你还没有提交过登记申请</div>') + "</div>"
+      + "</div></div>";
+  }
+
+  function ontologyLabelOf(vocab) {
+    for (let i = 0; i < ONTO_VOCABS.length; i++) {
+      if (ONTO_VOCABS[i][0] === vocab) return ONTO_VOCABS[i][1];
+    }
+    return String(vocab || "");
+  }
+
   function auditPane(UI, S) {
     const a = S.audit;
-    let out = '<div class="case-hint case-pad">审计只落<b>哈希与计数</b>'
+    let out = govBack(UI, "审计链校验：只落哈希与计数，可逐行验链")
+      + '<div class="case-hint case-pad">审计只落<b>哈希与计数</b>'
       + "（查询哈希、过滤指纹、命中数、不可见数），不落查询原文、不落案例正文——"
       + "审计本身不能变成第二个泄漏面。</div>";
     if (a) {
@@ -2288,6 +2727,8 @@
     });
     on("#case-ask", "click", function () { doAsk(); });
     on("#case-compare", "click", doCompare);
+    on("#case-cmp3-run", "click", doCompare3);
+    on("#gap-submit", "click", submitGap);
     on("#case-audit-run", "click", doAudit);
     // 页面信息加载失败后的重试入口（清错误态重新拉 meta）
     on("#case-meta-retry", "click", function () {
@@ -2381,6 +2822,14 @@
           S.tab = ""; S.view = "ask"; repaint(); scrollChat();
         }
         else if (act === "view-search") { S.tab = ""; S.view = "search"; repaint(); }
+        else if (act === "view-compare3") {
+          S.tab = "compare3"; S.view = "ask"; repaint();
+        }
+        else if (act === "ask-suggest") {
+          // 改写建议：点击即用建议术语重新提问（建议由服务端从受控词表推导）
+          const term = el.getAttribute("data-term") || "";
+          if (term) doAsk(term + " 怎么处置");
+        }
         else if (act === "chat-quick") {
           const q = el.getAttribute("data-q") || "";
           S.tab = ""; S.view = "ask";
@@ -2394,7 +2843,13 @@
           const cur = log.length ? (turnIsOpen(S, log, log.length - 1, turnKey(log[log.length - 1]))
             ? turnKey(log[log.length - 1]) : S.askOpen) : "";
           S.askOpen = (cur === k) ? "none" : k;
+          // 换的这一轮位置上（repaint 会整块重画并回到顶部，展开的轮次可能被甩出视野）
+          const anchor = "turn-hist:" + k;
           repaint();
+          const box = root.querySelector('[data-turn="' + anchor + '"]');
+          if (box && box.scrollIntoView) {
+            box.scrollIntoView({ block: "nearest", behavior: "smooth" });
+          }
         }
         else if (act === "onto-vocab") {
           S.ontoVocab = el.getAttribute("data-vocab") || "defect_mode";
@@ -2406,7 +2861,33 @@
         else if (act === "onto-search") applyOntoTerm("search");
         else if (act === "onto-ask") applyOntoTerm("ask");
         else if (act === "onto-close") { S.ontoSel = null; repaint(); }
+        else if (act === "gov-back") {
+          // 治理视图占满主区时不显示大对话框页签——返回入口必须显式给（否则出不去）
+          S.tab = "";
+          S.view = "ask";
+          repaint();
+          scrollChat();
+        }
         else if (act === "gov-compare") { S.tab = "compare"; repaint(); }
+        else if (act === "gov-onto") { S.tab = "onto"; repaint(); doCoverage(); doGapList(); }
+        // ---- FR-10 命中分布热力 ----
+        else if (act === "heat-open") {
+          S.heatOpen = !S.heatOpen;
+          repaint();
+          if (S.heatOpen && !S.heat) doHeat();
+        }
+        else if (act === "heat-load") { doHeat(); }
+        // ---- FR-09 本体缺口登记 ----
+        else if (act === "gap-open") {
+          S.gapDraft = { vocab: "defect_mode", term: el.getAttribute("data-q") || "" };
+          S.tab = "onto";
+          repaint();
+          doCoverage();
+          doGapList();
+        }
+        else if (act === "gap-approve" || act === "gap-reject") {
+          decideGap(el.getAttribute("data-gid") || "", act === "gap-approve");
+        }
         else if (act === "gov-audit") { S.tab = "audit"; repaint(); doAudit(); }
         else if (act === "gov-access") { S.tab = "access"; repaint(); doAccessList(); }
         // I10 相邻概念：点击即替换查询并重搜
@@ -2495,6 +2976,7 @@
         : ((root.querySelector("#case-question") || {}).value || "")).trim();
       if (!q) { UI.toast("请输入问题", "err"); return; }
       S.asking = true;
+      S.lastQuestion = q;   // FR-09：登记入口用它预填（不推测用户意图）
       S.tab = "";
       S.view = "ask";       // 等待动画只在问答视图
       repaint();
@@ -2556,6 +3038,130 @@
         repaint();
         doSearch();
       }
+    }
+
+    /**
+     * FR-10 命中分布热力：一次 GET，服务端与检索同源统计（可见范围 + 空白格）。
+     */
+    function doHeat() {
+      S.heatLoading = true;
+      repaint();
+      caseFetch(base, "/api/v2/cases/distribution?top=12", { token: S.token })
+        .then(function (data) {
+          S.heatLoading = false;
+          S.heat = data;
+          repaint();
+        }).catch(function (err) {
+          S.heatLoading = false;
+          repaint();
+          UI.toast(err.message || "分布统计失败", "err", 3600);
+        });
+    }
+
+    /**
+     * FR-09 登记队列：我的申请 + 待我裁决（治理视图内一次拉取）。
+     */
+    function doGapList() {
+      S.gapLoading = true;
+      repaint();
+      caseFetch(base, "/api/v2/cases/ontology/gap", { token: S.token })
+        .then(function (data) {
+          S.gapLoading = false;
+          S.gapList = data;
+          repaint();
+        }).catch(function (err) {
+          S.gapLoading = false;
+          repaint();
+          UI.toast(err.message || "登记队列加载失败", "err", 3600);
+        });
+    }
+
+    /** 提交登记申请（术语未登记时的正向治理入口；后端会挡掉已在词表里的词）。 */
+    function submitGap() {
+      const vocab = ((root.querySelector("#gap-vocab") || {}).value || "defect_mode");
+      const term = ((root.querySelector("#gap-term") || {}).value || "").trim();
+      const hint = ((root.querySelector("#gap-hint") || {}).value || "").trim();
+      if (!term) { UI.toast("请填写要登记的术语或现场说法", "err"); return; }
+      caseFetch(base, "/api/v2/cases/ontology/gap", {
+        token: S.token,
+        body: { vocab: vocab, term: term, hint: hint, source: "manual" },
+      }).then(function (data) {
+        UI.toast(data.duplicated
+          ? "该术语已有待审申请，无需重复提交"
+          : "已提交登记申请：" + term + "（待质量体系审批）", "ok", 3600);
+        S.gapDraft = null;
+        doGapList();
+      }).catch(function (err) {
+        UI.toast(err.message || "提交失败", "err", 4200);
+      });
+    }
+
+    /**
+     * 裁决登记申请。**驳回必须写理由**（前端先挡，后端也会 400 兜住）——
+     * 词条不登记会影响所有同类问句，理由要留痕，不能只点一下。
+     */
+    function decideGap(gapId, approve) {
+      const reason = ((root.querySelector("#gap-reason-" + gapId) || {}).value || "").trim();
+      if (!approve && !reason) {
+        UI.toast("驳回必须写明理由（词条不登记会影响所有同类问句）", "err", 4200);
+        return;
+      }
+      caseFetch(base, "/api/v2/cases/ontology/gap/" + encodeURIComponent(gapId) + "/decide", {
+        token: S.token, body: { approve: approve, reason: reason },
+      }).then(function () {
+        UI.toast(approve
+          ? "已批准：请质量体系在词表 YAML 中登记该词条（系统不自动写入词表）"
+          : "已驳回并留痕", "ok", 4200);
+        doGapList();
+      }).catch(function (err) {
+        UI.toast(err.message || "裁决失败", "err", 4200);
+      });
+    }
+
+    /**
+     * FR-08 本体覆盖率（治理视图）：一次 GET，服务端真实比对语料与词表。
+     * 失败安静降级（治理视图不该因为一个统计接口把整屏打崩）。
+     */
+    function doCoverage() {
+      if (S.coverage || S.coverageLoading) return;
+      S.coverageLoading = true;
+      repaint();
+      caseFetch(base, "/api/v2/cases/ontology/coverage", { token: S.token })
+        .then(function (data) {
+          S.coverageLoading = false;
+          S.coverage = data;
+          repaint();
+        }).catch(function (err) {
+          S.coverageLoading = false;
+          repaint();
+          UI.toast(err.message || "覆盖率计算失败", "err", 3600);
+        });
+    }
+
+    /**
+     * FR-06 三方对照：同一句话、同一身份 → 三组检索配置并列。
+     * 走一次 /api/v2/cases/compare（服务端才拥有"同一身份 + 同一过滤器"这个前提，
+     * 前端三次请求拼出来的对照没法保证这一点）。
+     */
+    function doCompare3() {
+      const q = ((root.querySelector("#case-cmp3-q") || {}).value
+        || S.cmp3Query || "").trim();
+      if (!q) { UI.toast("请输入问题（三组对照需要同一句话）", "err"); return; }
+      S.cmp3Query = q;
+      S.cmp3Loading = true;
+      S.cmp3 = null;
+      repaint();
+      caseFetch(base, "/api/v2/cases/compare", {
+        token: S.token, body: { question: q, k: S.k || 5, action: "read" },
+      }).then(function (data) {
+        S.cmp3Loading = false;
+        S.cmp3 = data;
+        repaint();
+      }).catch(function (err) {
+        S.cmp3Loading = false;
+        repaint();
+        UI.toast(err.message || "对照失败（仅演示环境开放）", "err", 4200);
+      });
     }
 
     function doCompare() {
@@ -2861,6 +3467,16 @@
           };
           repaint();
         });
+    }
+
+    // 深链待提问（数据速查「问案例」）：已建立案例会话就直接发起一次智能问答；
+    // 尚无会话则问题先留在输入条里（左栏建会话后任意一次 repaint 会自动补发）。
+    // 位置放在 bind 末尾是有意的：doAsk 会同步 repaint（重跑整个 bind），
+    // 放在中段会让外层 bind 继续往新 DOM 上把同一批处理器再绑一遍。
+    if (S.pendingAsk && S.token) {
+      const pendingQ = S.pendingAsk;
+      S.pendingAsk = null;
+      doAsk(pendingQ);
     }
   }
 

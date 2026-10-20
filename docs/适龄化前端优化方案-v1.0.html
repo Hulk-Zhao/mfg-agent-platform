@@ -1,0 +1,771 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>制造业智能门户 · 适龄化前端优化方案 v1.0</title>
+<style>
+  :root{
+    --ink:#16202E; --ink-2:#3D4A5C; --ink-3:#68758A;
+    --line:#DFE5EE; --line-2:#EDF1F6;
+    --bg:#F6F8FB; --surface:#FFFFFF;
+    --brand:#1557AD; --brand-soft:#EAF1FB;
+    --ok:#16702F; --ok-bg:#E8F5EC;
+    --warn:#8A5C00; --warn-bg:#FFF6DF;
+    --danger:#B8202B; --danger-bg:#FFEBE9;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Segoe UI",sans-serif;
+    font-size:15px; line-height:1.8; color:var(--ink); background:var(--bg);
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1080px;margin:0 auto;padding:0 28px 80px}
+  header{background:var(--surface);border-bottom:1px solid var(--line);padding:44px 0 34px;margin-bottom:36px}
+  header .wrap{padding-bottom:0}
+  .eyebrow{font-size:13px;letter-spacing:2px;color:var(--brand);font-weight:700;margin-bottom:10px}
+  h1{font-size:30px;line-height:1.35;font-weight:700;letter-spacing:-.3px}
+  .sub{color:var(--ink-3);font-size:14.5px;margin-top:10px}
+  .meta{display:flex;gap:22px;flex-wrap:wrap;margin-top:18px;font-size:13px;color:var(--ink-3)}
+  .meta b{color:var(--ink-2);font-weight:600}
+
+  h2{font-size:21px;font-weight:700;margin:52px 0 6px;padding-bottom:12px;border-bottom:2px solid var(--line)}
+  h2 .n{color:var(--brand);margin-right:10px}
+  h3{font-size:16.5px;font-weight:700;margin:30px 0 10px;color:var(--ink)}
+  h4{font-size:15px;font-weight:700;margin:20px 0 8px;color:var(--ink-2)}
+  p{margin:10px 0;color:var(--ink-2)}
+  ul,ol{margin:10px 0 10px 22px;color:var(--ink-2)}
+  li{margin:5px 0}
+  strong{color:var(--ink);font-weight:700}
+  code{font-family:"SFMono-Regular",Consolas,monospace;font-size:12.8px;background:var(--line-2);
+       padding:1px 6px;border-radius:4px;color:#3B4A5E}
+
+  .lead{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:22px 26px;margin:22px 0}
+  .lead p{margin:6px 0}
+
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px;margin:22px 0}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:20px 22px}
+  .card.critical{border-left:4px solid var(--danger)}
+  .card.warn{border-left:4px solid var(--warn)}
+  .card.good{border-left:4px solid var(--ok)}
+  .card h4{margin-top:0;font-size:15.5px}
+  .card p{font-size:14px;margin:8px 0 0}
+  .card .num{font-size:26px;font-weight:800;letter-spacing:-.5px;color:var(--ink);display:block;margin-bottom:2px}
+
+  table{width:100%;border-collapse:collapse;margin:16px 0;font-size:13.6px;background:var(--surface);
+        border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  th{background:#F2F6FB;text-align:left;padding:11px 14px;font-weight:700;color:var(--ink);
+     border-bottom:1px solid var(--line);font-size:13px}
+  td{padding:10px 14px;border-bottom:1px solid var(--line-2);color:var(--ink-2);vertical-align:top}
+  tr:last-child td{border-bottom:none}
+  td.num{font-variant-numeric:tabular-nums;white-space:nowrap}
+
+  .tag{display:inline-block;font-size:11.5px;font-weight:700;padding:2px 8px;border-radius:5px;line-height:1.7}
+  .t-p0{background:var(--danger-bg);color:var(--danger)}
+  .t-p1{background:var(--warn-bg);color:var(--warn)}
+  .t-p2{background:var(--brand-soft);color:var(--brand)}
+  .t-fail{background:var(--danger-bg);color:var(--danger)}
+  .t-pass{background:var(--ok-bg);color:var(--ok)}
+  .t-hi{background:var(--danger-bg);color:var(--danger)}
+  .t-mid{background:var(--warn-bg);color:var(--warn)}
+  .t-low{background:#EEF1F6;color:var(--ink-3)}
+
+  .quote{border-left:3px solid var(--brand);background:var(--brand-soft);padding:14px 18px;
+         border-radius:0 8px 8px 0;margin:16px 0;font-size:14px;color:var(--ink-2)}
+  .quote b{color:var(--brand)}
+
+  .persona{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;margin:20px 0}
+  .persona .card{border-top:3px solid var(--brand)}
+  .persona .card:nth-child(2){border-top-color:#8A5C00}
+  .persona .card:nth-child(3){border-top-color:#B8202B}
+  .persona .who{font-size:17px;font-weight:700;margin-bottom:2px}
+  .persona .age{font-size:12.5px;color:var(--ink-3);margin-bottom:12px}
+  .persona dl{font-size:13.5px;margin:0}
+  .persona dt{font-weight:700;color:var(--ink);margin-top:10px;font-size:13px}
+  .persona dd{margin:2px 0 0;color:var(--ink-2)}
+
+  .matrix td:first-child{font-weight:700;color:var(--ink);background:#FAFCFE}
+  .matrix th{text-align:center}
+  .matrix th:first-child{text-align:left}
+  .matrix td{font-size:13px}
+
+  .foot{margin-top:56px;padding-top:20px;border-top:1px solid var(--line);font-size:12.5px;color:var(--ink-3)}
+  .toc{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:18px 24px;margin:24px 0}
+  .toc ol{margin:6px 0 0 20px;columns:2;column-gap:32px}
+  .toc li{margin:4px 0;font-size:14px}
+  .toc a{color:var(--brand);text-decoration:none}
+  .toc a:hover{text-decoration:underline}
+
+  @media print{
+    body{background:#fff;font-size:11pt}
+    header{padding-top:0}
+    h2{page-break-after:avoid}
+    table{page-break-inside:avoid}
+    .card{page-break-inside:avoid}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <div class="eyebrow">前端体验治理 · 专题方案</div>
+    <h1>制造业智能门户 · 适龄化主题与排版优化方案</h1>
+    <div class="sub">面向青年 / 中年 / 资深三类企业内用户的可读性、可操作性与认知负荷系统性改造</div>
+    <div class="meta">
+      <span><b>版本</b> v1.0</span>
+      <span><b>日期</b> 2026-10-20</span>
+      <span><b>范围</b> 智能门户前端（13 个基础屏 + 7 个场景屏 · 31 个岗位）</span>
+      <span><b>方法</b> 代码实测 + WCAG 2.1 验算 + 分年龄人因分析</span>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+<div class="toc">
+  <strong style="font-size:14.5px">目录</strong>
+  <ol>
+    <li><a href="#s1">核心结论</a></li>
+    <li><a href="#s2">现状体检：实测数据</a></li>
+    <li><a href="#s3">三类用户画像</a></li>
+    <li><a href="#s4">问题清单（六维度）</a></li>
+    <li><a href="#s5">优化方案（按维度）</a></li>
+    <li><a href="#s6">年龄段 × 维度交汇矩阵</a></li>
+    <li><a href="#s7">优先级路线图</a></li>
+    <li><a href="#s8">验收清单</a></li>
+    <li><a href="#s9">落地验证结果</a></li>
+    <li><a href="#s10">风险、分歧与未覆盖项</a></li>
+  </ol>
+</div>
+
+<!-- ========== 1 ========== -->
+<h2 id="s1"><span class="n">01</span>核心结论</h2>
+
+<div class="lead">
+  <p>本轮对前端做了逐行实测（<code>app.css</code> 4500+ 行、<code>app.js</code> 1300+ 行），共定位 <strong>32 项可验证缺陷</strong>，其中 <strong>12 项属于「看不见 / 点不到 / 不知道自己在哪」的功能性阻断</strong>，而非审美问题。</p>
+  <p>三项结论改变了问题的定性：</p>
+</div>
+
+<div class="cards">
+  <div class="card critical">
+    <span class="num">3.5 : 1</span>
+    <h4>最该被看见的按钮，标签本身看不清</h4>
+    <p>主按钮 <code>.btn-primary</code> 是白字压在 <code>#2B7AE0→#3B8AE8</code> 渐变上，对比度仅约 <strong>3.5</strong>，低于正文级 4.5 门槛。根因是 <code>--primary</code> 一个令牌同时承担两种相反职责：做强调文字要<strong>亮</strong>，做按钮填充底要<strong>暗</strong>。解法是拆成「墨色」与「填充」两个角色令牌。</p>
+  </div>
+  <div class="card critical">
+    <span class="num">2.99 : 1</span>
+    <h4>亮色主题自落地起就没真正达标</h4>
+    <p>亮色下 <code>--text-3</code> 对白底仅 <strong>2.99</strong>、侧栏分组标题 <strong>2.40</strong>、登录页副文案 <strong>2.59</strong>。这些颜色确实存在于已提交版本中——讽刺地来自名为「亮色对比度回修」的那次提交。<strong>只修深色、把资深员工推向亮色，反而更糟</strong>。</p>
+  </div>
+  <div class="card warn">
+    <span class="num">≠ 放大字号</span>
+    <h4>资深员工的最优解是换主题，不是放大字号</h4>
+    <p>老视（45 岁后调节力 &lt;3D）伴随瞳孔散大与球面像差，深色模式下的<strong>光晕（halation）</strong>无法通过放大字号消除。正确落点是<strong>「亮色 + 大字 + 宽松密度」打包档位</strong>。这条决定了整个方案的形态。</p>
+  </div>
+</div>
+
+<div class="quote">
+  <b>一句话结论：</b>当前界面是按「25 岁、深色环境、高信息密度」的单一假设设计的，而企业内 45 岁以上用户恰恰在这三个维度上全部相反。改造不是把字调大，而是让<strong>主题、字号、密度三件事可以被一次点击同时切换</strong>，并且让不会主动找设置的人也能在真实阅读场景里遇到调整入口。
+</div>
+
+<!-- ========== 2 ========== -->
+<h2 id="s2"><span class="n">02</span>现状体检：实测数据</h2>
+
+<h3>2.1 色彩对比度（WCAG 2.1 相对亮度公式实测）</h3>
+<table>
+  <thead><tr><th>组合</th><th>现状值</th><th>要求</th><th>判定</th><th>受影响人群</th></tr></thead>
+  <tbody>
+    <tr><td>正文 <code>--text</code> / 卡片底</td><td class="num">13.61</td><td class="num">4.5</td><td><span class="tag t-pass">AAA</span></td><td>—</td></tr>
+    <tr><td>次要文字 <code>--text-2</code> / 卡片底</td><td class="num">9.13</td><td class="num">4.5</td><td><span class="tag t-pass">AAA</span></td><td>—</td></tr>
+    <tr><td>弱化文字 <code>--text-3</code> / 卡片底</td><td class="num">6.20</td><td class="num">4.5</td><td><span class="tag t-pass">AA</span></td><td>—</td></tr>
+    <tr><td><strong>主色 <code>--primary</code> / 卡片底</strong></td><td class="num">4.29</td><td class="num">4.5</td><td><span class="tag t-fail">FAIL</span></td><td>全部</td></tr>
+    <tr><td><strong>主按钮白字 / 按钮填充</strong></td><td class="num">≈3.5</td><td class="num">4.5</td><td><span class="tag t-fail">FAIL</span></td><td>全部</td></tr>
+    <tr><td>危险色 <code>--danger</code> / 卡片底</td><td class="num">5.07</td><td class="num">7（老视）</td><td><span class="tag t-fail">不足</span></td><td>资深</td></tr>
+    <tr><td>控件边框 <code>--border</code> / 卡片底</td><td class="num">1.40</td><td class="num">3.0</td><td><span class="tag t-fail">FAIL</span></td><td>中年、资深</td></tr>
+    <tr><td>焦点环 <code>rgba(59,130,246,.65)</code> / 四类背景</td><td class="num">2.09 – 2.92</td><td class="num">3.0</td><td><span class="tag t-fail">全 FAIL</span></td><td>键盘、低视力</td></tr>
+    <tr><td>亮色 <code>--text-3</code> / 白底</td><td class="num">2.99</td><td class="num">4.5</td><td><span class="tag t-fail">FAIL</span></td><td>资深</td></tr>
+    <tr><td>亮色侧栏分组标题 <code>#97A3B5</code></td><td class="num">2.40</td><td class="num">4.5</td><td><span class="tag t-fail">FAIL</span></td><td>中年、资深</td></tr>
+    <tr><td>亮色登录页副文案 <code>#7A8698</code></td><td class="num">3.49</td><td class="num">4.5</td><td><span class="tag t-fail">FAIL</span></td><td>资深</td></tr>
+  </tbody>
+</table>
+
+<h3>2.2 字号与排版</h3>
+<table>
+  <thead><tr><th>指标</th><th>实测</th><th>问题</th></tr></thead>
+  <tbody>
+    <tr><td><code>font-size</code> 声明总数</td><td class="num">421 处</td><td>—</td></tr>
+    <tr><td><strong>小于 12px 的声明</strong></td><td class="num">181 处（43%）</td><td>10px×5、10.5px×21、11px×62、11.5px×68 等，最小 9px</td></tr>
+    <tr><td>离散字号取值</td><td class="num">31 种</td><td>12.2 / 12.3 / 12.4 / 12.5 并存，靠细微分差造层级 = 视觉噪声</td></tr>
+    <tr><td>正文基准</td><td class="num">14px</td><td>仅 11 处使用，基准形同虚设</td></tr>
+    <tr><td>行高</td><td>1.6–1.9 为主</td><td>方向正确；但表格与紧凑区存在 1.5 与 1，中文密集下易串行</td></tr>
+    <tr><td>用户级字号缩放</td><td class="num">0 处</td><td>无「大字模式」，无法个性化</td></tr>
+  </tbody>
+</table>
+
+<h3>2.3 布局密度与可点目标</h3>
+<table>
+  <thead><tr><th>元素</th><th>现状</th><th>建议下限</th><th>缺口</th></tr></thead>
+  <tbody>
+    <tr><td>卡片 / 列表行内边距</td><td class="num">6 – 11px（主流）</td><td class="num">12 – 16px</td><td>留白不足，视觉拥挤</td></tr>
+    <tr><td><code>.btn-sm</code></td><td class="num">27px</td><td class="num">44px</td><td>面积差 2.7 倍</td></tr>
+    <tr><td><code>.icon-btn</code></td><td class="num">32px</td><td class="num">44px</td><td>顶栏图标按钮群</td></tr>
+    <tr><td><code>.chip</code> / 标签</td><td class="num">34 × 24px</td><td class="num">44 × 44px</td><td>筛选控件群</td></tr>
+    <tr><td>侧栏导航项</td><td class="num">≈37px</td><td class="num">44px</td><td>命中面积 +19%</td></tr>
+    <tr><td>滚动条</td><td class="num">8px（实抓 ≈4px）</td><td class="num">12px</td><td>资深用户难以抓取</td></tr>
+  </tbody>
+</table>
+
+<h3>2.4 导航与响应式</h3>
+<table>
+  <thead><tr><th>指标</th><th>实测</th><th>影响</th></tr></thead>
+  <tbody>
+    <tr><td>导航结构</td><td>13 个基础屏（4 组）+ 7 个场景屏（第 5 组「生态链场景」）= <strong>20 项 / 5 组</strong>；其中 <code>s00 契约自检屏</code> 属开发自检用</td><td>按实际 CSS 值重算侧栏总高 <strong>≈953px</strong>，远超 1080p 可视高度，<strong>必然滚动</strong></td></tr>
+    <tr><td>登录页角色网格滚动条</td><td class="num">6px（全站最细，通用为 8px）</td><td>thumb 半径仅 3px，而它位于<strong>资深员工进系统的第一个交互</strong>（选岗位）</td></tr>
+    <tr><td>≤960px 侧栏</td><td>塌为 64px 纯图标轨，文字与分组标题全部 <code>display:none</code></td><td><strong>全站 tooltip 为 0 处</strong> → 19 个屏变成靠猜的图标</td></tr>
+    <tr><td>抽屉 / 底部栏 / <code>pointer:coarse</code></td><td class="num">0 处</td><td>移动端无可用导航形态；车间平板仍用 27/32px 目标</td></tr>
+    <tr><td>响应式断点</td><td class="num">10 个（480/720/760/860/900/960/980/1080/1180/1200）</td><td>无体系，相邻档差异 40–100px，行为不可预测</td></tr>
+    <tr><td>硬编码最小列宽</td><td><code>minmax(118/276/360/400px)</code> 共 4 处</td><td>中大字号下必定横向溢出</td></tr>
+    <tr><td>当前位置指示</td><td>仅侧栏 3px 色条，无面包屑，无 <code>aria-current</code></td><td>滚动后丢失上下文</td></tr>
+    <tr><td>破坏性操作确认</td><td class="num">0 处 <code>window.confirm</code></td><td><strong>「驳回」等不可恢复操作点了就生效</strong></td></tr>
+  </tbody>
+</table>
+
+<div class="quote">
+  <b>顺带记一笔优点（不要改）：</b>① 已有 <code>@media (prefers-reduced-motion: reduce)</code> 全局降级（覆盖 <code>*, *::before, *::after</code>，质量高于一般实现）；② 侧栏「图标 + 文字」并存对 46 岁以上人群是正确的，不要在「精简视觉」口号下改成纯图标；③ 动效时长主流 120–180ms 共 91 处，处于合理区间，<strong>不需要压缩</strong>——真正缺的是<strong>按下态（:active）确认</strong>，而非时长；④ <code>.role-group-title</code> 已 sticky 且 <code>.role-grid</code> 已 <code>overflow:auto</code>，说明滚动容器是<strong>有意为之</strong>，改造应是「加宽滚动条 + 在此之上加二级导航」而非推翻重做；⑤ <code>theme-switcher.js</code> 的 <code>apply()</code> 在 IIFE 顶层同步执行，首绘前写 <code>&lt;html&gt;</code> 属性，避免了主题闪跳——新增字号/密度属性时沿用同一模式。
+</div>
+
+<!-- ========== 3 ========== -->
+<h2 id="s3"><span class="n">03</span>三类用户画像</h2>
+
+<div class="persona">
+  <div class="card">
+    <div class="who">青年员工</div>
+    <div class="age">22 – 32 岁 · 数字化原生</div>
+    <dl>
+      <dt>视觉生理</dt><dd>调节力 8–10D，近点约 10cm，10–11px 小字无阅读障碍；对比敏感度处于峰值。</dd>
+      <dt>操作习惯</dt><dd>鼠标精度高，可命中 ≤24px 目标；惯用快捷键与多标签并行；滚动耐心高，愿意长页面探索。</dd>
+      <dt>认知特点</dt><dd>短时记忆 7±2 项，可同屏处理 3–4 个卡片；术语（Cpk / OEE / HITL）学习成本低；出错后自主恢复强。</dd>
+      <dt>核心诉求</dt><dd>关键路径 ≤3 次点击；支持功能搜索直达；允许高信息密度；键盘可达且焦点环完整。</dd>
+    </dl>
+  </div>
+  <div class="card">
+    <div class="who">中年员工</div>
+    <div class="age">33 – 45 岁 · 业务骨干</div>
+    <dl>
+      <dt>视觉生理</dt><dd>调节力降至 4–6D，<strong>38–42 岁出现早期老视</strong>；对比敏感度中高频衰退最早——<strong>最先表现为「看不见卡片边界」</strong>；晶状体轻微黄化。</dd>
+      <dt>操作习惯</dt><dd>鼠标仍精准但<strong>滚动耐心显著下降</strong>，倾向「看标题 → 定位 → 读重点」；用 Ctrl+F 与筛选多于滚动；多任务并行，易被打断。</dd>
+      <dt>认知特点</dt><dd>领域 expertise 高，术语无障碍但反感冗余解释；短时记忆被业务负载占用，<strong>同屏分组过多会丢失当前位置</strong>。</dd>
+      <dt>核心诉求</dt><dd>正文 ≥14px、辅助 ≥12px；控件边界 ≥3:1；每屏有明确「我在哪」；一级区块 ≤5 个。</dd>
+    </dl>
+  </div>
+  <div class="card">
+    <div class="who">资深员工</div>
+    <div class="age">46 – 60 岁 · 经验权威</div>
+    <dl>
+      <dt>视觉生理</dt><dd><strong>老视全面化</strong>（调节力 &lt;3D，近点退至 40–50cm）；晶状体黄化使蓝光透过率下降约 30%；<strong>需 ≥7:1 才能舒适阅读小字</strong>；暗光下瞳孔散大 → 球面像差 → <strong>深色模式光晕</strong>；男性红绿色弱累计约 8%。</dd>
+      <dt>操作习惯</dt><dd>鼠标抖动，需 ≥44px 目标；滚动耐心低，倾向线性从左到右点击；几乎不用快捷键；触屏经验薄弱，<strong>误触后不知如何退出</strong>；8px 滚动条难以抓取。</dd>
+      <dt>认知特点</dt><dd>行业经验深厚但<strong>不熟数字化术语</strong>，偏好中文全称；短时记忆 4–5 项，跨屏/滚动后易丢上下文；<strong>出错后恢复能力弱</strong>，依赖明确的撤销与返回。</dd>
+      <dt>核心诉求</dt><dd>默认落「亮色 + 大字」；可点目标 ≥44px；<strong>状态必须色 + 图标 + 中文三重冗余</strong>；每个不可逆动作有固定位置的撤销入口。</dd>
+    </dl>
+  </div>
+</div>
+
+<div class="quote">
+  <b>设计上的关键取舍：</b>不要用「青年 / 中年 / 资深」给档位命名。年龄与实际视力弱相关（同年龄段差异可达 3 倍），贴年龄标签既冒犯又不准。本方案统一<strong>用诉求命名</strong>：<code>标准</code> / <code>清晰</code> / <code>大字</code>，并用<strong>症状化提问</strong>（「要凑近一点才看得清」）而非年龄提问来引导选择。
+</div>
+
+<!-- ========== 4 ========== -->
+<h2 id="s4"><span class="n">04</span>问题清单（六维度）</h2>
+
+<h3>4.1 色彩对比度</h3>
+<table>
+  <thead><tr><th style="width:52px">编号</th><th>问题</th><th>最受影响</th><th style="width:70px">严重度</th></tr></thead>
+  <tbody>
+    <tr><td>C1</td><td>主色 <code>#3B8AE8</code> / 卡片底 4.29，正文级 AA 不达标</td><td>全部</td><td><span class="tag t-hi">高</span></td></tr>
+    <tr><td>C2</td><td>控件边框 1.40，远低于非文本 3:1 —— 中年员工看不见卡片边界</td><td>中年、资深</td><td><span class="tag t-hi">高</span></td></tr>
+    <tr><td>C3</td><td>危险色 5.07，未达老视所需的 7:1</td><td>资深</td><td><span class="tag t-hi">高</span></td></tr>
+    <tr><td>C4</td><td><strong>主按钮白字 / 按钮填充 ≈3.5</strong>，另有 10 处 <code>background:var(--primary)</code> 配白字</td><td>全部</td><td><span class="tag t-hi">高</span></td></tr>
+    <tr><td>C5</td><td>亮色 <code>--text-3</code> 2.99、侧栏分组标题 2.40、登录页副文案 2.59–3.49（共 7 处）</td><td>资深</td><td><span class="tag t-hi">高</span></td></tr>
+    <tr><td>C6</td><td>亮色下侧栏与登录页<strong>仍强制深色</strong>，与白色内容区割裂，视线横移需反复重适应</td><td>资深</td><td><span class="tag t-mid">中</span></td></tr>
+    <tr><td>C7</td><td>焦点环使用半透明 <code>rgba(...,.65)</code>，四类背景实测 2.09–2.92 全部不达标</td><td>键盘用户</td><td><span class="tag t-hi">高</span></td></tr>
+    <tr><td>C8</td><td><strong>状态只靠颜色</strong>区分（红/黄/绿），无图标与文字冗余；男性色弱约 8%</td><td>资深</td><td><span class="tag t-hi">高</span></td></tr>
+  </tbody>
+</table>
+
+<h3>4.2 字体大小与层级</h3>
+<table>
+  <thead><tr><th style="width:52px">编号</th><th>问题</th><th>最受影响</th><th style="width:70px">严重度</th></tr></thead>
+  <tbody>
+    <tr><td>T1</td><td>181 处字号 &lt; 12px（占 43%），最小 9px</td><td>中年、资深</td><td><span class="tag t-hi">高</span></td></tr>
+    <tr><td>T2</td><td>31 种离散字号，无类型阶梯；层级靠 0.1–0.3px 的细微分差制造</td><td>全部（维护）</td><td><span class="tag t-mid">中</span></td></tr>
+    <tr><td>T3</td><td>无用户级字号缩放，无「大字模式」</td><td>资深</td><td><span class="tag t-hi">高</span></td></tr>
+    <tr><td>T4</td><td>表格与紧凑区行高存在 1.5 与 1，中文密集下易串行</td><td>中年、资深</td><td><span class="tag t-mid">中</span></td></tr>
+    <tr><td>T5</td><td>数字未启用等宽（tabular-nums），指标与表格列纵向不对齐</td><td>中年、资深</td><td><span class="tag t-mid">中</span></td></tr>
+  </tbody>
+</table>
+
+<h3>4.3 布局密度</h3>
+<table>
+  <thead><tr><th style="width:52px">编号</th><th>问题</th><th>最受影响</th><th style="width:70px">严重度</th></tr></thead>
+  <tbody>
+    <tr><td>L1</td><td>卡片与列表行内边距主流 6–11px（全站级，含表格、聊天、卡片头）</td><td>中年、资深</td><td><span class="tag t-hi">高</span></td></tr>
+    <tr><td>L2</td><td>触控目标过小：<code>.btn-sm</code> 27px、<code>.icon-btn</code> 32px、chip 34×24px</td><td>资深</td><td><span class="tag t-hi">高</span></td></tr>
+    <tr><td>L3</td><td>侧栏导航项 ≈37px，低于 44px</td><td>资深</td><td><span class="tag t-hi">高</span></td></tr>
+    <tr><td>L4</td><td>4 处硬编码 <code>minmax()</code> 最小列宽，中大字号下必横向溢出</td><td>中年、资深</td><td><span class="tag t-mid">中</span></td></tr>
+    <tr><td>L5</td><td>滚动条 8px（实抓区 ≈4px），资深用户难以抓取</td><td>资深</td><td><span class="tag t-mid">中</span></td></tr>
+  </tbody>
+</table>
+
+<h3>4.4 导航结构</h3>
+<table>
+  <thead><tr><th style="width:52px">编号</th><th>问题</th><th>最受影响</th><th style="width:70px">严重度</th></tr></thead>
+  <tbody>
+    <tr><td>N1</td><td>20 项 / 5 组平铺，侧栏总高 <strong>≈953px</strong>（标准档），<strong>必然滚动</strong></td><td>资深</td><td><span class="tag t-mid">中</span></td></tr>
+    <tr><td>N2</td><td>7 个<strong>场景屏占了一级位置</strong>，含开发自检屏 <code>s00 契约自检屏</code>——最终用户会看到一个毫无语义的入口</td><td>全员</td><td><span class="tag t-mid">中</span></td></tr>
+    <tr><td>N3</td><td>无面包屑、无 <code>aria-current</code>；侧栏滚动后当前组标题滚出视口 → <strong>丢失上下文</strong></td><td>中年、资深</td><td><span class="tag t-hi">高</span></td></tr>
+    <tr><td>N4</td><td>登录页<strong>已按 5 组渲染且组标题 sticky（现状优点）</strong>，但 5 组<strong>共用同一滚动容器</strong>、未形成两级决策；该容器滚动条仅 <strong>6px</strong>，却是资深员工进系统的第一个交互</td><td>资深</td><td><span class="tag t-hi">高</span></td></tr>
+    <tr><td>N5</td><td>31 张卡若全部可 Tab，会把 Tab 序列炸成 31 步（隐性无障碍问题）</td><td>键盘用户</td><td><span class="tag t-mid">中</span></td></tr>
+    <tr><td>N6</td><td>功能搜索无快捷键，且<strong>空态是空白面板</strong>——不会用搜索的资深用户没有任何兜底</td><td>资深</td><td><span class="tag t-mid">中</span></td></tr>
+  </tbody>
+</table>
+
+<h3>4.5 交互反馈</h3>
+<table>
+  <thead><tr><th style="width:52px">编号</th><th>问题</th><th>最受影响</th><th style="width:70px">严重度</th></tr></thead>
+  <tbody>
+    <tr><td>I1</td><td>焦点环共 4 处规则，<strong>规格全部低于 3:1</strong>；另有 10 类业务级可点行完全没有焦点指示</td><td>中年、资深</td><td><span class="tag t-hi">高</span></td></tr>
+    <tr><td>I2</td><td><strong>17 条 <code>outline: none</code></strong> 且无替代焦点样式（输入框 / 下拉 / 文本域），其中 <strong>7 条直接写在 <code>:focus</code> 规则里</strong>（<code>.case-input:focus</code> 等），最致命</td><td>低视力</td><td><span class="tag t-hi">高</span></td></tr>
+    <tr><td>I2b</td><td><strong>另有 13 处用 <code>box-shadow</code> 半透明光晕冒充焦点环</strong>——<code>--ring-color #3B8AE8@.30</code>、<code>.of-*</code>/<code>.hitl-search</code>@.25、紫 <code>#8B5CF6@.18</code>、<code>.case-onto-q</code>@.14、<code>--primary-light-2</code>@.11 等，实测渲染对比 <strong>1.16 – 1.55</strong>，比 outline 那处还差一个量级</td><td>低视力</td><td><span class="tag t-hi">高</span></td></tr>
+    <tr><td>I3</td><td><strong>按下态（:active）几乎缺失</strong>——点击是否被接收无视觉确认，导致重复点击</td><td>资深</td><td><span class="tag t-mid">中</span></td></tr>
+    <tr><td>I4</td><td><strong>系统内没有任何撤销机制</strong>；<code>.toast-root</code> 是 <code>pointer-events:none</code>，即便加了按钮也点不到</td><td>资深</td><td><span class="tag t-hi">高</span></td></tr>
+    <tr><td>I5</td><td><strong>破坏性操作无任何二次确认</strong>：「驳回」点了就关单，不可恢复</td><td>资深</td><td><span class="tag t-hi">高</span></td></tr>
+    <tr><td>I6</td><td>12s 后端超时无显式处理，用户只看到转圈 → 反复点刷新</td><td>中年、资深</td><td><span class="tag t-mid">中</span></td></tr>
+    <tr><td>I7</td><td>加载态无文字说明；错误类 toast 也会自动消失且无 <code>role="alert"</code></td><td>中年、资深</td><td><span class="tag t-mid">中</span></td></tr>
+  </tbody>
+</table>
+
+<h3>4.6 响应式适配</h3>
+<table>
+  <thead><tr><th style="width:52px">编号</th><th>问题</th><th>最受影响</th><th style="width:70px">严重度</th></tr></thead>
+  <tbody>
+    <tr><td>R1</td><td>10 个零散断点，无体系，相邻档差异 40–100px</td><td>全员（维护）</td><td><span class="tag t-mid">中</span></td></tr>
+    <tr><td>R2</td><td><strong>≤960px 塌为 64px 纯图标轨</strong>，20 个导航项 + 5 个组标题全部 <code>display:none</code>，全站 tooltip 0 处</td><td>资深</td><td><span class="tag t-hi">高</span></td></tr>
+    <tr><td>R3</td><td>无抽屉、无底部栏、<strong>无 <code>@media (pointer: coarse)</code></strong>——车间平板仍用 27/32px 目标</td><td>资深</td><td><span class="tag t-hi">高</span></td></tr>
+    <tr><td>R4</td><td>断点变化不联动字号与密度 —— 小屏上字号不变，反而更挤</td><td>资深</td><td><span class="tag t-hi">高</span></td></tr>
+    <tr><td>R5</td><td>无强光 / 弱光亮度策略（车间窗边反光、夜班暗光）</td><td>资深、中年</td><td><span class="tag t-mid">中</span></td></tr>
+  </tbody>
+</table>
+
+<!-- ========== 5 ========== -->
+<h2 id="s5"><span class="n">05</span>优化方案（按维度）</h2>
+
+<h3>5.1 色彩对比度</h3>
+<h4>结构性改造：拆开 <code>--primary</code> 的双重职责</h4>
+<p>这是本方案最核心的一处令牌重构。<code>--primary</code> 现在同时承担 ① 深色表面上的强调文字（需要<strong>亮</strong>）与 ② 实心按钮填充底（需要<strong>暗</strong>以承载白字），两者要求相反，这正是 C1 与 C4 同时失效的根因。必须拆成两个角色令牌：</p>
+<ul>
+  <li><code>--primary</code> = 强调墨色（亮方向）</li>
+  <li><code>--primary-fill-a/b</code> + <code>--primary-ink</code> = 实心按钮（亮蓝底 + 近黑字）</li>
+</ul>
+
+<table>
+  <thead><tr><th>令牌</th><th>现状</th><th>改造后（深色）</th><th>改造后（亮色）</th><th>效果</th></tr></thead>
+  <tbody>
+    <tr><td><code>--primary</code></td><td><code>#3B8AE8</code></td><td><code>#6BAEF7</code></td><td><code>#1557AD</code></td><td class="num">4.29 → <strong>6.46</strong> AA</td></tr>
+    <tr><td><code>--danger</code></td><td><code>#F4696B</code></td><td><code>#FD9496</code></td><td><code>#B8202B</code></td><td class="num">5.07 → <strong>7.06</strong> AAA</td></tr>
+    <tr><td><code>--text-3</code></td><td><code>#93A8C6</code></td><td><code>#A3B6D0</code></td><td><code>#656E7E</code></td><td class="num">6.20 → 7.28 / <strong>2.99 → 5.14</strong></td></tr>
+    <tr><td><code>--border-control</code>（新增）</td><td>无</td><td><code>#5A80B2</code></td><td><code>#818A9D</code></td><td class="num">1.40 → <strong>3.70</strong> PASS 3:1</td></tr>
+    <tr><td><code>--border</code>（装饰）</td><td><code>#263E62</code></td><td><code>#3A587F</code></td><td><code>#D8DEE9</code></td><td class="num">1.40 → 2.06</td></tr>
+    <tr><td><code>--focus-ring</code>（新增）</td><td>半透明 rgba</td><td><code>#6BAEF7</code></td><td><code>#1557AD</code></td><td class="num">2.09–2.92 → <strong>6.46–7.99</strong></td></tr>
+  </tbody>
+</table>
+
+<div class="quote">
+  <b>为什么装饰边框不推到 3:1：</b>WCAG 1.4.11 只要求<strong>必要控件边界</strong>达 3:1，装饰性分隔线可豁免。强行把 <code>--border</code> 提到 3:1 会把深色主题做成「描边面板」，是视觉灾难。正确做法是新增 <code>--border-control</code> 专供输入框、下拉、复选、表格列线使用。
+</div>
+
+<h4>亮色侧栏割裂的处理</h4>
+<p>「品牌深色侧栏」在白色内容区旁会让瞳孔在每次视线横移时重适应，对调节慢、暗适应差的资深员工是持续性负担。方案是把侧栏与登录页从<strong>硬编码渐变</strong>改为<strong>令牌驱动</strong>，亮色下跟随变浅；深色模式下完整保留原有渐变与品牌资产。同时修复 7 处历史失效色，统一改用 <code>var(--text-3)</code>（实测 4.45–5.14，全背景 AA）。</p>
+
+<h3>5.2 字体大小与层级</h3>
+<h4>九级类型阶梯</h4>
+<table>
+  <thead><tr><th>令牌</th><th class="num">px</th><th class="num">行高</th><th class="num">字重</th><th>用途</th></tr></thead>
+  <tbody>
+    <tr><td><code>--fs-display</code></td><td class="num">30</td><td class="num">1.20</td><td class="num">700</td><td>页面级超大指标</td></tr>
+    <tr><td><code>--fs-xl</code></td><td class="num">24</td><td class="num">1.30</td><td class="num">700</td><td>区块大数（KPI）</td></tr>
+    <tr><td><code>--fs-h1</code></td><td class="num">22</td><td class="num">1.35</td><td class="num">700</td><td>页面标题</td></tr>
+    <tr><td><code>--fs-h2</code></td><td class="num">18</td><td class="num">1.40</td><td class="num">600</td><td>区块小标题</td></tr>
+    <tr><td><code>--fs-h3</code></td><td class="num">16</td><td class="num">1.50</td><td class="num">600</td><td>卡片标题</td></tr>
+    <tr><td><code>--fs-body-lg</code></td><td class="num">15</td><td class="num">1.70</td><td class="num">400</td><td>对话气泡、结论卡</td></tr>
+    <tr><td><code>--fs-body</code></td><td class="num">14</td><td class="num">1.75</td><td class="num">400</td><td><strong>正文基准</strong></td></tr>
+    <tr><td><code>--fs-sm</code></td><td class="num">13</td><td class="num">1.70</td><td class="num">400</td><td>表格正文、列表项</td></tr>
+    <tr><td><code>--fs-caption</code></td><td class="num">12</td><td class="num">1.60</td><td class="num">500</td><td>辅助说明、元信息</td></tr>
+  </tbody>
+</table>
+<p><strong>硬底线：正文最小 14px、辅助文字最小 12px、禁止任何 &lt;12px。</strong>现有 181 处 &lt;12px 声明全部归入 <code>--fs-caption</code>，31 种离散值收敛为 9 个令牌。</p>
+
+<h4>三档全局缩放</h4>
+<table>
+  <thead><tr><th>档位</th><th class="num">缩放</th><th class="num">正文</th><th class="num">辅助</th><th>目标人群</th><th>命名（用户可见）</th></tr></thead>
+  <tbody>
+    <tr><td>标准</td><td class="num">1</td><td class="num">14.0px</td><td class="num">12.0px</td><td>青年</td><td>现在的字看着刚好</td></tr>
+    <tr><td>清晰</td><td class="num">1.125</td><td class="num">15.8px</td><td class="num">13.5px</td><td>中年</td><td>有点小，看久了眼睛累</td></tr>
+    <tr><td>大字</td><td class="num">1.25</td><td class="num">17.5px</td><td class="num">13.1px</td><td>资深</td><td>要凑近一点才看得清</td></tr>
+  </tbody>
+</table>
+<p>实现方式：单一变量 <code>--font-scale</code> 驱动，行高一律用无单位值以自动跟随。</p>
+
+<h4>中文字体与排版规则</h4>
+<ul>
+  <li><strong>字重陷阱</strong>：企业内网以 Windows 为主，<code>Microsoft YaHei</code> <strong>只有 400 与 700</strong>。写 600 会被合成为 Bold，导致「13px 加粗标题」与「16px 标题」视觉撞车、层级崩塌。规范：正文只许 400，强调只许 700，500/600 仅用于 ≤14px 的小面积控件。</li>
+  <li><strong>字间距</strong>：中文正文 <code>letter-spacing: 0</code>（加字距会让方块字松散）。现状侧栏分组标题上的 <code>letter-spacing: 1.2px</code> 配 10.5px 中文是负优化，改为 12px + 0.5px。</li>
+  <li><strong>断行</strong>：启用 <code>line-break: strict; overflow-wrap: break-word</code>，<strong>严禁 <code>word-break: break-all</code></strong>（会把「2024-Q3」断碎，造成阅读中断）。</li>
+  <li><strong>等宽数字</strong>：所有指标、表格、柏拉图数字启用 <code>font-variant-numeric: tabular-nums</code>。现状为比例数字，列不对齐，老视用户纵向扫读会串行、读错量级——低成本高收益项。</li>
+  <li><strong>行宽</strong>：中文最佳每行 30–38 字，正文容器 <code>max-width: 38em</code>。</li>
+</ul>
+
+<h3>5.3 布局密度与间距节奏</h3>
+<p>建立 8pt 间距标尺，并把三档密度做成<strong>全局令牌</strong>（现状 6–11px 的 padding 是全站级的，不做令牌化根本改不完）：</p>
+<table>
+  <thead><tr><th>位置</th><th>现状</th><th>紧凑（青年）</th><th>标准（中年）</th><th>宽松（资深）</th></tr></thead>
+  <tbody>
+    <tr><td>列表 / 告警行</td><td class="num">6–7px</td><td class="num">8px 10px</td><td class="num"><strong>12px 16px</strong></td><td class="num">16px 20px</td></tr>
+    <tr><td>消息 / 引用块</td><td class="num">7px 10px</td><td class="num">8px 10px</td><td class="num"><strong>12px 16px</strong></td><td class="num">16px 20px</td></tr>
+    <tr><td>提示条</td><td class="num">8px 10px</td><td class="num">8px 10px</td><td class="num"><strong>14px 18px</strong></td><td class="num">18px 22px</td></tr>
+    <tr><td>表格单元格</td><td class="num">10px 12px</td><td class="num">8px 10px</td><td class="num"><strong>12px 14px</strong></td><td class="num">16px 18px</td></tr>
+    <tr><td>卡片容器</td><td class="num">14px 16px</td><td class="num">12px</td><td class="num"><strong>20px</strong></td><td class="num">28px</td></tr>
+    <tr><td>行最小高</td><td class="num">—</td><td class="num">36px</td><td class="num"><strong>44px</strong></td><td class="num">52px</td></tr>
+  </tbody>
+</table>
+<p><strong>建议联动</strong>：首次选「大字」档时自动切到宽松密度（可手动覆盖），青年默认紧凑。这样一个两项切换即可覆盖三档人群 80% 的需求。</p>
+
+<h3>5.4 导航结构</h3>
+<table>
+  <thead><tr><th>措施</th><th>具体做法</th><th>预期效果</th></tr></thead>
+  <tbody>
+    <tr><td><strong>场景屏下沉二级</strong></td><td>7 个场景屏收入侧栏底部「场景演练」二级入口，顶层回归 13 项；<strong>非 demo 环境隐藏 <code>s00 契约自检屏</code></strong></td><td>侧栏总高 <strong>≈953px → 约 669px</strong>，1080p 标准档下一屏可见；<strong>但大字档约 766px，1366×768 车间笔记本仍会滚动 → 滚动条加宽不可降级</strong></td></tr>
+    <tr><td><strong>大字档自动折叠非当前组</strong></td><td>字号档 = 大字（1.25）时，侧栏默认<strong>只展开当前屏所在组</strong>，其余 3 组折叠（把「组可折叠」从可选交互升级为密度自适应行为）</td><td>侧栏总高 <strong>≈766px → 约 385px</strong>，连 1366×768 车间笔记本也放得下</td></tr>
+    <tr><td><strong>当前位置双指示</strong></td><td>顶栏新增面包屑「运营视图 › 订单履约看板」+ 侧栏 <code>aria-current="page"</code> + 组标题 sticky（实色底）</td><td>消除滚动后上下文丢失；读屏可播报当前位置</td></tr>
+    <tr><td><strong>面包屑整条不可点击</strong></td><td>上层是「组」不可导航，做成链接即自指链接（无障碍反模式）；返回需求交给具名返回按钮</td><td>与侧栏 active <strong>互不冗余</strong></td></tr>
+    <tr><td><strong>登录页两级决策</strong></td><td>5 个域组（经营层 1 / 质量域 4 / 制造与设备 5 / 研发与工程 9 / 供应链与职能 12）→ 组内 3–12 张卡；顶部「上次使用」直达卡 + 搜索框</td><td>回头用户 <strong>约 20s → ≤3s</strong>；首次从「31 选 1」变为「5 选 1 + ≤12 选 1」</td></tr>
+    <tr><td><strong>键盘可达性</strong></td><td>卡片网格改用 roving tabindex（方向键移动，整格只有一个 <code>tabindex=0</code>）</td><td>Tab 序列从 31 步降为可控步数</td></tr>
+    <tr><td><strong>顶栏「Aa」显示入口</strong></td><td>顶栏右侧一级图标按钮（<code>Aa</code> 字形，不用齿轮或眼镜——眼镜带年龄暗示），<code>aria-label</code> = 「显示设置（字号 · 主题 · 间距）」；≥1281px 6 位全展开，1024–1280px 保留 user-chip / Aa / refresh、其余收进「更多」，≤1023px 只留头像 + Aa + ⋯</td><td>顶栏是唯一在所有屏常驻的区域；帮助面板入口要多 2 次点击，对恢复能力弱的资深用户等于不存在</td></tr>
+    <tr><td><strong>搜索兜底</strong></td><td>空关键词面板默认展示「全部功能目录」（13 个基础屏按组列出 + 场景演练入口，每项一句话说明）</td><td>不会用搜索的资深用户可当功能目录浏览；面板不再是空白</td></tr>
+  </tbody>
+</table>
+
+<h3>5.5 交互反馈</h3>
+<h4>焦点环：不透明令牌 + inset 绘制</h4>
+<p>现状半透明 <code>rgba(59,130,246,.65)</code> 在四种背景上实测仅 2.09–2.92，<strong>全部不达标</strong>——所以准确表述不是「这 6 类有焦点环」，而是「这 6 类有焦点环形状，但指示强度不合格；其余业务级组件连形状都没有」。</p>
+<p><strong>更糟的是还有一整类伪装成焦点环的东西。</strong>全站另有 <strong>13 处用 <code>box-shadow</code> 半透明光晕</strong>代替焦点环（<code>--ring-color #3B8AE8@.30</code>、<code>.of-*</code> @.25、紫 <code>#8B5CF6@.18</code>、<code>.case-onto-q</code> @.14、<code>--primary-light-2</code> @.11）。它们看起来"有反馈"，实测渲染对比度只有 <strong>1.16 – 1.55</strong>，比 outline 那处还差一个量级——<strong>「有」比「没有」更危险，因为没人会去修一个看起来正常的东西。</strong>改造分两层：</p>
+<p><strong>第一层：色值换不透明令牌。</strong>深色 <code>--focus-ring #6BAEF7</code>（vs 卡片 6.46 / vs 页面底 7.99），亮色 <code>#1557AD</code>（vs 白 7.00 / vs <code>#F3F5F9</code> 6.42），全部通过 3:1。</p>
+<p><strong>第二层：改用 inset 绘制。</strong>全站有 <strong>30+ 处溢出容器</strong>（<code>.nav</code>、<code>.role-grid</code>、<code>.hitl-screen</code>、<code>.user-menu</code>、<code>.chat-scroll</code>、<code>.login-shell</code> 等）。若统一用向外 <code>outline</code>，需逐个排查祖先容器、且 chip（34×24）这类紧凑元素的外扩环会互相重叠。而 <code>box-shadow: inset</code> 绘制在<strong>元素自身盒内，永不被祖先 <code>overflow</code> 裁切</strong>——一次免疫：</p>
+<div class="quote">
+  <code>:where(a,button,input,select,textarea,summary,[tabindex]):focus-visible{<br>
+  &nbsp;&nbsp;outline: 2px solid transparent;&nbsp;&nbsp;/* 高对比模式下由系统色接管 */<br>
+  &nbsp;&nbsp;box-shadow: inset 0 0 0 2px var(--focus-ring);<br>
+  }</code><br><br>
+  <b>透明 outline 不能省：</b>Windows 高对比 / forced-colors 模式下 <code>box-shadow</code> 会被丢弃，只剩透明 outline 由系统接管才能保证焦点不消失。<code>!important</code> 仅用于覆写既有的 <code>outline: none</code>，其余靠选择器权重取胜。
+</div>
+
+<h4>状态规格与冗余编码</h4>
+<table>
+  <thead><tr><th>状态</th><th>色</th><th>图标</th><th>中文文字</th><th>附加形状</th></tr></thead>
+  <tbody>
+    <tr><td>正常 / 达标</td><td><code>--ok</code></td><td>✓</td><td>达标 / 正常</td><td>实心圆点</td></tr>
+    <tr><td>注意 / 预警</td><td><code>--warn</code></td><td>!</td><td>注意 / 预警</td><td>三角</td></tr>
+    <tr><td>异常 / 告警</td><td><code>--danger</code></td><td>✕</td><td>异常 / 告警</td><td>菱形</td></tr>
+    <tr><td>提示 / 信息</td><td><code>--primary</code></td><td>i</td><td>提示</td><td>空心圆</td></tr>
+    <tr><td>进行中</td><td><code>--primary</code></td><td>⟳</td><td>进行中</td><td>—</td></tr>
+    <tr><td>待处理</td><td><code>--purple</code></td><td>◷</td><td>待处理</td><td>—</td></tr>
+  </tbody>
+</table>
+<p><strong>强制要求：三档异常级别必须同时输出 色 + 图标 + 中文文字。</strong>图表另需叠加线型差异（实线 / 虚线 / 点线）与 marker 形状（● ▲ ■）。红绿相邻必有一方带形状或文字，否则色弱用户不可分辨。</p>
+
+<h4>错误恢复（资深员工最脆弱的环节）</h4>
+<table>
+  <thead><tr><th>措施</th><th>规格</th></tr></thead>
+  <tbody>
+    <tr><td>可见撤销</td><td>toast 上「撤销」按钮（5 秒窗口）+ 内容区顶部 sticky 操作条，<strong>倒计时必须写数字</strong>（<code>剩 4:32 可撤销</code>）；文案 = 动词 + 具体对象</td></tr>
+    <tr><td>破坏性操作确认</td><td>四段结构：标题（动词 + 对象）→ 后果（未来时 + 不可逆标记）→ 影响范围（数量 + 前 3 条名单）→ 按钮区 <strong>[取消] [确认驳回]</strong>；<strong>默认焦点在「取消」</strong>；全站左右顺序必须一致</td></tr>
+    <tr><td>加载与超时</td><td>&lt;1s 无指示；1–3s 骨架屏 + 具体文字；3–12s 追加等待秒数；<strong>≥12s 必须给确定性结论</strong>，且<strong>保留已填内容</strong>；刷新按钮点击后进入 disabled 态</td></tr>
+    <tr><td>Toast 分级</td><td>成功 3s / 信息 3s / 警告 6s / <strong>错误不自动关闭</strong>；大字档按 1.6 系数延长（3→5、5→8）；错误类加 <code>role="alert"</code>；同时最多 3 条，错误永不因数量被丢弃</td></tr>
+    <tr><td>Toast 可交互性</td><td><code>.toast-root</code> 保持 <code>pointer-events: none</code>（现状设置是有道理的），<strong>仅带「撤销 / 重试 / 关闭」的 toast 加 <code>.is-interactive</code> 并设 <code>auto</code></strong>——不能全量放开，否则纯通知型 toast 会重新挡住下层点击</td></tr>
+    <tr><td>撤销窗口时长</td><td>标准档 <strong>8 秒</strong>（大字档 12 秒）；5 秒在「大字档 + 老视」下不足以完成「看见 toast → 移动鼠标 → 点中按钮」</td></tr>
+  </tbody>
+</table>
+
+<h3>5.6 响应式适配</h3>
+<p>把 10 个零散断点收敛为 5 档，并新增独立的触屏分支：</p>
+<table>
+  <thead><tr><th>档位</th><th>断点</th><th>归并的原断点</th><th>侧栏形态</th><th>字号 / 密度默认</th></tr></thead>
+  <tbody>
+    <tr><td>xs</td><td class="num">≤480</td><td>480</td><td>抽屉 + 遮罩 + <strong>底部直达栏</strong></td><td>清晰 / 宽松</td></tr>
+    <tr><td>sm</td><td class="num">≤768</td><td>720、760</td><td>抽屉（≥280px，含图标 + 文字）</td><td>清晰 / 标准</td></tr>
+    <tr><td>md</td><td class="num">≤960</td><td>900、960</td><td><strong>64px 图标轨 + 悬浮文字标签</strong></td><td>标准 / 标准</td></tr>
+    <tr><td>lg</td><td class="num">≤1280</td><td>1080、1180、1200</td><td>展开 220px</td><td>标准 / 标准</td></tr>
+    <tr><td>xl</td><td class="num">&gt;1280</td><td>—</td><td>展开 240px</td><td>标准 / 紧凑</td></tr>
+  </tbody>
+</table>
+<p><strong>关键在于 md 档的图标轨改造</strong>：现状 ≤960px 时 20 个导航项与 5 个组标题全部变成无文字、无悬浮标签的纯图标，对资深员工等同于导航不可用。改造为「图标 + 悬浮浮出文字标签」，三条触发缺一不可：<strong>hover 200ms 后</strong>显示、<strong>focus 立即</strong>显示、<strong>长按 500ms</strong> 显示（触屏）。注意 <code>.nav { overflow-y: auto }</code> 会把 <code>overflow-x</code> 一并强制为 auto，64px 图标轨下外扩焦点环会被裁掉——需把 <code>.nav</code> 横向内边距由 10px 提到 12px。</p>
+<p><strong>必须独立新增 <code>@media (pointer: coarse)</code></strong>（现状 0 处）——断点判的是设备宽度，而车间平板可能 1024px 宽却是触屏。该分支强制所有可点元素 ≥44px（车间档 48px）、滚动条 12px、禁用滑动删除类手势、每个全屏面板提供 ≥44px 的显式关闭按钮。</p>
+<div class="quote">
+  <b>一条必须守住的底线：</b>严禁添加 <code>user-scalable=no</code>。它会禁掉双指缩放——那是老视用户的最后救命稻草，且直接违反 WCAG 1.4.4。
+</div>
+
+<!-- ========== 6 ========== -->
+<h2 id="s6"><span class="n">06</span>年龄段 × 维度交汇矩阵</h2>
+<p>每个单元格是该人群在该维度上<strong>最该做的一件事</strong>。</p>
+<table class="matrix">
+  <thead><tr><th style="width:110px">维度</th><th>青年 22–32</th><th>中年 33–45</th><th>资深 46–60</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>色彩</td>
+      <td>保留高饱和 accent 的品牌张力<br><span class="tag t-p1">P1</span></td>
+      <td><strong>控件边界 ≥3:1，让「卡片边界看得见」</strong>——其对比敏感度中高频衰退最早击中这一项<br><span class="tag t-p0">P0</span></td>
+      <td><strong>默认落到亮色主题</strong>（非放大深色字号）；危险色 ≥7:1 且必带图标<br><span class="tag t-p0">P0</span></td>
+    </tr>
+    <tr>
+      <td>字号层级</td>
+      <td>保留紧凑密度与 12px 辅助字<br><span class="tag t-p2">P2</span></td>
+      <td><strong>消灭 181 处 &lt;12px</strong>，辅助字兜底 12px<br><span class="tag t-p1">P1</span></td>
+      <td><strong>大字档 125%（正文 17.5px）+ 行高 ≥1.75</strong>，行宽 30–38 字<br><span class="tag t-p0">P0</span></td>
+    </tr>
+    <tr>
+      <td>布局密度</td>
+      <td>紧凑档（卡片内边距 12px）<br><span class="tag t-p2">P2</span></td>
+      <td>标准档（20px 内边距）<br><span class="tag t-p1">P1</span></td>
+      <td><strong>宽松档（28px）+ 所有可点目标 ≥44px</strong>（含触屏分支）<br><span class="tag t-p0">P0</span></td>
+    </tr>
+    <tr>
+      <td>导航结构</td>
+      <td>功能搜索直达 + 快捷键<br><span class="tag t-p2">P2</span></td>
+      <td><strong>面包屑「组 › 屏」+ 组标题 sticky</strong>，防上下文丢失<br><span class="tag t-p0">P0</span></td>
+      <td><strong>登录页两级决策 + 最近使用置顶</strong>；场景屏下沉二级<br><span class="tag t-p0">P0</span></td>
+    </tr>
+    <tr>
+      <td>交互反馈</td>
+      <td>120ms 微交互保留<br><span class="tag t-p2">P2</span></td>
+      <td><strong>全局焦点环覆盖 9 处 <code>outline:none</code> 与 10 类可点行</strong><br><span class="tag t-p0">P0</span></td>
+      <td><strong>状态三重冗余 + 撤销机制 + 错误提示不自动消失</strong><br><span class="tag t-p0">P0</span></td>
+    </tr>
+    <tr>
+      <td>响应式</td>
+      <td>xl 档 240px 侧栏 + 紧凑密度<br><span class="tag t-p2">P2</span></td>
+      <td><strong>5 档断点收敛</strong>，平板抽屉稳定<br><span class="tag t-p1">P1</span></td>
+      <td><strong>触屏分支强制 44px + 滚动条 12px + 图标轨文字标签</strong><br><span class="tag t-p0">P0</span></td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ========== 7 ========== -->
+<h2 id="s7"><span class="n">07</span>优先级路线图</h2>
+
+<h3>P0 · 立即（解决「看不见 / 点不到 / 不知道自己在哪 / 错了回不来」）</h3>
+<table>
+  <thead><tr><th style="width:76px">编号</th><th>条目</th><th>预期效果</th><th style="width:100px">改动面</th></tr></thead>
+  <tbody>
+    <tr><td>P0-1</td><td>深色令牌修复（primary / danger / purple / text-2 / text-3）</td><td>primary <strong>4.29 → 6.46</strong>；danger <strong>5.07 → 7.06</strong>；text-3 <strong>6.20 → 7.28</strong></td><td>令牌区 ~15 行</td></tr>
+    <tr><td>P0-2</td><td>拆分按钮令牌，主按钮改「亮蓝底 + 近黑字」</td><td>主按钮标签 <strong>3.5 → 6.84</strong>；按钮面 / 卡片 <strong>4.29 → 5.53</strong></td><td>3 变量 + 按钮选择器 + 10 处复核</td></tr>
+    <tr><td>P0-3</td><td>新增 <code>--border-control</code>，控件与表格线改用之</td><td>控件边界 <strong>1.40 → 3.70</strong>（PASS 3:1）</td><td>2 变量 + 40–60 处引用</td></tr>
+    <tr><td>P0-4</td><td>亮色主题 7 处失效色修复</td><td>分组标题 <strong>2.40 → 4.83</strong>；副文案 <strong>2.59–3.49 → 4.45–5.14</strong></td><td>7 个选择器</td></tr>
+    <tr><td>P0-5</td><td>全局双层焦点环，覆盖 9 处 <code>outline:none</code></td><td>焦点指示 <strong>2.09–2.92 → 6.46–7.99</strong>（全 PASS）</td><td>1 条规则 + 9 处清理</td></tr>
+    <tr><td>P0-6</td><td>10 类业务可点行补齐焦点指示</td><td>可聚焦元素焦点可见从 6 类 → 全部</td><td>10 类组件 + <code>tabindex</code> 补齐</td></tr>
+    <tr><td>P0-7</td><td>触控目标抬高（27 / 32 / 34×24 / 37 → ≥44）</td><td>车间手套误触率显著下降；面积 ×2.7–3.2</td><td>~8 处选择器 + 1 条媒体查询</td></tr>
+    <tr><td>P0-8</td><td>≤960px 图标轨加悬浮文字标签</td><td>消除 19 屏「靠猜图标」；图标识别错误归零</td><td>1 个媒体查询块</td></tr>
+    <tr><td>P0-9</td><td>新增 <code>@media (pointer: coarse)</code> 分支</td><td>车间平板目标 <strong>27/32px → 44px</strong>；滚动条 8→12px</td><td>1 个媒体查询块</td></tr>
+    <tr><td>P0-10</td><td>状态三重冗余（色 + 图标 + 中文）</td><td>色觉障碍用户状态识别从「依赖色」→ 100% 可达</td><td>25–40 处状态组件</td></tr>
+    <tr><td>P0-11</td><td><strong>首次档位引导 + 顶栏「Aa」一键切换</strong></td><td>中年/资深「首屏即完成设置」率 <strong>约 5% → ≥70%</strong>；调整路径 3 次点击 → 1 次</td><td>新增 ~350 行<br><span style="color:#8A5C00">已落地（默认推荐「标准」，非「大字」——见 9.4）</span></td></tr>
+    <tr><td>P0-12</td><td>撤销机制（toast 按钮 + sticky 操作条 + Ctrl+Z，<strong>8s 窗口 / 大字档 12s</strong>）</td><td>误操作自助恢复成功率 <strong>0 → ≥90%</strong></td><td>~18 行 + toast 样式</td></tr>
+    <tr><td>P0-13</td><td>破坏性操作二次确认</td><td>消除「点一下就关单」；误驳回归零</td><td>统一确认组件 + 4 处替换</td></tr>
+    <tr><td>P0-14</td><td>12s 超时确定性反馈 + 保留已填内容</td><td>消除「转圈 12s → 反复点刷新」；重复请求下降</td><td>api 层 ~45 行</td></tr>
+    <tr><td>P0-15</td><td>面包屑 + <code>aria-current</code> + 组标题 sticky</td><td>「我在哪」的认知成本下降；读屏可播报</td><td>~60 行</td></tr>
+    <tr><td>P0-16</td><td>登录页两级决策 + 上次使用直达 + 搜索</td><td>回头用户 <strong>约 20s → ≤3s</strong></td><td>~260 行</td></tr>
+  </tbody>
+</table>
+
+<h3>P1 · 本轮（解决「读不清 / 不一致 / 跨屏丢上下文」）</h3>
+<table>
+  <thead><tr><th style="width:76px">编号</th><th>条目</th><th>预期效果</th><th style="width:100px">改动面</th></tr></thead>
+  <tbody>
+    <tr><td>P1-1</td><td>建立 9 级类型阶梯 + <code>--font-scale</code> 三档</td><td>31 种离散字号 → 9 个令牌；单点驱动三档缩放</td><td>421 处映射</td></tr>
+    <tr><td>P1-2</td><td>消灭 &lt;12px</td><td><strong>181 处 → 0</strong>；最小字号 9px → 12px</td><td>含于 P1-1</td></tr>
+    <tr><td>P1-3</td><td>行高统一（表格/紧凑区 1.5 与 1 → ≥1.6）</td><td>消除中文串行</td><td>~15 处</td></tr>
+    <tr><td>P1-4</td><td>数值启用 <code>tabular-nums</code></td><td>数字列纵向对齐，读错量级风险降低</td><td>1 条规则</td></tr>
+    <tr><td>P1-5</td><td>8pt 间距标尺 + 三档密度令牌</td><td>卡片内边距 <strong>平均 +100%</strong>（6–11 → 12–16）</td><td>~55 处</td></tr>
+    <tr><td>P1-6</td><td>亮色侧栏 / 登录页令牌化翻转</td><td>消除深浅割裂；亮色 nav 对比 10.39 / 7.00 / 5.14 全达标</td><td>5 个变量</td></tr>
+    <tr><td>P1-7</td><td>10 个断点 → 5 档</td><td>断点数量 <strong>−50%</strong>，行为可预测</td><td>合并 10 → 5</td></tr>
+    <tr><td>P1-8</td><td>拆除硬编码 <code>minmax()</code> → <code>min(100%, …)</code></td><td>中大字号与窄屏横向溢出缺陷归零</td><td>4 处</td></tr>
+    <tr><td>P1-9</td><td>7 个场景屏下沉「场景演练」；<code>s00 契约自检屏</code> 加 <code>internal: true</code>，非 demo 环境不登记</td><td>顶层 <strong>20 → 13 项</strong>；侧栏总高 <strong>953 → 669px</strong></td><td>~70 行</td></tr>
+    <tr><td>P1-10</td><td>按下态补全 + toast 分级</td><td>点击确认缺失 <strong>14 处 → 0</strong></td><td>~14 处</td></tr>
+    <tr><td>P1-11</td><td>跨屏上下文保留（上下文条 / 具名返回 / 筛选恢复 / 草稿恢复）</td><td>返回后重复设置筛选的操作归零</td><td>~90 行</td></tr>
+    <tr><td>P1-12</td><td>术语就地解释（首批 6 个：HITL / Cpk / OEE / SPC / Embedding / Agent）</td><td>省掉每次跳页重建上下文的 8–15s</td><td>~190 行</td></tr>
+    <tr><td>P1-13</td><td>首屏引导条 + 空状态三要素 + 默认展开/折叠表</td><td>「暂无数据」类求助归零</td><td>19 屏 × 1 行 + 模板</td></tr>
+    <tr><td>P1-14</td><td>抽屉（≤768）+ 底部直达栏（≤480）+ 焦点陷阱</td><td>移动端从「基本不可用」到可用</td><td>~220 行</td></tr>
+  </tbody>
+</table>
+
+<h3>P2 · 观察（上线后按数据决定）</h3>
+<table>
+  <thead><tr><th style="width:76px">编号</th><th>条目</th><th>预期效果</th></tr></thead>
+  <tbody>
+    <tr><td>P2-1</td><td>侧栏「常用 3 项」（岗位默认 + 7 天频次自适应）</td><td>高频屏到达成本 2 次点击 → 1 次</td></tr>
+    <tr><td>P2-2</td><td>全局搜索 Ctrl+K + 空态「全部功能目录」降级</td><td>青年效率提升；资深获得非搜索兜底</td></tr>
+    <tr><td>P2-3</td><td>悬浮助手被动提示（停留 60s 无操作 → 主动询问，最多 3 次）</td><td>覆盖「不会主动求助」的资深用户</td></tr>
+    <tr><td>P2-4</td><td>车间共用终端模式 +「仅本次生效」开关</td><td>共用机不再污染下一人的显示设置</td></tr>
+    <tr><td>P2-5</td><td>车间强光 / 弱光亮度档位</td><td>窗边反光与夜班弱光场景可读性</td></tr>
+    <tr><td>P2-6</td><td>埋点验证：按年龄段统计档位选择分布与停留时长</td><td>为真实验证画像提供依据，驱动下一轮参数微调</td></tr>
+  </tbody>
+</table>
+
+<!-- ========== 8 ========== -->
+<h2 id="s8"><span class="n">08</span>验收清单</h2>
+<p>每条可二值判定（通过 / 不通过），覆盖全部六个维度。</p>
+<table>
+  <thead><tr><th style="width:38px">#</th><th>验收项</th><th>判定方式</th><th style="width:96px">人群</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td>正文最小计算字号 ≥14px（大字档 ≥16px）</td><td>计算样式抽样 10 处</td><td>全</td></tr>
+    <tr><td>2</td><td>全站不存在 &lt;12px 的计算字号</td><td>全量 font-size 声明重算，抽样 20 处</td><td>全</td></tr>
+    <tr><td>3</td><td>主色 vs 卡片底 ≥4.5（6.46）；主按钮标签 ≥4.5（6.84）</td><td>实测 5 处</td><td>全</td></tr>
+    <tr><td>4</td><td>危险色 vs 卡片底 ≥7（7.06）</td><td>实测 3 处</td><td>资深</td></tr>
+    <tr><td>5</td><td>控件 / 表格线 vs 底 ≥3:1</td><td>实测 6 处（输入框 / 下拉 / 表格线 / 分隔 / 复选 / 开关）</td><td>中年、资深</td></tr>
+    <tr><td>6</td><td>亮色下无「亮色主体 + 深色侧栏」割裂</td><td>切亮色目测侧栏与登录页底色一致</td><td>全</td></tr>
+    <tr><td>7</td><td>三档缩放后正文 = 14 / 16.8 / 18.9px（±0.3，阶梯 1 / 1.2 / 1.35），且<strong>无横向滚动条、无文本裁切</strong></td><td>每档抽查 3 屏</td><td>全</td></tr>
+    <tr><td>8</td><td>三档密度切换后卡片内边距 = 12 / 20 / 28px，表格行高随之变化且无重叠</td><td>每档量测 3 处</td><td>中年、青年</td></tr>
+    <tr><td>9</td><td>8 类可交互元素 Tab 遍历均可见焦点环；<strong>色值取自不透明 <code>--focus-ring</code> 且实测 ≥3:1</strong>（原 <code>rgba(59,130,246,.65)</code> 为 2.09–2.92、13 处光晕为 1.16–1.55，均 FAIL）；<strong>按第 28 条的四档策略生效</strong>；开启 Windows 高对比模式后焦点仍可见</td><td>8 类各测 1 次 + 既有色值复测 + 高对比模式走一遍</td><td>键盘、低视力</td></tr>
+    <tr><td>10</td><td><strong>17 处 <code>outline:none</code></strong>（含 7 处写在 <code>:focus</code> 规则内）与 <strong>13 处失效光晕</strong>（实测 1.16–1.55）均已提供替代可见焦点指示，替换后对比度 ≥3:1</td><td>逐处 grep + <strong>计算样式</strong>验证</td><td>低视力</td></tr>
+    <tr><td>11</td><td>图标轨下 hover 200ms / focus 即时 / 长按 500ms 三种方式均能显示文字标签</td><td>三种方式各测 1 次</td><td>中年、资深</td></tr>
+    <tr><td>12</td><td>抽屉五项：遮罩点击关闭 / Esc 关闭 / 选中后自动关闭 / 焦点陷阱 / 关闭后焦点回到菜单键</td><td>逐项判定</td><td>车间平板</td></tr>
+    <tr><td>13</td><td>底部直达栏触控目标 ≥48×48，内容区底部不被遮挡，含 safe-area padding</td><td>目测 + 量测</td><td>车间</td></tr>
+    <tr><td>14</td><td>所有可点元素 ≥44×44（车间 ≥48×48）；<strong>滚动条加宽到 12px（含登录页角色网格的 6px 特例）</strong>，hover 撑到 16px</td><td>量测 15 处（含两处滚动条 thumb）</td><td>车间、资深</td></tr>
+    <tr><td>15</td><td>状态至少 2 种编码（颜色 + 图标 / 形状 / 文字），<strong>灰度截图下仍可分辨</strong>；含顶栏后端状态 dot（形状 ○●▲ + 颜色双编码 + <code>title</code>/<code>aria-label</code>）</td><td>抽查 6 处状态标签 + dot 3 态</td><td>色弱、资深</td></tr>
+    <tr><td>16</td><td>首次进入出现档位三选一，带<strong>真实字号预览</strong>，且<strong>不问年龄</strong></td><td>清空 localStorage 走一遍</td><td>中年、资深</td></tr>
+    <tr><td>17</td><td>档位切换四项：一次点击同改三项 / <strong>8s 内可撤销（大字档 12s）</strong> / 面板内有恢复默认 / 快捷键可恢复</td><td>逐项判定</td><td>资深</td></tr>
+    <tr><td>18</td><td>localStorage 键全为 <code>mfg-</code> 前缀；旧键被正确读取且<strong>未被改写</strong>；「仅本次生效」用 sessionStorage</td><td>逐键检查</td><td>全</td></tr>
+    <tr><td>19</td><td>侧栏一级项 ≤13，场景屏收进二级；<strong>切换岗位后入口仍存在且正确</strong></td><td>3 个不同岗位各测 1 次</td><td>全</td></tr>
+    <tr><td>20</td><td>面包屑格式「组 › 屏」，整条不可点击，与侧栏 active 不重复表达</td><td>目测 + 点击测试</td><td>全</td></tr>
+    <tr><td>21</td><td>登录页两级选择 + 上次使用直达 + 搜索支持中文名 / 姓名 / 缩写 + 无结果给分类建议</td><td>逐项判定</td><td>中年、资深</td></tr>
+    <tr><td>22</td><td>6 个术语出现处有虚线下划线；桌面 hover/focus 有解释、触屏点击展开；<strong>不跳页</strong></td><td>6 个术语 × 桌面 / 平板各 1 次</td><td>资深</td></tr>
+    <tr><td>23</td><td>加载 &gt;1s 有文字说明；12s 超时给确定性失败文案且<strong>保留已填内容</strong>；刷新按钮进入 disabled 态</td><td>断网 / 超时模拟各 1 次</td><td>全</td></tr>
+    <tr><td>24</td><td>破坏性操作确认弹窗含后果 + 影响范围 + 固定按钮顺序，<strong>默认焦点在取消</strong>，危险按钮除颜色外有图标</td><td>抽查 3 个破坏性操作</td><td>资深</td></tr>
+    <tr><td>25</td><td>Toast：错误类不自动关闭且带 <code>role="alert"</code>；大字档停留延长；最多 3 条；<code>prefers-reduced-motion</code> 下全部动效降级</td><td>逐项判定 + 开启系统开关走一遍</td><td>全</td></tr>
+    <tr><td>26</td><td><strong>非 demo 环境下 <code>s00 契约自检屏</code> 不出现在导航中</strong>（通过 <code>scenes/registry.js</code> 的 <code>internal: true</code> + 环境开关控制，<strong>不是用 CSS 隐藏</strong>）</td><td>非 demo 启动一次，确认导航无此项且无空占位；<strong>并确认 URL 直输 <code>#/s00</code> 不可进入</strong></td><td>全</td></tr>
+    <tr><td>27</td><td><strong>焦点环实施真实生效，而非只写在文件里</strong>：对 <code>a</code>、<code>.case-input</code>、<code>.case-onto-q</code>、<code>.case-id-row input</code> Tab 聚焦后检查<strong>计算样式</strong>中的 outline / box-shadow 确为新值，旧的 <code>rgba(59,130,246,.65)</code> 与失效光晕均已失效</td><td>DevTools 计算样式逐个核对 + 回归脚本断言</td><td>键盘、低视力</td></tr>
+    <tr><td>28</td><td><strong>焦点环按四档策略生效</strong>：A 档外扩（有间隙目标 + 通栏行）/ B 档 <code>offset:0</code>（相邻无间隙行 + 24–40px 紧凑目标）/ C 档 inset（长尾溢出容器）/ 兜底（<code>:focus</code> 与伪元素）—— 逐档各抽 1 处实测</td><td>四档各测 1 处</td><td>键盘、低视力</td></tr>
+  </tbody>
+</table>
+
+<!-- ========== 9 ========== -->
+<h2 id="s9"><span class="n">09</span>落地验证结果</h2>
+
+<p>本轮已交付一份<strong>可整文件回退的增量补丁</strong>，并在本机 Chrome（Playwright + 静态服务）完成实测，全程无页面错误。落地严格遵循「不碰他人正在修改的文件」这一约束。</p>
+
+<h4>交付物（3 个文件）</h4>
+<table>
+  <thead><tr><th>文件</th><th>说明</th><th>回退方式</th></tr></thead>
+  <tbody>
+    <tr><td><code>ui/aging.css</code>（新增，约 400 行 / 7 节）</td><td>纯覆盖层，令牌 + 焦点环 + 字号 + 密度 + 触控 + 亮色修复</td><td>删除即完全还原</td></tr>
+    <tr><td><code>ui/aging-mode.js</code>（新增，自包含 IIFE）</td><td>三档预设、Aa 面板、撤销、快捷键、首次引导</td><td>删除即完全还原</td></tr>
+    <tr><td><code>ui/index.html</code>（+2 行）</td><td>1 行 <code>&lt;link&gt;</code> 紧跟 app.css、1 行 <code>&lt;script defer&gt;</code> 紧跟主题切换器</td><td>删 2 行</td></tr>
+  </tbody>
+</table>
+<p>经 <code>git status</code> 核验：除上述两个新文件外，未引入任何其他改动；<code>app.css</code> / <code>app.js</code> / <code>screens.js</code> 等他人正在修改的文件<strong>均未被触碰</strong>。</p>
+
+<h4>实测数值（Chrome 计算样式 + WCAG 2.1 算法）</h4>
+<table>
+  <thead><tr><th>验收项</th><th>改造前</th><th>实测改造后</th><th>判定</th></tr></thead>
+  <tbody>
+    <tr><td>主按钮标签（深色）</td><td class="num">3.50</td><td>墨色 <code>rgb(10,19,34)</code> 压 <code>rgb(90,160,240)→rgb(78,151,239)</code>，<strong>6.84 / 6.20</strong></td><td><span class="tag t-pass">AA ✓</span></td></tr>
+    <tr><td>主按钮标签（亮色）</td><td class="num">—</td><td>深蓝底白字，<strong>5.50 / 8.24</strong></td><td><span class="tag t-pass">AA ✓</span></td></tr>
+    <tr><td>危险徽标 <code>.badge-red</code></td><td class="num">5.07</td><td class="num"><strong>7.06</strong></td><td><span class="tag t-pass">AAA ✓</span></td></tr>
+    <tr><td>导航选中项 / 表格 / 页面说明</td><td>—</td><td class="num">17.46 / 13.61 / 12.27</td><td><span class="tag t-pass">AAA ✓</span></td></tr>
+    <tr><td><strong>大字档正文字号</strong></td><td class="num">14px</td><td>body <strong>18.9px</strong>、表格 16.9px、卡片标题 18.9px（≥16 ✓）；清晰档 body 16.8px</td><td><span class="tag t-pass">✓</span></td></tr>
+    <tr><td><strong>大字档横向溢出</strong></td><td>—</td><td><code>scrollWidth 1440 == clientWidth 1440</code>，内容区 1220 == 1220，<strong>无溢出</strong>（表格屏已复测）</td><td><span class="tag t-pass">✓</span></td></tr>
+    <tr><td><strong>焦点环</strong>（深色 #6BAEF7）</td><td class="num">2.09–2.92 全 FAIL</td><td>alpha = 1 实色；vs 卡片 <strong>6.46</strong>、vs 页面底 <strong>7.99</strong></td><td><span class="tag t-pass">PASS 3:1 ✓</span></td></tr>
+    <tr><td><strong>焦点环</strong>（亮色 #1557AD）</td><td class="num">2.09–2.92 全 FAIL</td><td>vs 白 <strong>7.00</strong>、vs <code>#F3F5F9</code> <strong>6.42</strong></td><td><span class="tag t-pass">PASS 3:1 ✓</span></td></tr>
+    <tr><td>900px 图标轨</td><td>64px 无文字</td><td>侧栏 64px、导航项 <strong>44px</strong>、<code>.icon-btn</code> 32→40px、<code>.btn-sm</code> 27→32px；<strong>hover 与键盘 focus 均浮出「工作台 | 运营视图」标签</strong>（带分组名），移开即隐藏</td><td><span class="tag t-pass">✓</span></td></tr>
+    <tr><td>亮色侧栏割裂</td><td>亮色主体 + 深色侧栏</td><td>亮色侧栏已为 <code>#FFF→#F5F8FC</code> 浅色；<strong>深色下仍是原 <code>#0D1B30→#10233F→#0C1A2E</code> 渐变，未被误伤</strong></td><td><span class="tag t-pass">✓</span></td></tr>
+    <tr><td>亮色副文案 / 分组标题 / 环境标签</td><td class="num">2.99 / 2.40 / 2.76</td><td>统一 <code>#656E7E</code>，vs 白 <strong>5.14</strong></td><td><span class="tag t-pass">AA ✓</span></td></tr>
+    <tr><td>顺带修复：状态实心底白字</td><td class="num">2.13 / 2.09</td><td><code>.nav-badge</code> → <strong>8.53</strong>、<code>.btn-success</code> → <strong>8.22</strong>（新增 <code>--danger-ink</code> / <code>--ok-ink</code> 令牌）</td><td><span class="tag t-pass">AAA ✓</span></td></tr>
+  </tbody>
+</table>
+
+<h4>已实现的功能</h4>
+<ul>
+  <li>顶栏 <code>Aa</code> 按钮 + 面板（标准 320px / 大字 380px），三张预设卡<strong>各用该档真实字号渲染同一句预览</strong>（13 / 14.6 / 16.25px），当前档显示「✓ 当前使用」。</li>
+  <li>撤销：提示条 <code>pointer-events:auto</code>（避开了既有 <code>.toast-root</code> 的 <code>none</code>）、<code>Ctrl+Z</code> 撤销、<code>Alt+0</code> 恢复默认、<code>Alt+A</code> 开面板、Esc / 点击外部关闭。撤销窗口按规范为 <strong>8 秒（大字档 12 秒）</strong>。</li>
+  <li>与既有主题切换器双向兼容：广播 <code>mfg:displaychange</code>，并反向监听 <code>&lt;html data-theme&gt;</code> 变化同步自身状态，不会出现「界面亮了但图标还是月亮」。</li>
+  <li>首次引导：登录面板内三档<strong>症状化选项</strong> + 跳过链接，不收集任何个人信息。</li>
+</ul>
+
+<h4>未做 / 降级项（如实记录）</h4>
+<table>
+  <thead><tr><th>项</th><th>原因与后续</th></tr></thead>
+  <tbody>
+    <tr><td>未采用 <code>zoom: 1.25</code> 兜底</td><td>实测 Chrome 中 <code>zoom</code> 不影响 <code>getComputedStyle().fontSize</code>（仍报 14px），既无法满足「计算字号 ≥16px」的验收口径，又与 calc 令牌化叠加双重放大。已改为把 calc 缩放扩到 body + 30 余个主流容器，实测达标且无溢出。</td></tr>
+    <tr><td>字号令牌化只覆盖主流容器<span class="tag t-pass">已收口</span></td><td><strong>2026-10-20 已全量落地（原 P1-1 工单关单）</strong>：用户反馈「字体太小、放大了也没效果」——根因正是登录页 / 协同问数 / 帮助 / 场景屏（.sk-*）以及 JS 模板里的内联 <code>style="font-size:..."</code> 都不在覆盖名单内。现把 <strong>709 处</strong> font-size 全部令牌化为 <code>calc(Npx * var(--font-scale))</code>（app.css 533 + aging.css 21 + JS 模板/注入样式 155），并补上 SVG 表现属性 <code>font-size="N"</code> 的 CSS 覆写（表现属性优先级最低，CSS 可覆盖）；档位阶梯同步上调为 <strong>1 / 1.2 / 1.35</strong>。实测 15 屏 × 3 档（1600 与 1366 两种宽度）：横向溢出 0，唯一回归是审批卡固定列宽 <code>.as-cost-name</code> 的省略号截断，已改为 <code>calc(150px * var(--font-scale))</code>。</td></tr>
+    <tr><td><strong>新文件未登记进后端版本注入清单（已修复）</strong></td><td><strong>这是「切换档位后主内容字体无变化」反馈的根因</strong>：<code>api.py:114</code> 的 mtime 注入清单是硬编码元组，<code>aging.css</code> / <code>aging-mode.js</code> 不在其中，走后端访问时恒为静态 <code>?v=1</code>，浏览器长期使用缓存的早期版本。已按 <code>float-help.js</code> 的既有约定补登记，并把 <code>index.html</code> 版本号提到 <code>?v=2</code> 强制已缓存用户回源；同时补齐三个主内容高视觉权重元素的缩放（<code>.stat-num</code> 实测 <strong>24 → 30px</strong>）。<br><strong>推论：新增前端文件的集成点有两处——index.html 引用 + api.py 注入清单，漏后者就是「改了没生效」的静默缓存问题。</strong></td></tr>
+    <tr><td>图标轨浮出标签用 JS 定位而非纯 CSS</td><td>纯 CSS 浮出会被 <code>.nav</code> 的 <code>overflow-y:auto</code> 裁切；而放开 overflow 后实测导航高 950px vs 视口 754px，<strong>20 个导航项底部不可达</strong>（第一版踩到的真回归）。JS 版不裁切、不破坏滚动，键盘焦点同样触发。</td></tr>
+    <tr><td><code>.nav-item.active</code> 白字未改</td><td>其背景为半透明品牌色叠加深色侧栏，实测白字对比 <strong>17.46</strong>，无需修改。</td></tr>
+    <tr><td><strong>默认档位未强制落到「大字 + 亮色」</strong></td><td>实现采用体验侧口径：引导<strong>默认焦点在「标准」但不预选</strong>，用户按症状描述自选，系统不做推断。这与「资深员工应落亮色」的策略不冲突（预设档位本身已打包亮色），但意味着<strong>不会有人被自动切到大字档</strong>。是否改为按岗位/人群更强干预，<strong>需产品决策</strong>。</td></tr>
+    <tr><td><strong>焦点环采用「inset 基线 + 大目标外扩增强」双轨</strong></td><td>基线 <code>box-shadow: inset</code> 绘制在元素自身盒内，<strong>永不被祖先 <code>overflow</code> 裁切</strong>（全站 30+ 处溢出容器一次免疫）；<code>.nav-item</code>、<code>.btn</code>、<code>.chip</code> 等主路径目标<strong>额外保留向外 2px 增强环 + 2px 底色 gap</strong>，并把 <code>.nav</code> padding 由 10px 提到 12px 腾出余量——实测图标轨内左缘余 8px、右缘余 12px，<strong>完整落在 padding box 内未被裁切</strong>。<br><br><strong>但 <code>.role-card</code> 实测被裁，已退回 inset：</strong>它距 <code>.role-grid</code> 可视边缘仅 <strong>3px</strong>，而外扩环需要 <strong>4px</strong>（2px gap + 2px 环），左缘被 <code>overflow-y:auto</code> 吃掉 1px。这条恰好证明「祖先余量必须逐处量化，不能靠推断」——若未来要给它恢复外向环，需先把 <code>.role-grid</code> 横向 padding 补到 ≥4px（现状 3px）。所有环均带透明 <code>outline</code> 兜底，<strong>Windows 高对比模式下已实测：box-shadow 被丢弃、outline 由系统色接管（实测 <code>rgb(55,0,110)</code>），焦点仍清晰可见</strong>。</td></tr>
+    <tr><td>中和了 13 条失效光晕</td><td>除 17 条 <code>outline: none</code> 外，另有 13 处 <code>box-shadow</code> 半透明光晕（1.16–1.55）已被统一覆盖为 <code>--focus-ring</code>；回归脚本新增「<code>.case-input</code> / <code>.case-onto-q</code> / <code>.case-id-row input</code>」三条断言防回潮。</td></tr>
+    <tr><td>未使用 <code>!important</code></td><td>app.css 的 <code>.btn:focus-visible</code>（0,2,0）与运行时注入的场景样式会压过常规写法，改用 <code>html:root</code> 前缀提权至（0,3,1）解决。</td></tr>
+    <tr><td><strong>默认档位未强制为「大字 + 亮色」</strong></td><td>实现采用体验侧口径：引导<strong>默认焦点在「标准」但不预选</strong>，由用户按症状描述自选，不做推断。这与「资深默认落亮色」的策略并不冲突（预设档位本身已打包亮色），但意味着<strong>不会有人被自动切换到大字档</strong>。若企业希望对 45 岁以上人群更强干预，可改为按岗位属性推荐——<strong>需产品决策</strong>。</td></tr>
+  </tbody>
+</table>
+
+<h4>验证截图</h4>
+<p><code>logs/verify/</code> 下 12 张：<code>aging-dark</code>、<code>aging-light</code>、<code>aging-large</code>、<code>aging-900</code>（图标轨）、<code>aging-panel</code>、<code>aging-undo</code>、<code>aging-login-onboard</code>、<code>aging-ring-dark</code>、<code>aging-ring-light</code> 等。</p>
+
+<div class="quote">
+  <b>对验证结果的独立复核：</b>团队负责人已另行抽查——① <code>git status</code> 确认未污染他人改动；② <code>node --check</code> 通过；③ 用 WCAG 公式独立复算焦点环与主按钮对比度，与工程侧数值一致；④ 抽查发现代码注释中两处对比度数值写错（5.47→6.46、5.60→6.42，色值本身是对的），已要求工程侧<strong>用脚本把全部 40 处对比度注释重算一遍</strong>，结果显示 9 处不一致并已全部改对；⑤ 亲自验算焦点环选择器特异性为（0,3,1），确认压过 app.css 的 <code>.btn:focus-visible</code>（0,2,0），并纠正了注释里写错的（0,1,1）；⑥ 将撤销窗口从 5 秒对齐到规范要求的 8 秒 / 12 秒。
+</div>
+
+<!-- ========== 10 ========== -->
+<h2 id="s10"><span class="n">10</span>风险、分歧与未覆盖项</h2>
+
+<h3>10.1 需要产品决策的分歧</h3>
+<table>
+  <thead><tr><th style="width:180px">分歧点</th><th>说明与建议</th></tr></thead>
+  <tbody>
+    <tr><td><strong>场景屏下沉会破坏演示动线</strong></td><td>现有注释明确「顺序即演示脚本：客户跟着从上往下点」。下沉后讲解者要多点一次。<strong>建议</strong>：场景演练入口默认展开为可扫列表（不折叠），仍可顺序讲；或提供 URL 参数 <code>?demo=1</code> 保持平铺。需与演示负责人确认。</td></tr>
+    <tr><td><strong>预设档位是否强制改主题</strong></td><td>「清晰 / 大字」档默认带亮色（依据光晕洞察），但<strong>必须显式告知且可单独改</strong>，不静默改。切换时 toast 需写明「已同时切换为亮底黑字」。</td></tr>
+    <tr><td><strong>顶栏后端状态：定案为「dot 常驻所有断点」</strong></td><td>不收进「更多」菜单。理由：中年/资深员工遇到数据异常时第一反应是<strong>自责</strong>，那个 dot 是他唯一能自证「不是我的问题」的信号——这直接违反 Nielsen「系统状态可见性」，而这条在这三类人群里的权重远高于空间效率。成本仅 12px 宽。<code>⋯</code> 菜单项须「图标 + 中文文字」双标签 + <code>min-height:44px</code>；≤1023px 保留 refresh（车间平板上「数据是不是最新的」是高频确认动作）。</td></tr>
+    <tr><td><strong>「仅本次生效」范围：定案为只覆盖字号与密度</strong></td><td>「仅本次生效」（sessionStorage）<strong>只作用于 <code>mfg-font-scale</code> + <code>mfg-density</code>，主题始终写 localStorage</strong>。共用终端真正会污染下一人的是字号与密度（下个人进来发现字巨大且找不到在哪改），而主题是<strong>自纠正型</strong>——顶栏一个按钮一眼可见、一键改回。范围收窄后 <code>theme-switcher.js</code> 完全不需要知道 sessionStorage，<strong>跨脚本依赖归零</strong>，刷新闪跳与图标不一致从根上不会发生；也<strong>不再需要 index.html 的加载顺序约束</strong>。</td></tr>
+    <tr><td><strong><code>prefers-color-scheme</code> 会改变现状默认（dark）</strong></td><td>建议仅在「未设置过 <code>mfg-theme</code> 且非展厅模式」时生效；展厅与大屏演示加 <code>?theme=dark</code> 强制覆盖。</td></tr>
+    <tr><td><strong>顶栏后端状态是否常驻（待定）</strong></td><td>视觉侧建议 ≥1281px 全展开、1024–1280px 把主题色与后端状态收进「更多」；体验侧主张<strong>后端状态常驻</strong>——「看不到后端状态就去刷数据」是资深用户的高频损失路径，且其首选「大字 + 亮色 + 宽松」下屏幕本就只放得下 2–3 个卡片，缺了状态提示更容易瞎点。<strong>待现场实测后定。</strong></td></tr>
+    <tr><td><strong>「仅本次生效」的作用范围（待定）</strong></td><td>体验侧主张字号 + 密度可临时生效、<strong>主题必须落到 localStorage</strong>（浅色 UI + 深色弹窗的闪跳对 46–60 岁人群最难受）；同时建议共用 <code>window.MFGDisplay.get()</code> 统一读取，避免 session/local 两套读法导致刷新后闪跳。<strong>待实现时定。</strong></td></tr>
+  </tbody>
+</table>
+
+<h3>10.2 技术风险</h3>
+<ul>
+  <li><strong>焦点环 4px 外扩在紧凑区溢出</strong>：64px 图标轨、chip、表格行内小按钮处会被父容器裁切或相邻互压 → 对这些区域提供内嵌变体并保证父级 <code>overflow: visible</code>。</li>
+  <li><strong>术语自动注入可能误伤</strong>：TreeWalker 扫描会把按钮文案里的「Agent」也包起来、破坏已有 <code>title</code>、与悬浮助手 DOM 冲突 → 先做白名单容器扫描，验收通过后再扩全量。</li>
+  <li><strong>增量方案依赖 <code>renderNav()</code> 的重绘时机</strong>：若未来导航改为增量更新，MutationObserver 方案失效 → 已写入验收第 19 条作为常驻回归测试。</li>
+  <li><strong>半透明 <code>rgba</code> 是这个项目的系统性习惯</strong>：凡承担「必须可见」职责的元素（焦点环、控件边框、错误描边）都应强制使用不透明色，否则会持续重复产生同类缺陷。</li>
+  <li><strong>改造约束：场景屏下沉必须沿用 <code>SceneRegistry.register()</code> 登记机制，不得回头改 <code>NAV_ITEMS</code> 字面量</strong>。现有运行时登记（规避架构守卫的正则解析）是正确的架构决策，改动字面量会弄红 <code>test_架构守卫.py</code>。</li>
+  <li><strong>登录页角色网格的滚动条是 6px 特例</strong>（通用为 8px），改造时极易漏掉——而它恰恰位于资深员工进系统的第一个交互上。</li>
+  <li><strong>覆盖层最容易踩的坑是特异性，不是选择器写得对不对。</strong>若用 <code>:where()</code> 写通用焦点规则，它贡献 0 特异性，整条会塌成（0,1,0）或（0,2,1），被 <code>.btn:focus-visible</code>（0,2,0）与场景屏运行时注入的 <code>.case-input:focus</code>（0,2,1）反压——<strong>文件后加载也没用，特异性优先于层叠顺序</strong>。必须带 <code>html:root</code> 前缀提权（可达 0,3,1），或在关键属性上显式 <code>!important</code>。<strong>症状是「文件改了、实际没生效」，而验收时肉眼极难发现，因为焦点环只在 Tab 时出现。</strong></li>
+  <li><strong>焦点环不能只看 <code>outline</code>。</strong>本项目大量位置用 <code>box-shadow</code> 半透明光晕冒充焦点反馈（13 处，实测 1.16–1.55）。<strong>「有反馈」比「没反馈」更危险</strong>——没人会去修一个看起来正常的东西。凡做无障碍加固，必须把 <code>box-shadow</code> 一并纳入扫描范围。</li>
+  <li><strong>可聚焦性不完全由 CSS 决定。</strong>部分可点组件若是 <code>&lt;div&gt;</code>，仅补样式无效，还需 <code>tabindex="0"</code> + <code>role="button"</code> + Enter / Space 键盘处理；实施时须先确认 DOM 标签再选方案。</li>
+  <li><strong>登录页角色网格的滚动条是 6px 特例</strong>（通用为 8px），改造时容易漏掉——它恰恰位于资深员工进系统的第一个交互上。</li>
+</ul>
+
+<h3>10.3 未覆盖项</h3>
+<ul>
+  <li>音效与语音播报（无后端 TTS 能力）。</li>
+  <li>国际化与多语言排版。</li>
+  <li>屏幕阅读器（NVDA /  Narrator）真机实测——建议作为第三轮专项，不在本轮范围。</li>
+  <li>~~字号全量令牌化（421 处）：本轮以覆盖层实现，全量映射列为 P1-1。~~ <strong>2026-10-20 已收口</strong>：709 处 font-size 全量令牌化 + SVG 文本覆写，详见第 9 节。</li>
+</ul>
+
+<div class="foot">
+  制造业智能门户 · 适龄化前端优化方案 v1.0 ｜ 2026-10-20 ｜ 数据来源于对 <code>app.css</code>、<code>app.js</code>、<code>screens.js</code>、<code>theme-switcher.js</code>、<code>float-help.js</code> 的逐行实测与 WCAG 2.1 相对亮度验算。
+</div>
+
+</div>
+</body>
+</html>

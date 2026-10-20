@@ -76,12 +76,24 @@ steps:
   - id: fanin
     type: fan_in
 
+  # 4.5) 现场分派：客诉归因到责任工段（显式工段 / 产线前缀 / 批次反推）
+  # → 推送到该工段的现场看板；判不出工段则标 data_gap 转人工，不硬推。
+  # 归因结果以 site_assignees 传给下游 8D 工单，由工单把现场责任追加进责任人。
+  - id: dispatch_site
+    type: agent
+    agent: site_dispatch
+    label: 现场分派 · 责任工段
+    icon: "🏭"
+    timeout_s: 15
+    on_error: degrade
+
   # 5) 8D 整改工单
   - id: capa_flow
     type: workflow
     workflow: complaint_8d_flow
     title: 客诉 8D 整改工单
     assignees: [QA, PQE, SQE, 工程, 业务]
+    assignees_from: site_assignees   # 追加归因工段（如 SMT）；无归因则不追加
     notify_level: P1
     sla_hours: 72
     timeout_s: 15

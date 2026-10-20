@@ -42,7 +42,10 @@ CREATE TABLE quality_defect (
   defect_type VARCHAR(50),
   defect_qty INT,
   total_qty INT,
-  inspect_time DATETIME
+  inspect_time DATETIME,
+  process_stage VARCHAR(20),
+  defect_category VARCHAR(20),
+  product_category VARCHAR(20)
 );
 
 -- 4. SCM：来料批次
@@ -175,13 +178,13 @@ INSERT INTO line_stop_event VALUES
 
 -- 品质：锡膏印刷偏移集中不良
 INSERT INTO quality_defect VALUES
- (1,'BATCH-A-1015','A型号','SMT-1','锡膏偏移',32,500,'2026-10-15 14:35:00'),
- (2,'BATCH-A-1015','A型号','SMT-1','锡膏偏移',45,500,'2026-10-15 15:10:00'),
- (3,'BATCH-A-1015','A型号','SMT-1','连锡',8,500,'2026-10-15 15:40:00'),
- (4,'BATCH-B-1014','B型号','DIP-2','虚焊',3,300,'2026-10-15 10:00:00'),
+ (1,'BATCH-A-1015','A型号','SMT-1','锡膏偏移',32,500,'2026-10-15 14:35:00',NULL,NULL,NULL),
+ (2,'BATCH-A-1015','A型号','SMT-1','锡膏偏移',45,500,'2026-10-15 15:10:00',NULL,NULL,NULL),
+ (3,'BATCH-A-1015','A型号','SMT-1','连锡',8,500,'2026-10-15 15:40:00',NULL,NULL,NULL),
+ (4,'BATCH-B-1014','B型号','DIP-2','虚焊',3,300,'2026-10-15 10:00:00',NULL,NULL,NULL),
  -- S3 客诉批次 BATCH-A-1008 的过程不良（8D D4）；line_code=SMT-2，
  -- 不影响 line_stop 的 SMT-1/A型号不良分布聚合（回归红线）
- (5,'BATCH-A-1008','A型号','SMT-2','贴片偏移',46,2000,'2026-10-12 10:00:00');
+ (5,'BATCH-A-1008','A型号','SMT-2','贴片偏移',46,2000,'2026-10-12 10:00:00',NULL,NULL,NULL);
 
 -- 供应链：当日锡膏批次COA正常
 INSERT INTO material_batch VALUES

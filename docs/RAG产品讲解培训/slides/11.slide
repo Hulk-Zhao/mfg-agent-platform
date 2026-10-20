@@ -1,0 +1,87 @@
+<Slide style={{ width: 1280, height: 720, padding: 0, background: '#FFFFFF', fontFamily: '"Noto Sans SC","Source Han Sans SC","PingFang SC","Microsoft YaHei",sans-serif' }}>
+    <Box style={{ height: 120, padding: '34px 64px 0', flexDirection: 'column' }}>
+        <Text style={{ fontSize: 34, fontWeight: 'bold', color: '#0F172A', lineHeight: 1.3 }}>意图路由：sub-毫秒决定「问知识还是问模型」</Text>
+        <Text style={{ fontSize: 16, color: '#64748B', marginTop: 8 }}>域内走 RAG 保出处，域外直答省时间——分流本身不花时间</Text>
+    </Box>
+    <Box style={{ height: 540, padding: '20px 64px 0', flexDirection: 'row', gap: 32 }}>
+        <Box style={{ width: 300, background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 14, padding: '24px 22px', flexDirection: 'column' }}>
+            <Text style={{ fontSize: 14, color: '#2563EB', letterSpacing: 3, fontFamily: '"JetBrains Mono","Space Grotesk",Consolas,monospace' }}>ROUTER</Text>
+            <Text style={{ fontSize: 24, fontWeight: 'bold', color: '#0F172A', lineHeight: 1.4, marginTop: 12 }}>为什么不用<br />LLM 分类意图？</Text>
+            <Box style={{ width: 56, height: 5, background: 'linear-gradient(135deg, #2563EB 0%, #06B6D4 100%)', borderRadius: 3, margin: '16px 0 16px' }} />
+            <Text style={{ fontSize: 15, color: '#475569', lineHeight: 1.65, flex: 1 }}>每次提问先问一次大模型「你想问哪类」，一次分类 ~1.4s——检索还没开始，先付一次模型钱，属于负优化。<br /><br />词表路由是实测下来唯一 viable 的方案：毫秒级、零依赖、行为可测试。</Text>
+            <Box style={{ background: '#FFFFFF', border: '1px solid #BFDBFE', borderRadius: 10, padding: '12px 14px' }}>
+                <Text style={{ fontSize: 15, color: '#1E40AF', fontWeight: 'bold', lineHeight: 1.5 }}>路由层的价值：<br />别让贵路径处理便宜问题。</Text>
+            </Box>
+        </Box>
+        <Box style={{ flex: 1, flexDirection: 'column', gap: 14 }}>
+            <Box style={{ height: 252, background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: 12, padding: '8px 12px' }}>
+                <svg width="770" height="236" viewBox="0 0 770 236">
+                    <rect x="185" y="4" width="270" height="34" rx="8" fill="#FFF7ED" stroke="#F97316" strokeWidth="1.5" strokeDasharray="5 4" />
+                    <text x="320" y="25" fontSize="11" fontWeight="bold" fill="#C2410C" textAnchor="middle">怎么 / 如何 / 怎样 → 让位 RAG</text>
+                    <line x1="320" y1="38" x2="326" y2="70" stroke="#F97316" strokeWidth="1.5" strokeDasharray="4 3" markerEnd="url(#arrO)" />
+                    <rect x="0" y="86" width="104" height="56" rx="8" fill="#0F172A" />
+                    <text x="52" y="110" fontSize="13" fontWeight="bold" fill="#FFFFFF" textAnchor="middle">L1 未命中</text>
+                    <text x="52" y="128" fontSize="9" fill="#94A3B8" textAnchor="middle">双闸未过 / margin 不足</text>
+                    <line x1="104" y1="114" x2="258" y2="114" stroke="#94A3B8" strokeWidth="1.5" markerEnd="url(#arr)" />
+                    <polygon points="272,114 326,74 380,114 326,154" fill="#FFFFFF" stroke="#2563EB" strokeWidth="2" />
+                    <text x="326" y="110" fontSize="12" fontWeight="bold" fill="#1E40AF" textAnchor="middle">含域内词？</text>
+                    <text x="326" y="128" fontSize="9" fill="#64748B" textAnchor="middle">CJK 子串 + 词边界</text>
+                    <line x1="380" y1="114" x2="440" y2="86" stroke="#2563EB" strokeWidth="1.5" markerEnd="url(#arrBlue)" />
+                    <text x="398" y="94" fontSize="11" fontWeight="bold" fill="#1E40AF">是</text>
+                    <rect x="444" y="54" width="200" height="64" rx="8" fill="#EFF6FF" stroke="#2563EB" strokeWidth="1.5" />
+                    <text x="544" y="80" fontSize="13" fontWeight="bold" fill="#1E40AF" textAnchor="middle">域内 → L2 RAG</text>
+                    <text x="544" y="100" fontSize="10" fill="#1E3A8A" textAnchor="middle">保出处 · ~2.6s</text>
+                    <line x1="644" y1="86" x2="668" y2="86" stroke="#94A3B8" strokeWidth="1.5" markerEnd="url(#arr)" />
+                    <text x="676" y="82" fontSize="11" fill="#1E40AF">答案带</text>
+                    <text x="676" y="97" fontSize="11" fill="#1E40AF">[文件名 第N段] 出处</text>
+                    <line x1="326" y1="154" x2="326" y2="196" stroke="#94A3B8" strokeWidth="1.5" />
+                    <line x1="326" y1="196" x2="268" y2="196" stroke="#94A3B8" strokeWidth="1.5" markerEnd="url(#arr)" />
+                    <text x="334" y="178" fontSize="11" fill="#475569">否</text>
+                    <rect x="60" y="172" width="200" height="48" rx="8" fill="#F1F5F9" stroke="#64748B" strokeWidth="1.5" />
+                    <text x="160" y="192" fontSize="13" fontWeight="bold" fill="#334155" textAnchor="middle">域外 → direct 直答</text>
+                    <text x="160" y="210" fontSize="9" fill="#64748B" textAnchor="middle">不跑 Milvus · ~1.8s</text>
+                    <rect x="444" y="170" width="326" height="28" rx="6" fill="#EFF6FF" stroke="#BFDBFE" />
+                    <text x="456" y="188" fontSize="10" fill="#1E3A8A">域内词示例：CPK · SPC · 8D · ECN · MES · 锡膏 · 巡检 · 工单</text>
+                    <rect x="444" y="202" width="326" height="28" rx="6" fill="#F1F5F9" stroke="#CBD5E1" />
+                    <text x="456" y="220" fontSize="10" fill="#475569">拉丁缩写：VPN · IQC · OQC · MRB · SMED · TPM · WMS · NPI · EHS</text>
+                    <text x="0" y="234" fontSize="10" fill="#94A3B8">空 / 纯标点等退化输入：保守放行 RAG，不错过任何知识型提问</text>
+                    <defs>
+                        <marker id="arrO" markerWidth="8" markerHeight="8" refX="4" refY="3" orient="auto">
+                            <path d="M0,0 L7,3 L0,6 z" fill="#F97316" />
+                        </marker>
+                    </defs>
+                </svg>
+            </Box>
+            <Box style={{ flexDirection: 'row', gap: 12 }}>
+                <Box style={{ flex: 1, background: '#F8FAFC', border: '1px solid #E2E8F0', borderTop: '4px solid #2563EB', borderRadius: 12, padding: '12px 14px', flexDirection: 'column' }}>
+                    <Text style={{ fontSize: 26, fontWeight: 'bold', color: '#2563EB', fontFamily: '"JetBrains Mono","Space Grotesk",Consolas,monospace' }}>124 + 24</Text>
+                    <Text style={{ fontSize: 14, color: '#475569', lineHeight: 1.5, marginTop: 6 }}>124 个域内词（CJK 子串）+ 24 个拉丁缩写（VPN / ECN / 8D / CPK…），词边界正则防「MES」命中「TIMES」。</Text>
+                    <Text style={{ fontSize: 11, color: '#94A3B8', marginTop: 8, fontFamily: '"JetBrains Mono","Space Grotesk",Consolas,monospace' }}>kbqa_intent.py</Text>
+                </Box>
+                <Box style={{ flex: 1, background: '#F8FAFC', border: '1px solid #E2E8F0', borderTop: '4px solid #06B6D4', borderRadius: 12, padding: '12px 14px', flexDirection: 'column' }}>
+                    <Text style={{ fontSize: 26, fontWeight: 'bold', color: '#0E7490', fontFamily: '"JetBrains Mono","Space Grotesk",Consolas,monospace' }}>&lt; 100ms</Text>
+                    <Text style={{ fontSize: 14, color: '#475569', lineHeight: 1.5, marginTop: 6 }}>1000 次路由不到 100ms：纯函数、零外部调用、不调 LLM 不查库——所以它放在链路最前面，先分流、后花钱。</Text>
+                    <Text style={{ fontSize: 11, color: '#94A3B8', marginTop: 8, fontFamily: '"JetBrains Mono","Space Grotesk",Consolas,monospace' }}>test_kbqa_intent.py</Text>
+                </Box>
+                <Box style={{ flex: 1, background: '#F8FAFC', border: '1px solid #E2E8F0', borderTop: '4px solid #F97316', borderRadius: 12, padding: '12px 14px', flexDirection: 'column' }}>
+                    <Text style={{ fontSize: 20, fontWeight: 'bold', color: '#C2410C' }}>how_to 让位</Text>
+                    <Text style={{ fontSize: 14, color: '#475569', lineHeight: 1.5, marginTop: 6 }}>含「怎么 / 如何 / 怎样」：L1 即使命中也走 RAG；RAG miss 再回落 L1，并明示「未找到完整流程」。</Text>
+                    <Text style={{ fontSize: 11, color: '#94A3B8', marginTop: 8, fontFamily: '"JetBrains Mono","Space Grotesk",Consolas,monospace' }}>kbqa.py:198-233</Text>
+                </Box>
+            </Box>
+            <Box style={{ background: '#0F172A', borderRadius: 12, padding: '10px 20px', flexDirection: 'row', alignItems: 'center', gap: 14 }}>
+                <Box style={{ width: 5, height: 30, borderRadius: 3, background: '#06B6D4' }} />
+                <Text style={{ fontSize: 17, color: '#F8FAFC', lineHeight: 1.45, flex: 1 }}>域内保出处、域外省时间、退化输入不误伤——三条规则全部有测试守护</Text>
+            </Box>
+        </Box>
+    </Box>
+    <Box style={{ height: 60, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: '0 64px', position: 'relative' }}>
+        <Box style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            <Box style={{ width: 12, height: 12, borderRadius: 3, background: '#2563EB' }} />
+            <Box style={{ width: 9, height: 9, borderRadius: 5, background: '#06B6D4' }} />
+            <Text style={{ fontSize: 14, color: '#94A3B8' }}>mfg-agent-platform · 独立开发实践分享</Text>
+        </Box>
+        <Text style={{ fontSize: 14, color: '#94A3B8', fontFamily: '"JetBrains Mono","Space Grotesk",Consolas,monospace' }}>11 / 20</Text>
+        <Box style={{ position: 'absolute', bottom: 0, left: 0, width: 1280, height: 3, background: 'linear-gradient(90deg, #2563EB 0%, #06B6D4 55%, rgba(6,182,212,0) 100%)' }} />
+    </Box>
+</Slide>

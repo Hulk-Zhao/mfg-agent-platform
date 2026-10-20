@@ -57,6 +57,8 @@ class CaseRuntime:
     #: 访问申请的审批人提供者（**预留接口**：演示实现 = 职能管理岗代批；
     #: 生产替换为真实审批流实现，装配处换掉即可，服务端零改动）
     access_approver: Any = None
+    #: 本体缺口登记（FR-09）：申请 / 列表 / 裁决（批准 ≠ 写词表）
+    ontology_gap: Any = None
 
     # ---------- 装配 ----------
 
@@ -76,12 +78,14 @@ class CaseRuntime:
                                    redaction=get_redaction_service())
         from ..agents.case_access_agent import CaseAccessAgent
         from ..services.case_access import CaseAccessService
+        from ..services.case_ontology_gap import CaseOntologyGapService
 
         runtime = cls(store=store, index_service=index_service, search=search,
                       qa=qa, ingest=ingest, audit=audit,
                       resolver=PrincipalResolver(),
                       access=CaseAccessService(store, index_service, audit=audit),
-                      access_agent=CaseAccessAgent(store, audit))
+                      access_agent=CaseAccessAgent(store, audit),
+                      ontology_gap=CaseOntologyGapService(store, audit=audit))
         from .case_auto_approve import DemoAgentApprover
 
         runtime.access_approver = DemoAgentApprover(store)

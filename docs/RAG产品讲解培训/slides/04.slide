@@ -1,0 +1,84 @@
+<Slide style={{ width: 1280, height: 720, padding: 0, background: '#FFFFFF', fontFamily: '"Noto Sans SC","Source Han Sans SC","PingFang SC","Microsoft YaHei",sans-serif' }}>
+    <Box style={{ height: 120, padding: '34px 64px 0', flexDirection: 'column' }}>
+        <Text style={{ fontSize: 34, fontWeight: 'bold', color: '#0F172A', lineHeight: 1.3 }}>制造企业的知识，卡在三个地方</Text>
+        <Text style={{ fontSize: 16, color: '#64748B', marginTop: 8 }}>三条痛点全部来自一线实践口径，不是想象出来的需求</Text>
+    </Box>
+    <Box style={{ height: 540, padding: '24px 64px 0', flexDirection: 'row', gap: 36 }}>
+        <Box style={{ width: 760, flexDirection: 'column', gap: 16 }}>
+            <Box style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 18, background: '#EFF6FF', border: '1px solid #BFDBFE', borderLeft: '4px solid #2563EB', borderRadius: 14, padding: '20px 22px' }}>
+                <Box style={{ width: 52, height: 52, borderRadius: 12, background: '#EFF6FF', justifyContent: 'center', alignItems: 'center' }}>
+                    <FAIcon name='clock' style={{ fill: '#2563EB', width: 26, height: 26 }} />
+                </Box>
+                <Box style={{ flex: 1 }}>
+                    <Box style={{ flexDirection: 'row', alignItems: 'baseline', gap: 10 }}>
+                        <Text style={{ fontSize: 22, fontWeight: 'bold', color: '#0F172A' }}>跨部门同步「以天计」</Text>
+                        <Text style={{ fontSize: 14, color: '#94A3B8', fontFamily: '"JetBrains Mono","Space Grotesk",Consolas,monospace' }}>痛点 ①</Text>
+                    </Box>
+                    <Text style={{ fontSize: 17, color: '#475569', lineHeight: 1.55, marginTop: 6 }}>进度散落在各部门系统与微信群里，跨部门对齐一件事要以天计——信息在，链路不在。</Text>
+                </Box>
+            </Box>
+            <Box style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 18, background: '#EFF6FF', border: '1px solid #BFDBFE', borderLeft: '4px solid #2563EB', borderRadius: 14, padding: '20px 22px' }}>
+                <Box style={{ width: 52, height: 52, borderRadius: 12, background: '#EFF6FF', justifyContent: 'center', alignItems: 'center' }}>
+                    <FAIcon name='chart-bar' style={{ fill: '#2563EB', width: 26, height: 26 }} />
+                </Box>
+                <Box style={{ flex: 1 }}>
+                    <Box style={{ flexDirection: 'row', alignItems: 'baseline', gap: 10 }}>
+                        <Text style={{ fontSize: 22, fontWeight: 'bold', color: '#0F172A' }}>取数三件套：问人 · 导 Excel · 写 SQL</Text>
+                        <Text style={{ fontSize: 14, color: '#94A3B8', fontFamily: '"JetBrains Mono","Space Grotesk",Consolas,monospace' }}>痛点 ②</Text>
+                    </Box>
+                    <Text style={{ fontSize: 17, color: '#475569', lineHeight: 1.55, marginTop: 6 }}>要一个数，先问人、再导表、不行就写 SQL——取数成本高到「宁可拍脑袋」，数据始终到不了决策桌上。</Text>
+                </Box>
+            </Box>
+            <Box style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 18, background: '#EFF6FF', border: '1px solid #BFDBFE', borderLeft: '4px solid #2563EB', borderRadius: 14, padding: '20px 22px' }}>
+                <Box style={{ width: 52, height: 52, borderRadius: 12, background: '#EFF6FF', justifyContent: 'center', alignItems: 'center' }}>
+                    <FAIcon name='phone' style={{ fill: '#2563EB', width: 26, height: 26 }} />
+                </Box>
+                <Box style={{ flex: 1 }}>
+                    <Box style={{ flexDirection: 'row', alignItems: 'baseline', gap: 10 }}>
+                        <Text style={{ fontSize: 22, fontWeight: 'bold', color: '#0F172A' }}>跨部门取证靠打电话</Text>
+                        <Text style={{ fontSize: 14, color: '#94A3B8', fontFamily: '"JetBrains Mono","Space Grotesk",Consolas,monospace' }}>痛点 ③</Text>
+                    </Box>
+                    <Text style={{ fontSize: 17, color: '#475569', lineHeight: 1.55, marginTop: 6 }}>停线、缺料、客诉的取证靠打电话，闭环周期长；结论留在聊天记录里，同类问题第二次发生时，系统没有任何记忆。</Text>
+                </Box>
+            </Box>
+        </Box>
+        <Box style={{ flex: 1, flexDirection: 'column' }}>
+            <Box style={{ flexDirection: 'row', alignItems: 'center', gap: 16, padding: '2px 0 14px' }}>
+                <Text style={{ fontSize: 100, fontWeight: 'bold', lineHeight: 1, backgroundImage: 'linear-gradient(135deg, #F97316 0%, #FBBF24 100%)', backgroundClip: 'text', color: 'transparent', fontFamily: '"JetBrains Mono","Space Grotesk",Consolas,monospace' }}>3</Text>
+                <Box>
+                    <Text style={{ fontSize: 19, color: '#475569', letterSpacing: 4 }}>处卡点</Text>
+                    <Text style={{ fontSize: 13, color: '#94A3B8', letterSpacing: 2, marginTop: 4, fontFamily: '"JetBrains Mono","Space Grotesk",Consolas,monospace' }}>PAIN POINTS</Text>
+                </Box>
+                <Box style={{ marginLeft: 'auto', flexDirection: 'column', gap: 8, alignItems: 'flex-end' }}>
+                    <Box style={{ flexDirection: 'row', alignItems: 'center', gap: 8, border: '1px solid rgba(249,115,22,0.45)', borderRadius: 999, padding: '4px 12px' }}>
+                        <Text style={{ fontSize: 13, color: '#F97316', fontFamily: '"JetBrains Mono","Space Grotesk",Consolas,monospace' }}>01</Text>
+                        <Text style={{ fontSize: 14, color: '#475569' }}>跨部门同步</Text>
+                    </Box>
+                    <Box style={{ flexDirection: 'row', alignItems: 'center', gap: 8, border: '1px solid rgba(249,115,22,0.45)', borderRadius: 999, padding: '4px 12px' }}>
+                        <Text style={{ fontSize: 13, color: '#F97316', fontFamily: '"JetBrains Mono","Space Grotesk",Consolas,monospace' }}>02</Text>
+                        <Text style={{ fontSize: 14, color: '#475569' }}>取数</Text>
+                    </Box>
+                    <Box style={{ flexDirection: 'row', alignItems: 'center', gap: 8, border: '1px solid rgba(249,115,22,0.45)', borderRadius: 999, padding: '4px 12px' }}>
+                        <Text style={{ fontSize: 13, color: '#F97316', fontFamily: '"JetBrains Mono","Space Grotesk",Consolas,monospace' }}>03</Text>
+                        <Text style={{ fontSize: 14, color: '#475569' }}>取证</Text>
+                    </Box>
+                </Box>
+            </Box>
+            <Box style={{ flex: 1, background: '#0F172A', borderRadius: 16, padding: '20px 22px', flexDirection: 'column', justifyContent: 'center' }}>
+                <Text style={{ fontSize: 38, color: '#F97316', lineHeight: 1, fontFamily: 'Georgia, serif' }}>&ldquo;</Text>
+                <Text style={{ fontSize: 20, color: '#F8FAFC', lineHeight: 1.6, marginTop: 2 }}>不是缺工具，<br />是缺一条把「提问 → 取证<br />→ 决策 → 留痕」<br />串起来的链路。</Text>
+                <Box style={{ height: 1, background: 'rgba(148,163,184,0.3)', margin: '14px 0 12px' }} />
+                <Text style={{ fontSize: 15, color: '#94A3B8', lineHeight: 1.55 }}>工具已经很多，缺的是把散落的系统、表格和电话，收敛成一条每一步可审计的链路。</Text>
+            </Box>
+        </Box>
+    </Box>
+    <Box style={{ height: 60, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: '0 64px', position: 'relative' }}>
+        <Box style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            <Box style={{ width: 12, height: 12, borderRadius: 3, background: '#2563EB' }} />
+            <Box style={{ width: 9, height: 9, borderRadius: 5, background: '#06B6D4' }} />
+            <Text style={{ fontSize: 14, color: '#94A3B8' }}>mfg-agent-platform · 独立开发实践分享</Text>
+        </Box>
+        <Text style={{ fontSize: 14, color: '#94A3B8', fontFamily: '"JetBrains Mono","Space Grotesk",Consolas,monospace' }}>04 / 20</Text>
+        <Box style={{ position: 'absolute', bottom: 0, left: 0, width: 1280, height: 3, background: 'linear-gradient(90deg, #2563EB 0%, #06B6D4 55%, rgba(6,182,212,0) 100%)' }} />
+    </Box>
+</Slide>

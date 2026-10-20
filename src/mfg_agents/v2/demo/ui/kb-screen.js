@@ -27,7 +27,7 @@
   const USER_ICON = '<svg width="21" height="21" viewBox="0 0 24 24" fill="none">'
     + '<circle cx="12" cy="8.2" r="3.4" stroke="#fff" stroke-width="1.6"/>'
     + '<path d="M5.2 19.2c.9-3.2 3.6-4.9 6.8-4.9s5.9 1.7 6.8 4.9" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/></svg>';
-  const SEND_ICON = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/></svg>';
+  const SEND_ICON = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/></svg>';
 
   // 原项目侧边栏分类图标：emoji + 底色
   const CAT_ICON = {

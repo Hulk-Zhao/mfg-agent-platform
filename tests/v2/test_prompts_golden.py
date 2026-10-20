@@ -125,8 +125,21 @@ def test_customer_report_template_stop_uses_eta():
 
 
 def test_build_detail_prompt_reuses_schema_prompt():
+    """V1 SCHEMA_PROMPT 仍原样复用为前缀（零破坏），V4 追加 V2 表清单与口径纪律。
+
+    V4 多 Agent 协同迭代：V1 SCHEMA_PROMPT 只覆盖 8 张旧表，看板事实表对 LLM
+    不可见（明细探查答非所问的根因之一），故追加 V2 表清单 + 口径纪律 + few-shot；
+    与 linter.py 的语义硬伤拦截构成双保险。
+    """
     from mfg_agents.common.sql_tools import SCHEMA_PROMPT
-    assert build_detail_prompt("库存有多少") == f"{SCHEMA_PROMPT}\n\n问题：库存有多少"
+    prompt = build_detail_prompt("库存有多少")
+    assert prompt.startswith(SCHEMA_PROMPT)
+    assert "V2 看板事实表" in prompt
+    assert prompt.endswith("\n问题：库存有多少")
+    # V2 看板事实表 + 口径纪律（聚合禁入 WHERE / 混聚必须 GROUP BY）必须在内
+    assert "order_fulfillment" in prompt and "spc_measurement" in prompt
+    assert "WHERE 子句中禁止出现聚合函数" in prompt
+    assert "必须写 GROUP BY" in prompt
 
 
 def test_node_registry_forbidden_words_is_prompts_reexport():

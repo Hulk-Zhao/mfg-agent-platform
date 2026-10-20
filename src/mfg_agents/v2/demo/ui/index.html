@@ -1,12 +1,30 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="light" data-font="medium">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>智造协同平台 · 运营协同门户</title>
   <meta name="description" content="制造业跨部门协同平台演示门户：工作台 / 订单履约 / 协同问数 / 预警中心 / 报告中心 / 人工确认 审批" />
+  <!-- 首绘前确立显示偏好：默认「蓝色主题色 + 明亮 + 清晰字号」，已存过偏好的用户在这里一次性还原，
+       避免主题/字号闪跳（theme-switcher.js 与 aging-mode.js 都是 defer，排在数百 KB 脚本之后才执行）。
+       共用同一套 localStorage 键：mfg-theme / mfg-accent / mfg-font-scale / mfg-density。 -->
+  <script>
+    (function () {
+      try {
+        var root = document.documentElement;
+        var ls = window.localStorage;
+        if (ls.getItem("mfg-theme") === "dark") root.setAttribute("data-theme", "dark");
+        var accent = ls.getItem("mfg-accent");
+        if (accent === "cyan" || accent === "violet" || accent === "orange") root.setAttribute("data-accent", accent);
+        var font = ls.getItem("mfg-font-scale");
+        if (font === "standard" || font === "medium" || font === "large") root.setAttribute("data-font", font);
+        var density = ls.getItem("mfg-density");
+        if (density === "compact" || density === "standard" || density === "loose") root.setAttribute("data-density", density);
+      } catch (err) { /* 隐私模式禁用存储时按默认明亮进入 */ }
+    })();
+  </script>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='5' fill='%23185FA5'/%3E%3Cpath d='M12 4L4 8v8l8 4 8-4V8l-8-4z' fill='none' stroke='white' stroke-width='1.6' stroke-linejoin='round'/%3E%3Cpath d='M4 8l8 4 8-4M12 20v-8' stroke='white' stroke-width='1.6' stroke-linejoin='round' fill='none'/%3E%3C/svg%3E" />
-  <link rel="stylesheet" href="app.css?v=r4chat" />
+  <link rel="stylesheet" href="app.css?v=qb4" />
   <!-- 适龄化显示增强：纯覆盖层，必须排在 app.css 之后 -->
   <link rel="stylesheet" href="aging.css?v=2" />
 </head>
@@ -92,8 +110,8 @@
   <script defer src="./scenes/s05-trace.js"></script>
   <!-- T08：S6 采购执行场景屏（自注册到 SceneRegistry，不改 app.js） -->
   <script defer src="./scenes/s06-procurement.js"></script>
-  <script defer src="app.js?v=perf3"></script>
-  <script defer src="screens.js?v=perf2"></script>
+  <script defer src="app.js?v=perf4"></script>
+  <script defer src="screens.js?v=qb3"></script>
   <!-- 报告中心：覆盖 screens.js 的静态版 render_reports（新增文件，不改既有函数体） -->
   <script defer src="./reports-screen.js?v=1"></script>
   <script defer src="./case-screen.js?v=chat1"></script>
@@ -105,6 +123,6 @@
   <!-- 适龄化显示模式：三档预设 + 撤销 + 快捷键（依赖上面的主题切换器先写好 data-theme） -->
   <script defer src="./aging-mode.js?v=2"></script>
   <script defer src="./kb-screen.js?v=perf2"></script>
-  <script defer src="./office-screen.js?v=perf2"></script>
+  <script defer src="./office-screen.js?v=perf3"></script>
 </body>
 </html>

@@ -39,7 +39,46 @@ AGENT_TOOLS_META: list[dict[str, str]] = [
     {"name": "search_knowledge", "desc": "检索知识库（财务/行政制度；工程知识随接入扩展）", "kind": "只读"},
     {"name": "query_project_milestones", "desc": "查项目/NPI 里程碑（EVT/DVT/PVT/MP 阶段与状态）", "kind": "只读"},
     {"name": "query_test_records", "desc": "查测试记录（可靠性/执行结果，引用记录编号）", "kind": "只读"},
+    # V4 工具层并轨：以下工具经 ToolRegistry 装配（与 MCP / A2A 单一事实源），
+    # 按域附加给对应智能体（safe name：命名空间.动作 → 命名空间__动作）
+    {"name": "quality__trace", "desc": "批次全链路质量追溯（不良/客诉/测试记录串联）", "kind": "只读"},
+    {"name": "quality__8d", "desc": "8D 报告结构与进展查询（D1-D8 阶段留痕）", "kind": "只读"},
+    {"name": "spc__capability", "desc": "SPC 过程能力（Cp/Cpk 双西格玛口径；缺规格返 data_gap）", "kind": "只读"},
+    {"name": "spc__pareto", "desc": "不良柏拉图（按缺陷类型降序累积与关键少数）", "kind": "只读"},
+    {"name": "asset__status", "desc": "设备状态与参数查询（稼动/告警/维保）", "kind": "只读"},
+    {"name": "equipment__predict", "desc": "设备健康预测（异常风险与建议动作）", "kind": "只读"},
+    {"name": "inventory__atp", "desc": "ATP 可承诺量（库存 − 已预留，按型号）", "kind": "只读"},
+    {"name": "supply__risk", "desc": "供应风险评估（缺料/交期/齐套风险清单）", "kind": "只读"},
+    {"name": "schedule__what_if", "desc": "排产 What-if 模拟（产能/插单可行性测算）", "kind": "只读"},
+    {"name": "metric__dict", "desc": "指标字典（平台全部口径定义与负责域）", "kind": "只读"},
+    {"name": "doc__extract", "desc": "文档要点提取（工艺文件/报告的结构化摘取）", "kind": "只读"},
 ]
+
+# V4 工具层并轨：域 → 附加 ToolRegistry 工具（MCP 命名空间.动作）。
+# 排除写类/治理工具（workflow.* 含终批动作——Agent 永不放行；spc.ingest 落库写）；
+# 与既有闭包工具等价的（data.*/scenario.*/knowledge.search）不重复注入。
+AGENT_EXTRA_TOOLS: dict[str, tuple[str, ...]] = {
+    "quality": ("quality.trace", "quality.8d", "spc.capability",
+                "spc.pareto", "spc.report", "metric.dict"),
+    "manufacturing": ("asset.status", "equipment.predict", "spc.capability",
+                      "spc.pareto", "metric.dict"),
+    "supply_chain": ("inventory.atp", "supply.risk", "schedule.what_if",
+                     "metric.dict"),
+    "rd_engineering": ("quality.trace", "doc.extract", "metric.dict"),
+    "test_engineer": ("quality.trace", "metric.dict"),
+    "rd_test": ("quality.trace", "metric.dict"),
+    "me_engineer": ("doc.extract", "metric.dict"),
+    "ie_engineer": ("schedule.what_if", "asset.status", "metric.dict"),
+    "npi_engineer": ("quality.trace", "metric.dict"),
+    "project_manager": ("schedule.what_if", "supply.risk", "metric.dict"),
+    "procurement": ("supply.risk", "inventory.atp", "metric.dict"),
+    "warehouse": ("inventory.atp", "supply.risk", "metric.dict"),
+    "gm": ("metric.dict", "supply.risk", "spc.pareto"),
+    "finance": ("metric.dict",),
+    "admin": ("metric.dict",),
+    "ehs": ("metric.dict",),
+    "customer_service": ("quality.trace", "metric.dict"),
+}
 
 MAX_STEPS = 8          # 防卡死：单次任务最大工具循环步数
 TOOL_TIMEOUT_S = 45    # 单工具执行超时
@@ -296,6 +335,8 @@ class AgenticDomainAgent:
                              f"（可选: {sorted(DOMAIN_AGENT_CONFIGS)}）")
         self.cfg = cfg
         self._llm = None
+        # V4：registry 附加工具的描述（bind_tools 时并入 function 描述）
+        self._extra_desc: dict[str, str] = {}
 
     # ---------- LLM（懒加载；thinking 关闭——工具循环不需要深度思考） ----------
 
@@ -446,7 +487,69 @@ class AgenticDomainAgent:
                                                  "delivery_commit",
                                                  "maintenance_window"]}},
                 "required": ["title", "prompt", "slot"]}),
-        }
+        } | self._registry_tools()
+
+    # ---------- V4 工具层并轨：从 ToolRegistry 装配域附加工具 ----------
+
+    def _registry_tools(self) -> dict[str, tuple[Any, dict]]:
+        """按域附加 MCP 同源工具（ToolRegistry 单一事实源）。
+
+        - safe name：``quality.trace`` → ``quality__trace``（function calling
+          名称约束）；执行时直接调 ``tool.handler``（等价 ``registry.call``，
+          权限/脱敏/留痕同源）；
+        - 排除 schema 里的 ``user_ctx`` 参数：Agent 已持有调用者身份，
+          不让模型看到/填写身份字段（身份由运行时注入，不可伪造）；
+        - 结果统一截断（rows ≤5、JSON ≤600 字）——与闭包工具同口径，
+          防 token 爆炸；registry 装配失败静默返回空（旧工具不受影响）。
+        """
+        names = AGENT_EXTRA_TOOLS.get(self.domain, ())
+        if not names:
+            return {}
+        try:
+            from ..mcp_tools.tools import build_platform_tools
+            by_name = {t.name: t for t in build_platform_tools(self.orchestrator)}
+        except Exception as exc:  # noqa: BLE001 —— registry 不可用不拖垮基础工具
+            logger.warning("[agentic] ToolRegistry 装配失败（基础工具不受影响）: %s",
+                           exc)
+            return {}
+        tools: dict[str, tuple[Any, dict]] = {}
+        for name in names:
+            tool = by_name.get(name)
+            if tool is None:
+                continue
+
+            def _make(tool=tool):
+                def handler(**kwargs: Any) -> dict:
+                    res = tool.handler(args=dict(kwargs),
+                                       user_ctx=dict(self.user_ctx or {}))
+                    return self._trim_result(res)
+                return handler
+
+            schema = dict(tool.input_schema or {})
+            props = dict(schema.get("properties") or {})
+            props.pop("user_ctx", None)
+            schema["properties"] = props
+            if "user_ctx" in (schema.get("required") or []):
+                schema["required"] = [r for r in schema["required"]
+                                      if r != "user_ctx"]
+            safe = name.replace(".", "__")
+            self._extra_desc[safe] = str(tool.description or "")[:200]
+            tools[safe] = (_make(tool), schema)
+        return tools
+
+    @staticmethod
+    def _trim_result(res: Any) -> dict:
+        """工具结果统一裁剪（rows/items ≤5 行、列 ≤8；其余 JSON 截断）。"""
+        if isinstance(res, dict) and isinstance(res.get("rows"), list):
+            out = dict(res)
+            out["rows"] = [{k: v for k, v in list(r.items())[:8]}
+                           for r in res["rows"][:5] if isinstance(r, dict)]
+            out["row_count"] = len(res["rows"])
+            if isinstance(res.get("items"), list):
+                out["items"] = res["items"][:5]
+            return out
+        text = json.dumps(res, ensure_ascii=False, default=str)
+        return {"data": text[:600]}
 
     # 工具描述（给 Agent 的能力说明；与系统提示词的工具清单一致）
     _TOOL_DESCRIPTIONS = {
@@ -463,8 +566,9 @@ class AgenticDomainAgent:
     }
 
     def _tool_schemas(self) -> list[dict]:
+        descs = {**self._extra_desc, **self._TOOL_DESCRIPTIONS}
         return [{"type": "function", "function": {
-            "name": name, "description": self._TOOL_DESCRIPTIONS.get(name, ""),
+            "name": name, "description": descs.get(name, ""),
             "parameters": schema}}
             for name, (_, schema) in self._tools().items()]
 
@@ -481,6 +585,13 @@ class AgenticDomainAgent:
         llm = self._get_llm()
 
         sys_text = _SYSTEM_TEMPLATE.format(**self.cfg)
+        # V4：按域附加工具的运行时说明（registry 装配后动态拼入——静态模板
+        # 不知道每个域拿到哪些附加工具，写死会与实际能力清单失真）
+        if self._extra_desc:
+            extras = "\n".join(f"- {name}：{desc}"
+                               for name, desc in sorted(self._extra_desc.items()))
+            sys_text += (f"\n\n## 按域附加工具（与 MCP/A2A 同源装配）\n{extras}"
+                         f"\n（工具名中的 __ 对应能力命名空间 ·，如 quality__trace 即 quality.trace）")
         from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 
         messages.append(SystemMessage(content=sys_text))

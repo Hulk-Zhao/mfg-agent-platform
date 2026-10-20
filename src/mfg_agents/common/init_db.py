@@ -40,7 +40,10 @@ CREATE TABLE quality_defect (
   defect_type TEXT,
   defect_qty INTEGER,
   total_qty INTEGER,
-  inspect_time TEXT
+  inspect_time TEXT,
+  process_stage TEXT,
+  defect_category TEXT,
+  product_category TEXT
 );
 
 DROP TABLE IF EXISTS material_batch;
@@ -105,14 +108,17 @@ SEED_DATA = [
     "INSERT INTO production_output VALUES (3,'2026-10-15','DIP-2','B型号',3000,2950,84.5,10)",
     # line_stop_event
     "INSERT INTO line_stop_event VALUES (1,'SMT-1','A型号','2026-10-15 14:30:00',NULL,'EQUIPMENT','待分析','ongoing')",
-    # quality_defect
-    "INSERT INTO quality_defect VALUES (1,'BATCH-A-1015','A型号','SMT-1','锡膏偏移',32,500,'2026-10-15 14:35:00')",
-    "INSERT INTO quality_defect VALUES (2,'BATCH-A-1015','A型号','SMT-1','锡膏偏移',45,500,'2026-10-15 15:10:00')",
-    "INSERT INTO quality_defect VALUES (3,'BATCH-A-1015','A型号','SMT-1','连锡',8,500,'2026-10-15 15:40:00')",
-    "INSERT INTO quality_defect VALUES (4,'BATCH-B-1014','B型号','DIP-2','虚焊',3,300,'2026-10-15 10:00:00')",
+    # quality_defect（末三列 process_stage / defect_category / product_category：
+    # 既有行分属 SMT/DIP 旧线体，无工段/类别/产品分类标注，置 NULL；
+    # 电池域四段数据由 data/seed_quality_pareto.sql（工段/类别）与
+    # data/seed_quality_pareto_pcat.sql（产品分类）装载）
+    "INSERT INTO quality_defect VALUES (1,'BATCH-A-1015','A型号','SMT-1','锡膏偏移',32,500,'2026-10-15 14:35:00',NULL,NULL,NULL)",
+    "INSERT INTO quality_defect VALUES (2,'BATCH-A-1015','A型号','SMT-1','锡膏偏移',45,500,'2026-10-15 15:10:00',NULL,NULL,NULL)",
+    "INSERT INTO quality_defect VALUES (3,'BATCH-A-1015','A型号','SMT-1','连锡',8,500,'2026-10-15 15:40:00',NULL,NULL,NULL)",
+    "INSERT INTO quality_defect VALUES (4,'BATCH-B-1014','B型号','DIP-2','虚焊',3,300,'2026-10-15 10:00:00',NULL,NULL,NULL)",
     # S3 客诉批次 BATCH-A-1008 的过程不良（8D D4）；line_code=SMT-2，
     # 不影响 line_stop 的 SMT-1/A型号不良分布聚合（回归红线）
-    "INSERT INTO quality_defect VALUES (5,'BATCH-A-1008','A型号','SMT-2','贴片偏移',46,2000,'2026-10-12 10:00:00')",
+    "INSERT INTO quality_defect VALUES (5,'BATCH-A-1008','A型号','SMT-2','贴片偏移',46,2000,'2026-10-12 10:00:00',NULL,NULL,NULL)",
     # material_batch
     "INSERT INTO material_batch VALUES (1,'MAT-SP-1015','SP-001','无铅锡膏SAC305','千住金属','pass','http://coa.example.com/sp1015.pdf','2026-10-15 08:00:00')",
     "INSERT INTO material_batch VALUES (2,'MAT-PCB-1013','PCB-022','A型号PCB','深南电路','pass','http://coa.example.com/pcb1013.pdf','2026-10-13 09:00:00')",

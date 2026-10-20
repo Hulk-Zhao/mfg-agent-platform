@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
@@ -75,6 +76,25 @@ INVENTORY_SCENARIO_SIGNALS: tuple[str, ...] = (
     "齐套", "延期", "升级", "报告", "设备", "参数", "不良批次", "质量异常",
 )
 
+# 决策支持型（开放式态势汇总）意图（V4.1）：
+# "本月度最需关注什么 / 本月重点是什么 / 整体情况怎么样 / 最近有什么风险"。
+# 这类问题**既无场景触发词也无具体实体**——旧行为是落 chitchat（只回一句问候 +
+# 示例问题），或在降级路径里被**隐式指派**到某个场景跑重型 DAG（截图反馈：问
+# "本月最需关注什么"却跑了客诉 8D 链路 + 双人工确认）。管理者这类问题恰恰最需要
+# 答案，故单列 digest 快路径：跨域态势汇总（只读、无工单）。
+# 强信号词（命中其一即可，但仍需"无具体实体"这一硬门槛）：
+DIGEST_STRONG: tuple[str, ...] = (
+    "最需关注", "重点关注", "需要关注", "最该关注", "该关注", "关注什么",
+    "重点是什么", "重点是", "重点在哪", "有哪些风险", "有什么风险", "风险有哪些",
+    "整体情况", "整体态势", "整体怎么样", "全局情况", "经营情况", "整体表现",
+    "汇总", "概览", "小结", "总结一下", "概括一下",
+)
+# 弱信号：单说"关注"时必须同时带范围/时间词，否则不判 digest（防误吞对象级提问）：
+DIGEST_SCOPE: tuple[str, ...] = (
+    "本月", "这个月", "当月", "本周", "这周", "今天", "今日",
+    "最近", "当前", "目前", "整体", "全厂", "公司",
+)
+
 
 @dataclass
 class RouteResult:
@@ -115,7 +135,7 @@ class TwoLevelRouter:
         self.intent_classifier = intent_classifier or LLMClosedSetClassifier()
 
     def route(self, query: str, user_ctx: Optional[dict] = None) -> RouteResult:
-        """路由入口：库存数据速查 → L0 场景/办公 → L1 语义 → 降级。"""
+        """路由入口：库存数据速查 → L0 场景/办公 → 态势汇总 → L1 语义 → 降级。"""
         entities = self._extract_entities(query)
         inventory = self._route_inventory(query)
         if inventory is not None:
@@ -129,6 +149,13 @@ class TwoLevelRouter:
         if office is not None:
             office.entities = entities
             return office
+        # 决策支持型（开放式态势汇总）：无场景/办公信号时兜住"最需关注什么"这类
+        # 管理者提问——否则会落到 L1 → chitchat（只回问候），或被降级路径隐式
+        # 指派到某个场景跑重型 DAG。必须在 L1 之前。
+        digest = self._route_digest(query)
+        if digest is not None:
+            digest.entities = entities
+            return digest
         if llm_available():
             l1 = self._route_l1(query)
             if l1 is not None:
@@ -200,6 +227,49 @@ class TwoLevelRouter:
             domain="office", scenario_key=None, confidence=1.0, level="L0",
             reason=f"办公意图关键词命中: {hit}", strategy="office")
 
+    # ---------- 决策支持型：开放式态势汇总快路径（digest） ----------
+
+    def _route_digest(self, query: str) -> Optional[RouteResult]:
+        """开放式态势汇总问句 → digest（跨域态势汇总，只读无工单）。
+
+        两道判定，缺一不可：
+        ① **意图信号**：命中 DIGEST_STRONG 之一；或单说"关注"且带范围/时间词；
+        ② **无具体实体**：不含型号/线体/料号·批号·单号类编码——一旦有实体，说明是
+           对象级问题（"A型号本月情况如何"），必须走原链路，不能被汇总吞掉。
+        """
+        hit = next((w for w in DIGEST_STRONG if w in query), None)
+        if hit is None and "关注" in query:
+            hit = "关注" if any(w in query for w in DIGEST_SCOPE) else None
+        if hit is None:
+            return None
+        if self._has_entity(query):
+            logger.info("[router] 汇总意图命中 %r 但含具体对象 → 按对象级链路: %s",
+                        hit, query[:40])
+            return None
+        logger.info("[router] 汇总意图命中 %r → digest: %s", hit, query[:40])
+        return RouteResult(
+            domain=None, scenario_key=None, confidence=0.9, level="L0",
+            reason=f"开放式态势汇总意图命中: {hit}", strategy="digest")
+
+    @staticmethod
+    def _has_entity(query: str) -> bool:
+        """是否含具体对象（型号 / 线体 / 料号·批号·单号类编码）——只看**问题原文**。
+
+        为什么不用 ``_extract_entities``（V1 business_agent）的结果：它在**抽不到**
+        时会给默认值（``A型号`` / ``SMT-1`` / ``line_stop``）。据此判"有实体"会把
+        所有开放式提问都误判成对象级问题——本通道曾因此完全失效（"本月最需关注
+        什么"被判为有 A型号，digest 永不命中）。判据必须是问题原文本身。
+        """
+        if re.search(r"[A-Ea-e]\s*型号", query):
+            return True
+        if re.search(r"(SMT|DIP)-\d", query, re.IGNORECASE):
+            return True
+        code = re.search(r"\b([A-Z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)+)\b", query)
+        if code and not code.group(1).upper().startswith(("SMT-", "DIP-")) \
+                and any(ch.isdigit() for ch in code.group(1)):
+            return True
+        return bool(re.search(r"客户\s*[A-Za-z一二三四五六七八九十]", query))
+
     # ---------- L1：语义闭集分类（委托 intent.classifier） ----------
 
     def _route_l1(self, query: str) -> Optional[RouteResult]:
@@ -207,6 +277,19 @@ class TwoLevelRouter:
         if intent is None:
             return None
         if intent.domain is None:  # 非领域意图（闲聊/无关）：轻量回应+引导回领域
+            # V4.1 复核：**带具体对象**的问句（型号 / 线体 / 料号·批号类编码）本质是
+            # 数据问题，不该被回一句问候——"A型号本月情况如何"曾因此答非所问。
+            # 有对象 → 走数据直查（查不到还有 Agentic 域智能体 / 人工兜底）；无对象
+            # （真闲聊"你好""你会做饭吗"）才轻回应。这是对 L1 判定的**保守复核**，
+            # 只放宽"有明确指向"的那一类，不放宽纯闲聊。
+            if self._has_entity(query):
+                return RouteResult(
+                    domain=None, scenario_key=None,
+                    confidence=intent.confidence, level="L1",
+                    low_confidence=True,
+                    reason=f"{intent.reason}；但问题含具体对象（型号/线体/编码），"
+                           "按数据直查处理",
+                    strategy="qa")
             return RouteResult(domain=None, scenario_key=None,
                                confidence=intent.confidence, level="L1",
                                low_confidence=intent.low_confidence,
@@ -256,14 +339,30 @@ class TwoLevelRouter:
             if score > best_score:
                 best_domain, best_score = domain, score
         if best_domain is not None:
+            scenario_key, trig_score = self._scenario_for_domain(best_domain, query)
+            # V4.1：只有**场景触发词真命中**才走 scenario。此前这里无条件取
+            # `_scenario_for_domain` 的返回值（无触发词时它退化为"该域第一个场景"），
+            # 于是"域关键词命中但没有任何场景信号"的问题会被**隐式指派**一个场景
+            # 跑重型 DAG（截图反馈：泛化提问却跑了客诉 8D + 双 HITL）。无明显信号
+            # 的问题应走数据直答（qa），把"要不要建工单"的决定交给真实信号。
+            if trig_score > 0:
+                return RouteResult(
+                    domain=best_domain,
+                    scenario_key=scenario_key,
+                    confidence=min(0.4 + 0.1 * best_score, 0.7),
+                    level="degrade",
+                    low_confidence=True,
+                    reason=f"LLM 不可用，域组关键词模糊匹配 {best_score} 个"
+                           f"（场景触发词命中 {trig_score} 个）",
+                    strategy="scenario",
+                )
             return RouteResult(
-                domain=best_domain,
-                scenario_key=self._scenario_for_domain(best_domain, query),
+                domain=best_domain, scenario_key=None,
                 confidence=min(0.4 + 0.1 * best_score, 0.7),
-                level="degrade",
-                low_confidence=True,
-                reason=f"LLM 不可用，域组关键词模糊匹配 {best_score} 个",
-                strategy="scenario",
+                level="degrade", low_confidence=True,
+                reason=f"LLM 不可用，域组关键词模糊匹配 {best_score} 个"
+                       f"（无场景触发词，走数据直答）",
+                strategy="qa",
             )
         return RouteResult(
             domain=None, scenario_key=None, confidence=0.0, level="degrade",

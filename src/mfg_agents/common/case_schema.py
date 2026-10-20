@@ -133,6 +133,34 @@ CASE_DDL: tuple[str, ...] = (
     "CREATE INDEX IF NOT EXISTS idx_case_access_status "
     "ON case_access_request (status, created_at)",
 
+    # ---------- 本体缺口登记申请（FR-09：术语未登记时的治理入口）----------
+    # 为什么单独一张表而不是复用审计：审计纪律是"只记哈希、不记明文"
+    # （见 case_audit.FORBIDDEN_DETAIL_KEYS），而登记申请必须能看到"申请的是什么词"，
+    # 否则审批人无从裁决。二者是两条不同的治理链，各自保持单一职责。
+    """
+    CREATE TABLE IF NOT EXISTS case_ontology_gap (
+        gap_id          TEXT PRIMARY KEY,
+        vocab           TEXT NOT NULL DEFAULT 'defect_mode',
+        term            TEXT NOT NULL DEFAULT '',
+        code_proposed   TEXT NOT NULL DEFAULT '',
+        phenomenon_hint TEXT NOT NULL DEFAULT '',
+        source          TEXT NOT NULL DEFAULT 'manual',
+        requester_id    TEXT NOT NULL DEFAULT '',
+        requester_dept  TEXT NOT NULL DEFAULT '',
+        requester_role  TEXT NOT NULL DEFAULT '',
+        status          TEXT NOT NULL DEFAULT 'pending',
+        approver_id     TEXT NOT NULL DEFAULT '',
+        decision_reason TEXT NOT NULL DEFAULT '',
+        created_at      TEXT NOT NULL DEFAULT '',
+        decided_at      TEXT NOT NULL DEFAULT ''
+    )
+    """,
+    # 同一词表下同一个词只允许一条待审申请（防刷单；已裁决的可再申请）
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_ontology_gap_pending "
+    "ON case_ontology_gap (vocab, term) WHERE status='pending'",
+    "CREATE INDEX IF NOT EXISTS idx_ontology_gap_status "
+    "ON case_ontology_gap (status, created_at)",
+
     # ---------- 审计（只追加 + hash chain） ----------
     """
     CREATE TABLE IF NOT EXISTS case_audit (
@@ -163,7 +191,7 @@ CASE_DDL: tuple[str, ...] = (
 
 CASE_TABLES: tuple[str, ...] = (
     "case", "case_acl", "case_chunk", "case_evidence", "case_access_request",
-    "case_audit",
+    "case_ontology_gap", "case_audit",
 )
 
 

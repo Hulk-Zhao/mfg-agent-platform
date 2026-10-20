@@ -49,7 +49,7 @@
     { id: "orders", label: "订单履约看板", title: "订单履约看板", sub: "订单全链路管道 · 风险订单 · 部门协同", icon: "orders", group: "运营视图",
       roles: ["gm", "mfg", "biz", "cs", "pm", "pln", "mc", "scm", "procm", "proc", "whm", "wh", "finm", "fin"] },
     { id: "mfgboard", label: "制造综合看板", title: "制造综合看板", sub: "制造 + 品质双看板 · 稼动率/报废率/报工完成率/直通率/标准三率", icon: "activity", group: "运营视图",
-      roles: ["gm", "mfg", "eq", "eqm", "mt", "qd", "pqe", "pe", "ie", "te", "rdm", "rd", "me", "rdt", "npi", "pm", "ehs"] },
+      roles: ["gm", "mfg", "eq", "eqm", "mt", "qd", "qa", "sqe", "pqe", "pe", "ie", "te", "rdm", "rd", "me", "rdt", "npi", "pm", "ehs"] },
     { id: "spc", label: "SPC 过程能力看板", title: "SPC 过程能力看板", sub: "过程能力指数 Cpk/Pp/Ppk · 判定与越限预警 · 不良柏拉图", icon: "spc", group: "运营视图",
       roles: ["gm", "mfg", "qd", "pqe", "sqe", "qa", "pe", "te", "ie"] },
     // 预警是「看见异常」，属于运营视图；放在看板之后，形成「指标 → 异常」的自然下探。
@@ -111,6 +111,14 @@
   // GET 请求超时（毫秒）。本地毫秒级，公网隧道单次往返约 1-2s；
   // 给 12s 余量，但必须有上限——否则网络抖动会让"正在加载…"永远转圈。
   const DEFAULT_TIMEOUT_MS = 12000;
+
+  // 协同问数（POST /api/v2/query）超时（毫秒）。这条链路最慢会走到
+  // 「场景 DAG + RAG 根因分析 + LLM 报告」或「跨域协同 / 域智能体自主决策」
+  // （agentic 单步 LLM 45s、最多 8 步）——用通用 12s 预算会在后端还在推理时
+  // 就 abort 请求，用户只看到 "问数请求失败：signal is aborted without reason"
+  // 这类 DOMException 原文（截图反馈）。给足推理预算（90s，与 kbqa 的 75s 同
+  // 量级）；链路过程有 SSE 节点逐级点亮，等待不闷。
+  const ASK_TIMEOUT_MS = 90000;
 
   // 后端健康探测超时（毫秒）。
   // 必须是 GET 超时的 2 倍以上：公网隧道（Cloudflare / cpolar）下单次
@@ -183,11 +191,16 @@
   /* ---------- 登录态（演示版免密码：选择岗位身份即登录，并换取访问令牌） ---------- */
 
   const USER_KEY = "mfg_gateway_user_v1";
+  /* 会话标记（sessionStorage）：仅在同一标签页内存活。
+     产品口径（2026-10-20）：拿到公网链接的访客，每次新开链接默认落在登录界面；
+     只有同标签页刷新才直接恢复会话，关掉标签页 / 新开链接一律先见登录页。 */
+  const SESSION_FLAG_KEY = "mfg_gateway_session_v1";
 
   function saveUser(roleId, token) {
     try {
       localStorage.setItem(USER_KEY,
         JSON.stringify({ roleId, token: token || "", at: Date.now() }));
+      sessionStorage.setItem(SESSION_FLAG_KEY, "1");
     } catch (err) { /* 隐私模式/存储禁用时忽略 */ }
   }
 
@@ -211,7 +224,10 @@
   }
 
   function clearUser() {
-    try { localStorage.removeItem(USER_KEY); } catch (err) { /* ignore */ }
+    try {
+      localStorage.removeItem(USER_KEY);
+      sessionStorage.removeItem(SESSION_FLAG_KEY);
+    } catch (err) { /* ignore */ }
   }
 
   /** 头像字母：优先岗位显式 abbr（GM/MFG/SQE…），缺失时回退中文名首字。 */
@@ -550,13 +566,23 @@
     base() { return state.backend.base; },
     online() { return state.backend.online; },
 
-    /** 探测后端：同源优先，随后本机 8004；全部失败 → 演示模式。
+    /** 探测后端：**同源优先**，同源不可用才竞速本机 8004；全部失败 → 演示模式。
      *
-     *  **竞速而非集合**：候选基址并行探测，**第一个成功立即采用并取消其余**。
-     *  旧实现用 `Promise.all` 等全部完成，总耗时由最慢的候选决定——页面从
-     *  `http://127.0.0.1:8004` 打开时，同源 100ms 就通了，却要陪着
-     *  `localhost:8004`（可能解析到未监听的 IPv6）一起等满 9s 才判定在线，
-     *  登录后盯着"检测中"是这段时间。演示现场这就是"卡住了"。
+     *  **两段式，顺序敏感**：
+     *  ① 同源单打——页面由后端自己托管时（`http://host:port/` 打开），同源就是
+     *     正确后端，直接采用，不再并行探测其余候选；
+     *  ② 同源不可用（file:// 直开、前端与后端分离部署）→ 竞速本机候选，
+     *     第一个成功立即采用并取消其余。
+     *
+     *  为什么①必须真正"优先"而不是只把同源丢进竞速池：本机同时挂着另一份
+     *  **旧实例**时（典型：新代码起在 8005、8004 还遗留旧进程），两端
+     *  `/api/v2/health` 都只有几毫秒，竞速是"先返回者胜"→ 结果近似抛硬币，
+     *  前端会随机连到旧后端，现场表现为"改了不生效""页面还是旧行为"。
+     *  同源优先把这个不确定性彻底去掉：谁托管页面，就用谁做后端。
+     *
+     *  第二轮仍保留竞速（而非集合）：`Promise.all` 等全部完成时，总耗时会由
+     *  最慢的候选决定——`localhost:8004` 可能解析到未监听的 IPv6，白等满 9s
+     *  才判在线，现场就是"卡在检测中"。
      *
      *  并发守卫：boot()（已登录用户）与 enterApp()（登录页点岗位）都可能触发
      *  startApp() → probe()。公网隧道下探测耗时 1-2s，两次并发时后返回的
@@ -565,10 +591,6 @@
     probe() {
       if (probeInFlight) return probeInFlight;
       probeInFlight = (async () => {
-        const candidates = [];
-        if (/^https?:$/.test(location.protocol)) candidates.push(location.origin);
-        API_PORT_CANDIDATES.forEach((c) => { if (!candidates.includes(c)) candidates.push(c); });
-
         const controllers = [];
         const probeOne = async (base) => {
           const ctrl = new AbortController();
@@ -590,20 +612,30 @@
           return null;
         };
 
-        const attempts = candidates.map(probeOne);
-        const hit = await new Promise((resolve) => {
-          let pending = attempts.length;
-          let settled = false;
-          attempts.forEach((p) => p.then((h) => {
-            if (h && !settled) {
-              settled = true;
-              controllers.forEach((c) => c.abort());   // 其余探测立刻放弃，不再等
-              resolve(h);
-              return;
-            }
-            if (--pending === 0 && !settled) resolve(null);
-          }));
-        });
+        // ① 同源优先：http(s) 托管时先单独打同源（不打其它候选，避免竞速误选旧实例）
+        const sameOrigin = /^https?:$/.test(location.protocol) ? location.origin : "";
+        let hit = sameOrigin ? await probeOne(sameOrigin) : null;
+
+        // ② 同源不可用 → 竞速本机候选（file:// 直开 / 前后端分离部署的老路）
+        if (!hit) {
+          const candidates = API_PORT_CANDIDATES.filter((c) => c !== sameOrigin);
+          if (candidates.length) {
+            const attempts = candidates.map(probeOne);
+            hit = await new Promise((resolve) => {
+              let pending = attempts.length;
+              let settled = false;
+              attempts.forEach((p) => p.then((h) => {
+                if (h && !settled) {
+                  settled = true;
+                  controllers.forEach((c) => c.abort());   // 其余探测立刻放弃，不再等
+                  resolve(h);
+                  return;
+                }
+                if (--pending === 0 && !settled) resolve(null);
+              }));
+            });
+          }
+        }
 
         if (hit) {
           state.backend = { online: true, base: hit.base, checking: false, health: hit.health || null };
@@ -681,9 +713,15 @@
     /** 当前登录态校验（F2）：令牌有效则返回权威 user_ctx */
     me() { return this._get("/api/v2/auth/me", 6000); },
 
-    /** 统一问数入口（TwoLevelRouter → YamlDagExecutor） */
-    query(query, requestId, userCtx) {
-      return this._post("/api/v2/query", { query, request_id: requestId, user_ctx: userCtx });
+    /** 统一问数入口（TwoLevelRouter → YamlDagExecutor）。
+     *  askCtx：结构化问数上下文（module/kpi/window/filters/view），看板问数
+     *  口径直查用——与自然语言并行传递，后端未命中时静默回落纯文本链路。 */
+    query(query, requestId, userCtx, askCtx) {
+      const body = { query, request_id: requestId, user_ctx: userCtx };
+      if (askCtx && typeof askCtx === "object") body.ask_ctx = askCtx;
+      // 超时预算单列：问数链路含场景 DAG / RAG / LLM，不能用 12s 通用预算
+      // （见 ASK_TIMEOUT_MS 注释——超时会以 "signal is aborted" 形态暴露给用户）。
+      return this._post("/api/v2/query", body, ASK_TIMEOUT_MS);
     },
 
     /** 企业咨询助手：Milvus 制度库检索 + LLM 生成带出处回答（独立通道）。
@@ -706,9 +744,38 @@
 
     /* ---------- 企业综合助手（Agentic Agent：办公事务 + 制造数据只读速查） ---------- */
 
-    /** 企业助手对话（强制定向该 Agent；返回含工具调用留痕 steps） */
-    officeChat(query, userCtx) {
-      return this._post("/api/v2/office/chat", { query, user_ctx: userCtx || null });
+    /** 企业助手对话（强制定向该 Agent；返回含工具调用留痕 steps）
+     *  attachments：本次携带的上传材料编号（attachment_id 列表），后端解析为
+     *  本人材料元数据后交给 Agent，提交报销/病假时绑定到单据。 */
+    officeChat(query, userCtx, attachments) {
+      const body = { query, user_ctx: userCtx || null };
+      if (attachments && attachments.length) body.attachments = attachments;
+      return this._post("/api/v2/office/chat", body);
+    },
+    /** OA 材料登记（演示态"虚假上传"）：**只登记文件名与大小，不上传文件字节**。
+     *  返回材料元数据（含 attachment_id 与 virtual=true）。 */
+    officeUpload(file, kind, actor, note) {
+      return this._post("/api/v2/office/upload", {
+        filename: (file && file.name) || "",
+        kind: kind || "其他",
+        actor: actor || "",
+        note: note || "",
+        size: (file && file.size) || 0,
+        content_type: (file && file.type) || "",
+      });
+    },
+    /** 材料登记信息地址（演示态无原文件：打开为登记卡片说明） */
+    officeAttachmentUrl(attachmentId) {
+      return `${this.base()}/api/v2/office/attachment/${encodeURIComponent(attachmentId)}`;
+    },
+    /** 整理报销科目（确定性规则，无需 LLM）：二级科目拆分 + 必传/选传材料核对 */
+    officeExpenseOrganize(payload) {
+      return this._post("/api/v2/office/expense/organize", payload || {});
+    },
+    /** 给请假单补件（如病假条）：补件材料须为本人上传 */
+    officeLeaveAttachment(leaveId, attachmentId, actor) {
+      return this._post(`/api/v2/office/leave/${encodeURIComponent(leaveId)}/attachment`,
+        { attachment_id: attachmentId, actor: actor || "" });
     },
     /** 办公能力元数据：后端实现（demo/真实）/ LLM 可用性 / 高影响阈值 */
     officeMeta() { return this._get("/api/v2/office/meta", 6000); },
@@ -823,10 +890,14 @@
     },
 
     /** 制造看板（稼动率/报废率/报工完成率/测试直通率；按岗位数据范围裁决）
-     *  window: "window"(最近7天，默认) | "day"(当日) | "month"(当月) */
-    manufacturingDashboard(window) {
+     *  window: "window"(最近7天，默认) | "day"(当日) | "month"(当月)；
+     *  stage/productCategory: 板级「工段 / 产品分类」筛选（缺省 = 全部），
+     *  KPI 卡与 TOP5 即所选范围汇总（后端用固定映射折出这两个维度）。 */
+    manufacturingDashboard(window, stage, prodCat) {
       return this._getScoped("/api/v2/dashboard/manufacturing"
-        + (window ? `?window=${encodeURIComponent(window)}` : ""), 8000);
+        + `?window=${encodeURIComponent(window || "window")}`
+        + (stage ? `&stage=${encodeURIComponent(stage)}` : "")
+        + (prodCat ? `&product_category=${encodeURIComponent(prodCat)}` : ""), 8000);
     },
 
     /** 品质看板（不良率/直通率 FPY/来料批次合格率/客诉闭环率；按岗位数据范围裁决）
@@ -839,6 +910,14 @@
         + `?window=${encodeURIComponent(window || "window")}${qs}`, 8000);
     },
 
+    /** 标准三率「班组明细」弹窗：单个班组的三率拆解（按工序 / 按日）+ 不良原因归因。
+     *  与 qualityDashboard 的 standard_three_rates 同一套口径，弹窗数字与大盘可对账。 */
+    qualityTeam(stage, team, window) {
+      return this._getScoped("/api/v2/dashboard/quality/team"
+        + `?stage=${encodeURIComponent(stage)}&team=${encodeURIComponent(team)}`
+        + `&window=${encodeURIComponent(window || "window")}`, 8000);
+    },
+
     /** 订单履约看板（OTD/OTIF/延期订单率/齐套率；客户身份按岗位脱敏）
      *  window: "window"(最近7天，默认) | "day"(当日) | "month"(当月) */
     ordersDashboard(window) {
@@ -846,8 +925,66 @@
         + (window ? `?window=${encodeURIComponent(window)}` : ""), 8000);
     },
 
-    /** SPC 过程能力看板（逐特性 Cpk/Pp/Ppk 判定 + 子组越限预警 + 不良柏拉图；按岗位裁决） */
-    spcDashboard() { return this._getScoped("/api/v2/dashboard/spc", 8000); },
+    /** 订单状态管道「点环节」弹窗：该环节订单清单 + 汇总。
+     *  与 ordersDashboard 的 pipeline 同源同口径（同一张表、同一个 due_date 窗口）。 */
+    orderStage(stage, window) {
+      return this._getScoped("/api/v2/dashboard/orders/stage"
+        + `?stage=${encodeURIComponent(stage || "")}`
+        + `&window=${encodeURIComponent(window || "window")}`, 8000);
+    },
+
+    /** 订单详情弹窗：单张订单全字段（客户身份按岗位脱敏，与风险订单清单同一套规则）。 */
+    orderDetail(orderNo) {
+      return this._getScoped("/api/v2/dashboard/orders/detail"
+        + `?order_no=${encodeURIComponent(orderNo || "")}`, 8000);
+    },
+
+    /** 订单履约 2 级看板「点行」弹窗：单分组（客户·等级 / 型号）的订单清单。
+     *  与 dashboardDrill(screen=orders) 的 L2 同一套 DRILL_DEFS 聚合口径，
+     *  弹窗头部指标值与 2 级看板该行逐字段一致（可对账）。 */
+    ordersGroup(kpi, entity, window) {
+      const ent = entity || {};
+      const qs = Object.keys(ent).filter((k) => ent[k])
+        .map((k) => `&${k}=${encodeURIComponent(ent[k])}`).join("");
+      return this._getScoped("/api/v2/dashboard/orders/group"
+        + `?kpi=${encodeURIComponent(kpi)}${qs}`
+        + `&window=${encodeURIComponent(window || "window")}`, 8000);
+    },
+
+    /** SPC 过程能力看板（逐特性 Cpk/Pp/Ppk 判定 + 子组越限预警 + 不良柏拉图；按岗位裁决）
+     *  板级筛选：window（day|month|window）/ stage（工段）/ product_category（产品分类）。 */
+    spcDashboard(window, stage, productCategory) {
+      const qs = [
+        `window=${encodeURIComponent(window || "window")}`,
+        stage ? `stage=${encodeURIComponent(stage)}` : "",
+        productCategory ? `product_category=${encodeURIComponent(productCategory)}` : "",
+      ].filter(Boolean).join("&");
+      return this._getScoped(`/api/v2/dashboard/spc?${qs}`, 8000);
+    },
+
+    /** SPC 2 级看板「点特性」弹窗：单特性能力拆解 + 逐日越限 + 原始记录（与 L1 同源）。 */
+    spcCapability(characteristic, window, stage, productCategory) {
+      const qs = [
+        `characteristic=${encodeURIComponent(characteristic || "")}`,
+        `window=${encodeURIComponent(window || "window")}`,
+        stage ? `stage=${encodeURIComponent(stage)}` : "",
+        productCategory ? `product_category=${encodeURIComponent(productCategory)}` : "",
+      ].filter(Boolean).join("&");
+      return this._getScoped(`/api/v2/dashboard/spc/capability?${qs}`, 8000);
+    },
+
+    /** SPC 测量记录弹窗：越限明细（overOnly）/ 单日明细（day）——与看板同口径可对账。 */
+    spcRecords(window, stage, productCategory, characteristic, day, overOnly) {
+      const qs = [
+        `window=${encodeURIComponent(window || "window")}`,
+        stage ? `stage=${encodeURIComponent(stage)}` : "",
+        productCategory ? `product_category=${encodeURIComponent(productCategory)}` : "",
+        characteristic ? `characteristic=${encodeURIComponent(characteristic)}` : "",
+        day ? `day=${encodeURIComponent(day)}` : "",
+        overOnly ? "over_only=true" : "",
+      ].filter(Boolean).join("&");
+      return this._getScoped(`/api/v2/dashboard/spc/records?${qs}`, 8000);
+    },
 
     /** 看板下钻：无 entity = L2（按维度分解）；带 entity = L3（单实体）；
      *  再带 step = L4（该工序逐日+工位）；再带 station = L5（该工位逐日+过站记录）；
@@ -869,6 +1006,37 @@
       if (prodCat) extra += `&prod_category=${encodeURIComponent(prodCat)}`;
       extra += `&window=${encodeURIComponent(window || "window")}`;
       return this._getScoped(`/api/v2/dashboard/drill?${qs}${extra}`, 8000);
+    },
+
+    /** 预警中心（真实优先）：五类预警，前四类由后端当前只读数据机械推导
+     *  （SPC越限 / 缺料 / 订单临期 / 设备告警），第五类「现场推送」来自治理库的
+     *  现场看板推送表（客诉 8D 分派后的现场处置队列）；等级与状态按可复算规则给出；
+     *  订单客户名与现场推送客户名按岗位脱敏。全员可见（异常可能来自任何岗位），只需令牌。 */
+    alerts() {
+      return this._getScoped("/api/v2/alerts", 8000);
+    },
+
+    /* ---------- 现场看板（客诉 → 责任工段 推送队列：读 + 现场回写） ---------- */
+
+    /** 现场看板推送队列（stage 缺省=全部工段；status 缺省=全部状态）。
+     *  与预警中心「现场推送」同一张表，同源裁决 + 客户名按岗位脱敏。 */
+    siteBoard(stage, status) {
+      const qs = [];
+      if (stage) qs.push(`stage=${encodeURIComponent(stage)}`);
+      if (status) qs.push(`status=${encodeURIComponent(status)}`);
+      return this._getScoped(`/api/v2/site-board${qs.length ? "?" + qs.join("&") : ""}`, 8000);
+    },
+
+    /** 现场接收推送（pushed → acked）：接收人由岗位令牌裁决，备注可选 */
+    siteBoardAck(pushId, note) {
+      return this._post(`/api/v2/site-board/${encodeURIComponent(pushId)}/ack`,
+        { note: note || "" });
+    },
+
+    /** 现场处置闭环（acked → closed）：处置结论**必填**（后端空则 400） */
+    siteBoardFeedback(pushId, feedback) {
+      return this._post(`/api/v2/site-board/${encodeURIComponent(pushId)}/feedback`,
+        { feedback: feedback || "" });
     },
 
     /** 选定处置动作（按该动作 propose/cosign 生成会签要求）。
@@ -1201,15 +1369,15 @@
         + "border-radius:10px;box-shadow:var(--shadow-pop);z-index:100;overflow:hidden;";
       let html = "";
       if (!results.length) {
-        html = `<div style="padding:16px;font-size:12.5px;color:var(--text-3);text-align:center;">未命中演示数据</div>`;
+        html = `<div style="padding:16px;font-size: calc(12.5px * var(--font-scale));color:var(--text-3);text-align:center;">未命中演示数据</div>`;
       } else {
         results.forEach((r, i) => {
           html += `<div class="search-hit" data-idx="${i}" style="padding:10px 14px;cursor:pointer;border-bottom:1px solid var(--border);display:flex;gap:9px;align-items:center;">`
             + `<span class="badge badge-blue">${esc(r.type)}</span>`
-            + `<div style="min-width:0;"><div style="font-size:12.8px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(r.title)}</div>`
-            + `<div style="font-size:11.5px;color:var(--text-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(r.sub)}</div></div></div>`;
+            + `<div style="min-width:0;"><div style="font-size: calc(12.8px * var(--font-scale));font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(r.title)}</div>`
+            + `<div style="font-size: calc(11.5px * var(--font-scale));color:var(--text-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(r.sub)}</div></div></div>`;
         });
-        html += `<div style="padding:7px 14px;font-size:11px;color:var(--text-3);background:#F8FAFD;">检索范围为演示数据（订单 / 预警 / 工单）</div>`;
+        html += `<div style="padding:7px 14px;font-size: calc(11px * var(--font-scale));color:var(--text-3);background:#F8FAFD;">检索范围为演示数据（订单 / 预警 / 工单）</div>`;
       }
       panel.innerHTML = html;
       const wrap = input.closest(".topbar-search");
@@ -1224,7 +1392,15 @@
             if (hit2.ask) {
               // 报告中心用独立预填键：命中"报告"条目时不得污染协同问数的提问框
               const key = hit2.screen === "reports" ? "report_prefill" : "chat_prefill";
-              try { sessionStorage.setItem(key, hit2.ask); } catch (e) { /* 忽略 */ }
+              try {
+                sessionStorage.setItem(key, hit2.ask);
+                if (key === "chat_prefill") {
+                  // 结构化来源标注：AI 搜问进协同问数（无看板口径，仅标模块）
+                  sessionStorage.setItem("chat_ask_ctx", JSON.stringify({ module: "search" }));
+                } else {
+                  sessionStorage.removeItem("chat_ask_ctx");
+                }
+              } catch (e) { /* 忽略 */ }
             }
             navigate(hit2.screen);
             closePanel();
@@ -1241,7 +1417,14 @@
         if (r.length) {
           if (r[0].ask) {
             const key = r[0].screen === "reports" ? "report_prefill" : "chat_prefill";
-            try { sessionStorage.setItem(key, r[0].ask); } catch (e) { /* 忽略 */ }
+            try {
+              sessionStorage.setItem(key, r[0].ask);
+              if (key === "chat_prefill") {
+                sessionStorage.setItem("chat_ask_ctx", JSON.stringify({ module: "search" }));
+              } else {
+                sessionStorage.removeItem("chat_ask_ctx");
+              }
+            } catch (e) { /* 忽略 */ }
           }
           navigate(r[0].screen);
           closePanel();
@@ -1373,10 +1556,16 @@
 
   async function boot() {
     initChrome();
-    // 刷新/重开保持会话：有有效登录态就直接进应用（所在屏由 location.hash 恢复，
-    // 见 startApp），没有才回登录页选择岗位。退出登录走 clearUser()，不受影响。
+    /* 会话恢复口径（2026-10-20）：公网链接访客默认落在登录界面。
+       - 同一标签页刷新（sessionStorage 会话标记还在）→ 直接进应用，所在屏由
+         location.hash 恢复（见 startApp）；
+       - 新开 / 重开链接、新访客 → 一律先到登录界面；已选过岗位的回显
+         「已选择：xxx」并预选中，点「进入系统」一键直达，不丢便利性。
+       退出登录走 clearUser()，两个存储一起清。 */
     const saved = loadUser();
-    if (saved) {
+    let sameTab = false;
+    try { sameTab = sessionStorage.getItem(SESSION_FLAG_KEY) === "1"; } catch (err) { sameTab = false; }
+    if (saved && sameTab) {
       state.role = saved.roleId;
       state.token = saved.token;   // 令牌由 startApp → ensureSession 校验/补签
       const root = document.getElementById("login-root");
@@ -1385,7 +1574,7 @@
       startApp();
       return;
     }
-    state.role = "";
+    state.role = saved ? saved.roleId : "";   // 仅用于登录页预选中上次岗位
     state.token = "";
     renderLogin();
   }

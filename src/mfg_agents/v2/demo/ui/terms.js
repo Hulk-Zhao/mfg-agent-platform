@@ -19,12 +19,15 @@
 
   const SCENARIO_NAMES = {
     line_stop_v2: "停线应急协同",
-    customer_complaint_v2: "客户投诉闭环",
-    customer_complain_v2: "客户投诉闭环", // 兼容后端历史拼写
+    customer_complaint_v2: "客户投诉闭环 8D",
+    customer_complain_v2: "客户投诉闭环 8D", // 兼容后端历史拼写
     delivery_status_v2: "出货风险协同",
     equipment_warning_v2: "设备预警与维护协同",
     order_change_impact_v2: "订单变更影响评估",
     incoming_quality_v2: "来料异常联动",
+    // V4.1 补齐：引导问题新增了 SPC 过程能力问法，结果卡标题不能再露内部 key
+    spc_anomaly_v2: "SPC 过程能力异常预警",
+    order_review_v2: "接单评审会签",
   };
 
   /* ============================================================

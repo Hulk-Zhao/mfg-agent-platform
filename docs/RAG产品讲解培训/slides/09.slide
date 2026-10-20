@@ -1,0 +1,124 @@
+<Slide style={{ width: 1280, height: 720, padding: 0, background: '#FFFFFF', fontFamily: '"Noto Sans SC","Source Han Sans SC","PingFang SC","Microsoft YaHei",sans-serif' }}>
+    <Box style={{ height: 120, padding: '34px 64px 0', flexDirection: 'column' }}>
+        <Text style={{ fontSize: 34, fontWeight: 'bold', color: '#0F172A', lineHeight: 1.3 }}>三层链路：L0 缓存 → L1 速查 → 意图路由 → L2 RAG</Text>
+        <Text style={{ fontSize: 16, color: '#64748B', marginTop: 8 }}>每层只干自己擅长的，贵的后置——这是全部设计的出发点</Text>
+    </Box>
+    <Box style={{ height: 540, padding: '16px 64px 0', flexDirection: 'column', gap: 14 }}>
+        <Box style={{ height: 292, background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: 14, padding: '10px 12px' }}>
+            <svg width="1120" height="270" viewBox="0 0 1120 270">
+                <defs>
+                    <marker id="arr" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+                        <path d="M0,0 L7,3 L0,6 z" fill="#94A3B8" />
+                    </marker>
+                    <marker id="arrBlue" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+                        <path d="M0,0 L7,3 L0,6 z" fill="#2563EB" />
+                    </marker>
+                </defs>
+                <rect x="0" y="6" width="620" height="58" rx="8" fill="#FFFFFF" stroke="#E2E8F0" />
+                <text x="14" y="26" fontSize="11" fontWeight="bold" fill="#334155">读图指南</text>
+                <text x="14" y="44" fontSize="11" fill="#475569">问题自左向右流动。上支 = 域内知识路径（贵，~2.6s）；下支 = 域外直答（省，~1.8s）。</text>
+                <text x="14" y="58" fontSize="11" fill="#475569">L0 / L1 是毫秒级的便宜路径，先跑；路由决定谁上场。</text>
+                <rect x="0" y="98" width="100" height="62" rx="10" fill="#0F172A" />
+                <text x="50" y="135" fontSize="16" fontWeight="bold" fill="#FFFFFF" textAnchor="middle">用户问题</text>
+                <line x1="100" y1="129" x2="132" y2="129" stroke="#94A3B8" strokeWidth="1.5" markerEnd="url(#arr)" />
+                <rect x="136" y="82" width="134" height="94" rx="10" fill="#ECFEFF" stroke="#06B6D4" strokeWidth="1.5" />
+                <text x="203" y="106" fontSize="14" fontWeight="bold" fill="#0E7490" textAnchor="middle">L0 · Redis 缓存</text>
+                <text x="203" y="128" fontSize="11" fill="#155E75" textAnchor="middle">键含 faq_version</text>
+                <text x="203" y="146" fontSize="11" fill="#155E75" textAnchor="middle">命中回放 19ms</text>
+                <text x="203" y="164" fontSize="11" fill="#155E75" textAnchor="middle">TTL 1800s</text>
+                <line x1="270" y1="129" x2="302" y2="129" stroke="#94A3B8" strokeWidth="1.5" markerEnd="url(#arr)" />
+                <rect x="306" y="82" width="148" height="94" rx="10" fill="#EFF6FF" stroke="#2563EB" strokeWidth="1.5" />
+                <text x="380" y="106" fontSize="14" fontWeight="bold" fill="#1E40AF" textAnchor="middle">L1 · FAQ 双闸</text>
+                <text x="380" y="128" fontSize="11" fill="#1E3A8A" textAnchor="middle">score ≥ 0.70</text>
+                <text x="380" y="146" fontSize="11" fill="#1E3A8A" textAnchor="middle">margin ≥ 0.15</text>
+                <text x="380" y="164" fontSize="11" fill="#1E3A8A" textAnchor="middle">命中 7ms · 0 次 LLM</text>
+                <line x1="454" y1="129" x2="486" y2="129" stroke="#94A3B8" strokeWidth="1.5" markerEnd="url(#arr)" />
+                <rect x="490" y="82" width="132" height="94" rx="10" fill="#F1F5F9" stroke="#64748B" strokeWidth="1.5" />
+                <text x="556" y="106" fontSize="14" fontWeight="bold" fill="#334155" textAnchor="middle">意图路由</text>
+                <text x="556" y="128" fontSize="11" fill="#475569" textAnchor="middle">124 个域内词</text>
+                <text x="556" y="146" fontSize="11" fill="#475569" textAnchor="middle">24 个拉丁缩写</text>
+                <text x="556" y="164" fontSize="11" fill="#475569" textAnchor="middle">sub-ms 纯函数</text>
+                <line x1="622" y1="112" x2="666" y2="66" stroke="#2563EB" strokeWidth="1.5" markerEnd="url(#arrBlue)" />
+                <text x="612" y="86" fontSize="10" fill="#1E40AF">域内词命中</text>
+                <text x="612" y="99" fontSize="10" fill="#C2410C">how_to 让位 RAG</text>
+                <line x1="622" y1="146" x2="666" y2="212" stroke="#94A3B8" strokeWidth="1.5" markerEnd="url(#arr)" />
+                <text x="612" y="182" fontSize="10" fill="#475569">域外</text>
+                <rect x="670" y="10" width="316" height="116" rx="10" fill="#EFF6FF" stroke="#2563EB" strokeWidth="1.5" />
+                <text x="828" y="32" fontSize="14" fontWeight="bold" fill="#1E40AF" textAnchor="middle">L2 · RAG 检索与生成（~2.6s）</text>
+                <rect x="682" y="44" width="69" height="38" rx="6" fill="#FFFFFF" stroke="#BFDBFE" />
+                <text x="716" y="60" fontSize="10" fontWeight="bold" fill="#1E40AF" textAnchor="middle">BGE-M3</text>
+                <text x="716" y="74" fontSize="9" fill="#475569" textAnchor="middle">dense+sparse</text>
+                <rect x="759" y="44" width="69" height="38" rx="6" fill="#FFFFFF" stroke="#BFDBFE" />
+                <text x="793" y="60" fontSize="10" fontWeight="bold" fill="#1E40AF" textAnchor="middle">Milvus</text>
+                <text x="793" y="74" fontSize="9" fill="#475569" textAnchor="middle">0.7/0.3 加权</text>
+                <rect x="836" y="44" width="69" height="38" rx="6" fill="#FFFFFF" stroke="#BFDBFE" />
+                <text x="870" y="60" fontSize="10" fontWeight="bold" fill="#1E40AF" textAnchor="middle">Reranker</text>
+                <text x="870" y="74" fontSize="9" fill="#475569" textAnchor="middle">重排 top_n</text>
+                <rect x="913" y="44" width="65" height="38" rx="6" fill="#FFFFFF" stroke="#BFDBFE" />
+                <text x="945" y="60" fontSize="10" fontWeight="bold" fill="#1E40AF" textAnchor="middle">LLM</text>
+                <text x="945" y="74" fontSize="9" fill="#475569" textAnchor="middle">带出处生成</text>
+                <text x="828" y="102" fontSize="10" fill="#475569" textAnchor="middle">候选 max(12, top_k×3) → top_n · chunk 按段 400 字符</text>
+                <rect x="670" y="196" width="316" height="58" rx="10" fill="#F1F5F9" stroke="#64748B" strokeWidth="1.5" />
+                <text x="828" y="220" fontSize="13" fontWeight="bold" fill="#334155" textAnchor="middle">域外 → 约束 LLM 直答</text>
+                <text x="828" y="240" fontSize="10" fill="#475569" textAnchor="middle">不跑 Milvus · ~1.8s · 比 RAG 省 ~1.6s</text>
+                <line x1="986" y1="66" x2="1014" y2="104" stroke="#94A3B8" strokeWidth="1.5" markerEnd="url(#arr)" />
+                <line x1="986" y1="212" x2="1014" y2="176" stroke="#94A3B8" strokeWidth="1.5" markerEnd="url(#arr)" />
+                <rect x="1016" y="76" width="104" height="128" rx="10" fill="#0F172A" />
+                <text x="1068" y="112" fontSize="14" fontWeight="bold" fill="#FFFFFF" textAnchor="middle">带出处</text>
+                <text x="1068" y="132" fontSize="14" fontWeight="bold" fill="#FFFFFF" textAnchor="middle">答案</text>
+                <text x="1068" y="158" fontSize="10" fill="#93C5FD" textAnchor="middle">[文件名 第N段]</text>
+                <text x="1068" y="176" fontSize="10" fill="#94A3B8" textAnchor="middle">LLM 不可用</text>
+                <text x="1068" y="190" fontSize="10" fill="#94A3B8" textAnchor="middle">回放片段</text>
+                <line x1="0" y1="264" x2="1120" y2="264" stroke="#CBD5E1" strokeWidth="1" strokeDasharray="4 4" />
+                <text x="0" y="278" fontSize="10" fill="#64748B">任一层故障都有兜底：L1 库挂 → 跳过前置层 · Milvus 挂 → rag_unavailable 且不缓存 · LLM 挂 → 回放最相关片段并标 degraded（详见 P14）</text>
+            </svg>
+        </Box>
+        <Box style={{ flexDirection: 'row', gap: 12, flex: 1 }}>
+            <Box style={{ flex: 1, background: '#ECFEFF', border: '1px solid #A5F3FC', borderRadius: 12, padding: '12px 14px', flexDirection: 'column' }}>
+                <Box style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <Box style={{ background: '#06B6D4', borderRadius: 6, padding: '2px 8px' }}><Text style={{ fontSize: 12, fontWeight: 'bold', color: '#FFFFFF', fontFamily: '"JetBrains Mono","Space Grotesk",Consolas,monospace' }}>L0</Text></Box>
+                    <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#0F172A' }}>缓存层</Text>
+                </Box>
+                <Text style={{ fontSize: 13, color: '#475569', lineHeight: 1.5, marginTop: 8 }}>只包 L2 / direct 两条贵路径；FAQ 任何写操作换命名空间，旧键自然失效。</Text>
+                <Text style={{ fontSize: 13, color: '#0E7490', fontWeight: 'bold', marginTop: 6 }}>缓存回放 19ms</Text>
+                <Text style={{ fontSize: 11, color: '#94A3B8', marginTop: 'auto', fontFamily: '"JetBrains Mono","Space Grotesk",Consolas,monospace' }}>core/cache.py · kbqa.py</Text>
+            </Box>
+            <Box style={{ flex: 1, background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 12, padding: '12px 14px', flexDirection: 'column' }}>
+                <Box style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <Box style={{ background: '#2563EB', borderRadius: 6, padding: '2px 8px' }}><Text style={{ fontSize: 12, fontWeight: 'bold', color: '#FFFFFF', fontFamily: '"JetBrains Mono","Space Grotesk",Consolas,monospace' }}>L1</Text></Box>
+                    <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#0F172A' }}>速查层</Text>
+                </Box>
+                <Text style={{ fontSize: 13, color: '#475569', lineHeight: 1.5, marginTop: 8 }}>48 张制度速查卡，词面加权计分 + 双闸 + 维度衰减，纯标准库零依赖。</Text>
+                <Text style={{ fontSize: 13, color: '#1D4ED8', fontWeight: 'bold', marginTop: 6 }}>命中 7ms · 0 次 LLM</Text>
+                <Text style={{ fontSize: 11, color: '#94A3B8', marginTop: 'auto', fontFamily: '"JetBrains Mono","Space Grotesk",Consolas,monospace' }}>kbqa_faq_match.py</Text>
+            </Box>
+            <Box style={{ flex: 1, background: '#F1F5F9', border: '1px solid #CBD5E1', borderRadius: 12, padding: '12px 14px', flexDirection: 'column' }}>
+                <Box style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <Box style={{ background: '#475569', borderRadius: 6, padding: '2px 8px' }}><Text style={{ fontSize: 12, fontWeight: 'bold', color: '#FFFFFF', fontFamily: '"JetBrains Mono","Space Grotesk",Consolas,monospace' }}>路由</Text></Box>
+                    <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#0F172A' }}>分流层</Text>
+                </Box>
+                <Text style={{ fontSize: 13, color: '#475569', lineHeight: 1.5, marginTop: 8 }}>词表判断「问知识还是问模型」：域内走 RAG 保出处，域外直答省时间。</Text>
+                <Text style={{ fontSize: 13, color: '#334155', fontWeight: 'bold', marginTop: 6 }}>1000 次路由 &lt; 100ms</Text>
+                <Text style={{ fontSize: 11, color: '#94A3B8', marginTop: 'auto', fontFamily: '"JetBrains Mono","Space Grotesk",Consolas,monospace' }}>kbqa_intent.py</Text>
+            </Box>
+            <Box style={{ flex: 1, background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 12, padding: '12px 14px', flexDirection: 'column' }}>
+                <Box style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <Box style={{ background: '#1E40AF', borderRadius: 6, padding: '2px 8px' }}><Text style={{ fontSize: 12, fontWeight: 'bold', color: '#FFFFFF', fontFamily: '"JetBrains Mono","Space Grotesk",Consolas,monospace' }}>L2</Text></Box>
+                    <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#0F172A' }}>检索层</Text>
+                </Box>
+                <Text style={{ fontSize: 13, color: '#475569', lineHeight: 1.5, marginTop: 8 }}>双路混合召回 + CrossEncoder 重排，答案必须挂出处，LLM 挂了回放片段。</Text>
+                <Text style={{ fontSize: 13, color: '#1D4ED8', fontWeight: 'bold', marginTop: 6 }}>域内全程 ~2.6s</Text>
+                <Text style={{ fontSize: 11, color: '#94A3B8', marginTop: 'auto', fontFamily: '"JetBrains Mono","Space Grotesk",Consolas,monospace' }}>rag_tools.py · kbqa.py</Text>
+            </Box>
+        </Box>
+    </Box>
+    <Box style={{ height: 60, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: '0 64px', position: 'relative' }}>
+        <Box style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            <Box style={{ width: 12, height: 12, borderRadius: 3, background: '#2563EB' }} />
+            <Box style={{ width: 9, height: 9, borderRadius: 5, background: '#06B6D4' }} />
+            <Text style={{ fontSize: 14, color: '#94A3B8' }}>mfg-agent-platform · 独立开发实践分享</Text>
+        </Box>
+        <Text style={{ fontSize: 14, color: '#94A3B8', fontFamily: '"JetBrains Mono","Space Grotesk",Consolas,monospace' }}>09 / 20</Text>
+        <Box style={{ position: 'absolute', bottom: 0, left: 0, width: 1280, height: 3, background: 'linear-gradient(90deg, #2563EB 0%, #06B6D4 55%, rgba(6,182,212,0) 100%)' }} />
+    </Box>
+</Slide>

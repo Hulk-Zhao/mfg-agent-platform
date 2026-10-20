@@ -1,0 +1,74 @@
+<Slide style={{ width: 1280, height: 720, padding: 0, background: '#FFFFFF', fontFamily: '"Noto Sans SC","Source Han Sans SC","PingFang SC","Microsoft YaHei",sans-serif' }}>
+    <Box style={{ height: 120, padding: '34px 64px 0', flexDirection: 'column' }}>
+        <Text style={{ fontSize: 34, fontWeight: 'bold', color: '#0F172A', lineHeight: 1.3 }}>L1 · FAQ 双闸匹配：答得快，更要答得准</Text>
+        <Text style={{ fontSize: 16, color: '#64748B', marginTop: 8 }}>词面加权计分 + 两道闸门 + 维度衰减，全部用评测集标定</Text>
+    </Box>
+    <Box style={{ height: 540, padding: '20px 64px 0', flexDirection: 'row', gap: 32 }}>
+        <Box style={{ width: 664, flexDirection: 'column', gap: 14 }}>
+            <Box style={{ background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 12, padding: '14px 18px', flexDirection: 'column' }}>
+                <Text style={{ fontSize: 14, color: '#2563EB', letterSpacing: 2, fontFamily: '"JetBrains Mono","Space Grotesk",Consolas,monospace' }}>评分公式 · SCORING</Text>
+                <Box style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+                    <Box style={{ background: '#FFFFFF', border: '1px solid #BFDBFE', borderRadius: 8, padding: '6px 10px' }}><Text style={{ fontSize: 14, color: '#1E40AF', fontFamily: '"JetBrains Mono","Space Grotesk",Consolas,monospace' }}>关键词 × 2（封顶 6）</Text></Box>
+                    <Text style={{ fontSize: 15, color: '#64748B' }}>+</Text>
+                    <Box style={{ background: '#FFFFFF', border: '1px solid #BFDBFE', borderRadius: 8, padding: '6px 10px' }}><Text style={{ fontSize: 14, color: '#1E40AF', fontFamily: '"JetBrains Mono","Space Grotesk",Consolas,monospace' }}>标题 × 3</Text></Box>
+                    <Text style={{ fontSize: 15, color: '#64748B' }}>+</Text>
+                    <Box style={{ background: '#FFFFFF', border: '1px solid #BFDBFE', borderRadius: 8, padding: '6px 10px' }}><Text style={{ fontSize: 14, color: '#1E40AF', fontFamily: '"JetBrains Mono","Space Grotesk",Consolas,monospace' }}>内容 × 1</Text></Box>
+                    <Text style={{ fontSize: 15, color: '#64748B' }}>，除以 6 归一；同题直中 1.0</Text>
+                </Box>
+            </Box>
+            <Box style={{ flex: 1, background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: 12, padding: '12px 16px' }}>
+                <svg width="620" height="296" viewBox="0 0 620 296">
+                    <text x="0" y="20" fontSize="13" fontWeight="bold" fill="#334155">双闸实测：问「报销流程」时，流程卡稳赢单事实卡</text>
+                    <line x1="90" y1="40" x2="560" y2="40" stroke="#E2E8F0" strokeWidth="1" />
+                    <text x="0" y="72" fontSize="12" fill="#0F172A">流程卡</text>
+                    <rect x="90" y="54" width="470" height="30" rx="6" fill="#2563EB" />
+                    <text x="566" y="74" fontSize="13" fontWeight="bold" fill="#1E40AF">1.0</text>
+                    <text x="0" y="120" fontSize="12" fill="#0F172A">单事实卡</text>
+                    <rect x="90" y="102" width="376" height="30" rx="6" fill="#06B6D4" />
+                    <text x="474" y="122" fontSize="13" fontWeight="bold" fill="#0E7490">0.8</text>
+                    <line x1="419" y1="34" x2="419" y2="196" stroke="#F97316" strokeWidth="2" strokeDasharray="5 4" />
+                    <text x="419" y="28" fontSize="11" fontWeight="bold" fill="#C2410C" textAnchor="middle">第一闸 0.70</text>
+                    <line x1="90" y1="196" x2="560" y2="196" stroke="#CBD5E1" strokeWidth="1" />
+                    <text x="90" y="214" fontSize="10" fill="#94A3B8" textAnchor="middle">0</text>
+                    <text x="325" y="214" fontSize="10" fill="#94A3B8" textAnchor="middle">0.5</text>
+                    <text x="560" y="214" fontSize="10" fill="#94A3B8" textAnchor="middle">1.0</text>
+                    <path d="M 466 150 L 466 162 L 560 162 L 560 150" stroke="#F97316" strokeWidth="1.5" fill="none" />
+                    <text x="513" y="156" fontSize="11" fontWeight="bold" fill="#C2410C" textAnchor="middle">margin 0.2</text>
+                    <rect x="0" y="232" width="620" height="56" rx="8" fill="#FFF7ED" stroke="#FED7AA" />
+                    <text x="14" y="254" fontSize="11" fill="#9A3412">第二闸：top1 − top2 ≥ 0.15，才认「明显更像」。</text>
+                    <text x="14" y="272" fontSize="11" fill="#9A3412">被压侧 0.8 仍高于 0.70——是稳赢，不是险胜。</text>
+                </svg>
+            </Box>
+            <Box style={{ background: '#0F172A', borderRadius: 12, padding: '14px 20px', flexDirection: 'row', alignItems: 'center', gap: 14 }}>
+                <Box style={{ width: 5, height: 34, borderRadius: 3, background: '#F97316' }} />
+                <Text style={{ fontSize: 18, color: '#F8FAFC', lineHeight: 1.5, flex: 1 }}>阈值不是玄学，是拿 badcase 一条条标定出来的</Text>
+            </Box>
+        </Box>
+        <Box style={{ flex: 1, flexDirection: 'column', gap: 12 }}>
+            <Box style={{ flex: 1, background: '#F8FAFC', border: '1px solid #E2E8F0', borderLeft: '4px solid #2563EB', borderRadius: 12, padding: '14px 16px', flexDirection: 'column' }}>
+                <Text style={{ fontSize: 12, color: '#2563EB', fontFamily: '"JetBrains Mono","Space Grotesk",Consolas,monospace' }}>理由 01</Text>
+                <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#0F172A', marginTop: 4 }}>双闸防「看起来像」</Text>
+                <Text style={{ fontSize: 14, color: '#475569', lineHeight: 1.55, marginTop: 6 }}>分数高不等于答得对：top1 与 top2 相差 0.15 以上，才算「明显更像」。单个 2 字符关键词也不能独自过闸。</Text>
+            </Box>
+            <Box style={{ flex: 1, background: '#F8FAFC', border: '1px solid #E2E8F0', borderLeft: '4px solid #2563EB', borderRadius: 12, padding: '14px 16px', flexDirection: 'column' }}>
+                <Text style={{ fontSize: 12, color: '#2563EB', fontFamily: '"JetBrains Mono","Space Grotesk",Consolas,monospace' }}>理由 02</Text>
+                <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#0F172A', marginTop: 4 }}>维度衰减破平局</Text>
+                <Text style={{ fontSize: 14, color: '#475569', lineHeight: 1.55, marginTop: 6 }}>查询含流程词而候选不含（或反之），该侧得分 ×0.8。问流程时，流程卡自然压过单事实卡，margin 拉到 0.2。</Text>
+            </Box>
+            <Box style={{ flex: 1, background: '#F8FAFC', border: '1px solid #E2E8F0', borderLeft: '4px solid #2563EB', borderRadius: 12, padding: '14px 16px', flexDirection: 'column' }}>
+                <Text style={{ fontSize: 12, color: '#2563EB', fontFamily: '"JetBrains Mono","Space Grotesk",Consolas,monospace' }}>理由 03</Text>
+                <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#0F172A', marginTop: 4 }}>全部来自评测标定</Text>
+                <Text style={{ fontSize: 14, color: '#475569', lineHeight: 1.55, marginTop: 6 }}>0.70 / 0.15 / ×0.8 用评测集逐条调出：流程类问法 10/10 命中流程卡，事实类 8/8 不走弯路。</Text>
+            </Box>
+        </Box>
+    </Box>
+    <Box style={{ height: 60, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: '0 64px', position: 'relative' }}>
+        <Box style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            <Box style={{ width: 12, height: 12, borderRadius: 3, background: '#2563EB' }} />
+            <Box style={{ width: 9, height: 9, borderRadius: 5, background: '#06B6D4' }} />
+            <Text style={{ fontSize: 14, color: '#94A3B8' }}>mfg-agent-platform · 独立开发实践分享</Text>
+        </Box>
+        <Text style={{ fontSize: 14, color: '#94A3B8', fontFamily: '"JetBrains Mono","Space Grotesk",Consolas,monospace' }}>10 / 20</Text>
+        <Box style={{ position: 'absolute', bottom: 0, left: 0, width: 1280, height: 3, background: 'linear-gradient(90deg, #2563EB 0%, #06B6D4 55%, rgba(6,182,212,0) 100%)' }} />
+    </Box>
+</Slide>

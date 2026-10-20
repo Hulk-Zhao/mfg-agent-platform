@@ -129,7 +129,21 @@ class Settings:
     # 企业微信回调配置（自建应用：URL+Token+AES；留空时回调端点 fail-fast 报错）
     IM_TOKEN: str = os.getenv("IM_TOKEN", "")
     IM_AES_KEY: str = os.getenv("IM_AES_KEY", "")
+    # 注意：回调侧本字段是**企业 ID（CorpID）**（解密后归属校验用它），非应用 AgentId
     IM_APPID: str = os.getenv("IM_APPID", "")
+
+    # 企业微信**应用消息**（主动推送 / @ 责任人）凭据：
+    # gettoken(corpid+corpsecret) → message/send(touser+agentid)。
+    # 三者齐全时现场群通道的「责任人」投递走真实 API；缺一即如实记账为 failed。
+    # IM_CORP_ID 留空则回落 IM_APPID（回调侧同一字段，避免同一份凭据配两遍）。
+    IM_CORP_ID: str = os.getenv("IM_CORP_ID", "")
+    IM_AGENT_ID: str = os.getenv("IM_AGENT_ID", "")
+    IM_CORP_SECRET: str = os.getenv("IM_CORP_SECRET", "")
+
+    # 现场看板推送的 IM 触达：工段 → 现场群映射目录（结构在 YAML，凭据在 env）
+    # 目录缺省用仓库内 v2/data/im_groups.yaml；群机器人 key / 责任人 userid 由
+    # IM_GROUP_KEY_<SLUG> / IM_GROUP_MEMBERS_<SLUG> 注入（见 services/im_groups.py）。
+    IM_GROUPS_PATH: str = os.getenv("IM_GROUPS_PATH", "")
 
     # 办公后端选择：demo（内存种子，默认）| feishu（飞书开放平台适配层）
     # 选 feishu 时缺凭据即启动报错（配置错误必须显式暴露，不静默回落 demo）
@@ -216,6 +230,33 @@ class Settings:
     # 少写一条审计就会把 B1 刚消掉的"时间侧信道"请回来。
     # 配成 0 或负数表示关闭（仅限本地调试）。
     CASE_RATE_LIMIT_PER_MIN: int = int(os.getenv("CASE_RATE_LIMIT_PER_MIN", "60"))
+
+    # ---------- 有界 Agentic 检索闭环（PRD FR-02 / FR-03）----------
+    # 总开关：false 时问答退化为"单轮检索"（即升级前行为），用于回滚与对照基线。
+    CASE_AGENTIC_ENABLED: bool = _env_bool("CASE_AGENTIC_ENABLED", True)
+    # 本体关系跳数硬上限（PRD ≤3）：触顶即终止，如实返回当前结果。
+    CASE_AGENTIC_MAX_HOPS: int = int(os.getenv("CASE_AGENTIC_MAX_HOPS", "3"))
+    # 主查询轮数上限：复合问句最多拆几路去召回（第 4 步起的关系扩展轮**另计**，
+    # 由 MAX_HOPS 约束，总轮数上限 = MAX_ROUNDS + MAX_HOPS）。
+    CASE_AGENTIC_MAX_ROUNDS: int = int(os.getenv("CASE_AGENTIC_MAX_ROUNDS", "3"))
+    # 相对收益阈值：本轮新增案例数 / 已命中案例数 低于该值即认为"无收益"并终止。
+    # 0 表示关闭该判据（仅靠轮数与跳数刹车）。
+    CASE_AGENTIC_GAIN_THRESHOLD: float = float(
+        os.getenv("CASE_AGENTIC_GAIN_THRESHOLD", "0.05"))
+
+    # ---------- 作答器（PRD FR-01）----------
+    # llm：大模型作答（不可达/超时/解析失败 → 自动降级为模板，响应里标注）；
+    # template：确定性模板作答（离线可跑，测试基线用）。
+    CASE_ANSWERER: str = os.getenv("CASE_ANSWERER", "llm")
+    # 作答调用超时（秒）与输出字数上限——云端模型必须显式设限，
+    # 否则长文本生成会拖垮演示链路（对齐 KBQA 输出纪律）。
+    CASE_ANSWER_TIMEOUT: float = float(os.getenv("CASE_ANSWER_TIMEOUT", "20"))
+    CASE_ANSWER_MAX_CHARS: int = int(os.getenv("CASE_ANSWER_MAX_CHARS", "200"))
+
+    # ---------- 三方对照演示（PRD FR-06）----------
+    # 仅演示环境开放：同一问题并列「无本体 / 单跳本体 / 本体增强 Agentic」三组结果。
+    # 默认 false——生产环境不允许出现第二/第三种检索行为。
+    CASE_DEMO_COMPARE: bool = _env_bool("CASE_DEMO_COMPARE", False)
 
     # ================= 数据速查：查询权限申请（演示自动审批）=================
     # 说明：以下 DATA_ACCESS_* 均为**新增项**，不改变任何既有字段的语义与默认值。

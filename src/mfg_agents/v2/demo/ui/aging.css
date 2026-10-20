@@ -1,0 +1,572 @@
+/* ============================================================
+   aging.css · 适龄化显示增强（覆盖层）
+   ------------------------------------------------------------
+   加载位置：必须排在 app.css 之后（index.html <head> 内紧随其后）
+   工程约定：
+     · 只做「覆盖式重写」，不修改 app.css / app.js 等既有文件，可整体回退
+     · 新增类名统一 .am- 前缀，避免与既有 .fh-（悬浮帮助）/ .sk-（场景屏）冲突
+     · 每条覆盖注明「原值 → 新值 · 对比度 X → Y」
+     · 对比度口径：WCAG 2.1 相对亮度算法；正文（<18.66px 非粗体）门槛 4.5:1，
+       非文本要素（焦点环 / 控件边框）门槛 3:1；纯装饰分隔线豁免
+   ============================================================ */
+
+/* ============================================================
+   0. 新增令牌（仅在此声明，供后续各节引用）
+   ============================================================ */
+:root {
+  /* 焦点环：深色底取亮蓝。环体由 box-shadow: inset 绘制在元素自身盒内，
+     不占外部空间，故基线方案不需要「gap 环」；--focus-gap 仅在已确认
+     无裁切风险的大目标上做向外增强环时使用（见第 2 节）。 */
+  --focus-ring: #6BAEF7;      /* rgba(59,130,246,.65) → 实色 #6BAEF7 · vs card 2.62 → 6.46（vs bg 7.99） */
+  --focus-gap: #0A1322;      /* 无 → #0A1322（等于 --bg），仅供向外增强环使用 */
+
+  /* 控件边框：需要 3:1 的表单/芯片边框专用（装饰性 --border 不参与） */
+  --border-control: #5A80B2;  /* 复用 --border-strong #35507A → #5A80B2 · 1.85 → 3.70 */
+
+  /* 主按钮填充与墨色：亮蓝底 + 近黑字（白字方案 vs 渐变两端 4.23 / 3.51，最差 3.51 不达标） */
+  --primary-fill-a: #5AA0F0;
+  --primary-fill-b: #4E97EF;
+  --primary-ink: #0A1322;    /* #fff → #0A1322 · vs fill-a 3.51 → 6.84 / vs fill-b 3.51 → 6.20（AA） */
+  --primary-fill-hover: #6FAAF4; /* hover 提亮，对比 7.73 */
+
+  /* 状态徽标墨色：红/绿实心底上原来一律白字，深底提亮后必须翻成深色字 */
+  --danger-ink: #2A0B0C;     /* #fff → #2A0B0C · 2.97 → 8.56 */
+  --ok-ink: #06210F;         /* #fff → #06210F · 2.09 → 8.14 */
+
+  /* 字号档位（1 / 1.125 / 1.25），驱动 calc() 缩放 */
+  --font-scale: 1;
+
+  /* 密度档位（compact / standard / loose） */
+  --d-card-pad: 20px;
+  --d-card-pad-x: 18px;
+  --d-row-pad: 13px;
+  --d-msg-pad: 10px;
+  --d-cell-pad: 8px;
+  --d-gap: 14px;
+}
+
+html[data-theme="light"] {
+  --focus-ring: #1557AD;      /* 深色 #6BAEF7 → 亮底取深蓝 · vs #F3F5F9 2.09 → 6.42（vs #FFFFFF 7.00） */
+  --focus-gap: #FFFFFF;
+  --border-control: #818A9D; /* vs #FFFFFF 3.47 / vs #F3F5F9 3.18 双过 */
+  --primary-fill-a: #1B66CC;
+  --primary-fill-b: #0F4C9E;
+  --primary-ink: #FFFFFF;    /* 亮底主按钮保持白字 · 5.50 / 8.25 */
+  --primary-fill-hover: #2B7AE0;
+  --danger-ink: #FFFFFF;     /* 亮色 --danger #CF222E 配白字 5.36 */
+  --ok-ink: #FFFFFF;         /* 亮色 --ok #1A7F37 配白字 5.08 */
+}
+
+/* ============================================================
+   1. 色彩令牌与对比度修复（深色主题 :root 为默认）
+   ============================================================ */
+:root {
+  --primary: #6BAEF7;   /* #3B8AE8 → #6BAEF7 · vs card #16273F 4.29 → 6.46（AA） */
+  --primary-bright: #7FB9F9; /* #2B7AE0 → #7FB9F9（渐变亮端，随主色一并提亮） */
+  --danger: #FD9496;    /* #F4696B → #FD9496 · vs card 5.07 → 7.06（AAA） */
+  --purple: #BFA9FC;    /* #A78BFA → #BFA9FC · vs card 5.53 → 7.37 */
+  --text-2: #C6D3E5;    /* #BCCBDF → #C6D3E5 · vs card 9.13 → 9.92 */
+  --text-3: #A3B6D0;    /* #93A8C6 → #A3B6D0 · vs card 6.20 → 7.28 */
+  --border: #3A587F;    /* #263E62 → #3A587F · 1.40 → 2.06（装饰分隔线，按规范豁免 3:1） */
+}
+
+/* 主按钮：白字方案 vs 渐变两端 4.23 / 3.51（最差 3.51）不达标 → 亮蓝底 + 近黑字 */
+.btn-primary {
+  background: linear-gradient(180deg, var(--primary-fill-a) 0%, var(--primary-fill-b) 100%);
+  color: var(--primary-ink);
+}
+.btn-primary:hover {
+  background: linear-gradient(180deg, var(--primary-fill-hover) 0%, var(--primary-fill-a) 100%);
+  color: var(--primary-ink);
+}
+
+/* 选中态芯片：原来 primary 渐变配白字 → 同主按钮方案 */
+.chip.active {
+  background: linear-gradient(180deg, var(--primary-fill-a) 0%, var(--primary-fill-b) 100%);
+  border-color: transparent;
+  color: var(--primary-ink);
+}
+
+/* 导航角标：--danger 提亮后白字仅 2.13 → 深色字 */
+.nav-badge { background: var(--danger); color: var(--danger-ink); }
+
+/* 成功按钮：--ok #3FCB79 配白字仅 2.09 → 深墨字 */
+.btn-success { background: var(--ok); color: var(--ok-ink); }
+
+/* 需要 3:1 的控件边框（表单 / 芯片 / 描边按钮）统一走 --border-control */
+.input, .textarea { border-color: var(--border-control); }
+.chip { border-color: var(--border-control); }
+.btn-outline { border-color: var(--border-control); }
+
+/* ============================================================
+   2. 焦点环（键盘可达性）· 基线 = inset + 透明 outline
+   ------------------------------------------------------------
+   原规则 .btn:focus-visible 等使用 outline:2px solid rgba(59,130,246,.65)，
+   半透明导致实测 vs card 2.62 / vs bg 2.92 / vs 亮色卡 2.18 / vs 亮底 2.09，
+   四点全部不达 3:1。
+
+   【为什么用 inset 而不是外扩 outline】
+   架构师已扫出全站 30+ 处溢出容器（.nav / .role-grid / .hitl-screen /
+   .user-menu / .chat-scroll / .login-shell 等）。外扩 outline 会被任意祖先的
+   overflow:hidden/auto 裁掉，逐个排查不可维护。
+   box-shadow: inset 绘制在**元素自身盒内**，不吃外部空间，天然免疫裁切。
+   一次覆盖，无需按「紧凑区 / 大目标」分档——chip 34×24、.btn-sm、
+   .rank-row、.qa-archive-item 这些紧凑区同样安全。
+
+   【透明 outline 为什么不能省】
+   Windows 高对比 / forced-colors 模式下 box-shadow 会被强制丢弃，
+   此时只剩这条 outline 由系统色接管，焦点才不会消失。本项目**唯一**
+   允许用 !important 的地方就是下面那条 input/select/textarea:focus 覆写
+   （app.css 有 13 处 outline:none，不用 !important 压不过）。
+
+   特异性（改动前必读）：
+     html:root :is(a,button,input,select,textarea,summary,[tabindex]):focus-visible
+     = :root(0,1,0) + :is(...) 取其**最具体实参** [tabindex](0,1,0) + :focus-visible(0,1,0)
+       + 元素 html(0,0,1) = **(0,3,1)**
+     压过 app.css 的 .btn:focus-visible（0,2,0）与运行时注入的 .sk-* / .s04-*（0,2,0，挂载更晚）。
+   ⚠️ 禁止把这里的 :is() 换成 :where() —— :where() 特异性恒为 0，整条会塌成 (0,2,1)，
+     被 .btn:focus-visible（0,2,0）与 13 处 outline:none 反压，焦点环将静默失效。
+     同理，新增同类规则时也必须带 html:root 前缀。
+   ============================================================ */
+
+/* 基线：inset 环 + 透明 outline（everything，含所有紧凑区） */
+html:root :is(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  box-shadow: inset 0 0 0 2px var(--focus-ring);
+}
+
+/* 表格行 / 可钻取行：原为 outline-offset:-2px 的外扩环（行背景会吞掉环）
+   → 统一并入 inset 基线，外加透明 outline 兜底 forced-colors。 */
+html:root .drill-table tbody tr.drill-row:focus-visible,
+html:root .pareto-row.clickable:focus-visible,
+html:root .s04-row.is-clickable:focus-visible,
+html:root .sk-num-card.is-clickable:focus-visible {
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  box-shadow: inset 0 0 0 2px var(--focus-ring);
+}
+
+/* ⚠️ 本项目唯一允许的 !important：
+   app.css 有 13 处 outline:none（.input/.textarea 及一批搜索框），
+   会把上面基线的透明 outline 也一并抹掉，导致 forced-colors 下焦点消失。
+   这里按最高权重还回「透明 outline」，正常渲染下不可见，不产生视觉差异。 */
+html:root :is(input, select, textarea):focus {
+  outline: 2px solid transparent !important;
+  outline-offset: 2px;
+}
+
+/* .nav 横向 padding 10px → 12px：为 .nav-item 的「2px gap + 2px 外扩环」共 4px
+   腾出空间，使其落在 .nav 的 padding box 内，不被 .nav 的 overflow-y:auto 裁切。
+   ⚠️ 不要顺手把 .nav 改成 overflow:visible —— 侧栏 20 项 / 5 组（实测内容高
+   950px vs 视口 754px）会让底部若干项被 .app 的 overflow:hidden 切掉、彻底不可达。
+   只加 padding，保持原滚动行为。 */
+html:root .nav { padding: 12px 12px 0; }
+
+/* 增强：已确认无裁切风险的大目标额外加一圈向外实色环，强化分离感。
+   .nav-item 必须保留外向环（64px 图标轨上，纯 inset 环会贴住 17px 图标，
+   视觉上分不清是环还是图标描边），外向空间由上面 .nav 的 12px padding 提供；
+   .btn（排除 .btn-sm，32px 小按钮可能落在溢出容器内，只走 inset 基线）的祖先
+   无 overflow 约束。
+   ⚠️ .role-card **已从增强环中移除**：实测其左侧距 .role-grid 可视边缘仅 3px，
+   而外扩环需要 4px（2px gap + 2px 环），左缘会被 .role-grid 的 overflow-y:auto
+   裁掉 1px。按本条兜底约定退回 inset 基线——inset 环完整可见，不影响可辨识性。
+   后续若要恢复外向环，需先给 .role-grid 补 ≥4px 横向 padding。 */
+html:root .nav-item:focus-visible,
+html:root .btn:not(.btn-sm):focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+  box-shadow: inset 0 0 0 2px var(--focus-ring), 0 0 0 2px var(--focus-gap);
+}
+
+/* ============================================================
+   3. 字号缩放
+   ------------------------------------------------------------
+   --font-scale 由 <html data-font> 驱动（standard=1 / medium=1.2 / large=1.35）。
+   【全量令牌化已落地】2026-10-20 收口：原先只有「主流容器 + 内容/明细家族」这
+   两批选择器挂缩放（下 3.0 / 3.1 节，即本文件的历史覆盖层），登录页 / 协同问数 /
+   帮助 / 场景屏（.sk-*）以及 JS 模板里的内联 `style="font-size:..."` 全部纹丝不动
+   ——这正是「切到大字档，看起来没反应」的根因。
+   现改为在 app.css 内把**全部** font-size 声明令牌化为 calc(Npx * var(--font-scale))
+   （709 处：app.css 533 + 本文件 21 + JS 模板/注入样式 155），并补 SVG 表现属性
+   font-size="N" 的 CSS 覆写（app.css 末尾），使内联样式与 SVG 图内文字也随档位缩放。
+   本节 3.0 / 3.1 保留：它们与 app.css 的对应规则值完全一致，属幂等冗余，
+   但被 tests/demo/test_theme_switcher.py 的契约测试锁定，删掉即测试转红。
+   新增字号相关规则时的唯一约定：一律写 calc(Npx * var(--font-scale))，
+   不要在 app.css / JS 里再出现裸 px 的 font-size。
+   ============================================================ */
+html[data-font="medium"] { --font-scale: 1.2; }
+html[data-font="large"]  { --font-scale: 1.35; }
+
+body             { font-size: calc(14px * var(--font-scale)); }
+.btn             { font-size: calc(13px * var(--font-scale)); }
+.btn-sm          { font-size: calc(12px * var(--font-scale)); }
+.chip            { font-size: calc(12.5px * var(--font-scale)); }
+.link-btn        { font-size: calc(12.5px * var(--font-scale)); }
+.badge           { font-size: calc(11.5px * var(--font-scale)); }
+.input, .textarea{ font-size: calc(13px * var(--font-scale)); }
+
+.nav-item        { font-size: calc(13.5px * var(--font-scale)); }
+.nav-group-label { font-size: calc(10.5px * var(--font-scale)); }
+.topbar-title    { font-size: calc(15.5px * var(--font-scale)); }
+.topbar-sub      { font-size: calc(11.5px * var(--font-scale)); }
+.user-name       { font-size: calc(12.5px * var(--font-scale)); }
+.user-role       { font-size: calc(11px * var(--font-scale)); }
+.backend-status  { font-size: calc(12px * var(--font-scale)); }
+.env-row         { font-size: calc(11.5px * var(--font-scale)); }
+
+.card-title      { font-size: calc(14px * var(--font-scale)); }
+.card-extra      { font-size: calc(12px * var(--font-scale)); }
+.section-title   { font-size: calc(13px * var(--font-scale)); }
+.page-desc       { font-size: calc(12.5px * var(--font-scale)); }
+.chip-row-label  { font-size: calc(12px * var(--font-scale)); }
+
+.std-table       { font-size: calc(12.5px * var(--font-scale)); }
+.std-table th    { font-size: calc(11.5px * var(--font-scale)); }
+.msg-text        { font-size: calc(13.5px * var(--font-scale)); }
+.todo-title      { font-size: calc(13.5px * var(--font-scale)); }
+.alert-title     { font-size: calc(13.5px * var(--font-scale)); }
+.pareto-row      { font-size: calc(12.5px * var(--font-scale)); }
+
+/* 大字号主力元素：页面标题与 KPI 数值是「主内容」里视觉权重最高的文字，
+   不缩放会造成「切了大字档却看不出变化」的观感（实测 .page-title 20px /
+   .stat-num 24px / .stat-unit 14px 固定不变）。 */
+.page-title      { font-size: calc(20px * var(--font-scale)); }
+.stat-num        { font-size: calc(24px * var(--font-scale)); }
+.stat-unit       { font-size: calc(14px * var(--font-scale)); }
+
+/* ------------------------------------------------------------
+   3.1 内容 / 明细家族补充缩放
+   ------------------------------------------------------------
+   缺口来源：看板「2 级 → 3 级」明细弹窗（.std-modal 体系）与下钻内容区的字号
+   全部写死 px、且不在 3.0 白名单里，切到「大 / 超大」档时这些文字纹丝不动
+   （用户截图红框：弹窗标题栏 / 指标大数 / 小节标题 / 底部注释）。
+   这里按「内容家族」成组补齐。选择器与 app.css 原规则**逐字相同**以保证
+   特异性 ≥ 原规则（如 .std-table td.std-conform = (0,2,1)、
+   .rank-row.locked .rank-name::after = (0,3,1)），本文件加载在后 → 覆盖生效。
+   ============================================================ */
+/* 弹窗（.std-modal 体系）*/
+.std-modal-head b { font-size: calc(14.5px * var(--font-scale)); }
+.std-modal-tag { font-size: calc(10.5px * var(--font-scale)); }
+.std-modal-sub { font-size: calc(11.5px * var(--font-scale)); }
+.std-modal-x { font-size: calc(15px * var(--font-scale)); }
+.std-modal-loading { font-size: calc(12.5px * var(--font-scale)); }
+.std-modal-warn { font-size: calc(11.5px * var(--font-scale)); }
+.std-modal-hint { font-size: calc(11px * var(--font-scale)); }
+.std-modal-title { font-size: calc(12.5px * var(--font-scale)); }
+.std-modal-title i { font-size: calc(10.5px * var(--font-scale)); }
+.std-modal-note { font-size: calc(10.8px * var(--font-scale)); }
+.std-modal-trend-label { font-size: calc(11.5px * var(--font-scale)); }
+.std-modal-trend-label i { font-size: calc(10px * var(--font-scale)); }
+.std-modal-trend-val { font-size: calc(11px * var(--font-scale)); }
+.std-chip { font-size: calc(11px * var(--font-scale)); }
+.std-conform { font-size: calc(30px * var(--font-scale)); }
+.std-table td.std-conform { font-size: calc(13px * var(--font-scale)); }
+.std-table td.std-dim { font-size: calc(11.5px * var(--font-scale)); }
+
+/* 下钻内容（明细表 / HERO / 面包屑 / 排行）*/
+.drill-hero-label { font-size: calc(13px * var(--font-scale)); }
+.drill-hero-value .big { font-size: calc(40px * var(--font-scale)); }
+.drill-hero-sub { font-size: calc(12.5px * var(--font-scale)); }
+.drill-def { font-size: calc(12px * var(--font-scale)); }
+.drill-table td.drill-dim { font-size: calc(12px * var(--font-scale)); }
+.drill-table td.drill-frac { font-size: calc(12px * var(--font-scale)); }
+.drill-table tbody tr.stage-row td { font-size: calc(12px * var(--font-scale)); }
+.crumb-back { font-size: calc(11.5px * var(--font-scale)); }
+.crumb-path { font-size: calc(12.5px * var(--font-scale)); }
+.rank-no { font-size: calc(11.5px * var(--font-scale)); }
+.rank-name { font-size: calc(12.8px * var(--font-scale)); }
+.rank-val { font-size: calc(13px * var(--font-scale)); }
+.rank-row.locked .rank-name::after { font-size: calc(10.5px * var(--font-scale)); }
+.row-ask { font-size: calc(11px * var(--font-scale)); }
+.drill-hero-ops .row-ask { font-size: calc(12px * var(--font-scale)); }
+
+/* 柏拉图（品质 / 制造看板）*/
+.pareto-no { font-size: calc(11px * var(--font-scale)); }
+.pareto-head { font-size: calc(11.5px * var(--font-scale)); }
+.pareto-cum { font-size: calc(11.5px * var(--font-scale)); }
+.pareto-toolbar .chip { font-size: calc(12px * var(--font-scale)); }
+.pareto-select { font-size: calc(12px * var(--font-scale)); }
+.pareto-select select { font-size: calc(12px * var(--font-scale)); }
+.pareto-pane-title { font-size: calc(12.5px * var(--font-scale)); }
+.pareto-pane-meta { font-size: calc(11px * var(--font-scale)); }
+.pareto-pane-extra { font-size: calc(11px * var(--font-scale)); }
+.pareto-bottom-filter .chip { font-size: calc(12px * var(--font-scale)); }
+
+/* KPI 卡 / 管线 / 域卡 / 简报 / 待办 */
+.stat-label { font-size: calc(12.5px * var(--font-scale)); }
+.stat-trend { font-size: calc(11.5px * var(--font-scale)); }
+.stat-ask-btn { font-size: calc(11px * var(--font-scale)); }
+.stat-scope { font-size: calc(11px * var(--font-scale)); }
+.pipe-stage-name { font-size: calc(12.5px * var(--font-scale)); }
+.pipe-stage-num { font-size: calc(21px * var(--font-scale)); }
+.pipe-stage-pct { font-size: calc(11px * var(--font-scale)); }
+.dept-domain-name { font-size: calc(13.5px * var(--font-scale)); }
+.dept-domain-count { font-size: calc(11.5px * var(--font-scale)); }
+.briefing-head { font-size: calc(13px * var(--font-scale)); }
+.briefing-item { font-size: calc(12.3px * var(--font-scale)); }
+.todo-meta { font-size: calc(12px * var(--font-scale)); }
+/* 小节标题右侧说明：app.css 里是复合选择器 (0,2,0)，必须原样复刻才压得住 */
+.section-title .section-extra { font-size: calc(12px * var(--font-scale)); }
+
+/* ============================================================
+   4. 密度（compact / standard / loose）
+   ============================================================ */
+html[data-density="compact"] {
+  --d-card-pad: 12px; --d-card-pad-x: 14px; --d-row-pad: 8px;
+  --d-msg-pad: 8px; --d-cell-pad: 5px; --d-gap: 9px;
+}
+html[data-density="loose"] {
+  --d-card-pad: 28px; --d-card-pad-x: 24px; --d-row-pad: 18px;
+  --d-msg-pad: 14px; --d-cell-pad: 12px; --d-gap: 20px;
+}
+
+.card-pad       { padding: var(--d-card-pad) var(--d-card-pad-x); }
+.grid           { gap: var(--d-gap); }
+.todo-item      { padding: var(--d-row-pad) var(--d-card-pad-x); }
+.alert-item     { padding: var(--d-row-pad) var(--d-card-pad-x); }
+.msg-text       { padding: var(--d-msg-pad) calc(var(--d-msg-pad) + 4px); }
+.std-table td   { padding: var(--d-cell-pad) 10px; }
+.std-table th   { padding: calc(var(--d-cell-pad) * .8) 10px; }
+
+/* ============================================================
+   5. 触控与响应式
+   ============================================================ */
+
+/* 主交互目标最小 44×44（WCAG 2.5.5 / 2.5.8）；用 min-* 声明，
+   不与既有 height/width 冲突（min 值在层叠后钳制 used value）。 */
+@media (pointer: coarse) {
+  :where(button, a, .nav-item, .todo-item, .alert-item, .role-card, [role="button"]) {
+    min-height: 44px;
+    min-width: 44px;
+  }
+  ::-webkit-scrollbar { width: 12px; height: 12px; }
+  ::-webkit-scrollbar-thumb:hover { background: #3A587F; }
+  html[data-theme="light"] ::-webkit-scrollbar-thumb:hover { background: #A9B8CC; }
+
+  /* 特例兜底：.role-grid（登录页岗位网格）在 app.css 里被单独指定为 6px，
+     特异性 (0,1,0)+伪元素 高于通用 ::-webkit-scrollbar，必须显式覆盖，
+     否则粗指针下这处仍是 6px（通用规则盖不住它）。 */
+  .role-grid::-webkit-scrollbar { width: 12px; height: 12px; }
+  .role-grid::-webkit-scrollbar-thumb { border-radius: 6px; }
+}
+
+/* 全局触控基线（不依赖 pointer 媒体查询，避免桌面触屏识别不到） */
+.btn-sm    { height: 32px; padding: 0 12px; }   /* 27px → 32px */
+.icon-btn  { width: 40px; height: 40px; }      /* 32px → 40px */
+.nav-item  { min-height: 44px; }
+
+/* ---- ≤960px：侧栏塌成 64px 图标轨，补「悬浮浮出文字标签」 ----
+   原规则把 .nav-item span 直接 display:none，且全站 tooltip 为 0 处，
+   导致窄屏下导航项完全不可辨识。
+   实现说明：不用纯 CSS 浮出——.nav 自身 overflow-y:auto 会把溢出标签裁掉，
+   而放开 overflow 又会让导航项在矮视口下不可达：侧栏实为 20 项 / 5 组
+   （13 基础 + 7 场景，含 s00 契约自检屏），实测 .nav 内容高 950px vs 视口
+   754px，底部若干项会被 .app 的 overflow:hidden 切掉。
+   因此标签由 aging-mode.js 渲染为挂在 body 上的固定定位 .am-rail-tip，
+   定位取 getBoundingClientRect，永不被裁切，且导航滚动行为保持原样。
+   标签文案为「导航项 + 所属分组」，分组名由脚本写入 span[data-group]，
+   5 个分组（运营视图 / 场景协同 等）在窄屏下语义不丢失。 */
+@media (max-width: 960px) {
+  .nav-item {
+    justify-content: center;
+    padding: 10px 0;
+  }
+}
+
+/* 图标轨浮出标签（JS 定位，桌面窄视口共用） */
+.am-rail-tip {
+  position: fixed;
+  z-index: 1300;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 12px;
+  border-radius: 8px;
+  background: var(--card);
+  border: 1px solid var(--border-control);
+  box-shadow: var(--shadow-pop);
+  pointer-events: none;
+  white-space: nowrap;
+}
+.am-rail-tip[hidden] { display: none; }
+.am-rail-tip-label { color: var(--text); font-size: calc(13px * var(--font-scale)); }
+.am-rail-tip-group {
+  color: var(--text-3);
+  font-size: calc(11px * var(--font-scale));
+  padding-left: 8px;
+  border-left: 1px solid var(--border);
+}
+
+/* ============================================================
+   6. 亮色主题既有失效修复（历史缺陷，非本次引入）
+   ------------------------------------------------------------
+   app.css 的 html[data-theme="light"] 保留了大量为深底设计的浅灰文字，
+   在白底上全部低于 4.5:1。以下统一改挂 --text-3（亮色值 #656E7E）。
+   ============================================================ */
+html[data-theme="light"] {
+  --text-3: #656E7E;   /* #8A96A9 → #656E7E · vs #FFFFFF 2.99 → 5.14（AA）/ vs #F3F5F9 4.71 */
+}
+
+html[data-theme="light"] .brand-sub,
+html[data-theme="light"] .nav-group-label,
+html[data-theme="light"] .nav-item svg,
+html[data-theme="light"] .env-label,
+html[data-theme="light"] .login-brand-sub,
+html[data-theme="light"] .login-stat span,
+html[data-theme="light"] .login-brand-foot {
+  color: var(--text-3);
+}
+
+/* 亮色 · 侧边栏与登录页表面（与原深色硬编码渐变对齐翻转；仅在 light 作用域生效） */
+html[data-theme="light"] .sidebar {
+  background: linear-gradient(180deg, #FFFFFF 0%, #F5F8FC 100%);
+}
+html[data-theme="light"] .login-root {
+  background:
+    radial-gradient(820px 520px at 12% -8%, rgba(27, 102, 204, .07), transparent 60%),
+    radial-gradient(760px 480px at 96% 108%, rgba(34, 197, 140, .05), transparent 60%),
+    linear-gradient(180deg, #F4F7FB 0%, #EAEFF6 100%);
+}
+html[data-theme="light"] .nav-item { color: #3D4759; }
+html[data-theme="light"] .nav-item.active { color: #0F4C9E; }
+
+/* ============================================================
+   7. 显示设置面板 / 撤销提示条（.am- 前缀，自给样式不依赖 app.css）
+   ============================================================ */
+.am-btn { font-size: calc(13px * var(--font-scale)); font-weight: 700; letter-spacing: .2px; }
+
+.am-panel {
+  position: fixed;
+  z-index: 1200;
+  width: 320px;
+  max-width: calc(100vw - 24px);
+  padding: 14px 16px 12px;
+  background: var(--card);
+  border: 1px solid var(--border-control);
+  border-radius: 14px;
+  box-shadow: var(--shadow-pop);
+  font-size: calc(13px * var(--font-scale));
+  color: var(--text);
+}
+html[data-font="large"] .am-panel { width: 380px; }
+.am-panel[hidden] { display: none; }
+
+.am-panel-head {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 10px;
+}
+.am-panel-title { font-size: calc(14px * var(--font-scale)); font-weight: 700; }
+.am-close {
+  width: 28px; height: 28px; border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--text-3);
+}
+.am-close:hover { background: var(--bg-sub); color: var(--text); }
+
+.am-preset {
+  display: flex; flex-direction: column; gap: 6px;
+  width: 100%; text-align: left;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border-control);
+  background: var(--bg-sub);
+  margin-bottom: 8px;
+}
+.am-preset:hover { border-color: var(--focus-ring); background: var(--bg-soft); }
+.am-preset.current { border-color: var(--focus-ring); box-shadow: inset 0 0 0 1px var(--focus-ring); }
+.am-preset-row { display: flex; align-items: baseline; gap: 8px; }
+.am-preset-name { font-size: calc(14px * var(--font-scale)); font-weight: 700; }
+.am-preset-meta { font-size: calc(11.5px * var(--font-scale)); color: var(--text-3); }
+/* 各档「真实字号预览」：样本值必须固定（它们本身就是在演示该档位下正文的实际大小），
+   故不挂 --font-scale —— 否则预览会跟着当前档位二次放大，失去「所见即该档」的意义。
+   三档 = 13 / 13×1.2 / 13×1.35，与第 3 节阶梯严格对齐。 */
+.am-preset-preview { font-size: 13px; color: var(--text-2); line-height: 1.5; }
+.am-preset[data-preset="medium"] .am-preset-preview { font-size: 15.6px; }
+.am-preset[data-preset="large"]  .am-preset-preview { font-size: 17.55px; }
+.am-preset-flag { margin-left: auto; font-size: calc(11.5px * var(--font-scale)); color: var(--ok); font-weight: 600; }
+
+.am-adv { margin-top: 6px; border-top: 1px solid var(--border); padding-top: 8px; }
+.am-adv > summary {
+  cursor: pointer; list-style: none;
+  font-size: calc(12.5px * var(--font-scale)); color: var(--text-3); padding: 4px 0;
+}
+.am-adv > summary::marker { content: ""; }
+.am-adv > summary::before { content: "▸ "; }
+.am-adv[open] > summary::before { content: "▾ "; }
+.am-field { margin-top: 8px; }
+.am-field-label { font-size: calc(12px * var(--font-scale)); color: var(--text-3); margin-bottom: 4px; }
+.am-seg { display: flex; gap: 6px; flex-wrap: wrap; }
+.am-seg button {
+  flex: 1 1 auto; min-width: 68px;
+  height: 30px; padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border-control);
+  background: var(--bg-sub);
+  color: var(--text-2);
+  font-size: calc(12.5px * var(--font-scale));
+}
+.am-seg button[aria-pressed="true"] {
+  background: var(--primary-fill-a);
+  color: var(--primary-ink);
+  border-color: transparent;
+  font-weight: 700;
+}
+
+.am-panel-foot {
+  margin-top: 10px; padding-top: 10px;
+  border-top: 1px solid var(--border);
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+}
+.am-check { display: flex; align-items: center; gap: 6px; font-size: calc(12px * var(--font-scale)); color: var(--text-3); }
+.am-reset { font-size: calc(12px * var(--font-scale)); color: var(--text-3); text-decoration: underline; margin-left: auto; }
+.am-reset:hover { color: var(--text); }
+
+.am-undo-toast {
+  position: fixed;
+  top: 76px; left: 50%;
+  transform: translateX(-50%);
+  z-index: 1300;
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 14px;
+  pointer-events: auto;
+  background: var(--card);
+  border: 1px solid var(--border-control);
+  border-radius: 10px;
+  box-shadow: var(--shadow-pop);
+  font-size: calc(13px * var(--font-scale));
+  color: var(--text);
+  animation: am-toast-in .18s ease;
+}
+.am-undo-toast[hidden] { display: none; }
+.am-undo-btn {
+  border: 1px solid var(--border-control);
+  border-radius: 8px;
+  height: 30px; padding: 0 12px;
+  background: var(--bg-sub);
+  color: var(--text);
+  font-size: calc(12.5px * var(--font-scale)); font-weight: 600;
+}
+.am-undo-btn:hover { border-color: var(--focus-ring); }
+@keyframes am-toast-in { from { opacity: 0; transform: translate(-50%, -8px); } }
+
+/* 首次引导（登录页内第 2 步）—— 症状化三选一，不问年龄、不收集个人信息 */
+.am-onboard { margin: 14px 0 4px; padding: 12px 14px; border-radius: 10px; background: var(--bg-sub); border: 1px solid var(--border); }
+.am-onboard-title { font-size: calc(13px * var(--font-scale)); font-weight: 700; margin-bottom: 8px; }
+.am-onboard-opts { display: flex; flex-direction: column; gap: 8px; }
+.am-onboard-opt {
+  text-align: left; padding: 9px 12px; border-radius: 9px;
+  border: 1px solid var(--border-control); background: var(--card);
+}
+.am-onboard-opt:hover { border-color: var(--focus-ring); }
+.am-onboard-opt .am-onboard-label { font-weight: 600; font-size: calc(13px * var(--font-scale)); display: block; }
+.am-onboard-opt .am-onboard-prev { color: var(--text-3); margin-top: 3px; display: block; }
+.am-onboard-opt[data-font="medium"] .am-onboard-prev { font-size: 15.6px; }
+.am-onboard-opt[data-font="large"]  .am-onboard-prev { font-size: 17.55px; }
+.am-onboard-skip { margin-top: 8px; font-size: calc(12px * var(--font-scale)); color: var(--text-3); text-decoration: underline; }
+
+/* 系统「减少动态」偏好：面板与提示条去掉入场动画 */
+@media (prefers-reduced-motion: reduce) {
+  .am-undo-toast { animation: none; }
+}

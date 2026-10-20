@@ -696,6 +696,90 @@ class CaseSearchService:
             "by_status": by_status,
         }
 
+    # ---------- 命中分布（段 × 缺陷模式，PRD FR-10） ----------
+
+    def distribution(self, principal: Optional[Principal], action: str = "query",
+                     scan_cap: int = STATS_SCAN_CAP, *, top: int = 12
+                     ) -> dict[str, Any]:
+        """**段 × 缺陷模式**分布热力（**当前主体可见范围内**，含空白格）。
+
+        口径三条硬约束：
+
+        1. 数据源是 ``_scan_visible_restricted``（= 检索同源的可见集合：
+           硬维度过滤器 + 二次授权 + 披露判定），**不另起一套过滤逻辑**——
+           否则热力图会和检索结果对不上，现场一追问就穿；
+        2. 空白格不是"没查"，而是"该段在该缺陷模式上确实 0 例"（真实统计），
+           用来回答"我们这段这类问题高发还是压根没见过"；
+        3. 缺陷模式按命中数取前 ``top`` 个（可读性护栏）：响应里明确写
+           ``defect_modes_total`` 与 ``truncated``，**不假装画全了**。
+        """
+        from .case_relation import segment_label, segment_of
+        from ..contracts.ontology import get_ontology_registry
+
+        visible, _restricted = self._scan_visible_restricted(
+            principal, action, cap=scan_cap)
+        pairs: dict[tuple[str, str], int] = {}
+        seg_counts: dict[str, int] = {}
+        code_counts: dict[str, int] = {}
+        no_segment = 0
+        for case in visible:
+            group = segment_of(case.get("line_code"))
+            code = str(case.get("defect_mode_code") or "").strip()
+            if not group:
+                # 职能/跨部门案例没有产线：单独计数，不硬塞进某个工艺段
+                no_segment += 1
+                continue
+            seg_counts[group] = seg_counts.get(group, 0) + 1
+            if not code:
+                continue
+            code_counts[code] = code_counts.get(code, 0) + 1
+            key = (group, code)
+            pairs[key] = pairs.get(key, 0) + 1
+
+        registry = get_ontology_registry()
+        limit = max(1, int(top or 12))
+        ordered_codes = sorted(code_counts.items(),
+                               key=lambda kv: (-kv[1], kv[0]))[:limit]
+        segments = sorted(seg_counts.items(), key=lambda kv: (-kv[1], kv[0]))
+        cells = [{"segment": seg, "segment_label": segment_label(seg),
+                  "defect_mode": code, "count": count}
+                 for (seg, code), count in sorted(pairs.items())]
+        blank: list[dict[str, Any]] = []
+        for seg, _n in segments:
+            for code, _c in ordered_codes:
+                if pairs.get((seg, code), 0) == 0:
+                    blank.append({"segment": seg, "segment_label": segment_label(seg),
+                                  "defect_mode": code})
+        modes = []
+        for code, count in ordered_codes:
+            term = registry.term("defect_mode", code)
+            modes.append({"code": code, "count": count,
+                          "label": term.name if term else code,
+                          "registered": term is not None})
+        notes = [
+            f"口径：当前身份可见案例（{len(visible)} 例）中的 段 × 缺陷模式 分布，"
+            "与检索结果同源",
+            f"缺陷模式按命中数取前 {len(modes)} 个（共 {len(code_counts)} 个，"
+            + ("已截断）" if len(code_counts) > limit else "未截断）"),
+        ]
+        if no_segment:
+            notes.append(f"{no_segment} 例职能/跨部门案例无产线，未纳入段维度")
+        unregistered = sum(1 for m in modes if not m["registered"])
+        if unregistered:
+            notes.append(f"{unregistered} 个缺陷模式未登记本体只显示编码"
+                         "（覆盖率问题见「本体覆盖率」看板）")
+        return {
+            "visible_total": len(visible),
+            "segments": [{"key": seg, "label": segment_label(seg), "count": count}
+                         for seg, count in segments],
+            "defect_modes": modes,
+            "defect_modes_total": len(code_counts),
+            "blank_cells": blank,
+            "cells": cells,
+            "truncated": len(visible) >= int(scan_cap),
+            "notes": notes,
+        }
+
     # ---------- hidden_count / notice ----------
 
     def _hidden_count(self, principal: Principal, action: str,

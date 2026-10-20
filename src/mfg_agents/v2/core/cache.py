@@ -116,12 +116,22 @@ def cache_delete(key: str) -> None:
         _reset()
 
 
-def query_key(question: str, user_ctx: dict[str, Any] | None = None) -> str:
-    """查询缓存键：``mfg:q:{sha1(问题|部门|角色)}``（同一问题同一角色才复用）。"""
+def query_key(question: str, user_ctx: dict[str, Any] | None = None,
+              ask_ctx: dict[str, Any] | None = None) -> str:
+    """查询缓存键：``mfg:q:{sha1(问题|部门|角色|ask_ctx)}``。
+
+    V4：``ask_ctx`` 的关键维度（screen/kpi/view/window/filters）并入键——
+    同一句问数文案在「当月 / 最近7天」等不同档位下结论不同，不并入会口径错配。
+    """
     ctx = user_ctx or {}
     roles = ctx.get("roles") or []
     raw = "|".join([question.strip(), str(ctx.get("dept", "")),
                     ",".join(sorted(str(r) for r in roles))])
+    if ask_ctx:
+        ac = {k: ask_ctx.get(k) for k in
+              ("screen", "kpi", "view", "window", "filters") if ask_ctx.get(k)}
+        if ac:
+            raw += "|" + json.dumps(ac, sort_keys=True, ensure_ascii=False)
     return "mfg:q:" + hashlib.sha1(raw.encode("utf-8")).hexdigest()
 
 

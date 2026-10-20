@@ -111,7 +111,7 @@ def demo_ui_index() -> _HTMLResponse:
     保证清单内资源必定带上 ``?v=<mtime>``——文件一改，缓存自动失效。
     """
     html = (_UI_DIR / "index.html").read_text(encoding="utf-8")
-    for f in ("demo-data.js", "terms.js", "app.js", "screens.js", "reports-screen.js", "help-screen.js", "kb-screen.js", "office-screen.js", "case-screen.js", "float-help.js", "app.css", "aging.css", "aging-mode.js"):
+    for f in ("demo-data.js", "terms.js", "app.js", "screens.js", "reports-screen.js", "help-screen.js", "kb-screen.js", "office-screen.js", "case-screen.js", "float-help.js", "app.css", "aging.css", "aging-mode.js", "theme-switcher.js"):
         fp = _UI_DIR / f
         v = int(fp.stat().st_mtime) if fp.exists() else 0
         # 仅替换引号内的资源引用（允许 ./、子目录等路径前缀），不动 HTML 其余部分；
@@ -209,6 +209,10 @@ class QueryRequest(BaseModel):
     query: str
     user_ctx: Optional[dict[str, Any]] = None
     request_id: Optional[str] = None
+    # V4 结构化问数上下文（看板问数口径直查用；缺省回落纯自然语言链路）：
+    # {"module": "mfgboard", "screen": "orders", "kpi": "otd", "view": "kpi",
+    #  "window": "day|month|window|all", "filters": {stage/category/prod_cat}}
+    ask_ctx: Optional[dict[str, Any]] = None
 
 
 class OfficeCancelRequest(BaseModel):
@@ -237,6 +241,48 @@ class DataAccessApproveRequest(BaseModel):
     """演示代批请求体：只需申请人标识（校验"只能为本人申请触发"）。"""
 
     actor: str = ""
+
+
+class OfficeChatRequest(QueryRequest):
+    """办公助手对话请求：在通用问数请求上追加**本次携带的上传材料**。
+
+    ``attachments`` 为材料标识列表（attachment_id），服务端据此把材料元数据
+    注入 Agent 上下文（提交报销时绑定到单据）；传入的材料只认上传人本人所有。
+    """
+
+    attachments: Optional[list[str]] = None
+
+
+class OfficeOrganizeRequest(BaseModel):
+    """整理报销科目请求体（确定性规则，不需要 LLM）。"""
+
+    category: str = ""
+    amount: float = 0.0
+    note: str = ""
+    attachment_kinds: list[str] = []
+    actor: str = ""
+
+
+class OfficeLeaveAttachmentRequest(BaseModel):
+    """请假单补件请求体（如病假条）：补件材料须为本人上传。"""
+
+    attachment_id: str = ""
+    actor: str = ""
+
+
+class OfficeUploadRequest(BaseModel):
+    """OA 材料登记请求（演示态：**只登记清单，不接收文件字节**）。
+
+    前端选文件只为取文件名与大小，请求体里**没有文件内容**——真实字节从不提交到
+    本机（端点不收 ``UploadFile``）。``size`` 缺省时由服务端按文件名生成稳定假大小。
+    """
+
+    filename: str = ""
+    kind: str = "其他"
+    actor: str = ""
+    note: str = ""
+    size: int = 0
+    content_type: str = ""
 
 
 @app.get("/api/v2/health")
@@ -495,7 +541,9 @@ def api_query(req: QueryRequest, request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=429, detail="请求过于频繁，请稍后再试")
 
     request_id = req.request_id or f"req-{uuid.uuid4().hex[:12]}"
-    ckey = cache.query_key(req.query, user_ctx)
+    # 缓存键并入 ask_ctx 关键维度：同一句问数文案在不同档位/筛选下结论不同，
+    # 防止「当月」命中「最近7天」的缓存（口径错配比慢更糟）。
+    ckey = cache.query_key(req.query, user_ctx, ask_ctx=req.ask_ctx)
 
     cached = cache.cache_get(ckey)
     if cached is not None:
@@ -508,7 +556,8 @@ def api_query(req: QueryRequest, request: Request) -> dict[str, Any]:
     token = bind_existing(event_queue)
     try:
         result = get_orchestrator().handle(req.query, user_ctx,
-                                           sink=QueueSink(event_queue))
+                                           sink=QueueSink(event_queue),
+                                           ask_ctx=req.ask_ctx)
     finally:
         unbind(token)
     data = result.to_dict()
@@ -1206,28 +1255,138 @@ def api_agents_configs() -> dict[str, Any]:
 
 
 @app.post("/api/v2/office/chat")
-def api_office_chat(req: QueryRequest) -> dict[str, Any]:
+def api_office_chat(req: OfficeChatRequest) -> dict[str, Any]:
     """办公助手对话入口：直接交给独立的办公助手 Agentic Agent 办理。
 
     与 ``/api/v2/query`` 的区别：此处**强制定向**办公助手（不依赖关键词路由），
     供前台聚焦演示"帮我订个会议室/中午订个餐"；返回值含工具调用留痕（steps）。
     真实接入时把 ``runtime.office`` 换成飞书/钉钉/美餐适配器即可，本端点零改动。
+
+    ``req.attachments``（材料标识）由服务端解析为**本人上传**的材料元数据后一并
+    交给 Agent：提交报销时绑定到单据（借用他人票据的 id 会被剔除并如实说明）。
     """
     from ...common.llm_factory import llm_available
     from ..agents.office import OfficeAssistantAgent
+    from ..services.office import get_attachment_store
 
     if not llm_available():
         return {"code": 1, "data": None,
                 "message": "办公助手需要 LLM 服务（当前不可用），请稍后重试。"}
 
+    user_ctx = req.user_ctx or DEFAULT_USER_CTX
+    actor = (str(user_ctx.get("name") or "").strip()
+             or str(user_ctx.get("user_id") or "").strip())
+    attachments: list[dict[str, Any]] = []
+    invalid: list[str] = []
+    if req.attachments:
+        attachments, invalid = get_attachment_store().resolve(req.attachments, actor)
+
     orch = get_orchestrator()
     try:
         out = OfficeAssistantAgent(orchestrator=orch).run(
-            req.query, user_ctx=req.user_ctx or DEFAULT_USER_CTX)
+            req.query, user_ctx=user_ctx, attachments=attachments)
     except Exception as exc:  # noqa: BLE001 —— 演示端点：失败如实降级不崩
         return {"code": 1, "data": None,
                 "message": f"办公助手暂不可用：{type(exc).__name__}: {exc}"}
+    if invalid:
+        out["data_gaps"] = list(out.get("data_gaps") or []) + [
+            f"以下材料无效或不属于本人，已忽略：{'、'.join(invalid)}"]
     return {"code": 0, "data": out, "message": "ok"}
+
+
+@app.post("/api/v2/office/upload")
+def api_office_upload(req: OfficeUploadRequest) -> dict[str, Any]:
+    """登记 OA 办理材料（发票 / 出差报告 / 行程单 / 付款凭证 / 病假条 / 其他）。
+
+    **演示态做"虚假上传"**：只登记材料清单（文件名、类别、大小、上传人），
+    **不接收、不保存原文件**——前端选文件只为取文件名与大小，真实字节从不提交到
+    本机。返回材料元数据（含 ``attachment_id`` 与 ``virtual=true``），供前端挂到
+    报销/请假单据上。治理约束：类别白名单、单份大小上限、上传人必填。
+    """
+    from ..services.office import OfficeError, get_attachment_store
+
+    uploader = (str(req.actor or "").strip()
+                or str(DEFAULT_USER_CTX.get("name") or "").strip()
+                or str(DEFAULT_USER_CTX.get("user_id") or "演示用户"))
+    try:
+        meta = get_attachment_store().save(
+            req.filename, req.kind, uploader, req.size, req.content_type, req.note)
+    except OfficeError as exc:
+        raise HTTPException(status_code=400, detail={
+            "code": "OA_UPLOAD_INVALID", "message": str(exc)}) from exc
+    return {"code": 0, "data": meta, "message": "ok"}
+
+
+@app.get("/api/v2/office/attachment/{attachment_id}")
+def api_office_attachment(attachment_id: str) -> Response:
+    """查看材料登记信息（演示态**无原文件**：返回登记卡片说明，不提供实际下载）。
+
+    真实接入对象存储后，此处改为按单据权限校验后回源（``FileResponse``/预签名 URL）。
+    """
+    from ..services.office import get_attachment_store
+
+    meta = get_attachment_store().get(attachment_id)
+    if not meta:
+        raise HTTPException(status_code=404, detail={
+            "code": "OA_ATTACHMENT_NOT_FOUND", "message": "材料不存在或已失效"})
+    size_kb = f"{meta['size'] / 1024:.1f} KB"
+    html = (
+        "<!doctype html><html lang=\"zh-CN\"><meta charset=\"utf-8\">"
+        "<body style=\"font-family:system-ui,-apple-system,'Segoe UI',sans-serif;"
+        "padding:24px;color:#1f2937;background:#f7f8fb\">"
+        "<h3 style=\"margin:0 0 8px\">材料登记（演示态 · 未保存原文件）</h3>"
+        f"<p style=\"margin:4px 0\">登记号：<b>{meta['attachment_id']}</b></p>"
+        f"<p style=\"margin:4px 0\">文件名：{meta['filename']}</p>"
+        f"<p style=\"margin:4px 0\">类别：{meta['kind']} · 大小：≈{size_kb}</p>"
+        f"<p style=\"margin:4px 0\">上传人：{meta['uploader']} · {meta['uploaded_at']}</p>"
+        "<p style=\"margin:12px 0 0;color:#6b7280\">演示模式只登记材料清单，"
+        "未在本地接收/保存原文件；接入真实存储后可在此预览或下载原件。</p>"
+        "</body></html>")
+    return Response(content=html, media_type="text/html; charset=utf-8")
+
+
+@app.post("/api/v2/office/expense/organize")
+def api_office_expense_organize(req: OfficeOrganizeRequest) -> dict[str, Any]:
+    """整理报销科目（确定性规则，不需要 LLM）。
+
+    输出：二级科目清单、按「事由」拆分的明细（如「高铁 980 + 住宿 306」）、
+    该类别**必传/选传**材料核对与缺失的必传项。供前端"整理报销科目"按钮与
+    Agent 的 ``organize_expense`` 工具共用同一实现（口径即代码）。
+    """
+    from ..services.office import OfficeError, organize_expense
+
+    try:
+        out = organize_expense(req.category, req.amount, req.note,
+                               req.attachment_kinds)
+    except OfficeError as exc:
+        return {"code": 1, "data": None, "message": str(exc)}
+    return {"code": 0, "data": out, "message": "ok"}
+
+
+@app.post("/api/v2/office/leave/{leave_id}/attachment")
+def api_office_leave_attachment(leave_id: str,
+                                req: OfficeLeaveAttachmentRequest) -> dict[str, Any]:
+    """给请假单补件（如病假条图片）：仅限本人、未撤销的请假单。
+
+    与"提交后补充病假条"的真实场景对应：先上传取得 ``attachment_id``，再补挂到
+    请假单上；补件留痕、病假条到位后清除"待补"标记。他人单据不可代补。
+    """
+    from ..services.office import OfficeError, get_attachment_store
+
+    actor = (str(req.actor or "").strip()
+             or str(DEFAULT_USER_CTX.get("name") or "").strip()
+             or str(DEFAULT_USER_CTX.get("user_id") or "演示用户"))
+    metas, invalid = get_attachment_store().resolve([req.attachment_id], actor)
+    if not metas:
+        return {"code": 1, "data": None,
+                "message": f"材料无效或不属于本人：{req.attachment_id or '（空）'}"}
+    try:
+        leave = get_orchestrator().runtime.office.supplement_leave_document(
+            leave_id, metas[0], actor)
+    except OfficeError as exc:
+        return {"code": 1, "data": None, "message": str(exc)}
+    return {"code": 0, "data": {"leave": leave, "attachment": metas[0]},
+            "message": "ok"}
 
 
 @app.get("/api/v2/office/rooms")
@@ -1250,7 +1409,8 @@ def api_office_restaurants() -> dict[str, Any]:
 def api_office_mine(actor: str) -> dict[str, Any]:
     """按操作人查其会议室预订、订餐订单与 OA 申请（demo 演示用；真实环境按登录身份）。
 
-    OA 申请含：费用报销、请假申请、补考勤补卡，以及年假/调休余额。
+    OA 申请含：费用报销、请假申请、补考勤补卡、OA 服务工单（IT 报修/账号权限/设备领用/
+    车位/访客车辆/公务用车），以及年假/调休余额。
     """
     be = get_orchestrator().runtime.office
     bookings = be.list_bookings(actor)
@@ -1258,11 +1418,13 @@ def api_office_mine(actor: str) -> dict[str, Any]:
     expenses = be.list_expenses(actor)
     leaves = be.list_leaves(actor)
     attendance_fixes = be.list_attendance_fixes(actor)
+    service_requests = be.list_service_requests(actor)
     balance = be.leave_balance(actor)
     return {"code": 0, "data": {
         "bookings": bookings, "orders": orders,
         "expenses": expenses, "leaves": leaves,
-        "attendance_fixes": attendance_fixes, "leave_balance": balance,
+        "attendance_fixes": attendance_fixes,
+        "service_requests": service_requests, "leave_balance": balance,
     }, "message": "ok"}
 
 
@@ -1291,8 +1453,10 @@ def api_office_meta() -> dict[str, Any]:
     （会议室→飞书日历，见 ``services/feishu_calendar.py``），切换只改环境变量。
     """
     from ...common.llm_factory import llm_available
-    from ..services.office import EXPENSE_APPROVAL_AMOUNT, LEAVE_LONG_DAYS, \
-        ORDER_APPROVAL_AMOUNT
+    from ..services.office import (ATTACHMENT_KINDS, ATTACHMENT_MAX_MB,
+                                   EXPENSE_ATTACHMENT_KINDS,
+                                   EXPENSE_APPROVAL_AMOUNT, LEAVE_LONG_DAYS,
+                                   LEAVE_ATTACHMENT_KINDS, ORDER_APPROVAL_AMOUNT)
 
     office = get_orchestrator().runtime.office
     impl = type(office).__name__
@@ -1303,6 +1467,10 @@ def api_office_meta() -> dict[str, Any]:
         "order_approval_amount": ORDER_APPROVAL_AMOUNT,
         "expense_approval_amount": EXPENSE_APPROVAL_AMOUNT,
         "leave_long_days": LEAVE_LONG_DAYS,
+        "attachment_kinds": ATTACHMENT_KINDS,
+        "expense_attachment_kinds": EXPENSE_ATTACHMENT_KINDS,
+        "leave_attachment_kinds": LEAVE_ATTACHMENT_KINDS,
+        "attachment_max_mb": ATTACHMENT_MAX_MB,
         "real_adapter": "飞书日历（会议室）· 适配层已就绪",
         "switch_hint": "OFFICE_BACKEND=feishu 即切到真实飞书日历；订餐 P1-B 再接美餐/美团",
     }, "message": "ok"}
@@ -1563,9 +1731,10 @@ def _dashboard_payload(request: Request, dashboard: str, builder,
                        **extra: Any) -> dict[str, Any]:
     """统一编排：裁决 → 聚合 → 脱敏 → 回写 scope 凭据。
 
-    ``window`` 为可选板级时间口径（``manufacturing`` / ``quality`` 支持
-    ``window|day|month``）；``None`` 表示该看板不接口径参数（orders / spc）。
-    ``extra``：看板自定义筛选（如品质看板的 ``stage`` / ``category``），原样透传给聚合器。
+    ``window`` 为可选板级时间口径（``manufacturing`` / ``quality`` / ``spc`` 支持
+    ``window|day|month``）；``None`` 表示该看板不接口径参数（orders）。
+    ``extra``：看板自定义筛选（如品质看板的 ``stage`` / ``category``、SPC 看板的
+    ``stage`` / ``product_category``），原样透传给聚合器。
     """
     ctx = _scope_guard(request, dashboard)
     registry = get_orchestrator().runtime.data_registry
@@ -1593,20 +1762,39 @@ def _checked_window(window: str, allowed: tuple[str, ...] = _WINDOW_KEYS) -> str
 
 @app.get("/api/v2/dashboard/manufacturing")
 def api_dashboard_manufacturing(request: Request,
-                                window: str = Query("window")) -> dict[str, Any]:
+                                window: str = Query("window"),
+                                stage: str = Query(""),
+                                product_category: str = Query("")) -> dict[str, Any]:
     """制造看板：稼动率 / 报废率 / 报工完成率 / 测试直通率（按岗位范围裁决）。
 
     ``window``：``window``（最近7天，默认）/ ``day``（当日）/ ``month``（当月）——
     KPI 卡、TOP5 排行、迷你趋势与下钻均随所选口径切换。非法值 → 400。
 
+    ``stage``（工段：SMT/PCM/PACK/整机）/ ``product_category``（产品分类：消费电子 /
+    智能电源 / 储能电源 / 车载）为板级筛选，缺省 = 全部。制造四表没有这两列，用固定
+    映射（产线前缀 / 型号）折出筛选维度——卡片值即所选范围的汇总，TOP5 与下钻同口径；
+    测试直通率无产线维度，工段筛选对它不适用并回传 ``scope_note``。非法取值 → 400
+    （fail-fast，不静默当「全部」）。
+
     真实链路聚合本地只读数据源；聚合内部全兜底，数据源故障时返回
     ``degraded:true`` 的骨架，**绝不 500**（前端据此降级演示数据）。
     """
-    from ..services.dashboard import build_manufacturing_dashboard
+    from ..services.dashboard import (
+        MFG_PRODUCT_CATEGORIES, MFG_STAGES, build_manufacturing_dashboard,
+    )
+
+    stage = (stage or "").strip()
+    product_category = (product_category or "").strip()
+    if stage and stage not in MFG_STAGES:
+        raise HTTPException(status_code=400, detail="未知工段筛选 stage")
+    if product_category and product_category not in MFG_PRODUCT_CATEGORIES:
+        raise HTTPException(status_code=400, detail="未知产品分类筛选 product_category")
 
     return _dashboard_payload(request, "manufacturing",
                               build_manufacturing_dashboard,
-                              _checked_window(window))
+                              _checked_window(window),
+                              stage=stage or None,
+                              product_category=product_category or None)
 
 
 @app.get("/api/v2/dashboard/quality")
@@ -1640,6 +1828,33 @@ def api_dashboard_quality(request: Request,
                               stage=stage or None, category=category or None)
 
 
+@app.get("/api/v2/dashboard/quality/team")
+def api_dashboard_quality_team(request: Request,
+                               stage: str = Query(""),
+                               team: str = Query(""),
+                               window: str = Query("window")) -> dict[str, Any]:
+    """标准三率 2 级看板「点班组」弹窗：该班组三率拆解 + 不良原因归因。
+
+    ``stage``：工段（SMT/PCM/PACK/整机，受 ``QUALITY_STAGES`` 约束，非法 → 400）；
+    ``team``：班组名（如 ``PCM十五班``）；``window`` 同品质看板。
+
+    与 ``/api/v2/dashboard/quality`` 的 ``standard_three_rates`` **同一套** ``_three_rates``，
+    按工序/按日分解与原因归因都从同一批审核明细算出，前端弹窗数字与大盘可对账。
+    班组在该口径内无审核记录时返回 ``found:false`` 骨架（200，不是 404——
+    「本窗口没被审核」是有效结论，不该被当成接口错误）。
+    """
+    from ..services.dashboard import QUALITY_STAGES, build_std_team_detail
+
+    stage = (stage or "").strip()
+    team = (team or "").strip()
+    if stage not in QUALITY_STAGES:
+        raise HTTPException(status_code=400, detail="未知工段 stage")
+    if not team:
+        raise HTTPException(status_code=400, detail="缺少班组 team")
+    return _dashboard_payload(request, "quality", build_std_team_detail,
+                              _checked_window(window), stage=stage, team=team)
+
+
 @app.get("/api/v2/dashboard/orders")
 def api_dashboard_orders(request: Request,
                          window: str = Query("window")) -> dict[str, Any]:
@@ -1658,16 +1873,209 @@ def api_dashboard_orders(request: Request,
                               _checked_window(window))
 
 
+@app.get("/api/v2/dashboard/orders/stage")
+def api_dashboard_orders_stage(request: Request,
+                               stage: str = Query(""),
+                               window: str = Query("window")) -> dict[str, Any]:
+    """订单履约看板「状态管道 · 点环节」弹窗：该环节订单清单 + 汇总。
+
+    ``stage``：管道环节（已下单/计划/采购/生产/质检/发货，与
+    ``ORDER_STAGES`` 同源白名单，非法 → 400）；``window`` 同订单看板。
+
+    与 ``/api/v2/dashboard/orders`` 的 ``pipeline`` 同源同口径（同一张
+    ``order_fulfillment``、同一个 ``due_date`` 窗口），弹窗汇总与管道环节块
+    可对账；客户身份字段按岗位脱敏（同 ``risk_orders[]`` 规则）。
+    """
+    from ..services.dashboard import ORDER_STAGES, build_order_stage_detail
+
+    stage = (stage or "").strip()
+    if stage not in ORDER_STAGES:
+        raise HTTPException(status_code=400, detail="未知订单环节 stage")
+    return _dashboard_payload(request, "orders", build_order_stage_detail,
+                              _checked_window(window), stage=stage)
+
+
+@app.get("/api/v2/dashboard/orders/detail")
+def api_dashboard_orders_detail(request: Request,
+                                order_no: str = Query("")) -> dict[str, Any]:
+    """订单履约看板「风险订单 · 点行」弹窗：单张订单全字段明细。
+
+    ``order_no``：订单号（缺省 → 400）。订单号不存在返回 ``found:false``
+    骨架（200，不是 404）。客户身份字段按岗位脱敏，与风险订单清单同一套规则。
+    """
+    from ..services.dashboard import build_order_detail
+
+    order_no = (order_no or "").strip()
+    if not order_no:
+        raise HTTPException(status_code=400, detail="缺少订单号 order_no")
+    return _dashboard_payload(request, "orders", build_order_detail,
+                              None, order_no=order_no)
+
+
+@app.get("/api/v2/dashboard/orders/group")
+def api_dashboard_orders_group(request: Request,
+                               kpi: str = Query(""),
+                               customer: str = Query(""),
+                               level: str = Query(""),
+                               model: str = Query(""),
+                               window: str = Query("window")) -> dict[str, Any]:
+    """订单履约 2 级看板「点行」弹窗：单分组（客户·等级 / 型号）的订单清单。
+
+    ``kpi``：``DRILL_DEFS`` 中 ``screen=orders`` 的四个键（otd / otif /
+    delay_rate / kit_rate，白名单外 → 400）；分组维度按指标声明通用取用——
+    客户维指标传 ``customer`` + ``level``，齐套率传 ``model``（全部为空 → 400）。
+
+    与 ``/api/v2/dashboard/drill``（screen=orders）的 L2 **同一套** ``DRILL_DEFS``
+    聚合口径：弹窗头部指标值 / 分子分母与 2 级看板该行逐字段一致，可对账；
+    数据范围裁决与客户字段脱敏同订单看板（``orders[].customer`` 规则），
+    与班组明细弹窗（``/dashboard/quality/team``）同一模式。
+    """
+    from ..services.dashboard import (
+        DRILL_DEFS, build_order_group_detail, entity_param_names,
+    )
+
+    kpi = (kpi or "").strip()
+    defn = DRILL_DEFS.get(kpi)
+    if defn is None or defn["screen"] != "orders":
+        raise HTTPException(status_code=400, detail="未知订单指标 kpi")
+    vals = {"customer": (customer or "").strip(),
+            "level": (level or "").strip(), "model": (model or "").strip()}
+    names = entity_param_names(kpi)
+    if not any(vals.get(n) for n in names):
+        raise HTTPException(status_code=400,
+                            detail=f"缺少分组维度参数: {'/'.join(names)}")
+    entity = {n: vals.get(n, "") for n in names}
+    return _dashboard_payload(request, "orders", build_order_group_detail,
+                              _checked_window(window), kpi_key=kpi, entity=entity)
+
+
 @app.get("/api/v2/dashboard/spc")
-def api_dashboard_spc(request: Request) -> dict[str, Any]:
+def api_dashboard_spc(request: Request,
+                      window: str = Query("window"),
+                      stage: str = Query(""),
+                      product_category: str = Query("")) -> dict[str, Any]:
     """SPC 过程能力看板：逐特性 Cp/Cpk/Pp/Ppk 判定 + 超差率 + 不良柏拉图（按岗位范围裁决）。
 
     能力指数由确定性内核 ``core/spc``（双西格玛口径）计算；缺测量值时逐特性标
     ``data_gap``，聚合内部全兜底，**绝不 500**（前端据此降级演示数据）。
-    """
-    from ..services.dashboard import build_spc_dashboard
 
-    return _dashboard_payload(request, "spc", build_spc_dashboard)
+    板级筛选（与制造/品质看板同源）：
+    - ``window``：``window``（最近7天，默认）/ ``day``（当日）/ ``month``（当月），
+      非法值 → 400；
+    - ``stage``：工段，按 ``MFG_STAGES`` 白名单裁定，非法值 → 400；
+    - ``product_category``：产品分类，按 ``MFG_PRODUCT_CATEGORIES`` 白名单裁定，
+      非法值 → 400（**不静默当「全部」**）。
+    """
+    from ..services.dashboard import (
+        MFG_PRODUCT_CATEGORIES, MFG_STAGES, build_spc_dashboard,
+    )
+
+    stage = (stage or "").strip()
+    product_category = (product_category or "").strip()
+    if stage and stage not in MFG_STAGES:
+        raise HTTPException(status_code=400, detail="未知工段 stage")
+    if product_category and product_category not in MFG_PRODUCT_CATEGORIES:
+        raise HTTPException(status_code=400, detail="未知产品分类 product_category")
+
+    return _dashboard_payload(request, "spc", build_spc_dashboard,
+                              _checked_window(window), stage=stage or None,
+                              product_category=product_category or None)
+
+
+@app.get("/api/v2/dashboard/spc/capability")
+def api_dashboard_spc_capability(request: Request,
+                                 characteristic: str = Query(""),
+                                 window: str = Query("window"),
+                                 stage: str = Query(""),
+                                 product_category: str = Query("")) -> dict[str, Any]:
+    """SPC 2 级看板「点特性」弹窗：该特性的能力拆解 + 逐日越限 + 原始记录。
+
+    与 L1 看板**同源**（同一 ``_spc_caps_from_rows`` / 同一窗口 / 同一维度筛选）
+    → 弹窗的 cpk / 判定 / 样本数与 L1 卡片、2 级行逐字段一致、可对账。
+
+    走 ``_dashboard_payload(request, "spc", ...)`` → 自动继承 ``data_scope.yaml``
+    的 ``spc:`` 块（9 角色 allow_roles）→ 无权岗位 403 fail-closed，**绝不降级
+    200 空数据**。该特性无记录时返回 200 + ``found:false`` 骨架（**不 404**）。
+    """
+    from ..services.dashboard import (
+        MFG_PRODUCT_CATEGORIES, MFG_STAGES, build_spc_capability_detail,
+    )
+
+    characteristic = (characteristic or "").strip()
+    if not characteristic:
+        raise HTTPException(status_code=400, detail="缺少特性 characteristic")
+    stage = (stage or "").strip()
+    product_category = (product_category or "").strip()
+    if stage and stage not in MFG_STAGES:
+        raise HTTPException(status_code=400, detail="未知工段 stage")
+    if product_category and product_category not in MFG_PRODUCT_CATEGORIES:
+        raise HTTPException(status_code=400, detail="未知产品分类 product_category")
+
+    return _dashboard_payload(request, "spc", build_spc_capability_detail,
+                              _checked_window(window), characteristic=characteristic,
+                              stage=stage or None, product_category=product_category or None)
+
+
+@app.get("/api/v2/dashboard/spc/records")
+def api_dashboard_spc_records(request: Request,
+                              window: str = Query("window"),
+                              stage: str = Query(""),
+                              product_category: str = Query(""),
+                              characteristic: str = Query(""),
+                              day: str = Query(""),
+                              over_only: bool = Query(False)) -> dict[str, Any]:
+    """SPC 测量记录弹窗：越限明细（over_only=true）/ 单日明细（day=YYYY-MM-DD）。
+
+    与 L1 / 2 级 / 能力弹窗**同源**（同一窗口与维度筛选），记录数与看板
+    「越限条数 / 测量条数」可对账。走 ``_dashboard_payload(request, "spc", ...)``
+    → 继承 ``data_scope.yaml`` 的 ``spc:`` 块 → 无权 403 fail-closed。
+    无记录返回 200 + ``found:false`` 骨架（不 404）。
+    """
+    from ..services.dashboard import (
+        MFG_PRODUCT_CATEGORIES, MFG_STAGES, build_spc_measurement_records,
+    )
+
+    stage = (stage or "").strip()
+    product_category = (product_category or "").strip()
+    if stage and stage not in MFG_STAGES:
+        raise HTTPException(status_code=400, detail="未知工段 stage")
+    if product_category and product_category not in MFG_PRODUCT_CATEGORIES:
+        raise HTTPException(status_code=400, detail="未知产品分类 product_category")
+    day = (day or "").strip()
+    if day and not _re.fullmatch(r"\d{4}-\d{2}-\d{2}", day):
+        raise HTTPException(status_code=400, detail="日期格式应为 YYYY-MM-DD")
+
+    return _dashboard_payload(request, "spc", build_spc_measurement_records,
+                              _checked_window(window), characteristic=characteristic,
+                              day=day, over_only=bool(over_only),
+                              stage=stage or None,
+                              product_category=product_category or None)
+
+
+@app.get("/api/v2/alerts")
+def api_alerts(request: Request) -> dict[str, Any]:
+    """预警中心：五类预警（SPC越限 / 缺料 / 订单临期 / 设备告警 / 现场推送）。
+
+    - 令牌裁决：无令牌 401（业务数据不接受匿名读取）。预警中心**全员可见**
+      （异常可能来自任何岗位），故不走 ``data_scope.yaml`` 的看板白名单；
+    - 同源可对账：SPC 越限复用 SPC 看板能力判定、订单临期复用订单看板风险订单清单、
+      缺料复用统一注册查询 ``material_shortage`` —— 与各看板 / 数据速查逐字段一致；
+    - **现场推送**：客诉 8D 场景 ``dispatch_site`` 归因到责任工段的推送队列
+      （治理库 ``site_board_push``），状态即现场真实回写（pushed=待处置 / acked=处置中）；
+      现场可就地 ``ack`` / ``feedback``（见 ``/api/v2/site-board`` 两个回写端点）。
+      该类不读业务只读库，业务库故障时仍如实展示；
+    - 客户字段脱敏：订单预警按 ``orders``、现场推送按 ``site_board`` 的同一套规则脱敏
+      （非对客岗位看到「客户 A」）——预警全员可见不等于客户真名全员可见；
+    - 等级 / 状态为**可复算的机械规则**（随载荷回传 ``rules``）：库里没有预警处置
+      生命周期表，就不编造处置步骤与预计复线时间；任一数据源失败返回
+      ``degraded:true`` 骨架，**绝不 500**（前端据此回落演示快照）。
+    """
+    ctx = _require_identity(request)
+    from ..services.alerts import build_alerts
+
+    registry = get_orchestrator().runtime.data_registry
+    data = build_alerts(registry, list(ctx["roles"]))
+    return {"code": 0, "data": data, "message": "ok"}
 
 
 @app.get("/api/v2/dashboard/drill")
@@ -1691,6 +2099,10 @@ def api_dashboard_drill(request: Request, screen: str = Query(...),
       ``all`` 仅对不良类型下钻（``defect_type`` + pareto 路径）放行，可叠加
       ``stage`` / ``category`` / ``prod_category``（与质量柏拉图当前
       「产品分类/类别/工段」筛选一致）；
+    - 制造看板四个 KPI 声明了板级筛选（``scope``）：``stage`` / ``prod_category``
+      与看板同口径作用于下钻；品质「不良率 / 直通率」声明了 ``q_scope``：
+      ``stage`` / ``category`` 与品质看板 L1 卡片同口径作用于下钻（进 2 级看板换筛选
+      就地重取，不回退看板首页）；两类都未声明的指标忽略这些参数，行为不变；
     - ``defect_type``：仅白名单 ``DEFECT_TYPE_DRILLS``（services/dashboard.py）内的指标
       支持——质量看板不良率走「L1 累计不良柏拉图 → L2 按产线 · 型号分解」，
       且不与实体/工序/工位组合（组合 → 400）；spc_pareto 作为已声明实体维度下钻；
@@ -1698,8 +2110,9 @@ def api_dashboard_drill(request: Request, screen: str = Query(...),
     - 聚合内部全兜底，数据源故障时返回 ``degraded:true``，**绝不 500**。
     """
     from ..services.dashboard import (
-        DEFECT_TYPE_DRILLS, DRILL_DEFS, build_drill, build_pareto_drill,
-        entity_param_names,
+        DEFECT_TYPE_DRILLS, DRILL_DEFS, MFG_PRODUCT_CATEGORIES, MFG_STAGES,
+        QUALITY_CATEGORIES, QUALITY_STAGES,
+        build_drill, build_pareto_drill, entity_param_names,
     )
 
     defn = DRILL_DEFS.get(kpi)
@@ -1724,6 +2137,22 @@ def api_dashboard_drill(request: Request, screen: str = Query(...),
     prod_category = (prod_category or "").strip()
     if window not in _DRILL_WINDOW_KEYS:
         raise HTTPException(status_code=400, detail="未知时间口径 window")
+    # 板级筛选是否对该下钻指标生效，由 defn 的声明裁定（唯一事实源）：
+    #   制造看板四指标声明 ``scope`` → 吃「工段 / 产品分类」；
+    #   品质「不良率 / 直通率」声明 ``q_scope`` → 吃「工段 / 类别」（与 L1 卡片同源）。
+    # 生效者必须白名单裁定（否则常量映射取值 KeyError / 非白名单值被静默当「全部」），
+    # 未声明者不看这两个参数（传了也被忽略，与改动前逐字段一致）。
+    if defn.get("scope"):
+        if stage and stage not in MFG_STAGES:
+            raise HTTPException(status_code=400, detail="未知工段筛选 stage")
+        if prod_category and prod_category not in MFG_PRODUCT_CATEGORIES:
+            raise HTTPException(status_code=400,
+                                detail="未知产品分类筛选 product_category")
+    if defn.get("q_scope"):
+        if stage and stage not in QUALITY_STAGES:
+            raise HTTPException(status_code=400, detail="未知工段筛选 stage")
+        if category and category not in QUALITY_CATEGORIES:
+            raise HTTPException(status_code=400, detail="未知类别筛选 category")
     # defect_type 只对白名单 DEFECT_TYPE_DRILLS 内的 (screen, kpi) 生效（唯一事实源）：
     #   "pareto" → 走 L1 累计不良柏拉图下钻；"entity" → 作为已声明实体维度走下方通用下钻；
     # 白名单外一律 400（脏参不被静默吞掉），不再用散落的 str 判定。
@@ -1763,11 +2192,109 @@ def api_dashboard_drill(request: Request, screen: str = Query(...),
 
     registry = get_orchestrator().runtime.data_registry
     data = build_drill(registry, screen, kpi, entity, step or None,
-                       station or None, window)
+                       station or None, window,
+                       stage=stage or None,
+                       product_category=prod_category or None,
+                       category=category or None)
     data, masked = get_data_scope().apply(screen, data, _ctx["roles"], kpi=kpi)
     return {"code": 0, "data": data, "message": "ok",
             "scope": {"dashboard": screen, "roles": list(_ctx["roles"]),
                       "masked": masked}}
+
+
+# ---------- 现场看板（客诉 → 责任工段推送队列：读 + 现场回写） ----------
+
+
+class SiteBoardAckRequest(BaseModel):
+    """现场接收请求：备注可选（接收动作本身已按令牌身份留痕）。"""
+
+    note: str = ""
+
+
+class SiteBoardFeedbackRequest(BaseModel):
+    """现场处置闭环请求：处置结论**必填**（空理由不闭环，与驳回同纪律）。"""
+
+    feedback: str = ""
+
+
+def _site_board_payload(ctx: dict[str, Any], rows: list[dict[str, Any]],
+                        stage: str = "") -> dict[str, Any]:
+    """现场看板统一信封：按岗位脱敏（客户名）+ 回写 scope 凭据。
+
+    返回结构与读接口同构（``{"stage": …, "rows": […]}}``），所以三个端点的脱敏
+    走**同一条**规则（``site_board.mask.rows[].customer``）——写接口返回的单行
+    也不许绕开脱敏（客户名藏在响应里等于没脱敏）。
+    """
+    data, masked = get_data_scope().apply(
+        "site_board", {"stage": stage, "rows": list(rows)}, ctx["roles"])
+    return {"code": 0, "data": data, "message": "ok",
+            "scope": {"dashboard": "site_board", "roles": list(ctx["roles"]),
+                      "masked": masked}}
+
+
+@app.get("/api/v2/site-board")
+def api_site_board(request: Request,
+                   stage: str = Query(""),
+                   status: str = Query("")) -> dict[str, Any]:
+    """现场看板推送队列（客诉处置令 / 8D 工单通知）。
+
+    ``stage``（工段：SMT/PCM/PACK/整机）缺省 = 全部工段、``status``
+    （pushed / acked / closed）缺省 = 全部状态；非法取值 → 400（fail-fast，
+    不静默当「全部」）。按岗位裁决：无令牌 401、岗位不在范围 403。
+    """
+    from ..services import site_board as site_board_svc
+
+    ctx = _scope_guard(request, "site_board")
+    stage_key = (stage or "").strip()
+    if stage_key and stage_key not in site_board_svc.STAGES:
+        raise HTTPException(status_code=400, detail="未知工段筛选 stage")
+    status_key = (status or "").strip()
+    if status_key and status_key not in site_board_svc.STATUS_TRANSITIONS:
+        raise HTTPException(status_code=400, detail="未知状态筛选 status")
+
+    rows = site_board_svc.list_pushes(stage=stage_key or None,
+                                      status=status_key or None)
+    return _site_board_payload(ctx, rows, stage=stage_key)
+
+
+@app.post("/api/v2/site-board/{push_id}/ack")
+def api_site_board_ack(request: Request, push_id: str,
+                       req: SiteBoardAckRequest) -> dict[str, Any]:
+    """现场接收推送（``pushed → acked``）：接收人取自令牌身份，备注可选。"""
+    from ..services import site_board as site_board_svc
+
+    ctx = _scope_guard(request, "site_board")
+    actor = str(ctx.get("name") or ctx.get("user_id") or "")
+    try:
+        row = site_board_svc.ack(push_id, actor=actor,
+                                 note=(req.note or "").strip())
+    except site_board_svc.PushNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except site_board_svc.InvalidSiteBoardTransition as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return _site_board_payload(ctx, [row], stage=str(row.get("stage") or ""))
+
+
+@app.post("/api/v2/site-board/{push_id}/feedback")
+def api_site_board_feedback(request: Request, push_id: str,
+                            req: SiteBoardFeedbackRequest) -> dict[str, Any]:
+    """现场处置闭环（``acked → closed``）：处置结论必填，空则 400。"""
+    from ..services import site_board as site_board_svc
+
+    ctx = _scope_guard(request, "site_board")
+    text = (req.feedback or "").strip()
+    if not text:
+        raise HTTPException(
+            status_code=400,
+            detail="现场闭环需填写处置结论（已采取的措施、依据与结果）")
+    actor = str(ctx.get("name") or ctx.get("user_id") or "")
+    try:
+        row = site_board_svc.close(push_id, actor=actor, feedback=text)
+    except site_board_svc.PushNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except site_board_svc.InvalidSiteBoardTransition as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return _site_board_payload(ctx, [row], stage=str(row.get("stage") or ""))
 
 
 # ---------- 企业微信回调 ----------
@@ -1896,6 +2423,18 @@ class CaseSearchRequest(BaseModel):
 
 
 class CaseAskRequest(BaseModel):
+    question: str = ""
+    k: int = 5
+    action: str = "read"
+
+
+class CaseCompareRequest(BaseModel):
+    """三方对照请求（演示专用；PRD FR-06）。
+
+    **没有 filter 字段**：三组变体的可见范围完全相同（同一主体、同一安全内核），
+    对照的只能是"检索智能"，绝不能是"能看到多少"。
+    """
+
     question: str = ""
     k: int = 5
     action: str = "read"
@@ -2158,6 +2697,11 @@ def api_case_meta(request: Request) -> dict[str, Any]:
             ],
             "ontology": registry.to_meta(),
             "ontology_count": registry.count(),
+            # 演示开关透出给前端：前端**只渲染**服务端允许的东西，
+            # 不自己决定"要不要开放三方对照"（否则生产环境会被前端打开）。
+            "demo_compare": bool(getattr(settings, "CASE_DEMO_MODE", False)
+                                 and getattr(settings, "CASE_DEMO_COMPARE", False)),
+            "answerer": str(getattr(settings, "CASE_ANSWERER", "llm")),
             "actions": runtime.describe_permissions(),
             "rbac": _get_case_rbac().matrix(),
             "principal": {
@@ -2251,6 +2795,253 @@ def api_case_ask(req: CaseAskRequest, request: Request) -> dict[str, Any]:
     if result.search is not None and result.search.denied_code:
         _search_or_raise(result.search)
     return {"code": 0, "data": result.to_dict(), "message": "ok"}
+
+
+@app.get("/api/v2/cases/ontology/coverage")
+def api_case_ontology_coverage(request: Request) -> dict[str, Any]:
+    """**语料 ↔ 本体对齐度**（PRD FR-08：本体覆盖率看板）。
+
+    治理视图用：告诉质量体系"哪些编码还没登记本体"——覆盖率低的地方，
+    术语归一会落空、关系扩展也扩不出召回词（这正是"换更强模型也救不了"的那类问题）。
+
+    只读、只给码不给案例内容；不参与任何权限判定（它是治理面，不是检索面）。
+    """
+    _case_principal(request)
+    runtime = _case_runtime()
+    from ..services.case_relation import ontology_coverage
+    from ..contracts.ontology import get_ontology_registry
+    from ..services.case_store import VISIBLE_STATUS
+
+    data = ontology_coverage(runtime.store.list_cases(status=VISIBLE_STATUS),
+                             ontology=get_ontology_registry())
+    runtime.audit.append(actor=_case_principal(request).user_id,
+                         action="case.ontology.coverage",
+                         detail={"cases": data["cases"]})
+    return {"code": 0, "data": data, "message": "ok"}
+
+
+# ---------- FR-09 本体缺口登记（申请 / 列表 / 裁决） ----------
+
+
+class OntologyGapRequestModel(BaseModel):
+    """登记申请（**没有词表写入入口**：批准 ≠ 写词表，需质量体系人工登记）。"""
+
+    vocab: str = "defect_mode"
+    term: str = ""
+    code: str = ""
+    hint: str = ""
+    source: str = "manual"
+
+
+class OntologyGapDecideModel(BaseModel):
+    approve: bool = True
+    reason: str = ""
+
+
+def _gap_error(exc: Exception) -> HTTPException:
+    from ..services.case_ontology_gap import (
+        GapAlreadyRegistered,
+        GapInvalid,
+        GapNotFound,
+        GapTransitionError,
+    )
+
+    if isinstance(exc, GapAlreadyRegistered):
+        return HTTPException(status_code=409, detail={
+            "code": "CASE_ONTOLOGY_ALREADY_REGISTERED", "message": str(exc)})
+    if isinstance(exc, GapNotFound):
+        return HTTPException(status_code=404, detail={
+            "code": "CASE_ONTOLOGY_GAP_NOT_FOUND", "message": str(exc)})
+    if isinstance(exc, GapTransitionError):
+        return HTTPException(status_code=409, detail={
+            "code": "CASE_ONTOLOGY_GAP_TRANSITION", "message": str(exc)})
+    if isinstance(exc, GapInvalid):
+        return HTTPException(status_code=400, detail={
+            "code": "CASE_ONTOLOGY_GAP_INVALID", "message": str(exc)})
+    return HTTPException(status_code=403, detail={
+        "code": "CASE_ONTOLOGY_GAP_DENIED", "message": str(exc)})
+
+
+@app.post("/api/v2/cases/ontology/gap")
+def api_case_ontology_gap_request(req: OntologyGapRequestModel,
+                                  request: Request) -> dict[str, Any]:
+    """提交本体缺口登记申请（PRD FR-09：术语未登记时的正向治理入口）。
+
+    纪律：**只入申请队列，不入词表**（承接 N7：不做自动本体抽取/自动关系发现）；
+    已在词表里的词会被 409 挡回（防重复造词）。
+    """
+    principal = _case_principal(request)
+    _case_guard_rate_limit(request, principal, "ontology-gap")
+    runtime = _case_runtime()
+    from ..services.case_ontology_gap import GapError
+
+    try:
+        data = runtime.ontology_gap.request(
+            principal, vocab=req.vocab, term=req.term, code=req.code,
+            hint=req.hint, source=req.source)
+    except GapError as exc:
+        raise _gap_error(exc) from exc
+    except Exception as exc:  # noqa: BLE001 - 领域异常之外的意外也走统一错误码
+        raise _gap_error(exc) from exc
+    return {"code": 0, "data": data, "message": "ok"}
+
+
+@app.get("/api/v2/cases/ontology/gap")
+def api_case_ontology_gap_list(request: Request, scope: str = Query("dept")) -> dict[str, Any]:
+    """登记申请列表：``mine`` = 我提交的；``dept`` = 待我裁决（治理待办）。
+
+    与访问申请同一口径：列表本身只回"申请了什么词 + 状态 + 留痕"，
+    **不含**任何案例正文与权限明细。
+    """
+    principal = _case_principal(request)
+    runtime = _case_runtime()
+    mine = runtime.ontology_gap.list(
+        requester_id=principal.user_id, limit=50)
+    pending = runtime.ontology_gap.list(status="pending", limit=50)
+    return {"code": 0, "data": {
+        "mine": mine,
+        "pending": pending,
+        "pending_count": len(pending),
+        "can_decide": bool(_get_case_rbac().has_any(principal.roles, "case.ingest")),
+        "scope": "mine" if str(scope) == "mine" else "dept",
+    }, "message": "ok"}
+
+
+@app.post("/api/v2/cases/ontology/gap/{gap_id}/decide")
+def api_case_ontology_gap_decide(gap_id: str, req: OntologyGapDecideModel,
+                                 request: Request) -> dict[str, Any]:
+    """裁决登记申请（需 ``case.ingest``；不能裁决自己提交的；驳回必须写理由）。"""
+    principal = _case_principal(request)
+    _case_guard_rate_limit(request, principal, "ontology-gap-decide")
+    runtime = _case_runtime()
+    from ..services.case_ontology_gap import GapError
+
+    try:
+        data = runtime.ontology_gap.decide(
+            principal, gap_id, approve=bool(req.approve), reason=req.reason)
+    except GapError as exc:
+        raise _gap_error(exc) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise _gap_error(exc) from exc
+    return {"code": 0, "data": data, "message": "ok"}
+
+
+@app.get("/api/v2/cases/distribution")
+def api_case_distribution(request: Request, top: int = Query(12)) -> dict[str, Any]:
+    """**段 × 缺陷模式**分布热力（PRD FR-10）。
+
+    数据源与检索**完全同源**（当前主体可见集合），因此热力图与检索结果永远对得上；
+    空白格是真实统计（"该段确实没出现过这类问题"），不是"没查"。
+    """
+    principal = _case_principal(request)
+    runtime = _case_runtime()
+    data = runtime.search.distribution(principal, action="query",
+                                       top=max(2, min(int(top or 12), 24)))
+    return {"code": 0, "data": data, "message": "ok"}
+
+
+@app.post("/api/v2/cases/compare")
+def api_case_compare(req: CaseCompareRequest, request: Request) -> dict[str, Any]:
+    """**三方对照**（演示专用；PRD FR-06）：同一句话，三种查法并列。
+
+    | 组 | 配置 | 用途 |
+    |---|---|---|
+    | A | 无本体：原文直接检索，单轮，无关系 | 基线 |
+    | B | 单跳本体：受控词表同义扩展，单轮 | 现状能力 |
+    | C | 本体增强 Agentic：意图分解 + 有界多跳 + 自检再检索 | 目标能力 |
+
+    三条纪律：
+
+    1. **三组的可见范围完全相同**：同一主体、同一安全内核（过滤器下推 + 二次授权），
+       对照的只能是"检索智能"，绝不是"能看到多少"——否则这个接口就成了权限旁路；
+    2. **数字全部来自当次真实检索**，不做任何"看起来更好"的修饰；
+    3. 命中更多 ≠ 质量更高：response 里同时给三组的段分布与唯一案例，
+       由讲解员按"少而准"的诚实口径解读（沿用既有口径）。
+
+    默认关闭（``CASE_DEMO_COMPARE=false``）：生产环境不允许出现第二/第三种检索行为。
+    """
+    if not (bool(getattr(settings, "CASE_DEMO_MODE", False))
+            and bool(getattr(settings, "CASE_DEMO_COMPARE", False))):
+        raise HTTPException(status_code=403, detail={
+            "code": "CASE_COMPARE_DISABLED",
+            "message": "三方对照仅演示环境开放（需 CASE_DEMO_MODE 且 CASE_DEMO_COMPARE）"})
+    principal = _case_principal(request)
+    _case_guard_rate_limit(request, principal, "compare")
+    runtime = _case_runtime()
+    k = max(1, min(int(req.k or 5), int(getattr(settings, "CASE_K_MAX", 20))))
+    question = str(req.question or "").strip()
+    if not question:
+        raise HTTPException(status_code=422, detail={
+            "code": "CASE_QUERY_EMPTY", "message": "请提供 question（对照演示需要同一句话）"})
+
+    from ..services.case_relation import segment_label, segment_of
+
+    def variant(label: str, desc: str, search) -> dict[str, Any]:
+        rows: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        segments: dict[str, int] = {}
+        for hit in search.hits or ():
+            case_id = str(hit.get("case_id") or "")
+            if case_id in seen:
+                continue
+            seen.add(case_id)
+            group = segment_of(hit.get("line_code"))
+            if group:
+                segments[group] = segments.get(group, 0) + 1
+            rows.append({"case_id": case_id, "title": str(hit.get("title") or ""),
+                         "score": round(float(hit.get("score") or 0.0), 4),
+                         "line_code": str(hit.get("line_code") or ""),
+                         "segment": segment_label(group) if group else "职能 / 通用"})
+        return {"label": label, "desc": desc,
+                "hit_count": len(search.hits or ()), "case_count": len(seen),
+                "top": rows[:6], "case_ids": sorted(seen),
+                "segments": {segment_label(g): n for g, n in sorted(segments.items())},
+                "hidden_count": int(search.hidden_count or 0),
+                "candidates": int(search.candidates or 0)}
+
+    # A：无本体（原文检索，单轮）
+    normalized = runtime.qa.normalize_query(question)
+    plain = runtime.search.search(principal, question, action=req.action, k=k)
+    # B：单跳本体（同义扩展，单轮）
+    single = runtime.search.search(principal, normalized, action=req.action, k=k)
+    # C：本体增强 Agentic（完整闭环）
+    agentic = runtime.qa.answer(principal, question, k=k, action=req.action)
+    full = agentic.search
+    if full is None:
+        _search_or_raise(plain)
+        full = plain
+
+    groups = [variant("A · 无本体", "原文直接检索：不归一、无关系、单轮", plain),
+              variant("B · 单跳本体", "受控词表同义扩展后单轮检索（升级前能力）", single),
+              variant("C · 本体增强 Agentic",
+                      "意图分解 + 有条件多跳 + 自检再检索（本次升级）", full)]
+    a_ids = set(groups[0]["case_ids"])
+    b_ids = set(groups[1]["case_ids"])
+    c_ids = set(groups[2]["case_ids"])
+    gains = {
+        "b_only": sorted(b_ids - a_ids),
+        "c_only": sorted(c_ids - b_ids),
+        "c_beyond_b": len(c_ids - b_ids),
+        "c_segments": len(groups[2]["segments"]),
+        "summary": (f"B 比 A 多 {len(b_ids - a_ids)} 个案例（本体归一）；"
+                    f"C 比 B 多 {len(c_ids - b_ids)} 个案例"
+                    f"（关系扩展，覆盖 {len(groups[2]['segments'])} 个工艺段）"),
+    }
+    runtime.audit.append(actor=principal.user_id, action="case.compare",
+                         detail={"k": k, "b_only": len(gains["b_only"]),
+                                 "c_beyond_b": gains["c_beyond_b"]})
+    return {"code": 0, "message": "ok", "data": {
+        "question": question,
+        "normalized": normalized,
+        "k": k,
+        "variants": groups,
+        "gains": gains,
+        "agentic": agentic.agentic,
+        "answerer": agentic.answerer,
+        "answered": agentic.answered,
+        "notice": ("对照口径：三组可见范围完全一致，差异只来自检索智能；"
+                   "命中更多不等于质量更高。"),
+    }}
 
 
 @app.post("/api/v2/cases/ingest")

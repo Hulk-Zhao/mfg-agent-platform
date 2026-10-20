@@ -1,155 +1,64 @@
-%% mfg-agent-platform V2 增量设计 · 时序图（4 新场景主要调用链）
-%% 对应 docs/V2-INCREMENT-DESIGN.md §4
-
-%% ========== 通用入口：路由 → DAG（以 S2 来料异常为例，degraded 离线） ==========
+%% 生态链场景智能体化 · 时序图（架构设计 v1.1 提取）
+%% 图1：回放主链路（S5 客诉 → 回放端点 → agentPanel → 案例 RAG → HITL 卡）
 sequenceDiagram
-    autonumber
-    participant IM as IM/Web 入口
-    participant API as FastAPI /api/v2/query
-    participant ORC as V2Orchestrator
-    participant RT as TwoLevelRouter
-    participant REG as ScenarioRegistry
-    participant DAG as YamlDagExecutor
-    participant SQE as sqe_assess
-    participant SC as procurement/planning/material_control
-    participant WF as WorkflowEngine
-    participant HITL as hitl_disposition
-    participant REP as report_incoming
-    participant T2S as Text2SQLService
+    actor Q as qa-demo（访客只读）
+    participant S5 as s05-trace.js
+    participant K as SceneKit
+    participant API as demo/api.py
+    participant L as loader.py
+    participant WF as WorkflowEngine(data/mfg_agent.db)
+    participant DB as data/demo_storyline/*.jsonl
 
-    IM->>API: POST {query:"今天锡膏批次有问题", user_ctx}
-    API->>ORC: handle(query, user_ctx, sink)
-    ORC->>RT: route(query, user_ctx)
-    RT->>REG: match_trigger_words(query)
-    REG-->>RT: "incoming_quality_v2"（L0 命中）
-    RT-->>ORC: RouteResult(level=L0, domain=quality, entities={...})
-    ORC->>DAG: run(scenario=incoming_quality_v2, entities)
-    DAG->>SQE: intake(agent=business) → sqe_assess
-    SQE->>T2S: query_registered("iqc_batches_recent", user_ctx)
-    T2S-->>SQE: rows(不合格批次+COA, masked?) + provenance
-    SQE->>SQE: LLM 不可用 → 规则判定等级/处置(模板, status=degraded)
-    SQE-->>DAG: payload{iqc_judgement, iqc_rejected=True, provenance}
-    Note over DAG: fan_out condition: iqc_rejected → 三分支并行
-    par 采购/计划/物控 并行取证
-        DAG->>SC: procurement("supplier_followup")
-        SC->>T2S: query_registered("supplier_followup")
-        T2S-->>SC: 供应商跟催/评级建议
-        SC-->>DAG: DomainState(supply_chain)
-    and
-        DAG->>SC: planning("plan_impact_by_material")
-        SC-->>DAG: DomainState(supply_chain)
-    and
-        DAG->>SC: material_control("inventory_available_all")
-        SC-->>DAG: DomainState(supply_chain)
-    end
-    DAG->>DAG: fan_in（任一 degraded 不阻塞）
-    DAG->>WF: scar_flow（create_task + advance(start) + notify P1/SLA 4h）
-    WF-->>DAG: ticket(running)
-    DAG->>HITL: hitl_disposition（waiting_hitl，绝不自动放行）
-    HITL-->>DAG: card{退货/换货/特采/挑选}
-    DAG->>REP: report_incoming（内部简报；degraded 模板化）
-    REP-->>DAG: internal_brief
-    ORC-->>API: OrchestratorResult(brief/HITL/工单/provenance/degraded)
-    API-->>IM: {code,data,message}
+    Q->>S5: 登录进入 S5 屏（UI 点击，registry roles 现算可见）
+    S5->>K: pageHead() 首帧（T12 徽标守护自动覆盖）
+    S5->>K: story("events") 等七对象现取
+    K->>API: GET /api/v2/demo/objects/events
+    API->>L: get_object("events")
+    L->>DB: 读 events.jsonl（lru_cache 单例）
+    DB-->>API: rows
+    API-->>K: {is_demo, label, data_dir, object, rows}
+    K-->>S5: {ok:true, rows}（永不 reject；失败走降级文案）
+    S5->>K: replay("s05_complaint_8d")
+    K->>API: GET /api/v2/demo/replays/s05_complaint_8d
+    API->>L: get_replay(replay_id)
+    L->>DB: 读 agent_replays.jsonl 按主键查找
+    DB-->>API: package
+    API-->>K: {is_demo, label, data_dir, replay, schema_version:"1.0", package}
+    K-->>S5: {ok:true, package, schema_version}
+    S5->>K: agentPanel({title, agents, dag, steps, node_steps, conclusion, source:"replay"})
+    K-->>S5: HTML（头部+来源徽标/智能体行/DAG 拓扑条/四列并发步骤/结论卡）
+    Note over S5,K: 点击 fan_out 分支节点 → 步骤时间线切换 node_steps[branch]
+    S5->>K: replay("s05_same_root_cause_cases")
+    K->>API: GET /api/v2/demo/replays/s05_same_root_cause_cases
+    API-->>K: package（trace/hits/filter_explain/ontology_gain）
+    K-->>S5: {ok:true, package}
+    S5->>K: knowledgeCard({title, svg, nodes, caption})
+    K-->>S5: HTML（图谱七节点取证书签 + 8D 结构图；点击书签 → openDrill 弹层）
+    S5->>API: ctx.api.workflowPending(roles)
+    API->>API: _ensure_8d_seed()（幂等：demo_seed_id 标记判定 + 内存守卫）
+    API->>WF: create_task(hitl_d8_close) + select_action("close")
+    WF-->>API: task（waiting_hitl · 0/3 会签）
+    API->>WF: create_task(hitl_complaint_reply) + select_action("reply_8d")
+    WF-->>API: task2（waiting_hitl · 0/1 会签）
+    API-->>S5: 按令牌角色过滤的待办（visibility: mine/domain；qa 只见到 complaint_reply）
+    S5-->>Q: HITL 工单卡（按槽位可见，操作位一律「只读演示」）
+    Note over S5,Q: 降级分支：任一 replay 404/版本不符 → 整块 sk-degrade；工单取不到或种子队列为空 → 显式「仅展示演示种子工单」+ 回落事件流回放并说明不发起写操作（U3）
 
-%% ========== S3 客户投诉闭环 8D ==========
+%% 图2：预留形态（P1-1 实时链路 SSE，P0 不实现）
 sequenceDiagram
-    autonumber
-    participant U as 用户
-    participant DAG as YamlDagExecutor
-    participant QA as qa_lead
-    participant PQE as pqe_process
-    participant SQE as sqe_supplier
-    participant ENG as engineering
-    participant BZ as business_sales
-    participant WF as WorkflowEngine
-    participant H as hitl_d8_close / hitl_complaint_reply
-    participant R as report_complaint
+    actor U as 访客
+    participant S5 as s05-trace.js
+    participant API as demo/api.py
+    participant ORCH as MasterOrchestrator（既有）
+    participant AG as AgenticDomainAgent（既有）
 
-    U->>DAG: "华为投诉BATCH-A-1008"
-    DAG->>QA: intake(business) → qa_lead（complaint_detail + quality_defect_by_batch）
-    QA->>QA: 合成 8D 骨架 D1-D8（规则模板，degraded 亦齐全）
-    QA-->>DAG: complaint_found=True, d8_report
-    par 多域并行分析
-        DAG->>PQE: quality_defect_by_batch（过程分析）
-    and
-        DAG->>SQE: batch_supplier_by_no（供应商侧）
-    and
-        DAG->>ENG: 设计根因（无 BOM → 模板 + data_gap）
-    and
-        DAG->>BZ: shipment_status（对客口径）
-    end
-    DAG->>DAG: fan_in
-    DAG->>WF: capa_flow（8D 跟踪工单, assignees=[QA,PQE,SQE,工程,业务], SLA 72h）
-    DAG->>H: d8_close（质量总监）→ complaint_reply（业务经理, 脱敏后）
-    H-->>DAG: 2 × waiting_hitl
-    DAG->>R: report_complaint（8D 报告 + 对客脱敏报告）
-    R-->>DAG: internal_brief + customer_report
-
-%% ========== S4 出货风险（六域并行 + ATP 代码计算） ==========
-sequenceDiagram
-    autonumber
-    participant U as 用户
-    participant DAG as YamlDagExecutor
-    participant BZ as business_order
-    participant PL as planning
-    participant MC as material_control
-    participant WH as warehouse_atp
-    participant MF as manufacturing_output
-    participant LG as logistics
-    participant ATP as atp_analysis
-    participant WF as WorkflowEngine
-    participant H as hitl_delivery_commit
-    participant R as report_delivery
-
-    U->>DAG: "A型号能发多少货"
-    DAG->>DAG: intake(business)
-    par 供应链六 Agent 并行（join=all）
-        DAG->>BZ: orders_by_model
-    and
-        DAG->>PL: plan_by_model
-    and
-        DAG->>MC: shortage_by_model
-    and
-        DAG->>WH: warehouse_available + shipment_status
-    and
-        DAG->>MF: output_by_model
-    and
-        DAG->>LG: shipment_status（在途 ETA）
-    end
-    DAG->>ATP: fan_in → atp_analysis（ATP=on_hand-reserved；缺口代码计算）
-    ATP-->>DAG: atp_result + risk_list
-    DAG->>WF: delivery_risk_flow（风险订单工单, assignees=[计划,物控,业务,物流], SLA 8h）
-    DAG->>H: hitl_delivery_commit（对客交期承诺, 业务经理）
-    DAG->>R: report_delivery（OTD 摘要 + 对客口径去敏）
-
-%% ========== S8 设备预警与维护协同 ==========
-sequenceDiagram
-    autonumber
-    participant U as 用户
-    participant DAG as YamlDagExecutor
-    participant EQ as equipment(复用)
-    participant MT as maintenance
-    participant PW as planning_window
-    participant EP as engineering_param
-    participant SP as spare_parts
-    participant WF as WorkflowEngine
-    participant H as hitl_maintenance_window
-    participant R as report_equipment
-
-    U->>DAG: "SMT-1设备参数异常吗"
-    DAG->>EQ: intake(business) → equipment（equip_alarms）
-    EQ-->>DAG: abnormal_alarms, has_alarm=True
-    par 并行评估
-        DAG->>MT: 维保工单建议
-    and
-        DAG->>PW: plan_by_model（换产/停机窗口）
-    and
-        DAG->>EP: 参数/工艺建议（模板 + data_gap）
-    and
-        DAG->>SP: 备件需求（模板 + data_gap）
-    end
-    DAG->>DAG: fan_in
-    DAG->>WF: maintenance_flow（维保工单, assignees=[设备,工程,计划], SLA 4h）
-    DAG->>H: hitl_maintenance_window（停机窗口确认, 如适用）
-    DAG->>R: report_equipment（设备健康摘要 + 维保建议）
+    Note over U,AG: 前置：入口按钮仅当 llm_available() 为真时可点（复用 L946-951 降级先例）
+    U->>S5: 开启「实时链路」
+    S5->>API: POST /api/v2/query {query, scenario_key}
+    API->>ORCH: handle(query, user_ctx)
+    ORCH->>AG: ReAct 循环（LLM → tool_calls → 执行 → 观察）
+    AG-->>ORCH: AgenticStep 序列 + 最终 JSON 契约
+    ORCH-->>API: run 结果
+    API-->>S5: SSE /api/v2/events（agent_start/tool_start/tool_end/final 事件流）
+    S5->>S5: 事件 → 同一 agentPanel（source:"live"，徽标「实时链路」）
+    Note over S5,AG: 断线/超时 → 降级为回放形态并明示；访客 readonly 不破（query 链路只发起不放行）

@@ -150,7 +150,7 @@ def test_office_tools_registered(orch):
     from mfg_agents.v2.mcp_tools.tools import build_domain_toolsets
     toolsets = build_domain_toolsets(orch)
     office = toolsets["office"]
-    assert len(office) == 14 and len(office) <= 15
+    assert len(office) == 15 and len(office) <= 15
     by_name = {t.name: t for t in office}
     # 只读工具：tier=0 / readonly=True；写工具：tier=2 / readonly=False
     for name in ("office.list_rooms", "office.find_available_rooms",
@@ -159,7 +159,7 @@ def test_office_tools_registered(orch):
     for name in ("office.book_room", "office.cancel_booking",
                  "office.place_order", "office.cancel_order",
                  "office.submit_expense", "office.apply_leave",
-                 "office.submit_attendance_fix"):
+                 "office.submit_attendance_fix", "office.submit_service_request"):
         assert by_name[name].readonly is False and by_name[name].tier == 2
 
 

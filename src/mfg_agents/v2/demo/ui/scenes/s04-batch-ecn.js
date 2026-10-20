@@ -259,25 +259,25 @@
 
   const CSS = `
 .s04-row { display: flex; align-items: flex-start; gap: 10px; padding: 8px 10px;
-  border-bottom: 1px dashed var(--border); font-size: 12.6px; color: var(--text); }
+  border-bottom: 1px dashed var(--border); font-size: calc(12.6px * var(--font-scale)); color: var(--text); }
 .s04-row:last-child { border-bottom: none; }
 .s04-row.is-clickable { cursor: pointer; border-radius: var(--radius-sm); transition: background .15s ease; }
 .s04-row.is-clickable:hover { background: var(--primary-light-2); }
 .s04-row.is-clickable:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
 .s04-row-id { flex: none; width: 134px; font-weight: 600; color: var(--text); word-break: break-all; }
 .s04-row-main { flex: 1; min-width: 0; }
-.s04-row-sub { font-size: 11.5px; color: var(--text-3); margin-top: 2px; line-height: 1.55; }
-.s04-row-tip { flex: none; font-size: 10.5px; color: var(--text-3); padding-top: 2px; }
+.s04-row-sub { font-size: calc(11.5px * var(--font-scale)); color: var(--text-3); margin-top: 2px; line-height: 1.55; }
+.s04-row-tip { flex: none; font-size: calc(10.5px * var(--font-scale)); color: var(--text-3); padding-top: 2px; }
 .s04-quad { display: grid; gap: 14px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .s04-chain { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; }
 .s04-step { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px;
-  border-radius: 6px; font-size: 11.5px; border: 1px solid var(--border);
+  border-radius: 6px; font-size: calc(11.5px * var(--font-scale)); border: 1px solid var(--border);
   background: var(--card); color: var(--text-2); }
 .s04-step.is-done { border-color: var(--ok); color: var(--ok); background: var(--ok-bg); }
 .s04-step.is-doing { border-color: var(--warn); color: var(--warn); background: var(--warn-bg); }
-.s04-arrow { color: var(--text-3); font-size: 12px; }
-.s04-evidence { font-size: 11.5px; color: var(--text-3); line-height: 1.65; margin-top: 6px; }
-.s04-anchor { font-size: 11.5px; color: var(--text-2); line-height: 1.7; }
+.s04-arrow { color: var(--text-3); font-size: calc(12px * var(--font-scale)); }
+.s04-evidence { font-size: calc(11.5px * var(--font-scale)); color: var(--text-3); line-height: 1.65; margin-top: 6px; }
+.s04-anchor { font-size: calc(11.5px * var(--font-scale)); color: var(--text-2); line-height: 1.7; }
 .s04-anchor b { color: var(--text); }
 @media (max-width: 760px) {
   .s04-quad { grid-template-columns: minmax(0, 1fr); }

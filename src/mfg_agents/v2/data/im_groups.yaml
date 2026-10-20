@@ -1,0 +1,39 @@
+# 工段 → 现场群（企业微信）映射目录 —— 现场看板推送的 IM 触达依据
+#
+# 为什么单独一份文件：
+#   「客诉推到哪个工段」由 site_board 归因说了算；「该工段的人在哪收到通知」是**组织
+#   结构**问题，不能写死在代码里，也不能塞进 data_scope.yaml（那份管的是"能看什么"，
+#   不是"推给谁"）。两份目录各管一段，互不越界。
+#
+# 铁律：
+#   1. **结构在 YAML、凭据在环境变量**。群机器人 webhook key 与责任人 userid 属凭据/
+#      组织数据，YAML 只声明「这个工段对应哪个群、要 @ 谁」的结构与 env 变量名，
+#      真实值由 `IM_GROUP_KEY_<SLUG>` / `IM_GROUP_MEMBERS_<SLUG>` 注入，**不入库**。
+#   2. **工段必须来自 site_board.STAGES**（SMT/PCM/PACK/整机）。写错一个工段名
+#      加载期即失败——推错群比不推更贵（与归因同一条纪律）。
+#   3. **未配置 ≠ 静默丢弃**：既没 key 也没 members 的工段，投递时如实记账为
+#      skipped 并给出理由（演示态就是这样：只落看板与日志，不假装发出去了）。
+#   4. 一个工段一期对应**一个群**；群里要额外 @ 的责任人放 members（逗号分隔）。
+version: 1
+
+groups:
+  SMT:
+    name: "SMT 现场处置群"
+    slug: "smt"                      # env 变量名后缀：IM_GROUP_KEY_SMT / IM_GROUP_MEMBERS_SMT
+    # 责任人 userid（企微 userid）；演示态留空，真实值走 env
+    members: []
+
+  PCM:
+    name: "PCM（DIP）现场处置群"
+    slug: "pcm"
+    members: []
+
+  PACK:
+    name: "PACK 现场处置群"
+    slug: "pack"
+    members: []
+
+  整机:
+    name: "整机（ASSY）现场处置群"
+    slug: "assy"
+    members: []

@@ -20,6 +20,12 @@ from __future__ import annotations
 import math
 from typing import Any
 
+# 板级维度白名单（工段 / 产品分类）——**唯一事实源**在 ``core/dimensions.py``。
+# 本模块（纯函数内核、不得反向依赖 ``services``）从那里取同一份值并按原名再导出，
+# 保证「工段 / 产品分类」全仓库只有**一处**定义、不会两处各写一份而漂移。
+# 白名单裁定放在**写入通道**最内层，保证「用户字符串绝不进 SQL」。
+from .dimensions import MFG_PRODUCT_CATEGORIES, MFG_STAGES
+
 __all__ = [
     "compute_capability",
     "build_pareto",
@@ -29,6 +35,8 @@ __all__ = [
     "D2_CONSTANTS",
     "CPK_GOOD",
     "CPK_MARGINAL",
+    "SPC_STAGES",
+    "SPC_PRODUCT_CATEGORIES",
 ]
 
 # 控制图常数（Xbar-R 的 d2），子组容量 n = 2..15
@@ -39,6 +47,12 @@ D2_CONSTANTS: dict[int, float] = {
 
 CPK_GOOD = 1.33       # Cpk ≥ 1.33：过程能力合格
 CPK_MARGINAL = 1.00   # 1.00 ≤ Cpk < 1.33：偏低；Cpk < 1.00：不合格
+
+# SPC 测量值的两个可选维度（工段 / 产品分类）白名单——按 **SPC 语义**再导出同一份
+# 事实源（``core/dimensions.py``）：本模块被 ``mcp_tools`` / ``services`` 引用时用
+# SPC 语义名更贴切，但**值不另写一份**（避免两处定义漂移）。
+SPC_STAGES: tuple[str, ...] = MFG_STAGES
+SPC_PRODUCT_CATEGORIES: tuple[str, ...] = MFG_PRODUCT_CATEGORIES
 
 
 def _round(value: float | None, digits: int = 4) -> float | None:
@@ -228,17 +242,60 @@ def normalize_measurements(*, characteristic: str, values: Any = None,
                            subgroups: Any = None, subgroup_size: int = 5,
                            usl: float | None = None, lsl: float | None = None,
                            measured_at: str | None = None,
-                           source: str | None = None) -> dict[str, Any]:
+                           source: str | None = None,
+                           process_stage: str | None = None,
+                           product_category: str | None = None) -> dict[str, Any]:
     """校验并归一化测量值录入（纯函数，不落库）。
 
     与 ``compute_capability`` 同输入形状（``values`` 扁平 / ``subgroups`` 已分组），
     归一为统一的 ``{characteristic, subgroup_no, seq, value, usl, lsl, measured_at,
-    source}`` 行序列；每条值必须为**有限数值**。非法值**不静默丢弃**——进 ``rejected``
-    并附原因，绝不编造/补齐（供 ``spc.ingest`` 落库前的确定性校验）。
+    source, process_stage, product_category}`` 行序列；每条值必须为**有限数值**。
+    非法值**不静默丢弃**——进 ``rejected`` 并附原因，绝不编造/补齐（供 ``spc.ingest``
+    落库前的确定性校验）。
+
+    两个可选维度（``process_stage`` 工段 / ``product_category`` 产品分类）：
+    - **缺省（不传）**：accepted 行带这两个键且值为 ``None`` → 老调用方逐字段不变，
+      落库后两列为 NULL（``spc_store.append_measurements`` 按 ``.get()`` 取值）；
+    - **合法值**：原样透传到 accepted 行；
+    - **非法值**（不在 ``SPC_STAGES`` / ``SPC_PRODUCT_CATEGORIES`` 白名单内）：
+      整批**不产出 accepted 行**，并进 ``rejected`` + ``warnings`` → **绝不编造**。
+
+    白名单裁定放在本层（写入通道最内层），保证「用户字符串绝不进 SQL」。
     """
     accepted: list[dict[str, Any]] = []
     rejected: list[dict[str, Any]] = []
     warnings: list[str] = []
+
+    # 维度白名单裁定（缺省即 None；非法值整批拒绝，绝不静默改写）
+    dim_errors: list[str] = []
+    stage_val: str | None = None
+    pcat_val: str | None = None
+    for label, raw, whitelist in (
+        ("工段", process_stage, SPC_STAGES),
+        ("产品分类", product_category, SPC_PRODUCT_CATEGORIES),
+    ):
+        if raw is None:
+            continue
+        text = str(raw).strip()
+        if not text:
+            continue
+        if text not in whitelist:
+            dim_errors.append(
+                f"{label}「{text}」不在白名单 {tuple(whitelist)} 内")
+            continue
+        if label == "工段":
+            stage_val = text
+        else:
+            pcat_val = text
+    if dim_errors:
+        # 非法维度 → 整批拒绝（不产出任何 accepted 行），并如实说明原因
+        warnings.extend(dim_errors)
+        rejected.append({"index": 0, "reason": "；".join(dim_errors),
+                         "record": {"process_stage": process_stage,
+                                    "product_category": product_category}})
+        return {"accepted": [], "rejected": rejected,
+                "n_accepted": 0, "n_rejected": len(rejected),
+                "warnings": warnings}
 
     seq_rows: list[tuple[int, int, Any]] = []
     if subgroups:
@@ -273,7 +330,9 @@ def normalize_measurements(*, characteristic: str, values: Any = None,
             continue
         accepted.append({"characteristic": characteristic, "subgroup_no": subgroup_no,
                          "seq": seq, "value": num, "usl": usl, "lsl": lsl,
-                         "measured_at": measured_at, "source": source})
+                         "measured_at": measured_at, "source": source,
+                         "process_stage": stage_val,
+                         "product_category": pcat_val})
     if rejected:
         warnings.append(f"{len(rejected)} 条非法测量值已拒绝（未编造/未补齐）")
     return {"accepted": accepted, "rejected": rejected,

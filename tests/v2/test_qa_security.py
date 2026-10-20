@@ -514,7 +514,7 @@ class TestFallbackContract:
     def test_rejected_metric_returns_no_data(self, service):
         """指标 SQL 若审核不过 → fallback 且零数据行（不静默放行）。"""
         result = service.query_metric("otd_rate", user_ctx=MFG_CTX)
-        # otd_rate 查 shipment 表：manufacturing 无权限 → 拦截
+        # otd_rate 查 order_fulfillment 表：manufacturing 无权限 → 拦截
         assert result.fallback == "manual_ticket"
         assert result.rows == []
         assert result.confidence == 0.0

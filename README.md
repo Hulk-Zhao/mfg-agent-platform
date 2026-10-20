@@ -1,11 +1,11 @@
-# mfg-agent-platform
+﻿# mfg-agent-platform
 
 制造业多智能体协同平台。18 个智能体（17 个领域智能体 + 1 个办公智能体）、7 大协同场景，LangGraph 子图编排、人工在环会签、Text2SQL 只读治理、本地增强 Agentic RAG 案例检索、A2A / MCP 双协议接入；另设**生态链演示门户**——一条主线订单驱动六个场景屏，全链路只读、数据合成可复现。
 
 [![tests](https://github.com/Hulk-Zhao/mfg-agent-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/Hulk-Zhao/mfg-agent-platform/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![tests](https://img.shields.io/badge/tests-1385%20offline-brightgreen)
+![tests](https://img.shields.io/badge/tests-1896%20offline-brightgreen)
 
 <p float="left">
   <img src="docs/images/screen-dashboard.png" width="24.5%" />
@@ -15,6 +15,28 @@
 </p>
 
 **解决的问题**：制造企业的异常响应卡在三处——进度散落在各部门系统与微信群里，跨部门同步以天计；取数靠"问人、导 Excel、写 SQL"；停线、缺料、客诉的跨部门取证靠打电话，闭环周期长。平台把"提问 → 路由 → 多域并行取证 → 工单 → 人工会签 → 对客报告"收敛成一条可审计的链路，每一步都有事件流、SQL 溯源和权限校验。
+
+---
+
+## 近期更新
+
+**现场看板推送闭环：客诉 → 责任工段 → 现场可操作**
+
+- 客诉 8D 场景新增 `dispatch_site` 节点：归因顺序固定为「显式工段 → 产线前缀 → 批次反查」，三层都判不出即返回 `data_gap` 转人工分派；归因结果同时追加为 8D 工单责任人，现场才有"归属"。
+- 新增治理库表 `site_board_push` 与现场看板读 / 回写面（`GET /api/v2/site-board`、`POST …/{push_id}/ack`、`POST …/{push_id}/feedback`）：`pushed → acked → closed` 状态机、非法流转 409、闭环结论必填 400、重推只刷新内容不打回现场进度；三端点共用 `data_scope.yaml` 的 `site_board` 裁决（角色集合与制造看板同源）与 `rows[].customer` 脱敏（非对客岗位看「客户 A」）；门禁顺序 令牌 401 → 岗位 403 → 参数 400 → 不存在 404 → 状态机 409。
+- 预警中心新增**第五类「现场推送」**：前四类由只读业务库机械推导，它读治理库（业务库故障时仍如实展示）；现场岗位在卡片上直接「现场接收 / 闭环处置」（必填结论弹窗），状态与筛选片计数即时同步。
+- 「**工段 → 现场群**」映射目录 `v2/data/im_groups.yaml`：结构在 YAML、凭据在 env（`IM_GROUP_KEY_<SLUG>` / `IM_GROUP_MEMBERS_<SLUG>`），工段白名单加载期校验（**推错群比不推更贵**）；投递逐条记账（`pushed` / `skipped` / `failed`），未配置即如实记账、不静默丢弃。
+- 企微**应用消息**发送链路 `WeComPushClient`（`gettoken` → `message/send`，token TTL 缓存、`errcode≠0` 抛错、凭据不齐构造期报错）：配齐 `IM_CORP_ID` / `IM_AGENT_ID` / `IM_CORP_SECRET` 后，群内「责任人」由"只留痕"变为真实 @ 投递。
+
+**本批一并落地的其他改动（按模块）**
+
+- **看板与数据**：SPC 看板升级（PRD / 设计 / 类图 / 时序 + `test_spc_dashboard.py`）、制造与订单看板数据扩充与明细下钻（新增 `data/seed_*` 与生成工具）、柏拉图双窗筛选、来料 Top10、标准工时三级明细。
+- **案例域**：Agentic RAG 升级（`case_agentic` / `case_qa_llm` / `case_relation` / 本体缺口登记）、案例屏智能体 UI 与评测用例。
+- **预警与摘要**：预警中心聚合服务（`services/alerts.py`）、日报摘要 `services/digest.py`。
+- **问数**：看板上下文带入 `services/board_qa.py`（点击 KPI / 明细即携带口径跳转问数）。
+- **办公**：OA 服务工单（IT 报修 / 账号权限 / 设备领用 / 车位 / 访客车辆 / 公务用车）与附件、飞书后端补齐抽象方法。
+- **前端**：深色驾驶舱主题 + 明暗 / 主题色个性化切换、老化模式、生态链场景屏智能体回放与知识卡（T16–T20，见下方提交记录）。
+- **Text2SQL**：新增 SQL 静态检查 `services/text2sql/linter.py`。
 
 ---
 
@@ -60,10 +82,13 @@
 | `DataSource` | list_tables / run_query / execute_readonly_sql | SQLite（只读连接 `mode=ro`，写操作在驱动层即被拒绝） |
 | `VectorStore` | upsert / query | Milvus standalone（当前部署：BGE-M3 稠密+稀疏混合召回 + BGE-Reranker-v2-M3）；代码默认 ChromaDB（零依赖本地持久化），`VECTOR_BACKEND` 一键切换 |
 | `IMGateway` | 消息收发 + 回调验签 | 企业微信自建应用（AES-CBC + 签名验证） |
+| `NotificationChannel` | send(level, targets, title, body, context) | 日志留痕（内存 outbox，demo 断言用）/ 企微推送 / **现场看板**（落 `site_board_push`）三路并联，`context` 为可选投递上下文（承载业务引用与落库幂等键） |
 
 新数据源实现三个方法、注册进 `DataSourceRegistry`，即刻出现在 `/api/v2/datasources` 就绪度总览——健康状态、表清单、注册查询数。
 
 **治理层**。声明式权限目录（对标 Huly controlled-documents 范式）：9 个 HITL 槽位 × 3 个动词（propose / cosign / approve）= 27 条权限、32 个治理角色，全部声明在 YAML（第 9 槽位 `order_review` 为接单评审会签，propose=业务 / cosign=工程+计划 / approve=业务经理）。`PermissionRegistry` 构造期自检：Agent 身份只允许 `*.propose`，持有 `*.approve` 直接启动失败。会签一人一签、并发幂等。
+
+**现场看板推送（客诉 → 责任工段）**。客诉不停在"谁来牵头"，而是先**判责任工段再推**：归因顺序固定为「显式工段 → 产线前缀（`SMT-`/`DIP-`/`PACK-`/`ASSY-` → 工段）→ 批次反查（取该批次不良量最大的行所属工段，只读 `mode=ro` 读业务库）」，三层都判不出来就返回 `data_gap` 转人工分派——**判不出工段就不硬推，推错工段比不推更贵**。推送行走同一个 `NotificationChannel` 契约（`context` 承载客诉单号 / 批次，用于落库引用与幂等键），落进与工单同库的 `site_board_push` 表，便于把现场处置回流到 8D 关闭确认；现场侧状态机 `pushed → acked → closed`，**非法流转直接拒绝**（不做"尽力而为"），**重推（重试 / 重放）只刷新内容、不打回现场已推进的状态**。通道与日志留痕并联挂载，且只对**工段级 target** 落库：target 是岗位角色（如「质量总监」）时如实跳过并记账——工段才是现场看板的对象。客诉 8D 场景已在四域汇聚与 8D 工单之间挂 `dispatch_site` 节点，归因结果同时回写为工单责任人（工段追加进 `assignees`），因此该工段现场看板会收到两条：客诉处置令（引用客诉单号）与对应的 8D 整改工单通知。现场看板有独立的读 / 回写面：`GET /api/v2/site-board`（另有 `ack` / `feedback` 两个回写端点）— 三个端点共用一个裁决（`data_scope.yaml` 的 `site_board`，角色集合与制造看板同源）与同一条脱敏规则（`rows[].customer`：只有对客岗位看得到客户真名）；门禁顺序为 令牌 401 → 岗位 403 → 参数 400 → 不存在 404 → 状态机 409，现场接收与闭环都按令牌身份留痕（闭环结论必填，空则 400）。**载体是预警中心**：`GET /api/v2/alerts` 把它作为第五类「现场推送」呈现（前四类由只读业务库机械推导，它读治理库，业务库故障时仍如实展示），现场岗位在卡片上直接接收 / 闭环，状态与筛选片计数即时同步——现场推送就此从"能调用"变成"现场可操作"。**IM 触达走「工段 → 现场群」映射目录**（`v2/data/im_groups.yaml`）：结构（哪个工段对应哪个群、要 @ 谁）声明在 YAML，**凭据不入库**——群机器人 webhook key 与责任人 userid 由 `IM_GROUP_KEY_<SLUG>` / `IM_GROUP_MEMBERS_<SLUG>` 注入；加载期逐个校验工段必须来自 `site_board.STAGES`（**推错群比不推更贵**，写错工段名即启动失败）。投递逐条记账：命中群走群机器人 webhook（真实可发）、未配凭据如实记 `skipped` 并给出理由（只落站内，不假装发出去了）、配了责任人 + 企业应用凭据则**经应用消息 API 真实 @ 到人**（`WeComPushClient`：`gettoken` → `message/send`，token 带 TTL 缓存、`errcode≠0` 抛错；凭据不齐才记 `failed` 并说清原因）——三路（日志留痕 / 站内看板 / 现场群）并联挂载，同一条通知一次分发。企业应用凭据（`IM_CORP_ID` / `IM_AGENT_ID` / `IM_CORP_SECRET`，前者缺省回落回调侧的 `IM_APPID`）同样只从环境变量注入。
 
 **待办可见性同源于权限目录**。`/workflow/pending` 不再接受任何形式的口头身份：角色一律由 Bearer 令牌裁决，`role` 参数只能收窄不能扩宽；可见范围 = 我持有权限的 HITL 槽位（`mine` 可动作 / `domain` 域内只读）。**行政人事这类无治理职责的岗位拿到的是空队列**——不是"没资格看"，而是"本来就没有你的活"，两种状态在响应里可区分。详情接口同理，跨域返回 404 而非 403（403 会确认工单存在）。MCP / A2A 通道走同一套判据，工具参数里的 `roles` 无法覆盖真实身份。
 
@@ -104,7 +129,7 @@
 
 **健康检查**。`/api/v2/health` 是结构化依赖探针（业务库 / 治理库 / Redis / 向量库 / LLM），返回 `ok` / `degraded` 与逐项明细，前端顶栏据此显示绿 / 黄 / 红三色；探针**不触发编排器初始化**，可供 Docker `HEALTHCHECK` 高频调用。
 
-**前端**。原生 HTML/CSS/JS，零构建零 npm 依赖，挂载于 FastAPI，SSE 实时事件流驱动。内置可拖动的**悬浮帮助助手**（`float-help.js`，随场景切换会话、答疑静态预置不调后端），演示门户另有「生态链场景」分组承载六个场景屏。
+**前端**。原生 HTML/CSS/JS，零构建零 npm 依赖，挂载于 FastAPI，SSE 实时事件流驱动。内置可拖动的**悬浮帮助助手**（`float-help.js`，随场景切换会话、答疑静态预置不调后端、选项过多自动出滚动条），演示门户另有「生态链场景」分组承载六个场景屏。
 
 ## 部署形态
 
@@ -168,7 +193,7 @@ uv run uvicorn mfg_agents.v2.demo.api:app --port 8004
 |---|---|---|
 | 停线应急 | A型号在SMT-1停线，何时复线？ | 三域并行取证 + FA 评级 + 复线决策会签 + 对客 ETA 会签 |
 | 来料异常 | 今天锡膏批次有问题 | 供应链与品质联合判定，退货/换货/特采走会签 |
-| 客户投诉 | 华为投诉BATCH-A-1008 | 品质追溯 + 8D 结构化报告 + 关闭会签 |
+| 客户投诉 | 华为投诉BATCH-A-1008 | 品质追溯 + 8D 结构化报告 + 关闭会签 + **归因工段现场看板推送**（8D 工单责任人按工段动态追加） |
 | 出货风险 | A型号能发多少货 | 制造加仓储 ATP 核算，交期承诺会签 |
 | 设备预警 | SMT-1设备参数异常吗 | 设备日志 + FA 历史案例匹配，停机窗口会签 |
 | 订单变更影响 | 订单交期提前两周是否可行 | 制造与供应链联合评估产能与交期，变更承诺会签 |
@@ -191,7 +216,7 @@ uv run uvicorn mfg_agents.v2.demo.api:app --port 8004
 
 **五访客角色**（`gm / biz / rd / qa / mfg`）登录各见不同屏与数据范围，可见性由 `roles` 机械判定；`cs / hr / fin` 等岗位不出现「生态链场景」分组。**框架级演示纪律**：所有场景屏首帧必须带「演示数据」徽标——`SceneKit.installBadgeGuard()` 包装 `SceneRegistry.register`，漏挂即拒绝渲染并 `console.error`；所有接口响应带 `X-Demo-Mode` / `X-Demo-Label` 头（纯 ASGI `DemoMarkerMiddleware`，对 SSE 零影响）；另有静态层隔离自检 `tools/demo_gen/check_isolation.py`（连接串 / 凭据 / 真实企业名词三类，扫演示实例范围内文件）。
 
-**悬浮帮助助手**（`float-help.js`）：可拖动、位置存 `localStorage`；随 `state.screen` 切换场景即开新会话，点击预置问题后答案流式输出；答疑为**静态预置、不调后端**，与帮助中心同纪律——改屏内交互 / 链路 / 权限口径时必须同步改其 KB。
+**悬浮帮助助手**（`float-help.js`）：可拖动、位置存 `localStorage`（越界自动钳回视口，窗口缩放不丢）；随 `state.screen` 切换场景即开新会话，点击预置问题后答案流式输出；答疑为**静态预置、不调后端**，与帮助中心同纪律——改屏内交互 / 链路 / 权限口径时必须同步改其 KB。交互细节：常见问题超过约 6 条时选项区出现独立滚动条（滚轮下滑，滚到头不穿透背后页面）；流式输出期间上滑回看不被强制拽回底部；输出被打断（换问题 / 切场景 / 关面板）自动摘除光标；拖到一半松手不算点击，不会意外开合面板。
 
 ## 门户一览
 
@@ -219,13 +244,13 @@ uv run uvicorn mfg_agents.v2.demo.api:app --port 8004
 
 ## 测试
 
-1385 条离线测试（1380 通过 · 5 跳过；探针恒 False、不发外网请求），CI 在 Python 3.11 / 3.12 / 3.13 三个版本执行：
+1896 条离线测试（探针恒 False、不发外网请求），CI 在 Python 3.11 / 3.12 / 3.13 三个版本执行：
 
 ```bash
 uv run pytest tests/ -q
 ```
 
-覆盖：治理链（权限目录自检、会签幂等、越权拦截）、Text2SQL 防线（红队用例）、场景端到端、看板下钻、SPC 内核、**案例域安全检索**（两段式授权 / 引用校验 / RBAC-ABAC 策略 / 审计链对账 / 限流 / 顶部统计卡同源 / 总经理跨部门通行）、MCP / A2A 协议、企微加解密、飞书适配、**生态链演示**（屏 / 数据 / 组件三契约、六场景屏数字现取、演示徽标强制、演示标识中间件、接单评审工单化、隔离自检——见 `tests/demo/`）；以及**架构守卫**（治理库拒绝非 SQLite、方言判定不乱猜、健康探针不抛异常、导航按岗位收敛——见 `tests/v2/test_架构守卫.py`）、**数据范围守卫**（看板按岗位裁决 / 403 不降级成演示数据 / 脱敏与下钻键成对处理——见 `tests/v2/test_数据范围.py`）、**待办可见性守卫**（令牌为准 / 跨域 404 / 三条通道同一口径——见 `tests/v2/test_待办可见性.py`）和 **FAQ 前置层守卫**（L1 双闸 / 意图路由分流 / how_to 让位 RAG——见 `tests/v2/test_kbqa_faq_tier.py`、`tests/v2/test_kbqa_intent.py`）。
+覆盖：治理链（权限目录自检、会签幂等、越权拦截）、Text2SQL 防线（红队用例）、场景端到端、看板下钻、SPC 内核、**现场看板推送**（工段归因三层顺序与漂移守卫 / 客诉分派全链路 / 通道只认工段 target / 幂等重推不打回现场进度 / 两类 `data_gap` 兜底 / 客诉 8D 场景分派节点端到端 / 接口层 401·403·400·404·409 与客户名按岗位脱敏 / 预警中心第五类「现场推送」的状态等级映射、前端类型对回与写操作入口 / **工段→现场群映射**（目录自检拒绝非白名单工段、凭据 env 覆盖、投递逐条记账且缺凭据不假装已发、三路并联端到端）/ **企微应用消息**（gettoken→message/send 报文逐字段对回、token TTL 缓存、errcode≠0 抛错、凭据不齐构造期报错、装配网关按凭据齐缺决定——见 `tests/v2/test_wecom_app_push.py`）——见 `tests/v2/test_site_board.py`、`tests/demo/test_alerts_api.py`、`tests/v2/test_im_groups.py`）、**案例域安全检索**（两段式授权 / 引用校验 / RBAC-ABAC 策略 / 审计链对账 / 限流 / 顶部统计卡同源 / 总经理跨部门通行）、MCP / A2A 协议、企微加解密、飞书适配、**生态链演示**（屏 / 数据 / 组件三契约、六场景屏数字现取、演示徽标强制、演示标识中间件、接单评审工单化、隔离自检——见 `tests/demo/`）；以及**架构守卫**（治理库拒绝非 SQLite、方言判定不乱猜、健康探针不抛异常、导航按岗位收敛——见 `tests/v2/test_架构守卫.py`）、**数据范围守卫**（看板按岗位裁决 / 403 不降级成演示数据 / 脱敏与下钻键成对处理——见 `tests/v2/test_数据范围.py`）、**待办可见性守卫**（令牌为准 / 跨域 404 / 三条通道同一口径——见 `tests/v2/test_待办可见性.py`）和 **FAQ 前置层守卫**（L1 双闸 / 意图路由分流 / how_to 让位 RAG——见 `tests/v2/test_kbqa_faq_tier.py`、`tests/v2/test_kbqa_intent.py`）。
 
 ## 项目结构
 
@@ -238,7 +263,7 @@ mfg-agent-platform/
 │   ├── core/                     #   编排内核：两级路由 / YAML→LangGraph 子图 / 共享上下文 / SPC 内核 / 缓存
 │   ├── agents/                   #   域 Agent（quality / supply_chain / engineering / hitl / office / agentic）
 │   ├── intent/                   #   意图分类器与路由策略
-│   ├── services/                 #   Text2SQL 服务链 / 工作流引擎 / 通知 / 看板 / 认证 / 数据范围 / 待办可见性 / 数据访问 / 案例检索问答 / 飞书日历
+│   ├── services/                 #   Text2SQL 服务链 / 工作流引擎 / 通知（日志 · IM · 现场看板）/ 看板 / 认证 / 数据范围 / 待办可见性 / 数据访问 / 案例检索问答 / 飞书日历
 │   ├── security/                 #   案例域安全：RBAC / ABAC 策略编译与求值 / 过滤翻译 / 限流
 │   ├── scenarios/                #   8 个场景 YAML（7 个对话路由 + 接单评审会签；新场景零代码新增）
 │   ├── mcp_tools/                #   ToolRegistry + 自实现 MCP server（stdio JSON-RPC）
@@ -246,7 +271,7 @@ mfg-agent-platform/
 │   └── demo/                     #   FastAPI 入口 / CLI / 演示门户（纯静态零构建 · 生态链场景屏 scenes/ + 悬浮帮助助手）
 ├── data/                         # 演示数据种子 SQL + 知识库 JSONL + 案例种子 + 制度语料（kbqa_corpus）+ 生态链演示数据（demo_storyline：15 类 jsonl / 43 事件 + 六屏数据契约）
 ├── deploy/                       # Milvus standalone 内嵌 etcd 配置
-├── tests/                        # 1385 条离线测试（治理 / 红队 / 端到端 / 协议 / 架构守卫 / 数据范围 / 待办可见性 / 案例域 / FAQ 前置层）；tests/demo/ 为生态链演示冒烟与六屏契约
+├── tests/                        # 1896 条离线测试（治理 / 红队 / 端到端 / 协议 / 架构守卫 / 数据范围 / 待办可见性 / 案例域 / FAQ 前置层 / 现场看板推送 / 预警中心 / 工段→现场群映射 / 企微应用消息）；tests/demo/ 为生态链演示冒烟与六屏契约
 ├── tools/                        # 数据扩充 / 阈值校准 / 案例评测 / 演示数据生成与隔离自检（demo_gen）
 ├── docs/                         # 架构 / 接口 / HITL 设计 / 案例助手 / 优化设计（images/ 为门户截图）
 └── scripts/                      # Windows 一键启动脚本（本地 / Docker / 公网隧道 / 健康看门狗）
@@ -260,6 +285,7 @@ mfg-agent-platform/
 - **会签并发与幂等**：进程内 `RLock` 串行化需升级为数据库级——签名拆独立表 + 唯一索引 `(task_uid, role_key, actor, verb)` 幂等。**与上一条应一并做**（多实例的前提是签名落库）。
 - **看板数据范围**：四个 `/dashboard/*` 端点已接声明式数据范围目录（`v2/data/data_scope.yaml`）：按岗位 allow + 字段级脱敏 + 下钻同源裁决，未登记看板 fail-closed。剩余缺口是**行级**（同一看板内按组织/产线过滤到本人辖区）——当前是"看到全厂该岗位该看的部分"，生产前需把 `data_scope.yaml` 从角色维度扩展到组织维度。
 - **待办数据范围**：`/workflow/pending` 与 `/workflow/{task_id}` 已按 HITL 槽位裁决（令牌为准、`role` 只能收窄、跨域 404、MCP 同口径）。剩余缺口与看板同类——**行级**：同一槽位内按组织归属过滤（华东/华南质量负责人各看各的）；另外**未纳管的历史工单**没有槽位可判，统一进"无主池"（对有治理职责的岗位只读可见），需要一次工单归属回填才能消掉。
+- **现场看板推送的剩余缺口**：链路、接口、前端承载、IM 映射与**应用消息发送**都已落地（客诉 8D 场景 `dispatch_site` 归因工段 → 推送该工段现场看板 → 8D 工单责任人按工段追加 → `GET /api/v2/site-board` 读、`ack` / `feedback` 回写并留痕 → 预警中心第五类「现场推送」现场可直接接收与闭环 → 「工段 → 现场群」映射负责 IM 触达：群机器人 webhook 发群、`WeComPushClient` 走 `gettoken`/`message/send` @ 责任人）。还剩两件：① **真实租户联调**（企业微信后台建自建应用、配 CorpID/AgentId/Secret 与应用可见范围、IP 白名单——代码侧凭据齐即真发，`errcode≠0` 会抛错并记 failed，属部署动作）；② **行级归属**（同一工段内按组织/产线缩到本人辖区，与四个看板同类缺口）。
 - **A2A 任务持久化**：`tasks/get` 结果当前进程内保留 1 小时，生产需持久化。
 - **公网访问认证**：读接口（看板 / 下钻 / 待办 / 工单详情）均已 fail-closed 要求令牌；剩余的"链接即权限"在于**登录本身免密**（31 个岗位任选即入），对外正式提供前必须替换为 SSO。
 - **企微回调重放防护**：需补 timestamp 窗口验重 + nonce 缓存。

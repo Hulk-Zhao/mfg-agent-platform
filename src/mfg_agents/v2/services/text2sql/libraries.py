@@ -29,6 +29,18 @@ TABLE_ACL: dict[str, set[str]] = {
     "quality_defect": {"quality", "manufacturing", "coordinator", "gm"},
     # V3.6 SPC 域：测量值表（spc.ingest 落库 / spc 取数），口径与 quality_defect 一致
     "spc_measurement": {"quality", "manufacturing", "coordinator", "gm"},
+    # V4 看板口径直查（board_qa）：看板事实表补登记（此前仅看板 API 经 data_scope
+    # 可见，Text2SQL 明细探查查这些表会被表级 ACL 拒绝）。角色口径对齐同类表。
+    "equipment_run_time": {"manufacturing", "planning", "coordinator", "quality", "gm",
+                           "supply_chain_manager"},
+    "scrap_record": {"manufacturing", "planning", "coordinator", "quality", "gm",
+                     "supply_chain_manager"},
+    "work_report": {"manufacturing", "planning", "coordinator", "quality", "gm",
+                    "supply_chain_manager"},
+    "std_standard_audit": {"quality", "manufacturing", "coordinator", "gm"},
+    # 订单履约事实表（orders 看板）：角色口径对齐 shipment（业务/仓库/协同/销售/GM）
+    "order_fulfillment": {"business", "warehouse", "coordinator", "sales", "gm",
+                          "supply_chain_manager"},
     # V3.3：material_control 加入——齐套检查/到货批次是物控核心场景
     "material_batch": {"procurement", "quality", "coordinator", "material_control", "gm",
                        "supply_chain_manager"},

@@ -404,6 +404,10 @@ def build_handlers(runtime: Any) -> dict[str, Any]:
                 "maintenance_flow", "order_change_flow"):
         handlers[key] = wf_handler
 
+    # 现场分派：客诉归因到责任工段 → 推送该工段现场看板（确定性，无 LLM）
+    from ..services import site_board  # 局部导入：避免 services ↔ core 的模块级环
+    handlers["site_dispatch"] = site_board.make_site_dispatch(notifier, t2s)
+
     # 注册查询型域 Agent
     handlers["procurement"] = _make_registered_query_agent(
         t2s, "supply_chain", "supplier_followup",

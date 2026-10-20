@@ -346,7 +346,7 @@
       + '" role="button" tabindex="0" style="padding:10px 12px;'
       + 'border-bottom:1px solid var(--border);cursor:pointer;vertical-align:top">'
       + '<div style="display:flex;align-items:baseline;gap:6px;flex-wrap:wrap">'
-      + '<span class="sk-num-value" style="font-size:17px">' + K.esc(cell.text) + "</span>"
+      + '<span class="sk-num-value" style="font-size: calc(17px * var(--font-scale))">' + K.esc(cell.text) + "</span>"
       + K.badge(cell.pass ? "达标" : "不达标", cell.pass ? "badge-green" : "badge-red")
       + "</div>"
       + '<div class="sk-num-hint">' + K.esc(cell.hint) + "</div></td>";
@@ -356,7 +356,7 @@
     const K = window.SceneKit;
     const headCells = ["阶段门", "良率", "CPK", "直通率（工单级）", "问题闭环数", "门禁结论"]
       .map(function (t) {
-        return '<th style="text-align:left;padding:9px 12px;font-size:12px;color:var(--text-2);'
+        return '<th style="text-align:left;padding:9px 12px;font-size: calc(12px * var(--font-scale));color:var(--text-2);'
           + 'font-weight:600;border-bottom:1px solid var(--border);white-space:nowrap">' + K.esc(t) + "</th>";
       }).join("");
 
@@ -366,7 +366,7 @@
       const byKey = {};
       g.checks.forEach(function (c) { byKey[c.key] = c; });
       const head = '<td style="padding:10px 12px;border-bottom:1px solid var(--border);vertical-align:top">'
-        + '<div style="font-size:13px;font-weight:700;color:var(--text)">' + K.esc(n) + " 阶段门</div>"
+        + '<div style="font-size: calc(13px * var(--font-scale));font-weight:700;color:var(--text)">' + K.esc(n) + " 阶段门</div>"
         + '<div class="sk-num-hint">' + K.esc(K.fmtDate(m.ts || "")) + "</div></td>";
       const verdictCell = '<td data-sk-drill="' + K.esc("verdict-" + n)
         + '" role="button" tabindex="0" style="padding:10px 12px;border-bottom:1px solid var(--border);'
@@ -404,13 +404,13 @@
       + '<div class="card-head"><div class="card-title">' + K.icon("shield", 15) + "门禁机械判定规则"
       + '</div><div class="card-extra">' + K.badge("非人工评审 · 逐格可复核", "badge-blue") + "</div></div>"
       + '<div class="card-body" style="padding:12px 16px 16px">'
-      + '<div style="font-size:12.6px;color:var(--text);line-height:1.7">' + K.esc(VERDICT_RULE) + "</div>"
+      + '<div style="font-size: calc(12.6px * var(--font-scale));color:var(--text);line-height:1.7">' + K.esc(VERDICT_RULE) + "</div>"
       + '<div style="overflow-x:auto;margin-top:10px">'
       + '<table style="border-collapse:collapse;width:100%;min-width:520px">'
       + '<thead><tr>'
       + ["阶段门", "良率下限", "CPK 下限", "直通率下限", "问题"]
         .map(function (t) {
-          return '<th style="text-align:left;padding:8px 12px;font-size:12px;color:var(--text-2);'
+          return '<th style="text-align:left;padding:8px 12px;font-size: calc(12px * var(--font-scale));color:var(--text-2);'
             + 'font-weight:600;border-bottom:1px solid var(--border);white-space:nowrap">' + K.esc(t) + "</th>";
         }).join("")
       + "</tr></thead><tbody>" + rows + "</tbody></table></div>"

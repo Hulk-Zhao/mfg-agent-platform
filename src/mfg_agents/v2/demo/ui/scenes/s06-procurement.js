@@ -367,14 +367,14 @@
       ];
       return '<div style="padding:12px 0;border-bottom:1px dashed var(--border)">'
         + '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">'
-        + '<span style="font-size:12.8px;font-weight:700;color:var(--text)">'
+        + '<span style="font-size: calc(12.8px * var(--font-scale));font-weight:700;color:var(--text)">'
         + K.esc(c.object_ref) + "</span>"
         + K.badge("间隔 " + K.fmtNum(c.latency_min) + " 分钟", latencyOk ? "badge-green" : "badge-red")
         + K.badge("人工步骤 0 步", latencyOk ? "badge-green" : "badge-amber")
         + '<button class="btn btn-sm btn-outline" type="button" data-sk-drill="chain-auto">链路口径</button>'
         + "</div>"
         + steps.map(function (s, i) {
-          return '<div style="display:flex;gap:8px;align-items:baseline;font-size:12.4px;'
+          return '<div style="display:flex;gap:8px;align-items:baseline;font-size: calc(12.4px * var(--font-scale));'
             + 'color:var(--text-2);line-height:1.8">'
             + '<span style="min-width:132px;color:var(--text-3)">' + K.esc(s[0]) + "</span>"
             + '<span style="color:var(--text)">' + K.esc(s[1]) + "</span>"
@@ -401,7 +401,7 @@
   function poTableHtml(d) {
     const K = window.SceneKit;
     const th = function (t) {
-      return '<th style="text-align:left;padding:9px 12px;font-size:12px;color:var(--text-2);'
+      return '<th style="text-align:left;padding:9px 12px;font-size: calc(12px * var(--font-scale));color:var(--text-2);'
         + 'font-weight:600;border-bottom:1px solid var(--border);white-space:nowrap">' + K.esc(t) + "</th>";
     };
     const heads = ["PO", "物料", "供应商（OTD）", "下单量", "料期", "实交", "状态", "缺口判定"]
@@ -434,7 +434,7 @@
         + '<td style="padding:10px 12px;border-bottom:1px solid var(--border);white-space:nowrap">'
         + poStatusBadge(po.status) + "</td>"
         + '<td class="' + gapTone + '" data-sk-drill="po-' + K.esc(po.po_id) + '" role="button" tabindex="0" '
-        + 'style="padding:10px 12px;border-bottom:1px solid var(--border);cursor:pointer;font-size:12.2px">'
+        + 'style="padding:10px 12px;border-bottom:1px solid var(--border);cursor:pointer;font-size: calc(12.2px * var(--font-scale))">'
         + K.esc(gapText) + "</td>"
         + "</tr>";
     }).join("");
@@ -519,7 +519,7 @@
         + "</tr>";
     }).join("");
     const th = function (t) {
-      return '<th style="text-align:left;padding:9px 12px;font-size:12px;color:var(--text-2);'
+      return '<th style="text-align:left;padding:9px 12px;font-size: calc(12px * var(--font-scale));color:var(--text-2);'
         + 'font-weight:600;border-bottom:1px solid var(--border);white-space:nowrap">' + K.esc(t) + "</th>";
     };
     return '<div style="overflow-x:auto;padding-top:10px">'
@@ -542,15 +542,15 @@
         + K.fmtNum(lv.threshold_days) + " 天</td></tr>";
     }).join("");
     const th = function (t) {
-      return '<th style="text-align:left;padding:8px 12px;font-size:12px;color:var(--text-2);'
+      return '<th style="text-align:left;padding:8px 12px;font-size: calc(12px * var(--font-scale));color:var(--text-2);'
         + 'font-weight:600;border-bottom:1px solid var(--border);white-space:nowrap">' + K.esc(t) + "</th>";
     };
     return '<div class="card">'
       + '<div class="card-head"><div class="card-title">' + K.icon("shield", 15) + "缺口判定与升级阈值"
       + '</div><div class="card-extra">' + K.badge("机械判定 · 逐条可复核", "badge-blue") + "</div></div>"
       + '<div class="card-body" style="padding:12px 16px 16px">'
-      + '<div style="font-size:12.6px;color:var(--text);line-height:1.7">' + K.esc(SHORTAGE_RULE) + "</div>"
-      + '<div style="font-size:12.6px;color:var(--text);line-height:1.7;margin-top:6px">'
+      + '<div style="font-size: calc(12.6px * var(--font-scale));color:var(--text);line-height:1.7">' + K.esc(SHORTAGE_RULE) + "</div>"
+      + '<div style="font-size: calc(12.6px * var(--font-scale));color:var(--text);line-height:1.7;margin-top:6px">'
       + K.esc(ESC_RULE) + "</div>"
       + '<div style="overflow-x:auto;margin-top:10px">'
       + '<table style="border-collapse:collapse;width:100%;min-width:520px">'

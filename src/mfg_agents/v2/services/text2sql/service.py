@@ -96,10 +96,33 @@ class Text2SQLService:
 
     def query_metric(self, metric_id: str, params: Optional[dict] = None,
                      user_ctx: Optional[dict] = None) -> QueryResult:
-        """通道①：指标库命中（口径统一，最高置信）。"""
+        """通道①：指标库命中（口径统一，最高置信）。
+
+        带命名绑定的指标（如 OTD 的 ``:start/:end`` 统计窗口）由调用方传入
+        ``params``；缺省补**默认统计窗口**（最近 7 天，与看板默认档同源），
+        保证"未指定口径"时也能给出与看板一致的数值，而不是返回另一套口径。
+
+        结果行按指标定义里的 ``columns`` 映射为**业务列名**（口径即代码的一部分：
+        直答表格/结论不暴露 ``otd_rate_pct`` 这类 SQL 别名，与看板直答同构）。
+        """
         t0 = time.perf_counter()
         metric = self.metrics.get(metric_id)
         sql = str(metric["sql"])
+        merged = {**self.default_window_params(), **(params or {})}
+        bound = self._bind_params(sql, merged)
+        if bound is None:
+            missing = sorted(set(re.findall(r":([A-Za-z_]\w*)", sql))
+                             - set(merged))
+            logger.warning("[metric] 缺参降级: %s 需要 %s", metric_id, missing)
+            return QueryResult(
+                channel="fallback", sql=sql, confidence=0.0,
+                fallback="manual_ticket",
+                warnings=[f"指标 {metric_id} 缺少参数 {missing}，降级人工兜底"],
+                elapsed_ms=(time.perf_counter() - t0) * 1000,
+                provenance={"channel": "metric", "metric_id": metric_id,
+                            "metric_name": metric.get("name"),
+                            "missing_params": missing, "params": params or {}},
+            )
         try:
             SQLAuditor.audit(sql, user_ctx)  # 入口校验 + 正则 + 结构 + 表权限
         except SQLAuditError as exc:
@@ -107,16 +130,24 @@ class Text2SQLService:
                                   tables=metric.get("tables", []),
                                   metric_id=metric_id)
         rows = self.data_registry.execute_readonly_sql(
-            sql, params, row_cap=self.row_cap)
+            sql, bound, row_cap=self.row_cap)
         rows, masked = FieldMasker.mask(rows, user_ctx, sql)
         warnings = ResultValidator.validate(rows, self.row_cap)
+        rows = [self._label_metric_row(r, metric.get("columns")) for r in rows]
         return QueryResult(
             channel="metric", sql=sql, rows=rows, masked=masked, confidence=0.95,
             warnings=warnings, elapsed_ms=(time.perf_counter() - t0) * 1000,
             provenance={"channel": "metric", "metric_id": metric_id,
                         "metric_name": metric.get("name"),
                         "owner": metric.get("owner"),
+                        "metric_desc": metric.get("desc"),
+                        "metric_unit": metric.get("unit", ""),
+                        "metric_target": metric.get("target"),
+                        "metric_higher_is_better": metric.get("higher_is_better"),
                         "tables": metric.get("tables", []),
+                        "window": {"start": merged.get("start"),
+                                   "end": merged.get("end"),
+                                   "label": merged.get("label", "")},
                         "row_count": len(rows), "elapsed_ms": 0.0},
         )
 
@@ -178,8 +209,10 @@ class Text2SQLService:
             )
         from ....common.sql_tools import _extract_sql  # V1 资产复用
         try:
+            # V4：max_tokens 300→600——SQL 生成被截断会产出残缺语句，
+            # 又恰好绕过"能解析才 lint"的路径（残缺语句解析失败全走 fallback）。
             llm = get_llm(temperature=0.0, tier="L1",
-                          max_tokens=300, timeout=30, thinking="disabled")
+                          max_tokens=600, timeout=30, thinking="disabled")
             resp = llm.invoke(build_detail_prompt(question))
             raw = resp.content if hasattr(resp, "content") else str(resp)
             sql = _extract_sql(raw)
@@ -201,6 +234,22 @@ class Text2SQLService:
                 elapsed_ms=(time.perf_counter() - t0) * 1000,
                 provenance={"channel": "detail", "blocked": str(exc)},
             )
+        # V4 语义 lint（第五道半闸）：拦"语法合法但口径必错"的生成 SQL——
+        # 聚合进 WHERE / 混聚无 GROUP BY 在 SQLite 宽松语义下静默返回错误数字，
+        # 比查不到更危险。硬伤 → 人工兜底；软警告（缺 LIMIT 等）随结果提示复核。
+        from .linter import SqlLintError, lint_semantic
+        try:
+            lint_warnings = lint_semantic(sql)
+        except SqlLintError as exc:
+            logger.warning("[detail] 语义 lint 拦截: %s | SQL: %s", exc, sql[:120])
+            return QueryResult(
+                channel="fallback", sql=sql, confidence=0.0,
+                fallback="manual_ticket",
+                warnings=[f"语义校验拦截: {exc}"],
+                elapsed_ms=(time.perf_counter() - t0) * 1000,
+                provenance={"channel": "detail", "blocked": str(exc),
+                            "lint": "semantic"},
+            )
         try:
             rows = self.data_registry.execute_readonly_sql(
                 sql, row_cap=self.row_cap)
@@ -213,6 +262,7 @@ class Text2SQLService:
             )
         rows, masked = FieldMasker.mask(rows, user_ctx, sql)
         warnings = ResultValidator.validate(rows, self.row_cap)
+        warnings.extend(lint_warnings)
         return QueryResult(
             channel="detail", sql=sql, rows=rows, masked=masked, confidence=0.6,
             warnings=warnings, elapsed_ms=(time.perf_counter() - t0) * 1000,
@@ -225,12 +275,68 @@ class Text2SQLService:
         """统一入口：① 指标库 → ② 注册查询 → ③ 明细探查 → 兜底。"""
         metric = self.metrics.match(question)
         if metric is not None:
-            return self.query_metric(str(metric["id"]), user_ctx=user_ctx)
+            # 指标口径里的统计窗口随问题口径走（"最近7天 / 当日 / 当月"）——
+            # 否则同一句"最近7天 OTD"会拿到与看板不同窗口的数（口径错配）。
+            return self.query_metric(str(metric["id"]),
+                                     params=self._window_params(question),
+                                     user_ctx=user_ctx)
         params = self._extract_params(question)
         name = self.queries.match(question, params)
         if name is not None:
             return self.query_registered(name, params, user_ctx)
         return self.query_detail(question, user_ctx)
+
+    @staticmethod
+    def default_window_params() -> dict[str, str]:
+        """默认统计窗口（最近 7 天）——与看板默认档 ``resolve_window(None)`` 同源。"""
+        from ..dashboard import resolve_window
+
+        win = resolve_window(None)
+        return {"start": str(win["start"]), "end": str(win["end"]),
+                "label": str(win["label"])}
+
+    @staticmethod
+    def _window_params(question: str) -> dict[str, str]:
+        """问题文本 → 统计窗口（当日 / 当月 / 最近 7 天），口径与看板同源。
+
+        仅识别看板已定义的三档（``day`` / ``month`` / ``window``）；未提及时间
+        或提及其它跨度（如"最近30天"）一律回落默认档，**不臆造窗口**。
+        """
+        q = question or ""
+        key = "window"
+        if any(w in q for w in ("今天", "当日", "本日")):
+            key = "day"
+        elif any(w in q for w in ("本月", "当月", "这个月")):
+            key = "month"
+        from ..dashboard import resolve_window
+
+        win = resolve_window(key)
+        return {"start": str(win["start"]), "end": str(win["end"]),
+                "label": str(win["label"])}
+
+    @staticmethod
+    def _label_metric_row(row: dict, columns: Optional[list]) -> dict:
+        """指标结果行 → 业务列名（口径即代码的一部分）。
+
+        未在 ``columns`` 声明的列原样保留（不丢数据）；``unit`` 存在时值带单位
+        （如 ``68.4%`` / ``720单``）。
+        """
+        if not columns:
+            return row
+        out: dict[str, Any] = {}
+        mapped: set[str] = set()
+        for col in columns:
+            key = str(col.get("key") or "")
+            if key not in row:
+                continue
+            value = row[key]
+            unit = str(col.get("unit") or "")
+            out[str(col.get("label") or key)] = f"{value}{unit}" if unit else value
+            mapped.add(key)
+        for k, v in row.items():
+            if k not in mapped:
+                out[k] = v
+        return out
 
     @staticmethod
     def _extract_params(question: str) -> dict[str, str]:

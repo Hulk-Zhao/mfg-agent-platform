@@ -12,6 +12,37 @@
   "use strict";
 
   /* ============================================================
+   * 共享：结构化问数上下文（ask_ctx）——与 chat_prefill 搭对传递
+   *
+   * 各模块问数入口在写自然语言预填（chat_prefill）的同时，把结构化上下文
+   * （module/screen/kpi/view/window/filters）写入 chat_ask_ctx；协同问数屏
+   * 自动发送时一并携带——后端命中看板 KPI 时直接复用看板聚合函数，
+   * 口径与看板同源（不经 LLM 不重写 SQL，毫秒级返回）。
+   * ============================================================ */
+
+  function writeAskPrefill(question, askCtx) {
+    try {
+      sessionStorage.setItem("chat_prefill", question);
+      if (askCtx && typeof askCtx === "object") {
+        sessionStorage.setItem("chat_ask_ctx", JSON.stringify(askCtx));
+      } else {
+        sessionStorage.removeItem("chat_ask_ctx");
+      }
+    } catch (e) { /* 隐私模式忽略 */ }
+  }
+
+  function readAskCtx() {
+    try {
+      const raw = sessionStorage.getItem("chat_ask_ctx");
+      return raw ? JSON.parse(raw) : null;
+    } catch (e) { return null; }
+  }
+
+  function clearAskCtx() {
+    try { sessionStorage.removeItem("chat_ask_ctx"); } catch (e) { /* 忽略 */ }
+  }
+
+  /* ============================================================
    * 共享：SLA 倒计时（全局 ticker，1s 刷新）
    * ============================================================ */
 
@@ -266,10 +297,15 @@
     const mapped = k.drill && k.drill.screen && k.drill.kpi
       && kpiDrillVisible(ctx, k.drill.screen);
     const ask = k.ask || "";
+    // 结构化问数上下文：KPI 卡问数携带 drill 目标标识（screen/kpi）——
+    // 后端命中看板口径时直查（同源同口径），未命中回落自然语言链路
+    const askCtxAttrs = `data-ask-module="dashboard" data-ask-view="kpi"`
+      + ` data-ask-screen="${UI.esc((k.drill || {}).screen || "")}"`
+      + ` data-ask-kpi="${UI.esc((k.drill || {}).kpi || "")}"`;
     const attrs = mapped
       ? `data-dash-drill="1" data-screen="${UI.esc(k.drill.screen)}" data-kpi="${UI.esc(k.drill.kpi)}"
          title="点击下钻「${UI.esc(k.label)}」明细分解"`
-      : `data-ask="${UI.esc(ask)}" title="点击问数：${UI.esc(ask)}"`;
+      : `data-ask="${UI.esc(ask)}" ${askCtxAttrs} title="点击问数：${UI.esc(ask)}"`;
     const hint = mapped
       ? `${UI.icon("filter", 11)} 下钻分解`
       : `${UI.icon("chat", 11)} ${UI.esc(ask)}`;
@@ -280,7 +316,7 @@
         <div class="stat-label">${UI.esc(k.label)}</div>
         <div class="stat-trend ${k.up ? "up" : ""}">${UI.icon(k.up ? "warn" : "clock", 12)} ${UI.esc(k.trend)}</div>
         <div class="stat-ask">${hint}</div>
-        ${mapped ? `<button class="stat-ask-btn" data-ask="${UI.esc(ask)}"
+        ${mapped ? `<button class="stat-ask-btn" data-ask="${UI.esc(ask)}" ${askCtxAttrs}
                 title="跳转协同问数：${UI.esc(ask)}">${UI.icon("chat", 11)} 问数</button>` : ""}
       </div>
     </div>`;
@@ -400,7 +436,7 @@
           ${quickEntries(ctx).map((q) => `
           <button class="quick-entry" data-goto="${UI.esc(q.id)}">
             <span class="qe-ico" style="background:var(--${q.bg});color:var(--${q.fg})">${UI.icon(q.icon, 20)}</span>
-            ${UI.esc(q.label)}<span style="font-size:11.5px;color:var(--text-3);font-weight:400">${UI.esc(q.sub)}</span>
+            ${UI.esc(q.label)}<span style="font-size: calc(11.5px * var(--font-scale));color:var(--text-3);font-weight:400">${UI.esc(q.sub)}</span>
           </button>`).join("")}
         </div>
       </div>`;
@@ -422,13 +458,18 @@
         if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); fn(); }
       });
     });
-    // 卡内「问数」按钮 / 未映射卡整卡：跳协同问数（携带预置问题）
+    // 卡内「问数」按钮 / 未映射卡整卡：跳协同问数（携带预置问题 + 结构化上下文）
     root.querySelectorAll("[data-ask]").forEach((btn) => {
       const go = (ev) => {
         if (ev) ev.stopPropagation();
         const q = btn.dataset.ask;
         if (!q) return;
-        try { sessionStorage.setItem("chat_prefill", q); } catch (e) { /* 隐私模式忽略 */ }
+        writeAskPrefill(q, {
+          module: btn.dataset.askModule || "dashboard",
+          screen: btn.dataset.askScreen || "",
+          kpi: btn.dataset.askKpi || "",
+          view: btn.dataset.askView || "kpi",
+        });
         ctx.navigate("chat");
       };
       btn.addEventListener("click", go);
@@ -544,7 +585,7 @@
         if (count) count.textContent = "—";
         list.innerHTML = `<div class="empty">${UI.icon("info", 28)}`
           + `<div style="margin-top:8px">本岗位不参与治理审批</div>`
-          + `<div class="muted" style="margin-top:4px;font-size:12px">`
+          + `<div class="muted" style="margin-top:4px;font-size: calc(12px * var(--font-scale))">`
           + `复线 / 特采 / 8D 关闭 / 对客承诺等决策由对应治理岗位确认</div></div>`;
         return;
       }
@@ -557,7 +598,7 @@
         list.innerHTML = `<div class="empty">${UI.icon("check", 30)}`
           + `<div style="margin-top:8px">当前无待办——关键决策都已轮到别人</div>`
           + (hold > 0
-            ? `<div class="muted" style="margin-top:4px;font-size:12px">`
+            ? `<div class="muted" style="margin-top:4px;font-size: calc(12px * var(--font-scale))">`
               + `域内另有 ${hold} 条待观察（会签未到我 / 已签完待终批）
                  <button class="link-btn" data-goto="hitl">去审批中心</button></div>`
             : "")
@@ -735,7 +776,7 @@
     const rankHtml = `<div class="section-title">重点关注 TOP5 <span class="section-extra">最需关注的最差 5 名 · 点行看实体逐日明细</span></div>
       <div class="grid grid-2">${(d.rankings || []).map((r) => mfgRankCard(UI, r, "orders", d.window && d.window.label)).join("")}</div>`;
 
-    const pipeHtml = `<div class="section-title">订单状态管道 <span class="section-extra">按订单环节分布 · 标注各环节延期单数</span></div>
+    const pipeHtml = `<div class="section-title">订单状态管道 <span class="section-extra">按订单环节分布 · 标注各环节延期单数 · 点环节看该环节订单清单</span></div>
       <div class="card">
         <div class="card-head">
           <div class="card-title">${UI.icon("activity", 16)}订单状态管道</div>
@@ -743,23 +784,26 @@
         </div>
         <div class="pipeline">
           ${pipe.map((p, i) => `
-            <div class="pipe-stage">
+            <button type="button" class="pipe-stage" data-pipe-stage="${UI.esc(p.stage)}"
+              title="点看「${UI.esc(p.stage)}」环节订单清单（弹窗）">
               <div class="pipe-stage-name">${UI.esc(p.stage)}</div>
               <div class="pipe-stage-num">${UI.esc(p.count)}</div>
               <div class="pipe-stage-bar"><div class="progress-bar" style="width:${Math.round(((p.count || 0) / total) * 100)}%"></div></div>
               <div class="pipe-stage-pct">占比 ${Math.round(((p.count || 0) / total) * 100)}%${p.delayed ? ` · 延期 ${UI.esc(p.delayed)}` : ""}</div>
-            </div>
+            </button>
             ${i < pipe.length - 1 ? `<div class="pipe-arrow">${UI.icon("chevron", 14)}</div>` : ""}
           `).join("")}
         </div>
       </div>`;
 
-    const riskHtml = `<div class="section-title">风险订单 <span class="section-extra">延期风险 / 缺料关联 / 客诉 · 点「问数」协同处置</span></div>
+    const riskHtml = `<div class="section-title">风险订单 <span class="section-extra">延期风险 / 缺料关联 / 客诉 · 点行看订单详情 · 行内「问数」协同处置</span></div>
       <div class="card">
         ${risks.length ? risks.map((r) => {
           const levelCls = r.customer_level === "S" ? "badge-red" : r.customer_level === "A" ? "badge-amber" : "badge-gray";
           const ask = `订单 ${r.order_no}（${r.customer}）延期 ${r.delay_days} 天，当前环节「${r.stage}」，${r.shortage_note || "无缺料异常"}，如何推进按期交付？`;
-          return `<div class="risk-order">
+          return `<div class="risk-order" role="button" tabindex="0"
+              data-risk-order="${UI.esc(r.order_no)}"
+              title="点看订单 ${UI.esc(r.order_no)} 详情（弹窗）">
             <div class="ro-head">
               <span class="ro-no">${UI.esc(r.order_no)}</span>
               ${UI.badge(r.customer, "badge-blue")}
@@ -774,21 +818,23 @@
             </div>
             ${r.shortage_note ? `<div class="ro-body"><span>缺料/异常 <b>${UI.esc(r.shortage_note)}</b></span></div>` : ""}
             <div class="ro-foot">
-              <span style="font-size:11.5px;color:var(--text-3)">履约进度</span>
+              <span style="font-size: calc(11.5px * var(--font-scale));color:var(--text-3)">履约进度</span>
               <div class="progress"><div class="progress-bar ${r.progress < 50 ? "warn" : ""}" style="width:${r.progress}%"></div></div>
-              <span style="font-size:11.5px;color:var(--text-3);font-variant-numeric:tabular-nums">${UI.esc(r.progress)}%</span>
+              <span style="font-size: calc(11.5px * var(--font-scale));color:var(--text-3);font-variant-numeric:tabular-nums">${UI.esc(r.progress)}%</span>
             </div>
           </div>`;
         }).join("") : `<div class="empty">${UI.icon("check", 22)}<div style="margin-top:8px">窗口内无风险订单</div></div>`}
       </div>`;
 
-    const domainHtml = domains.length ? `<div class="section-title">部门协同状态 <span class="section-extra">16 部门 → 5 域组 · 今日待办 / 已闭环 / 超时 ${UI.demoFlag()}</span></div>
-      <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(230px,1fr))">
+    const domainHtml = domains.length ? `<div class="section-title">部门协同状态 <span class="section-extra">16 部门 → 5 域组 · 今日待办 / 已闭环 / 超时 · 点卡片看域内协同明细 ${UI.demoFlag()}</span></div>
+      <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(230px,1fr))">
         ${domains.map((dd) => {
           const todo = dd.depts.reduce((s, x) => s + x.todo, 0);
           const done = dd.depts.reduce((s, x) => s + x.done, 0);
           const over = dd.depts.reduce((s, x) => s + x.over, 0);
-          return `<div class="card dept-domain">
+          return `<div class="card dept-domain" role="button" tabindex="0"
+              data-domain="${UI.esc(dd.name)}"
+              title="点看「${UI.esc(dd.name)}」协同明细（弹窗）">
             <div class="dept-domain-head">
               <span class="stat-icon ${dd.name === "制造域" ? "blue" : dd.name === "品质域" ? "purple" : dd.name === "供应链域" ? "green" : dd.name === "设备域" ? "amber" : "red"}" style="width:30px;height:30px;border-radius:8px">${UI.icon(dd.icon, 15)}</span>
               <span class="dept-domain-name">${UI.esc(dd.name)}</span>
@@ -882,8 +928,8 @@
     box.innerHTML = `<div class="empty">
       ${UI.icon("shield", 30)}
       <div style="margin-top:10px;font-weight:600">${UI.esc(label)} · 当前岗位无权查看</div>
-      <div style="margin-top:6px;color:var(--text-2);font-size:13px">${UI.esc(msg)}</div>
-      <div style="margin-top:8px;color:var(--text-3);font-size:12px">
+      <div style="margin-top:6px;color:var(--text-2);font-size: calc(13px * var(--font-scale))">${UI.esc(msg)}</div>
+      <div style="margin-top:8px;color:var(--text-3);font-size: calc(12px * var(--font-scale))">
         数据范围由服务端裁决（<span class="mono">v2/data/data_scope.yaml</span>），
         需要访问请联系对应责任岗位或管理员。
       </div>
@@ -956,6 +1002,603 @@
 
     box.innerHTML = ordersBody(UI, payload, ctx.DEMO);
     mfgBind(ctx, box, payload);
+    // 板级载荷挂到 screenState：弹窗离线兜底时按管道环节回查汇总数
+    ctx.state.screenState.ordersPayload = payload;
+    bindOrdersExtras(ctx, box, payload);
+  }
+
+  /* ------------------------------------------------------------
+   * 订单履约看板模块点击详情（管道环节 / 风险订单 / 部门域卡）
+   * 弹窗复用「班组三率明细」的 .std-modal 体系：先挂骨架再填数据；
+   * 在线走 /api/v2/dashboard/orders/stage|detail（与看板同一套裁决与脱敏），
+   * 离线降级到当前载荷已知信息并明确标注，绝不编造明细。
+   * ------------------------------------------------------------ */
+
+  /** 弹窗骨架（复用 .std-modal 样式）：返回 { body, close }，由调用方填正文。 */
+  function openOrderModalShell(ctx, tag, title, sub) {
+    const UI = ctx.UI;
+    document.querySelectorAll(".std-modal").forEach((el) => el.remove());
+    const overlay = document.createElement("div");
+    overlay.className = "std-modal";
+    overlay.innerHTML = `<div class="std-modal-card" role="dialog" aria-modal="true"
+        aria-label="${UI.esc(title)}">
+        <div class="std-modal-head">
+          <span class="std-modal-tag">${UI.esc(tag)}</span>
+          <b>${UI.esc(title)}</b>
+          <span class="std-modal-sub">${UI.esc(sub)}</span>
+          <button type="button" class="std-modal-x" data-std-close aria-label="关闭">×</button>
+        </div>
+        <div class="std-modal-body"><div class="std-modal-loading">
+          ${UI.icon("info", 13)}正在加载详情…</div></div>
+      </div>`;
+    document.body.appendChild(overlay);
+    const onKey = (e) => { if (e.key === "Escape") close(); };
+    function close() {
+      document.removeEventListener("keydown", onKey);
+      overlay.remove();
+      document.body.classList.remove("std-modal-open");
+    }
+    document.addEventListener("keydown", onKey);
+    document.body.classList.add("std-modal-open");
+    overlay.addEventListener("click", (ev) => {
+      if (ev.target === overlay || (ev.target.closest && ev.target.closest("[data-std-close]"))) close();
+    });
+    return {
+      body: overlay.querySelector(".std-modal-body"),
+      head: overlay.querySelector(".std-modal-head"),
+      close,
+    };
+  }
+
+  /** 把弹窗正文填进骨架（等接口期间被关掉则丢弃）。 */
+  function fillOrderModal(shell, html) {
+    const body = shell.body;
+    if (!body || !body.isConnected) return;
+    const holder = document.createElement("div");
+    holder.innerHTML = html;
+    if (holder.firstElementChild) body.replaceWith(holder.firstElementChild);
+  }
+
+  /** 弹窗顶部入口：把「进入 N 级看板」放到标题右侧（关闭按钮左侧），常驻可见，
+   *  不再坠在弹窗正文末尾（原来要滚到底部才能看到）。 */
+  function setModalHeadEntry(shell, html, onGo) {
+    const head = shell.head;
+    if (!head) return;
+    const box = document.createElement("span");
+    box.className = "std-modal-go";
+    box.innerHTML = html;
+    head.insertBefore(box, head.querySelector(".std-modal-x"));
+    const btn = box.querySelector("button") || box;
+    btn.addEventListener("click", onGo);
+  }
+
+  /** 三类可点模块统一绑定（行内「问数」按钮自带 stopPropagation，不会误触）。 */
+  function bindOrdersExtras(ctx, box, payload) {
+    const keyGo = (el, fn) => {
+      el.addEventListener("click", fn);
+      el.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); fn(); }
+      });
+    };
+    const win = ctx.state.screenState.ordersWindow || "window";
+    box.querySelectorAll("[data-pipe-stage]").forEach((el) => {
+      keyGo(el, () => openOrderStageModal(ctx, el.dataset.pipeStage, win));
+    });
+    box.querySelectorAll("[data-risk-order]").forEach((el) => {
+      keyGo(el, () => {
+        const no = el.dataset.riskOrder;
+        const row = ((payload && payload.risk_orders) || [])
+          .find((r) => r.order_no === no) || {};
+        openOrderDetailModal(ctx, no, row);
+      });
+    });
+    box.querySelectorAll("[data-domain]").forEach((el) => {
+      keyGo(el, () => openOrderDomainModal(ctx, el.dataset.domain));
+    });
+  }
+
+  /** 环节弹窗正文：汇总小签 + 订单清单表。后端字段缺省时不编造（显示 —）。 */
+  function orderStageModalBody(UI, d, offline, fallbackCount) {
+    const s = (d && d.summary) || { count: fallbackCount == null ? 0 : fallbackCount };
+    const rows = (d && d.orders) || [];
+    const chips = `<div class="std-chips">
+        <span class="std-chip">订单数 <b>${UI.esc(fmtQty(s.count))}</b></span>
+        <span class="std-chip">延期 <b class="${(s.delayed || 0) > 0 ? "neg" : "pos"}">${UI.esc(fmtQty(s.delayed))}</b></span>
+        <span class="std-chip">订单量 <b>${UI.esc(fmtQty(s.qty))}pcs</b></span>
+        <span class="std-chip">平均进度 <b>${s.avg_progress == null ? "—" : UI.esc(s.avg_progress) + "%"}</b></span>
+      </div>`;
+    const offlineTip = offline
+      ? `<div class="std-modal-warn">${UI.icon("warn", 12)}
+         后端离线或接口受限，以下仅为看板已缓存的汇总，<b>不含</b>逐单明细。</div>`
+      : ((d && d.truncated) ? `<div class="std-modal-warn">${UI.icon("warn", 12)}
+         环节内共 ${UI.esc(fmtQty(d.summary.count))} 单，清单仅展示最紧急的前 ${rows.length} 单。</div>` : "");
+    const table = rows.length ? `<table class="std-table">
+        <thead><tr><th>订单号</th><th>客户</th><th>型号</th><th>数量</th><th>进度</th>
+          <th>延期</th><th>风险类型</th><th>责任人</th></tr></thead>
+        <tbody>${rows.map((r) => `<tr>
+          <td class="std-team">${UI.esc(r.order_no || "—")}</td>
+          <td>${UI.esc(r.customer || "—")}</td>
+          <td>${UI.esc(r.product_model || "—")}</td>
+          <td class="num">${UI.esc(fmtQty(r.qty))}</td>
+          <td class="num">${UI.esc(r.progress == null ? "—" : r.progress + "%")}</td>
+          <td class="num ${(r.delay_days || 0) > 0 ? "std-delta neg" : ""}">${UI.esc(r.delay_days == null ? "—" : r.delay_days + " 天")}</td>
+          <td>${UI.esc(r.risk_type || "—")}</td>
+          <td>${UI.esc(r.owner || "—")}</td>
+        </tr>`).join("")}</tbody></table>`
+      : `<div class="empty">${UI.icon("check", 22)}
+          <div style="margin-top:8px">${offline ? "离线演示数据无逐单明细" : "该口径内此环节无订单"}</div></div>`;
+    return `<div class="std-modal-body">${offlineTip}${chips}${table}
+      ${(d && d.notes || []).map((n) => `<div class="std-notes">${UI.icon("info", 12)}<span>${UI.esc(n)}</span></div>`).join("")}
+    </div>`;
+  }
+
+  /** 点管道环节 → 弹窗：该环节订单清单（与看板 pipeline 同源可对账）。 */
+  async function openOrderStageModal(ctx, stage, win) {
+    const UI = ctx.UI;
+    const shell = openOrderModalShell(ctx, "订单 · 环节", stage,
+      `「${stage}」环节订单清单 · 口径与看板一致`);
+    let data = null, offline = false;
+    try {
+      if (!ctx.api.online()) throw new Error("offline");
+      data = await ctx.api.orderStage(stage, win);
+    } catch (err) { offline = true; }
+    const pipe = ((ctx.state.screenState.ordersPayload || {}).pipeline || [])
+      .find((p) => p.stage === stage) || {};
+    fillOrderModal(shell, orderStageModalBody(UI, data, offline, pipe.count));
+  }
+
+  /** 订单详情正文：兼容后端行（order_no/product_model…）与演示行（no/product…）。 */
+  function orderDetailModalBody(UI, r, offline) {
+    const g = (...keys) => { for (const k of keys) { if (r[k] !== undefined && r[k] !== null && r[k] !== "") return r[k]; } return null; };
+    const no = g("order_no", "no");
+    const level = g("customer_level", "level");
+    const levelCls = level === "S" ? "badge-red" : level === "A" ? "badge-amber" : "badge-gray";
+    const offlineTip = offline
+      ? `<div class="std-modal-warn">${UI.icon("warn", 12)}
+         后端离线或接口受限，以下来自看板风险订单行，交期 / 齐套等字段<b>缺省</b>。</div>`
+      : "";
+    if (!no && !offline) {
+      return `<div class="std-modal-body"><div class="empty">${UI.icon("info", 26)}
+        <div style="margin-top:8px">查无此订单号。</div>
+        <div class="std-modal-hint">订单可能已归档到其它窗口，可回看板按口径重试。</div>
+      </div></div>`;
+    }
+    const row = (k, v) => v == null ? "" : `<div class="std-cause-line" style="display:flex;gap:8px">
+        <span style="min-width:64px;color:var(--text-3);font-size: calc(12px * var(--font-scale))">${UI.esc(k)}</span>
+        <b style="font-size: calc(12.5px * var(--font-scale))">${v}</b></div>`;
+    const kit = r.kit_rate != null
+      ? `${UI.esc(r.kit_rate)}%（${UI.esc(fmtQty(r.kit_done_qty == null ? "—" : r.kit_done_qty))} / ${UI.esc(fmtQty(r.kit_total_qty == null ? "—" : r.kit_total_qty))}）`
+      : null;
+    const progress = Number(g("progress") || 0);
+    return `<div class="std-modal-body">${offlineTip}
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+        <span class="ro-no">${UI.esc(no || "—")}</span>
+        <span class="badge badge-blue">${UI.esc(g("customer") || "—")}</span>
+        <span class="badge ${levelCls}">客户等级 ${UI.esc(level || "—")}</span>
+        ${g("risk_type") ? `<span class="badge badge-outline">${UI.esc(g("risk_type"))}</span>` : ""}
+        ${(g("delay_days") || 0) > 0 ? `<span class="badge badge-red">延期 ${UI.esc(g("delay_days"))} 天</span>` : `<span class="badge badge-gray">无延期</span>`}
+      </div>
+      <div class="std-chips">
+        <span class="std-chip">产品 <b>${UI.esc(g("product_model", "product") || "—")}</b></span>
+        <span class="std-chip">数量 <b>${UI.esc(fmtQty(g("qty")))}</b>pcs</span>
+        <span class="std-chip">环节 <b>${UI.esc(g("stage") || "—")}</b></span>
+        <span class="std-chip">责任人 <b>${UI.esc(g("owner") || "—")}</b></span>
+      </div>
+      <div class="std-notes">
+        ${row("下单日期", g("order_date"))}
+        ${row("客户交期", g("due_date"))}
+        ${row("实际发货", g("ship_date"))}
+        ${row("准时 / 足额", g("on_time") == null ? null : `${g("on_time") ? "准时" : "逾期"} / ${g("in_full") ? "足额" : "缺料"}`)}
+        ${row("齐套率", kit)}
+      </div>
+      ${r.shortage_note ? `<div class="std-modal-warn">${UI.icon("warn", 12)}缺料/异常：${UI.esc(r.shortage_note)}</div>` : ""}
+      <div class="std-notes"><div class="std-cause-line" style="display:flex;gap:8px;align-items:center">
+        <span style="min-width:64px;color:var(--text-3);font-size: calc(12px * var(--font-scale))">履约进度</span>
+        <div class="progress" style="flex:1"><div class="progress-bar ${progress < 50 ? "warn" : ""}" style="width:${progress}%"></div></div>
+        <b style="font-size: calc(12px * var(--font-scale))">${UI.esc(progress)}%</b></div>
+      </div>
+    </div>`;
+  }
+
+  /** 点风险订单行 → 弹窗：在线取全字段明细；离线用看板行数据降级展示。 */
+  async function openOrderDetailModal(ctx, orderNo, row) {
+    const UI = ctx.UI;
+    const shell = openOrderModalShell(ctx, "订单 · 详情", orderNo,
+      "订单全字段明细 · 客户身份按岗位脱敏");
+    let data = null, offline = false;
+    try {
+      if (!ctx.api.online()) throw new Error("offline");
+      data = await ctx.api.orderDetail(orderNo);
+      if (data && data.found === false) data = null;   // 查无此单 → 走空态
+    } catch (err) { offline = true; }
+    const r = (data && data.order && Object.keys(data.order).length)
+      ? Object.assign({}, data.order, { kit_rate: data.kit_rate }) : (row || {});
+    fillOrderModal(shell, orderDetailModalBody(UI, r, offline));
+  }
+
+  /** 订单履约 2 级看板「点行」弹窗正文：指标小结 + 订单清单（列随指标动态下发）。
+   *  在线时与 2 级看板该行同一套 DRILL_DEFS 口径（头部指标值逐字段可对账）；
+   *  离线降级为「只有该行已缓存的比率」并明确标注，绝不编造订单明细。 */
+  function orderGroupModalBody(UI, d, offline, fb) {
+    const row = fb || {};
+    const w = (d && d.window) || {};
+    const val = (d && d.value) != null
+      ? `${UI.esc(d.value)}${UI.esc(d.unit || "%")}`
+      : (row.value != null ? `${UI.esc(row.value)}%` : "—");
+    const frac = (d && d.numerator) != null
+      ? `${UI.esc(d.numerator)} ÷ ${UI.esc(d.denominator)}`
+      : (row.numerator != null ? `${UI.esc(row.numerator)} ÷ ${UI.esc(row.denominator)}` : "—");
+    const chips = `<div class="std-chips">
+        <span class="std-chip">${UI.esc((d && d.label) || "指标值")}
+          <b class="${UI.esc((d && d.status) || row.status || "")}">${val}</b></span>
+        <span class="std-chip">目标 <b>${(d && d.target) != null
+          ? UI.esc(d.target) + UI.esc(d.unit || "%") : "—"}</b></span>
+        <span class="std-chip">分子 ÷ 分母 <b>${frac}</b></span>
+        ${d && d.orders ? `<span class="std-chip">清单 <b>${UI.esc(d.orders.length)}</b> 单</span>` : ""}
+      </div>`;
+    const offlineTip = offline
+      ? `<div class="std-modal-warn">${UI.icon("warn", 12)}
+         后端离线或接口受限，以下仅为 2 级看板已缓存的该行比率，<b>不含</b>订单清单。</div>`
+      : ((d && !d.found) ? `<div class="std-modal-warn">${UI.icon("info", 12)}
+         该分组在「${UI.esc(w.label || "当前口径")}」内没有订单（不是数据丢失）。</div>` : "");
+    if (offline || (d && d.found === false)) {
+      return `<div class="std-modal-body">${offlineTip}${chips}
+        ${(d && d.notes || []).map((n) => `<div class="std-notes">${UI.icon("info", 12)}<span>${UI.esc(n)}</span></div>`).join("")}
+      </div>`;
+    }
+    const cols = (d && d.columns) || [];
+    const rows = (d && d.orders) || [];
+    const cell = (r, c) => {
+      const v = r[c.key];
+      if (c.key === "on_time" || c.key === "in_full") {
+        if (v === null || v === undefined) return "—";
+        return v === 1 ? `<span class="badge badge-gray">是</span>`
+                       : `<span class="badge badge-red">否</span>`;
+      }
+      if (c.key === "customer_level") {
+        return v ? `<span class="badge ${v === "S" ? "badge-red" : v === "A" ? "badge-amber" : "badge-gray"}">${UI.esc(v)}</span>` : "—";
+      }
+      if (c.key === "progress") return v == null ? "—" : `${UI.esc(v)}%`;
+      if (c.key === "delay_days") {
+        return `<span class="${(v || 0) > 0 ? "std-delta neg" : ""}">${v == null ? "—" : UI.esc(v)}</span>`;
+      }
+      return v === null || v === undefined || v === "" ? "—" : UI.esc(v);
+    };
+    const table = rows.length ? `<div class="drill-scroll"><table class="std-table">
+        <thead><tr>${cols.map((c) => `<th>${UI.esc(c.label)}</th>`).join("")}</tr></thead>
+        <tbody>${rows.map((r) => `<tr>${cols.map((c) => `<td>${cell(r, c)}</td>`).join("")}</tr>`).join("")}</tbody>
+      </table></div>`
+      : `<div class="empty">${UI.icon("check", 22)}
+          <div style="margin-top:8px">该口径内此分组无订单</div></div>`;
+    return `<div class="std-modal-body">${offlineTip}${chips}${table}
+      ${(d && d.notes || []).map((n) => `<div class="std-notes">${UI.icon("info", 12)}<span>${UI.esc(n)}</span></div>`).join("")}
+    </div>`;
+  }
+
+  /** 订单履约 2 级看板点行 → 分组订单明细弹窗（对齐班组三率弹窗模式）。
+   *  行缓存值（rowJson）仅作离线降级；在线以 /orders/group 的同口径聚合为准。 */
+  async function openOrderGroupModal(ctx, kpi, entityJson, win, rowJson) {
+    const UI = ctx.UI;
+    let ent = {}, row = {};
+    try { ent = JSON.parse(entityJson || "{}") || {}; } catch (e) { ent = {}; }
+    try { row = JSON.parse(rowJson || "{}") || {}; } catch (e) { row = {}; }
+    const name = row.name
+      || [ent.customer, ent.level].filter(Boolean).join(" · ")
+      || ent.model || "—";
+    const shell = openOrderModalShell(ctx, "2 级 · 订单明细", name,
+      "该分组订单清单 · 口径与看板一致 · 客户身份按岗位脱敏");
+    let data = null, offline = false;
+    try {
+      if (!ctx.api.online()) throw new Error("offline");
+      data = await ctx.api.ordersGroup(kpi, ent, win);
+    } catch (err) {
+      if (err && err.kind === "permission_denied") {
+        // 403 如实拒绝，不降级成演示明细（与看板加载器同一纪律）
+        fillOrderModal(shell, `<div class="std-modal-body"><div class="empty">
+          ${UI.icon("warn", 26)}<div style="margin-top:8px">当前岗位无权查看该分组订单明细。</div>
+        </div></div>`);
+        return;
+      }
+      offline = true;
+    }
+    fillOrderModal(shell, orderGroupModalBody(UI, data, offline, row));
+    // 3 级入口移到弹窗顶部（标题右侧）；仅在确有订单清单时提供，走既有 L3 下钻机件
+    // （面包屑 / 返回 / 口径切换全部复用）。
+    if (!offline && data && data.found !== false && ((data.orders || []).length)) {
+      setModalHeadEntry(shell, `<button type="button" class="btn btn-primary" data-order-group-drill3
+        title="继续下钻到 3 级：该分组逐日明细 + 原始记录">进入 3 级看板</button>`,
+      () => {
+        shell.close();
+        const host = ((ctx.state.screenState || {}).boardDrill || {}).host || "";
+        setDrill(ctx, { level: 3, host, screen: "orders", kpi, entity: ent, window: win });
+      });
+    }
+  }
+
+  /** SPC 2 级看板行 → 该特性的能力明细弹窗：能力指数（双西格玛）+ 逐日越限 + 原始记录。
+   *  口径跟随当前档位与板级筛选（工段 / 产品分类）；与 L1 卡片**同源**（同一后端聚合），
+   *  弹窗内保留「进入 3 级看板」入口（走既有 setDrill：面包屑 / 返回 / 口径切换全部复用）。
+   *  403 如实拒绝（不降级演示明细）；离线显式标注；无数据如实说「暂无」，绝不编造。 */
+  async function openSpcCapabilityModal(ctx, spec) {
+    const UI = ctx.UI;
+    const name = spec.name || spec.characteristic || "—";
+    const shell = openOrderModalShell(ctx, "2 级 · 过程能力", name,
+      "该特性的能力指数与越限明细 · 口径与看板一致");
+    let data = null, offline = false;
+    try {
+      if (!ctx.api.online()) throw new Error("offline");
+      data = await ctx.api.spcCapability(spec.characteristic, spec.win,
+        spec.stage, spec.productCategory);
+    } catch (err) {
+      if (err && err.kind === "permission_denied") {
+        // 403 如实拒绝，不降级成演示明细（与看板加载器同一纪律）
+        fillOrderModal(shell, `<div class="std-modal-body"><div class="empty">
+          ${UI.icon("warn", 26)}<div style="margin-top:8px">当前岗位无权查看该特性的过程能力明细。</div>
+        </div></div>`);
+        return;
+      }
+      if (err && err.status === 404) {
+        // 服务端尚未部署该能力（旧版本服务未重启）→ 如实说明，不误导成「离线」
+        fillOrderModal(shell, `<div class="std-modal-body"><div class="std-modal-warn">
+          ${UI.icon("warn", 14)}<span>服务端尚未包含「过程能力明细」能力（版本待更新），
+          数据本身在线；服务端更新后即可查看。</span>
+        </div></div>`);
+        return;
+      }
+      offline = true;
+    }
+    fillOrderModal(shell, spcCapabilityModalBody(UI, data, offline, name));
+    // 3 级入口移到弹窗顶部（标题右侧）；仅在确有明细时提供，走既有 L3 下钻机件
+    // （面包屑 / 返回 / 口径切换全部复用）。
+    if (!offline && data && data.found !== false) {
+      setModalHeadEntry(shell, `<button type="button" class="btn btn-primary"
+        data-spc-drill3>进入 3 级看板</button>`,
+      () => {
+        shell.close();
+        const host = ((ctx.state.screenState || {}).boardDrill || {}).host || "";
+        setDrill(ctx, { level: 3, host, screen: "spc", kpi: "spc_capability",
+          entity: { characteristic: spec.characteristic }, window: spec.win });
+      });
+    }
+  }
+
+  /** SPC 测量记录弹窗：越限明细（overOnly）/ 单日明细（day）。
+   *  与看板同口径（同窗口 / 同维度筛选）→ 记录数与看板「越限条数 / 测量条数」可对账。
+   *  数据源 GET /api/v2/dashboard/spc/records（403 如实拒绝 / 离线显式标注 / 空数据骨架）。 */
+  async function openSpcRecordsModal(ctx, spec) {
+    const UI = ctx.UI;
+    const isOver = !!spec.overOnly;
+    const title = isOver ? "越限明细 · 子组超差率" : "单日测量明细";
+    const name = isOver ? (spec.stage ? `${spec.stage} 工段` : "全部特性")
+      : (spec.characteristic || "全部特性") + (spec.day ? ` · ${spec.day}` : "");
+    const shell = openOrderModalShell(ctx, title, name,
+      isOver ? "超出规格限的测量记录 · 按超出幅度降序 · 口径与看板一致"
+             : "该日全部测量记录 · 口径与看板一致");
+    let data = null, offline = false;
+    try {
+      if (!ctx.api.online()) throw new Error("offline");
+      data = await ctx.api.spcRecords(spec.win, spec.stage, spec.productCategory,
+        spec.characteristic || "", spec.day || "", isOver);
+    } catch (err) {
+      if (err && err.kind === "permission_denied") {
+        fillOrderModal(shell, `<div class="std-modal-body"><div class="empty">
+          ${UI.icon("warn", 26)}<div style="margin-top:8px">当前岗位无权查看该测量记录明细。</div>
+        </div></div>`);
+        return;
+      }
+      if (err && err.status === 404) {
+        // 服务端尚未部署该能力（旧版本服务未重启）→ **如实说明原因**，
+        // 不误导成「离线」——数据明明在线，只是服务端版本落后。
+        fillOrderModal(shell, `<div class="std-modal-body"><div class="std-modal-warn">
+          ${UI.icon("warn", 14)}<span>服务端尚未包含「测量记录明细」能力（版本待更新），
+          数据本身在线；服务端更新后即可查看。</span>
+        </div></div>`);
+        return;
+      }
+      offline = true;
+    }
+    if (offline) {
+      fillOrderModal(shell, `<div class="std-modal-body"><div class="std-modal-warn">
+        ${UI.icon("warn", 14)}<span>离线演示数据不含测量记录明细，可恢复后端后重试。</span>
+      </div></div>`);
+      return;
+    }
+    if (!data || data.found === false) {
+      fillOrderModal(shell, `<div class="std-modal-body"><div class="empty">${UI.icon("info", 24)}
+        <div style="margin-top:8px">当前口径与筛选范围内暂无${isOver ? "越限" : "测量"}记录。</div>
+      </div></div>`);
+      return;
+    }
+    const cell = (v) => (v === null || v === undefined || v === "" ? "—" : UI.esc(v));
+    const cols = data.columns || [];
+    const f = data.filter || {};
+    const scopeCn = [f.stage ? `工段 ${f.stage}` : "", f.product_category ? `产品分类 ${f.product_category}` : ""]
+      .filter(Boolean).join(" · ") || "全厂";
+    const rows = (data.records || []).map((r) => `<tr>${cols.map((c) => {
+      const raw = r[c.key];
+      const v = (c.key === "source" && raw === "demo-seed") ? "演示种子" : raw;
+      return `<td>${cell(v)}</td>`;
+    }).join("")}</tr>`).join("");
+    fillOrderModal(shell, `<div class="std-modal-body">
+      <div class="std-modal-cols">
+        <div class="std-modal-col"><i>${isOver ? "越限记录" : "测量记录"}</i>
+          <b>${UI.esc(data.count)}</b><em>条（最多展示 ${UI.esc((data.records || []).length)} 条）</em></div>
+        <div class="std-modal-col"><i>范围</i><b>${UI.esc(scopeCn)}</b>
+          <em>${f.characteristic ? UI.esc(f.characteristic) : "全部特性"}${f.day ? " · " + UI.esc(f.day) : ""}</em></div>
+      </div>
+      <div class="card"><div class="drill-scroll"><table class="std-table drill-table">
+        <thead><tr>${cols.map((c) => `<th>${UI.esc(c.label || c.key)}</th>`).join("")}</tr></thead>
+        <tbody>${rows}</tbody></table></div></div>
+      <div class="std-modal-note">${UI.icon("info", 12)}<span>口径与看板一致（同窗口 · 同维度筛选）——
+        ${isOver ? "越限 = 测量值超出规格上限或低于规格下限；超出幅度 = 超出量 ÷ 规格区间。"
+                 : "「数据来源：演示种子」表示该行来自演示数据装载，非运行时录入。"}</span></div>
+    </div>`);
+  }
+
+  /** SPC 能力明细弹窗正文：能力指数小签 + 逐日越限 + 原始记录表。 */
+  function spcCapabilityModalBody(UI, d, offline, name) {
+    if (offline) {
+      return `<div class="std-modal-body"><div class="std-modal-warn">
+        ${UI.icon("warn", 14)}<span>离线演示数据不含该特性的明细，可恢复后端后重试。</span>
+      </div><div class="empty">${UI.icon("info", 24)}
+        <div style="margin-top:8px">「${UI.esc(name)}」的明细暂不可用（离线）。</div></div></div>`;
+    }
+    if (!d) {
+      return `<div class="std-modal-body"><div class="empty">${UI.icon("info", 24)}
+        <div style="margin-top:8px">暂无法加载「${UI.esc(name)}」的明细。</div></div></div>`;
+    }
+    if (d.found === false) {
+      return `<div class="std-modal-body"><div class="empty">${UI.icon("info", 24)}
+        <div style="margin-top:8px">「${UI.esc(name)}」在当前口径与筛选范围内暂无测量记录。</div>
+      </div></div>`;
+    }
+    const cell = (v) => (v === null || v === undefined ? "—" : UI.esc(v));
+    const spec = d.spec || {};
+    const specTxt = (spec.lsl == null && spec.usl == null) ? "—"
+      : `${spec.lsl == null ? "—" : spec.lsl} ~ ${spec.usl == null ? "—" : spec.usl}`;
+    const tone = SPC_VERDICT[d.verdict] || "empty";
+    const kpis = `<div class="std-modal-cols">
+      <div class="std-modal-col"><i>Cpk</i><b class="std-conform ${UI.esc(tone)}">${cell(d.cpk)}</b>
+        <em>判定 ${UI.esc(d.verdict || "—")}</em></div>
+      <div class="std-modal-col"><i>Cp</i><b>${cell(d.cp)}</b><em>组内 σ 口径</em></div>
+      <div class="std-modal-col"><i>Ppk</i><b>${cell(d.ppk)}</b><em>整体 σ 口径</em></div>
+      <div class="std-modal-col"><i>子组超差率</i><b>${cell(d.over_rate)}%</b>
+        <em title="越限条数 ÷ 测量条数（子组口径）">${UI.esc(d.over_num)} ÷ ${UI.esc(d.over_den)}</em></div>
+      <div class="std-modal-col"><i>样本 / 子组</i><b>${cell(d.n_total)} / ${cell(d.n_subgroups)}</b>
+        <em>规格 ${UI.esc(specTxt)}（演示规格限 · 工艺侧待给定）</em></div>
+    </div>`;
+    const daily = (d.daily || []).length ? `<div class="section-title">子组超差率 · 逐日越限
+        <span class="section-extra">与看板「子组超差率」同源（同批测量行现算）</span></div>
+      <div class="card"><div class="std-modal-trend">${(d.daily || []).map((x) => `
+        <div class="std-modal-trend-item"><span class="std-modal-trend-label">${UI.esc(x.date)}</span>
+          <span class="std-modal-trend-val">${UI.esc(x.over_rate)}%</span></div>`).join("")}</div></div>` : "";
+    const cols = d.columns || [];
+    const recs = d.records || [];
+    const table = recs.length ? `<div class="section-title">关联原始记录
+        <span class="section-extra">最多 ${recs.length} 条 · 与聚合同源</span></div>
+      <div class="card"><div class="drill-scroll"><table class="std-table drill-table">
+        <thead><tr>${cols.map((c) => `<th>${UI.esc(c.label || c.key)}</th>`).join("")}</tr></thead>
+        <tbody>${recs.map((r) => `<tr>${cols.map((c) => {
+          // 「数据来源」显示翻译（与 mfgRecordCard 同口径）：demo-seed = 演示种子
+          const raw = r[c.key];
+          const v = (c.key === "source" && raw === "demo-seed") ? "演示种子" : raw;
+          return `<td>${cell(v)}</td>`;
+        }).join("")}</tr>`).join("")}</tbody>
+      </table></div></div>` : "";
+    return `<div class="std-modal-body">${kpis}${daily}${table}
+      <div class="std-modal-note">${UI.icon("info", 12)}<span>双西格玛口径：Cp/Cpk 用组内 σ（Xbar-R），
+        Pp/Ppk 用整体 σ；判定线 ≥1.33 合格 / ≥1.00 偏低 / &lt;1.00 不合格。</span></div>
+    </div>`;
+  }
+
+  /** 制造看板 2/3/4 级行 → 明细弹窗：拉「下一级」下钻载荷（工段 · 工序 · 工位 + 逐日 + 关联
+   *  原始记录）在弹窗里就地展示，弹窗内保留「进入 N 级看板」入口（走既有 setDrill：
+   *  面包屑 / 返回 / 口径切换全部复用）。在线以 /dashboard/drill 的同口径聚合为准；
+   *  离线降级到演示数据并明确标注，缺数据时如实说「暂无」，绝不编造明细。 */
+  async function openMfgDrillModal(ctx, spec) {
+    const UI = ctx.UI;
+    const lvl = Math.min(5, Math.max(3, spec.level || 3));
+    const shell = openOrderModalShell(ctx, `${lvl} 级 · 明细详情`, spec.name || "—",
+      "制造看板 · 与所看口径同源 · 关联原始记录可追溯 · 弹窗内可进入整页看板");
+    if (!shell.body) return;
+    const ss = ctx.state.screenState || {};
+    // 与看板级筛选同口径：制造四指标声明了 scope（工段 / 产品分类），下钻一并生效
+    const mStage = spec.screen === "manufacturing" ? (ss.mfgMStage || "") : "";
+    const mPcat = spec.screen === "manufacturing" ? (ss.mfgProdCat || "") : "";
+    let data = null, reason = "";
+    try {
+      if (!ctx.api.online()) throw new Error("offline");
+      const d = await ctx.api.dashboardDrill(spec.screen, spec.kpi, spec.entity,
+        spec.step || "", spec.station || "", "", spec.win || "window",
+        mStage, "", mPcat);
+      if (d && !d.degraded && d.level === lvl) data = d;
+      else reason = (d && d.degraded_reason) || "后端数据降级";
+    } catch (err) {
+      if (err && err.kind === "permission_denied") {
+        // 403 如实拒绝，不降级成演示明细（与看板加载器同一纪律）
+        fillOrderModal(shell, `<div class="std-modal-body"><div class="empty">
+          ${UI.icon("warn", 26)}<div style="margin-top:8px">当前岗位无权查看该明细。</div>
+        </div></div>`);
+        return;
+      }
+      reason = UI.friendlyError(err).text;
+    }
+    if (!data) {
+      data = mfgDrillFallback(ctx, {
+        level: lvl, screen: spec.screen, kpi: spec.kpi, entity: spec.entity,
+        step: spec.step || "", station: spec.station || "", window: spec.win || "window",
+      }, reason || "后端离线 · 演示数据");
+    }
+    if (!data) {
+      fillOrderModal(shell, `<div class="std-modal-body"><div class="empty">
+        ${UI.icon("warn", 26)}<div style="margin-top:8px">该分组在当前口径下暂无明细数据</div>
+        <div style="margin-top:6px;font-size: calc(12.5px * var(--font-scale));color:var(--text-3)">
+          离线演示数据只含 TOP5 分组；逐日明细与关联原始记录需后端在线</div>
+      </div></div>`);
+      return;
+    }
+    const bodyOf = { 3: mfgDrillL3Body, 4: mfgDrillL4Body, 5: mfgDrillL5Body };
+    fillOrderModal(shell, `<div class="std-modal-body">
+      ${data.degraded ? UI.demoFlag(data.degraded_reason || "演示数据") : ""}
+      ${(bodyOf[lvl] || mfgDrillL3Body)(UI, data)}
+    </div>`);
+    // 弹窗正文里的行还要再绑一次：弹窗挂在 <body> 下、不在看板容器里，mfgBind 的常规绑定到不了。
+    // 这样弹窗内才有「工序行 → 4 级弹窗」「工位行 → 5 级弹窗」「行内问数 → 协同问数」。
+    const modalHost = document.querySelector(".std-modal");
+    if (modalHost) mfgBind(ctx, modalHost, data, "");
+    // 「进入 N 级看板」入口移到弹窗顶部（标题右侧）：走既有 setDrill（面包屑 / 返回 / 口径切换全部复用）
+    setModalHeadEntry(shell, `<button type="button" class="btn btn-primary" data-mfg-modal-jump
+      title="关闭弹窗并进入 ${lvl} 级看板（面包屑 / 返回 / 口径切换全部复用）">
+      进入 ${lvl} 级看板</button>`,
+    () => {
+      shell.close();
+      const host = ((ctx.state.screenState || {}).boardDrill || {}).host || "";
+      const next = { level: lvl, host: host, screen: spec.screen, kpi: spec.kpi,
+                     entity: spec.entity, window: spec.win || "window" };
+      if (spec.step) next.step = spec.step;
+      if (spec.station) next.station = spec.station;
+      setDrill(ctx, next);
+    });
+  }
+
+  /** 部门域卡正文：域内各部门待办/闭环/超时条形 + 闭环率（纯前端演示数据）。 */
+  function orderDomainModalBody(UI, dd) {
+    const todo = dd.depts.reduce((s, x) => s + x.todo, 0);
+    const done = dd.depts.reduce((s, x) => s + x.done, 0);
+    const over = dd.depts.reduce((s, x) => s + x.over, 0);
+    const closed = todo + done;
+    const chips = `<div class="std-chips">
+        <span class="std-chip">待办 <b class="neg">${UI.esc(todo)}</b></span>
+        <span class="std-chip">已闭环 <b class="pos">${UI.esc(done)}</b></span>
+        <span class="std-chip">超时 <b class="${over > 0 ? "neg" : ""}">${UI.esc(over)}</b></span>
+        <span class="std-chip">闭环率 <b>${closed ? UI.esc(Math.round(done / closed * 100)) + "%" : "—"}</b></span>
+      </div>`;
+    const rows = dd.depts.map((x) => {
+      const total2 = x.todo + x.done;
+      const rate = total2 ? Math.round(x.done / total2 * 100) : 0;
+      return `<div class="std-cause-item">
+        <div class="std-cause-line">
+          <span class="std-cause-name">${UI.esc(x.name)}</span>
+          <b>待办 ${UI.esc(x.todo)} · 闭环 ${UI.esc(x.done)}${x.over > 0 ? ` · <i style="color:var(--danger);font-style:normal">超时 ${UI.esc(x.over)}</i>` : ""}</b>
+        </div>
+        <div class="std-cause-bar"><i class="ok-fill" style="width:${Math.max(2, rate)}%"></i></div>
+        <div class="std-cause-meta">闭环率 ${rate}%</div>
+      </div>`;
+    }).join("");
+    return `<div class="std-modal-body">${chips}${rows}
+      <div class="std-notes">${UI.icon("info", 12)}<span>今日待办 / 已闭环 / 超时为协同演示口径；超时 = SLA 临期未闭环事项。</span></div>
+    </div>`;
+  }
+
+  /** 点部门域卡 → 弹窗：域内协同明细（数据与看板卡片同源，纯前端）。 */
+  function openOrderDomainModal(ctx, name) {
+    const UI = ctx.UI;
+    const dd = (((ctx.DEMO || {}).ORDERS || {}).domains || [])
+      .find((x) => x.name === name);
+    if (!dd) return;
+    const shell = openOrderModalShell(ctx, "订单 · 协同", name,
+      `「${name}」${dd.depts.length} 个部门 · 今日待办 / 闭环 / 超时`);
+    fillOrderModal(shell, orderDomainModalBody(UI, dd));
   }
 
   /* ============================================================
@@ -973,8 +1616,28 @@
     "business_order", "warehouse_atp", "manufacturing_output", "logistics",
     // S8 设备预警
     "maintenance", "planning_window", "engineering_param", "spare_parts",
+    // V4 协同规划器：多域并行取证（collab_<domain>）
+    "collab_quality", "collab_manufacturing", "collab_supply_chain",
+    "collab_rd_engineering",
   ]);
+  // 在线引导问题：**选能凸显问数亮点、且已实测命中各条链路的问法**——
+  //   ① 跨域态势汇总（digest）：一次拿到全厂未达标清单，口径随提问；
+  //   ② SPC 过程能力（双西格玛口径 + 工具并轨）：越限即走处置确认；
+  //   ③ 协同场景闭环：三域并行取证 → 根因 → 工单 → 人工确认；
+  //   ④ 指标库口径统一：秒级直答，与看板同口径；
+  //   ⑤ 跨域取证 + 对客承诺确认。
+  // 不用"排产/排程/设备参数在哪"这类当前无对应链路的问法——点了答不上来，
+  // 反而看不出能力（旧版引导问题的实测结论）。
   const QUICK_QUESTIONS = [
+    "本月度最需关注什么？",
+    "回流焊峰值温度的过程能力 Cpk 是否越限？",
+    "A型号在SMT-1停线，何时复线？",
+    "最近7天 OTD 准时交付率是多少？",
+    "A型号能发多少货",
+  ];
+  // 离线引导问题：离线靠**预置回放**（demo-data.CHAT_DEMOS 按问题原文索引），
+  // 故只能用已收录的 5 条；在线才换成上面的亮点问法（避免离线点了报"未收录"）。
+  const DEMO_QUICK_QUESTIONS = [
     "A型号在SMT-1停线，何时复线？",
     "今天锡膏批次有问题",
     "华为投诉BATCH-A-1008",
@@ -1033,6 +1696,11 @@
     maintenance_flow: "工作流 · 维保工单",
     hitl_maintenance_window: "人工确认 · 停机窗口确认",
     report_equipment: "报告 · 设备简报",
+    // V4 协同规划器：多域并行取证节点（事件通常已带 label，此处为兜底）
+    collab_quality: "质量域智能体 · 并行取证",
+    collab_manufacturing: "制造域智能体 · 并行取证",
+    collab_supply_chain: "供应链智能体 · 并行取证",
+    collab_rd_engineering: "研发工程智能体 · 并行取证",
   };
 
   function chatStore(ctx) {
@@ -1135,7 +1803,7 @@
             ? ""
             : `<span class="offline-banner" style="padding:5px 11px">${UI.icon("warn", 13)}后端离线——当前为演示模式：对话使用预置演示结果回放（已标注演示）</span>`}
           <div class="head-extra">
-            <span style="font-size:12px;color:var(--text-3)">问数角色</span>
+            <span style="font-size: calc(12px * var(--font-scale));color:var(--text-3)">问数角色</span>
             ${UI.badge(ctx.currentRole().name, "badge-blue")}
             <button class="btn btn-outline btn-sm" id="chat-clear">${UI.icon("refresh", 12)}清空对话</button>
           </div>
@@ -1144,17 +1812,18 @@
           <div class="chat-scroll" id="chat-scroll"></div>
           <div class="chat-inputbar">
             <div class="chat-chips" id="chat-chips">
-              ${QUICK_QUESTIONS.map((q) => `<button class="chip" data-q="${UI.esc(q)}">${UI.esc(q)}</button>`).join("")}
+              ${(ctx.api.online() ? QUICK_QUESTIONS : DEMO_QUICK_QUESTIONS)
+                .map((q) => `<button class="chip" data-q="${UI.esc(q)}">${UI.esc(q)}</button>`).join("")}
             </div>
             <div class="chat-history" id="chat-history">
               <span class="chat-history-label">${UI.icon("clock", 12)}最近问过（点击重问）</span>
               <span id="chat-history-items"></span>
             </div>
             <div class="chat-input-row">
-              <textarea class="chat-input" id="chat-input" rows="1" placeholder="请输入制造业协同问题，例如：A型号在SMT-1停线，何时复线？"></textarea>
+              <textarea class="chat-input" id="chat-input" rows="1" placeholder="请输入制造业协同问题，例如：本月度最需关注什么？"></textarea>
               <button class="chat-send" id="chat-send" title="发送">${UI.icon("send", 17)}</button>
             </div>
-            <div class="chat-hint">问数链路：两级路由 → 场景 DAG（三域并行取证 → 根因分析 → 工作流工单 → 人工确认 → 报告）· 全部结论数据可追溯</div>
+            <div class="chat-hint">问数链路：看板 KPI 点「问数」→ 与看板同口径直查　·　开放式提问 → 跨域态势汇总　·　具体问题 → 数据直答 / 跨域取证 / 协同场景（工单 → 人工确认 → 报告）· 结论均可追溯</div>
           </div>
         </div>
       </div>`;
@@ -1170,7 +1839,7 @@
     const hist = chatHistory();
     if (histBox) {
       if (!hist.length) {
-        histBox.innerHTML = `<span style="color:var(--text-3);font-size:11.5px">暂无（问完自动记录）</span>`;
+        histBox.innerHTML = `<span style="color:var(--text-3);font-size: calc(11.5px * var(--font-scale))">暂无（问完自动记录）</span>`;
       } else {
         histBox.innerHTML = hist.slice(0, 6).map((h) =>
           `<button class="chip chip-hist" data-hq="${UI.esc(h.q)}" title="${UI.esc(h.summary || "")}">${UI.esc(h.q.length > 18 ? h.q.slice(0, 18) + "…" : h.q)}</button>`).join("");
@@ -1201,12 +1870,19 @@
       if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); doSend(); }
     });
 
-    // 其他屏下钻带来的预填问题（KPI 卡/全局搜索）：自动发送一次
+    // 其他屏下钻带来的预填问题（KPI 卡/全局搜索）：自动发送一次。
+    // ask_ctx 与预填搭对：本轮自动发送携带结构化上下文（用后即清——
+    // 用户手动输入的后续问题不继承旧口径，防止跨 KPI 串口径）。
     let prefill = null;
     try { prefill = sessionStorage.getItem("chat_prefill"); } catch (e) { /* 忽略 */ }
     if (prefill) {
-      try { sessionStorage.removeItem("chat_prefill"); } catch (e) { /* 忽略 */ }
-      sendChatQueryRouter(ctx, scroll, prefill);
+      let prefillAskCtx = null;
+      try {
+        prefillAskCtx = readAskCtx();
+        sessionStorage.removeItem("chat_prefill");
+        clearAskCtx();
+      } catch (e) { /* 忽略 */ }
+      sendChatQueryRouter(ctx, scroll, prefill, prefillAskCtx);
     }
     input.addEventListener("input", () => {
       input.style.height = "auto";
@@ -1233,7 +1909,7 @@
   function renderChatMessages(ctx, scroll) {
     const chat = chatStore(ctx);
     if (!chat.messages.length) {
-      scroll.innerHTML = `<div class="empty" style="margin:auto">${ctx.UI.icon("chat", 34)}<div style="margin-top:10px;font-size:13px">向智能总控提问，或点击上方快捷问题开始</div></div>`;
+      scroll.innerHTML = `<div class="empty" style="margin:auto">${ctx.UI.icon("chat", 34)}<div style="margin-top:10px;font-size: calc(13px * var(--font-scale))">向智能总控提问，或点击上方快捷问题开始</div></div>`;
       return;
     }
     scroll.innerHTML = chat.messages.map((m) => renderChatMessage(ctx, m)).join("");
@@ -1261,6 +1937,7 @@
     if (m.kind === "flow") body = flowPanelHtml(ctx, m);
     else if (m.kind === "result") body = resultCardHtml(ctx, m.result, { demo: !!m.demo });
     else if (m.kind === "qa") body = qaAnswerCardHtml(ctx, m.result, { demo: !!m.demo });
+    else if (m.kind === "digest") body = digestCardHtml(ctx, m.result, { demo: !!m.demo });
     else if (m.kind === "chitchat") body = chitchatCardHtml(ctx, m.result, { demo: !!m.demo });
     else if (m.kind === "fallback") body = fallbackCardHtml(ctx, m.result, { demo: !!m.demo });
     else if (m.kind === "hitl") body = hitlChatCardHtml(ctx, m);
@@ -1298,7 +1975,7 @@
 
   /* ---------- 发送：真实链路 ---------- */
 
-  async function sendChatQuery(ctx, scroll, text) {
+  async function sendChatQuery(ctx, scroll, text, askCtx) {
     const UI = ctx.UI;
     const chat = chatStore(ctx);
     chat.messages.push({ kind: "user", id: "m" + ++chat.seq, text });
@@ -1333,9 +2010,18 @@
 
     let result = null;
     try {
-      result = await ctx.api.query(text, requestId, userCtxFor(ctx));
+      result = await ctx.api.query(text, requestId, userCtxFor(ctx), askCtx);
     } catch (err) {
-      chat.messages.push({ kind: "error", id: "m" + ++chat.seq, text: `问数请求失败：${err && err.message ? err.message : String(err)}。请检查后端服务后重试。` });
+      // 错误文案走统一友好层：abort（超时） / 网络不可达 / 后端 5xx 各有人话，
+      // 不再把 "signal is aborted without reason" 这类 DOMException 原文甩给用户。
+      console.warn("[chat] 问数请求失败:", err);
+      const timedOut = err && (err.name === "AbortError"
+        || /abort|timeout/i.test(String(err.message || "")));
+      const text2 = timedOut
+        ? "问数超时：该问题走了重型推理链路（跨域协同 / 根因分析 / 报告生成），"
+          + "后端仍在计算。请稍后重试，或把问题问得更聚焦一些（如指定线体 / 型号 / 批次）。"
+        : `问数未完成：${UI.friendlyError(err).text}`;
+      chat.messages.push({ kind: "error", id: "m" + ++chat.seq, text: text2 });
       flow.status = "error";
       renderChatMessages(ctx, scroll);
       if (es) es.close();
@@ -1424,9 +2110,9 @@
     if (input) { input.disabled = false; input.focus(); }
   }
 
-  /** 统一发送入口：在线走真实链路，离线走演示回放 */
-  function sendChatQueryRouter(ctx, scroll, text) {
-    if (ctx.api.online()) return sendChatQuery(ctx, scroll, text);
+  /** 统一发送入口：在线走真实链路，离线走演示回放（回放不携带 ask_ctx） */
+  function sendChatQueryRouter(ctx, scroll, text, askCtx) {
+    if (ctx.api.online()) return sendChatQuery(ctx, scroll, text, askCtx);
     return sendDemoQuery(ctx, scroll, text);
   }
 
@@ -1477,6 +2163,10 @@
     flow.status = "done";
     // 缓存命中：查询直接回放、无进度事件 → 面板按"结果复用"呈现，避免误标"直答"
     flow.cached = !!(result && result.cached);
+    // 策略留痕：无流程节点时面板文案要按真实策略区分（chitchat / digest / office / qa），
+    // 否则"问候卡旁边写着数据直答"这类自相矛盾会再出现（截图反馈）。
+    flow.strategy = ((result && result.route) || {}).strategy || "";
+    flow.fallback = (result && result.fallback) || "";   // manual_ticket 时同界面文案也要区分
     const timings = (result && result.timings) || {};
     flow.order.forEach((id) => {
       const node = flow.nodes[id];
@@ -1490,10 +2180,19 @@
   function flowPanelHtml(ctx, flow) {
     const UI = ctx.UI;
     const running = flow.order.filter((id) => flow.nodes[id].status === "running").length;
+    // 无流程节点 ≠ 都是"数据直答"：chitchat（问候/引导）、digest（跨域汇总）、
+    // office（办公）同样不经场景编排。此前一律标"直答完成/本问题为数据直答"，
+    // 于是出现"执行过程写着数据直答、结果卡却是打个招呼"的自相矛盾（截图反馈）。
+    const doneLabel = flow.cached ? "结果复用（缓存）"
+      : flow.fallback === "manual_ticket" ? "已转人工跟进（未走场景链路）"
+        : flow.strategy === "chitchat" ? "轻回应完成（不查数据 / 不建工单）"
+          : flow.strategy === "digest" ? "汇总完成（不经场景节点）"
+            : flow.strategy === "office" ? "办公办理完成"
+              : "直答完成（不经场景节点）";
     let stateHtml;
     if (flow.status === "done") stateHtml = flow.order.length
       ? `${UI.icon("check", 12)} 已完成 · ${flow.order.length} 节点`
-      : `${UI.icon("check", 12)} ${flow.cached ? "结果复用（缓存）" : "直答完成（不经场景节点）"}`;
+      : `${UI.icon("check", 12)} ${doneLabel}`;
     else if (flow.status === "error") stateHtml = `${UI.icon("warn", 12)} 执行异常`;
     else stateHtml = `${UI.spinner()} 执行中（${running} 个节点运行中）`;
     return `<div class="flow-panel">
@@ -1505,9 +2204,15 @@
   function flowBodyHtml(ctx, flow) {
     let html = "";
     if (!flow.order.length) {
-      return flow.status === "done"
-        ? `<div class="flow-empty">本问题为数据直答：未经场景编排，直接查询数据并返回（见下方结果卡）。</div>`
-        : `<div class="flow-empty">等待响应…</div>`;
+      if (flow.status !== "done") return `<div class="flow-empty">等待响应…</div>`;
+      const text = flow.fallback === "manual_ticket"
+        ? "该问题确定性链路未能作答：已转人工兜底跟进（见下方结果卡），未臆造结论。"
+        : {
+          chitchat: "语义未匹配到业务域：按轻回应 + 领域引导作答（见下方），未查数据、未建工单。",
+          digest: "跨域态势汇总：不经场景编排，按各看板口径汇总未达标项（见下方结果卡）。",
+          office: "办公事务办理：不经场景编排，由办公助手直接调用工具办理（见下方结果卡）。",
+        }[flow.strategy] || "本问题为数据直答：未经场景编排，直接查询数据并返回（见下方结果卡）。";
+      return `<div class="flow-empty">${text}</div>`;
     }
     let i = 0;
     while (i < flow.order.length) {
@@ -1526,7 +2231,7 @@
         i++;
       }
     }
-    if (!html) html = `<div style="font-size:12.5px;color:var(--text-3)">等待节点启动…</div>`;
+    if (!html) html = `<div style="font-size: calc(12.5px * var(--font-scale));color:var(--text-3)">等待节点启动…</div>`;
     return html;
   }
 
@@ -1555,11 +2260,16 @@
 
   function resultCardMessage(ctx, result, demo) {
     const chat = chatStore(ctx);
-    // 三策略分流（V3.1）：qa=数据直答卡 / fallback=人工兜底卡 / 其余=场景结果卡。
+    // 四策略分流（V4.1）：qa=数据直答卡 / digest=态势汇总卡 / fallback=人工兜底卡 /
+    // 其余=场景结果卡。
     // 注意：qa 直答 scenario_key 也是空——不能再按"scenario_key 空=兜底"判定，
     // 否则查到真实数据的直答会被误渲染成"人工兜底"（截图反馈的 Bug）。
     if (result && result.route && result.route.strategy === "chitchat") {
       return { kind: "chitchat", id: "m" + ++chat.seq, result, demo: !!demo };
+    }
+    if (result && result.route && result.route.strategy === "digest"
+        && result.fallback !== "manual_ticket") {
+      return { kind: "digest", id: "m" + ++chat.seq, result, demo: !!demo };
     }
     if (result && result.route && result.route.strategy === "qa"
         && result.fallback !== "manual_ticket") {
@@ -1582,9 +2292,57 @@
         <div class="badges">${demo ? UI.demoFlag("演示回放") : ""}</div>
       </div>
       <div class="result-body">
-        <div style="font-size:13px;line-height:1.9">${UI.esc(result.report || "")}</div>
+        <div style="font-size: calc(13px * var(--font-scale));line-height:1.9">${UI.esc(result.report || "")}</div>
         ${suggestions.length ? `<div class="act-chips" style="margin-top:10px">${suggestions.map((sg) =>
           `<button type="button" class="chip chip-cmt" data-sq="${UI.esc(sg.example)}">${UI.esc(sg.name)}：${UI.esc(sg.example)}</button>`).join("")}</div>` : ""}
+      </div>
+    </div>`;
+  }
+
+  /** 态势汇总卡（digest 策略）：回答"本月度最需关注什么"这类决策支持型提问。
+   *
+   *  与数据直答卡的区别：这里呈现的是**跨域"未达标"清单**（各看板口径同源）+
+   *  能力不足/S 待办/不可见屏与缺口，按严重度排序；不是单一查询的明细表。
+   */
+  function digestCardHtml(ctx, result, opts) {
+    const UI = ctx.UI;
+    const demo = opts && opts.demo;
+    const brief = result.internal_brief || {};
+    const prov = (result.provenance || [])[0] || {};
+    const items = prov.items || [];
+    const scope = brief["口径"] || "";
+    const rowsHtml = items.map((it, i) => {
+      const sev = it.status === "danger" ? "danger" : "warn";
+      const gap = it.gap ? `缺口 ${Math.abs(it.gap)}pt` : "";
+      return `<div class="digest-row ${sev}">
+        <span class="digest-no">${i + 1}</span>
+        <span class="digest-badge ${sev}">${sev === "danger" ? "严重" : "关注"}</span>
+        <span class="digest-main">
+          <b>${UI.esc(it.board)} · ${UI.esc(it.label)}</b>
+          <span class="digest-num">${UI.esc(it.value)}</span>
+          <span class="digest-meta">目标 ${UI.esc(it.target)}${gap ? " · " + UI.esc(gap) : ""}${it.note ? " · " + UI.esc(it.note) : ""}</span>
+        </span>
+        <button type="button" class="row-ask" data-sq="${UI.esc(it.board + " " + it.label + " " + scope + "为什么没达标？")}"
+          title="就这一项继续问数">${UI.icon("chat", 11)}问数</button>
+      </div>`;
+    }).join("");
+    return `<div class="result-card digest-card">
+      <div class="result-head">
+        <div class="result-title">${UI.icon("grid", 15)}态势汇总 · 最需关注</div>
+        <div class="badges">
+          ${demo ? UI.demoFlag("演示回放") : ""}
+          ${scope ? UI.badge(scope, "badge-outline") : ""}
+          ${UI.badge(`覆盖 ${UI.esc(brief["覆盖看板"] || "")}`, "badge-blue")}
+        </div>
+      </div>
+      <div class="result-body">
+        ${rowsHtml || `<div class="empty" style="padding:14px 0">按当前口径各看板指标均已达标，暂无明显需要升级的项。</div>`}
+        <div class="digest-foot">${UI.esc((result.report || "").split("\n")
+          .filter((l) => l.startsWith("·")).join("　"))}</div>
+        <div style="margin-top:8px;font-size: calc(11.3px * var(--font-scale));color:var(--text-3)">
+          汇总口径与各看板同源（未达标项 = 各看板 KPI 判定） · 只读汇总，不产生工单
+        </div>
+        ${evidenceHtml(ctx, result, true)}
       </div>
     </div>`;
   }
@@ -1601,7 +2359,7 @@
       if (!rows.length) return "";
       const cols = Object.keys(rows[0]).slice(0, 6);
       return `<div style="margin-top:9px;overflow:auto">
-        <div style="font-size:11.5px;color:var(--text-3);margin-bottom:4px">${UI.esc(p.query_name ? term("queryLabel", p.query_name) : "查询结果")}（${p.row_count ?? rows.length} 行）</div>
+        <div style="font-size: calc(11.5px * var(--font-scale));color:var(--text-3);margin-bottom:4px">${UI.esc(p.query_name ? term("queryLabel", p.query_name) : "查询结果")}（${p.row_count ?? rows.length} 行）</div>
         <table class="qa-table"><tr>${cols.map((c) => `<th>${UI.esc(c)}</th>`).join("")}</tr>
         ${rows.map((r) => `<tr>${cols.map((c) => `<td>${UI.esc(String(r[c] ?? ""))}</td>`).join("")}</tr>`).join("")}</table>
       </div>`;
@@ -1616,9 +2374,9 @@
       </div>
       <div class="result-body">
         <div class="head-line">${UI.esc(term("headline", result))}</div>
-        ${result.report ? `<div style="font-size:13px;line-height:1.9;white-space:pre-wrap;margin-top:8px">${UI.esc(result.report)}</div>` : ""}
+        ${result.report ? `<div style="font-size: calc(13px * var(--font-scale));line-height:1.9;white-space:pre-wrap;margin-top:8px">${UI.esc(result.report)}</div>` : ""}
         ${rowsHtml}
-        <div style="margin-top:8px;font-size:11.3px;color:var(--text-3)">直答模式：数据查询不经协同场景链路，无工单产生。数据来源：${UI.esc(term("domainLabel", route.domain))}</div>
+        <div style="margin-top:8px;font-size: calc(11.3px * var(--font-scale));color:var(--text-3)">直答模式：数据查询不经协同场景链路，无工单产生。数据来源：${UI.esc(term("domainLabel", route.domain))}</div>
         ${evidenceHtml(ctx, result, true)}
       </div>
     </div>`;
@@ -1809,12 +2567,12 @@
       <div class="result-body">
         <div class="offline-banner" style="margin-bottom:12px">${UI.icon("info", 14)}<span><b>${UI.esc(route.strategy === 'qa' ? '数据直答未能获取结果（权限或数据源限制），已转人工跟进。' : '当前问题超出平台已覆盖范围（或路由匹配度低），已转人工兜底工单处理。')}</b>人工兜底是平台设计的一部分——确定性流程之外的问题不臆造结论。</span></div>
         ${(result.suggestions || []).length ? `<div class="fallback-suggest">
-          <div style="font-size:12.3px;font-weight:650;margin-bottom:6px">${UI.icon("sparkle", 13)} 你可能想问（点击直接提问）</div>
+          <div style="font-size: calc(12.3px * var(--font-scale));font-weight:650;margin-bottom:6px">${UI.icon("sparkle", 13)} 你可能想问（点击直接提问）</div>
           <div class="act-chips">${result.suggestions.map((s) =>
             `<button type="button" class="chip chip-cmt" data-sq="${UI.esc(s.example)}">${UI.esc(s.name)}：${UI.esc(s.example)}</button>`).join("")}</div>
         </div>` : ""}
         <div class="brief-grid">${items}</div>
-        ${result.report ? `<div style="margin-top:10px;font-size:12.8px;color:var(--text-2);line-height:1.8">${UI.icon("file", 13)} ${UI.esc(result.report)}</div>` : ""}
+        ${result.report ? `<div style="margin-top:10px;font-size: calc(12.8px * var(--font-scale));color:var(--text-2);line-height:1.8">${UI.icon("file", 13)} ${UI.esc(result.report)}</div>` : ""}
       </div>
     </div>`;
   }
@@ -1881,7 +2639,7 @@
         </div>
       </div>`).join("");
     const timingHtml = timings.length
-      ? `<div class="prov-item"><div class="prov-item-head">${UI.badge("处理耗时", "badge-gray")}<span style="font-size:12px;color:var(--text-3)">${timings.length} 个环节</span></div>
+      ? `<div class="prov-item"><div class="prov-item-head">${UI.badge("处理耗时", "badge-gray")}<span style="font-size: calc(12px * var(--font-scale));color:var(--text-3)">${timings.length} 个环节</span></div>
          <div class="chip-row" style="margin-top:7px">${timings.map((t) => `<span class="badge ${t.status === "ok" ? "badge-green" : "badge-amber"}">${UI.esc(t.node || "-")} ${UI.esc(String(t.elapsed_ms != null ? Math.round(t.elapsed_ms) + "ms" : "-"))}</span>`).join("")}</div></div>`
       : "";
     return `<details class="sql-fold">
@@ -2382,92 +3140,268 @@
 
   /* ============================================================
    * 屏幕四：预警中心
+   *
+   * 真实优先：五类预警由后端 `/api/v2/alerts` 机械推导——前四类来自**当前只读数据**
+   * （SPC 过程能力 / 材料库存 / 订单履约 / 设备日志），与各看板同源可对账；
+   * 第五类「现场推送」来自治理库的现场看板推送表（客诉 8D 分派后的现场处置队列），
+   * 可在卡片上直接**现场接收 / 闭环处置**（写回 `/api/v2/site-board`）。
+   * 后端离线 / 降级才回落到 DEMO.ALERTS 演示快照（明确标注来源）。
    * ============================================================ */
 
+  // 五类预警（字面量必须与后端 ALERT_TYPES 完全一致——驱动筛选片与配色；
+  // 守卫见 tests/demo/test_alerts_api.py 的 typeCls 对回用例）
+  const ALERT_TYPES = ["SPC越限", "缺料", "订单临期", "设备告警", "现场推送"];
+
+  // 预警缓存（按岗位隔离）：同岗位内切换筛选 / 展开不重复请求；
+  // 换岗位必须重取——订单客户名按岗位脱敏，缓存串岗位会让脱敏失效。
+  let _alertsCache = null;   // { role, data, source, reason }
+
   function render_alerts(root, ctx) {
-    const UI = ctx.UI, DEMO = ctx.DEMO;
+    const UI = ctx.UI;
     const st = ctx.state.screenState;
     if (!st.alertFilter) st.alertFilter = "全部";
-    const types = ["全部", "SPC越限", "缺料", "订单临期", "设备告警"];
-    const typeCls = { "SPC越限": "badge-purple", "缺料": "badge-amber", "订单临期": "badge-red", "设备告警": "badge-blue" };
-    const statusCls = { "待处置": "badge-red", "处置中": "badge-blue", "已闭环": "badge-green" };
-    const list = st.alertFilter === "全部" ? DEMO.ALERTS : DEMO.ALERTS.filter((a) => a.type === st.alertFilter);
 
     root.innerHTML = `
       <div class="content-inner">
         <div class="page-head">
           <div class="page-title">${UI.icon("alert", 20)}预警中心</div>
-          <div class="page-desc">SPC 越限 / 缺料 / 订单临期 / 设备告警四类预警，每条标注联动部门（体现多域协同设计）。${UI.demoFlag()}</div>
+          <div class="page-desc">SPC 越限 / 缺料 / 订单临期 / 设备告警四类预警由当前只读数据机械推导（SPC 过程能力 · 材料库存 · 订单履约 · 设备日志）；现场推送为客诉 8D 分派到责任工段的处置队列（治理库实况），可在卡片上直接现场接收与闭环。每条标注联动部门。
+            <span id="alert-window"></span>
+            <span id="alert-flag"></span><span id="alert-gen" class="mfg-gen"></span></div>
         </div>
-        <div class="chip-row" style="margin-bottom:14px" id="alert-filters">
-          ${types.map((t) => `<button class="chip${st.alertFilter === t ? " active" : ""}" data-filter="${UI.esc(t)}">${UI.esc(t)}${t === "全部" ? ` (${DEMO.ALERTS.length})` : ` (${DEMO.ALERTS.filter((a) => a.type === t).length})`}</button>`).join("")}
-        </div>
-        <div class="card">
-          ${list.length ? list.map((a) => `
-            <div class="alert-item alert-clickable" data-alert="${UI.esc(a.id)}" title="点击${st.expandedAlert === a.id ? "收起" : "查看细则"}">
-              <div class="alert-level ${a.level}">${a.level}</div>
-              <div class="alert-main">
-                <div class="alert-title">${UI.esc(a.title)} ${UI.badge(a.type, typeCls[a.type] || "badge-gray")}</div>
-                <div class="alert-detail">${UI.esc(a.detail)}</div>
-                ${st.expandedAlert === a.id ? alertDetailHtml(ctx, a) : ""}
-                <div class="alert-tags">
-                  <span class="tag-label">联动部门：</span>
-                  ${a.tags.map((t) => UI.badge(t, "badge-outline")).join("")}
-                </div>
-                <div class="alert-foot"><span>编号 ${UI.esc(a.id)}</span><span>责任人 ${UI.esc(a.owner)}</span><span>触发时间 ${UI.esc(a.time)}</span></div>
-              </div>
-              <div class="alert-status">${UI.badge(a.status, statusCls[a.status] || "badge-gray", true)}</div>
-            </div>`).join("") : `<div class="empty">该类型暂无预警</div>`}
+        <div class="chip-row" style="margin-bottom:14px" id="alert-filters"></div>
+        <div class="card" id="alert-list">
+          <div class="empty">${UI.spinner("lg")}<div style="margin-top:10px">正在加载预警数据…</div></div>
         </div>
       </div>`;
 
-    root.querySelectorAll("[data-filter]").forEach((btn) => {
-      btn.addEventListener("click", () => { ctx.state.screenState.alertFilter = btn.dataset.filter; ctx.refreshScreen(); });
-    });
-    root.querySelectorAll("[data-alert]").forEach((card) => {
+    loadAlerts(ctx);
+  }
+
+  /**
+   * 预警中心数据加载（真实优先 + 演示降级，全程不抛）：
+   * 在线且未降级 → /api/v2/alerts（后端实时聚合）；否则 → DEMO.ALERTS。
+   * **空列表也是有效结论**（当前数据下确无预警）——不因"没数据"回落演示快照，
+   * 否则会把"无异常"伪装成"有异常"（与看板把 403 当降级同一类假阳性）。
+   */
+  async function loadAlerts(ctx) {
+    const UI = ctx.UI;
+    const roleId = (ctx.state.role || "");
+    if (_alertsCache && _alertsCache.role === roleId) { paintAlerts(ctx); return; }
+
+    let data = null, source = "real", reason = "";
+    if (ctx.api.online()) {
+      try {
+        const d = await ctx.api.alerts();
+        if (d && !d.degraded) data = d;
+        else reason = (d && d.degraded_reason) || "后端数据降级";
+      } catch (err) {
+        reason = UI.friendlyError(err).text;
+        UI.toast("预警数据请求失败，已切换演示数据", "warn", 3600);
+      }
+    } else {
+      reason = "后端离线 · 演示数据";
+    }
+
+    if (!data) {
+      source = "demo";
+      data = { alerts: ctx.DEMO.ALERTS, types: ALERT_TYPES, counts: null,
+               window: null, generated_at: "", rules: [] };
+    }
+    _alertsCache = { role: roleId, data, source, reason };
+    paintAlerts(ctx);
+  }
+
+  function countAlertTypes(alerts, types) {
+    const out = {};
+    types.forEach((t) => { out[t] = 0; });
+    alerts.forEach((a) => { out[a.type] = (out[a.type] || 0) + 1; });
+    return out;
+  }
+
+  function paintAlerts(ctx) {
+    const UI = ctx.UI;
+    const st = ctx.state.screenState;
+    const cache = _alertsCache;
+    if (!cache) return;
+    const data = cache.data || {};
+    const alerts = data.alerts || [];
+    const types = data.types || ALERT_TYPES;
+    const counts = data.counts || countAlertTypes(alerts, types);
+    const filter = st.alertFilter;
+    const list = filter === "全部" ? alerts : alerts.filter((a) => a.type === filter);
+
+    // 口径与来源：真实 / 演示必须在界面上可区分，绝不混为一谈
+    const winEl = document.getElementById("alert-window");
+    if (winEl) {
+      const w = data.window;
+      winEl.textContent = (w && w.start) ? `统计口径 ${w.label}（${w.start} ~ ${w.end}）` : "";
+    }
+    const flagEl = document.getElementById("alert-flag");
+    if (flagEl) {
+      flagEl.innerHTML = cache.source === "demo"
+        ? UI.demoFlag(cache.reason || "演示数据")
+        : UI.realFlag("后端实时聚合 · 与各看板同源");
+    }
+    const genEl = document.getElementById("alert-gen");
+    if (genEl) genEl.textContent = data.generated_at ? " · 生成于 " + data.generated_at : "";
+
+    // 筛选片（计数来自真实数据，不再写死演示常量）
+    const filters = document.getElementById("alert-filters");
+    if (filters) {
+      filters.innerHTML = ["全部"].concat(types).map((t) => {
+        const n = t === "全部" ? alerts.length : (counts[t] || 0);
+        return `<button class="chip${filter === t ? " active" : ""}" data-filter="${UI.esc(t)}">${UI.esc(t)} (${n})</button>`;
+      }).join("");
+      filters.querySelectorAll("[data-filter]").forEach((btn) => {
+        btn.addEventListener("click", () => { st.alertFilter = btn.dataset.filter; paintAlerts(ctx); });
+      });
+    }
+
+    const box = document.getElementById("alert-list");
+    if (!box) return;
+    box.innerHTML = list.length
+      ? list.map((a) => alertItemHtml(ctx, a)).join("")
+      : `<div class="empty">${filter === "全部" ? "当前数据下暂无预警" : "该类型暂无预警"}</div>`;
+
+    box.querySelectorAll("[data-alert]").forEach((card) => {
       card.addEventListener("click", () => {
         st.expandedAlert = st.expandedAlert === card.dataset.alert ? null : card.dataset.alert;
-        ctx.refreshScreen();
+        paintAlerts(ctx);
       });
     });
-    root.querySelectorAll("[data-ask-alert]").forEach((btn) => {
+    box.querySelectorAll("[data-ask-alert]").forEach((btn) => {
       btn.addEventListener("click", (ev) => {
         ev.stopPropagation();
-        try { sessionStorage.setItem("chat_prefill", btn.dataset.askAlert); } catch (e) { /* 忽略 */ }
+        // 结构化来源标注：预警问数（无看板口径，供审计留痕与后续预警上下文关联）
+        const card = btn.closest("[data-alert]");
+        writeAskPrefill(btn.dataset.askAlert, {
+          module: "alerts",
+          alert: card ? card.dataset.alert : "",
+        });
         ctx.navigate("chat");
+      });
+    });
+    // 「现场推送」的写操作（其余四类预警只读，无这些按钮）
+    box.querySelectorAll("[data-site-ack]").forEach((btn) => {
+      btn.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        siteBoardAckAction(ctx, btn.dataset.siteAck);
+      });
+    });
+    box.querySelectorAll("[data-site-close]").forEach((btn) => {
+      btn.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        siteBoardCloseAction(ctx, btn.dataset.siteClose);
       });
     });
   }
 
-  /** 预警细则（点开可见）：影响分析 + 引导式处置步骤 + 响应时间线 + 快速操作。 */
+  /** 单条预警卡片（数据驱动：字段全部来自真实预警载荷 / 演示快照同构）。 */
+  function alertItemHtml(ctx, a) {
+    const UI = ctx.UI;
+    const st = ctx.state.screenState;
+    const typeCls = { "SPC越限": "badge-purple", "缺料": "badge-amber", "订单临期": "badge-red", "设备告警": "badge-blue", "现场推送": "badge-green" };
+    const statusCls = { "待处置": "badge-red", "处置中": "badge-blue", "已闭环": "badge-green" };
+    const tags = a.tags || [];
+    return `<div class="alert-item alert-clickable" data-alert="${UI.esc(a.id)}" title="点击${st.expandedAlert === a.id ? "收起" : "查看细则"}">
+      <div class="alert-level ${UI.esc(a.level)}">${UI.esc(a.level)}</div>
+      <div class="alert-main">
+        <div class="alert-title">${UI.esc(a.title)} ${UI.badge(a.type, typeCls[a.type] || "badge-gray")}</div>
+        <div class="alert-detail">${UI.esc(a.detail)}</div>
+        ${st.expandedAlert === a.id ? alertDetailHtml(ctx, a) : ""}
+        <div class="alert-tags">
+          <span class="tag-label">联动部门：</span>
+          ${tags.map((t) => UI.badge(t, "badge-outline")).join("")}
+        </div>
+        <div class="alert-foot"><span>编号 ${UI.esc(a.id)}</span><span>责任人 ${UI.esc(a.owner)}</span><span>触发时间 ${UI.esc(a.time)}</span></div>
+      </div>
+      <div class="alert-status">${UI.badge(a.status, statusCls[a.status] || "badge-gray", true)}</div>
+    </div>`;
+  }
+
+  /**
+   * 预警细则（点开可见）：判定依据 + 影响分析 + 引导式处置步骤 + 响应时间线 + 快速操作。
+   * 真实预警的等级 / 状态是机械规则推出的，故给出「判定依据」，
+   * 库中没有处置生命周期就不填 steps / timeline（有则渲染，无则整段省略，绝不编造）。
+   */
   function alertDetailHtml(ctx, a) {
     const UI = ctx.UI;
-    const askQ = {
+    const askQ = a.ask || {
       "SPC越限": "最近锡膏印刷 CPK 越限的详细数据与趋势",
       "缺料": "锡膏 M7020 的库存、在途与齐套情况",
       "订单临期": "A型号的 ATP 可承诺量与出货风险",
       "设备告警": "SMT-1设备参数异常吗",
     }[a.type] || a.title;
     return `<div class="alert-detail-panel">
-      <div class="adp-sec"><b>影响分析</b><span>${UI.esc(a.impact || "暂无")}</span></div>
+      ${a.basis ? `<div class="adp-sec"><b>判定依据</b><span>${UI.esc(a.basis)}</span></div>` : ""}
+      ${a.impact ? `<div class="adp-sec"><b>影响分析</b><span>${UI.esc(a.impact)}</span></div>` : ""}
       ${(a.steps || []).length ? `<div class="adp-sec"><b>处置步骤（引导式）</b>
         <ol class="adp-steps">${a.steps.map((st2) => `<li>${UI.esc(st2)}</li>`).join("")}</ol></div>` : ""}
       ${(a.timeline || []).length ? `<div class="adp-sec"><b>响应时间线</b>
         <div class="adp-timeline">${a.timeline.map((t) => `<div class="adp-tl-row"><span class="adp-tl-time">${UI.esc(t[0])}</span><span>${UI.esc(t[1])}</span><span class="adp-tl-who">${UI.esc(t[2])}</span></div>`).join("")}</div></div>` : ""}
       <div class="adp-actions">
+        ${siteBoardActions(ctx, a)}
         <button class="btn btn-outline btn-sm" data-ask-alert="${UI.esc(askQ)}">${UI.icon("chat", 13)}去问数分析</button>
         ${a.status !== "已闭环" ? `<button class="btn btn-outline btn-sm" data-ask-alert="为预警 ${UI.esc(a.id)} 创建人工跟进工单">${UI.icon("approve", 13)}转人工跟进</button>` : ""}
         <button class="btn btn-outline btn-sm" data-report-gen="${UI.esc(JSON.stringify({
           source_module: "alert",
           context: {
             title: `预警处置报告 · ${a.title}`,
-            summary: `${a.detail || ""}｜影响分析：${a.impact || "暂无"}｜状态：${a.status || ""}`,
+            summary: `${a.detail || ""}｜判定依据：${a.basis || "—"}｜状态：${a.status || ""}`,
             refs: [a.id],
             risk_level: /^[A-D]$/.test(String(a.level || "")) ? a.level : "",
           },
         }))}">${UI.icon("report", 13)}生成报告</button>
       </div>
     </div>`;
+  }
+
+  /**
+   * 「现场推送」卡片的写操作按钮（其余四类预警是只读推导，无此按钮）。
+   * 状态即真实回写状态：待处置 → 现场接收；处置中 → 闭环处置；已闭环 → 只看不留按钮。
+   */
+  function siteBoardActions(ctx, a) {
+    if (a.type !== "现场推送") return "";
+    const UI = ctx.UI;
+    const pushId = ((a.entity || {}).push_id) || a.id || "";
+    if (!pushId || a.status === "已闭环") return "";
+    if (a.status === "处置中") {
+      return `<button class="btn btn-primary btn-sm" data-site-close="${UI.esc(pushId)}">${UI.icon("report", 13)}闭环处置</button>`;
+    }
+    return `<button class="btn btn-primary btn-sm" data-site-ack="${UI.esc(pushId)}">${UI.icon("approve", 13)}现场接收</button>`;
+  }
+
+  /** 现场接收（pushed → acked）：成功后失效预警缓存并重绘，状态与计数同步刷新。 */
+  async function siteBoardAckAction(ctx, pushId) {
+    const UI = ctx.UI;
+    try {
+      await ctx.api.siteBoardAck(pushId, "");
+      UI.toast("已接收现场推送，处置进度将回流到 8D 关闭确认", "ok", 3200);
+      _alertsCache = null;
+      loadAlerts(ctx);
+    } catch (err) {
+      UI.toast(UI.friendlyError(err).text, "warn", 4000);
+    }
+  }
+
+  /** 现场闭环（acked → closed）：处置结论**必填**——与后端同口径（空则 400）。 */
+  async function siteBoardCloseAction(ctx, pushId) {
+    const UI = ctx.UI;
+    const reason = await askComment(ctx, {
+      title: "现场处置结论（必填）",
+      hint: "结论写入现场看板留痕，并作为 8D 关闭确认的依据；请写清已采取的措施与结果。",
+      placeholder: "例：已围堵首件 200pcs，参数复核后连续 3 批无同类不良",
+    });
+    if (!reason) return;
+    try {
+      await ctx.api.siteBoardFeedback(pushId, reason);
+      UI.toast("现场已闭环，处置结论已留痕", "ok", 3200);
+      _alertsCache = null;
+      loadAlerts(ctx);
+    } catch (err) {
+      UI.toast(UI.friendlyError(err).text, "warn", 4000);
+    }
   }
 
   /* ============================================================
@@ -2496,7 +3430,7 @@
             <div class="report-doc-head internal">
               ${UI.icon("file", 16)}
               <div><div class="report-doc-title">${UI.esc(R.internal.title)}</div>
-              <div style="font-size:11.5px;color:var(--text-3)">run_id ${UI.esc(R.internal.run_id)} · ${UI.esc(R.internal.route.scenario)}</div></div>
+              <div style="font-size: calc(11.5px * var(--font-scale));color:var(--text-3)">run_id ${UI.esc(R.internal.run_id)} · ${UI.esc(R.internal.route.scenario)}</div></div>
               <div style="margin-left:auto">${UI.badge("内部可见", "badge-blue")}</div>
             </div>
             <div class="report-doc-body">
@@ -2512,7 +3446,7 @@
             <div class="report-doc-head customer">
               ${UI.icon("shield", 16)}
               <div><div class="report-doc-title">${UI.esc(R.customer.title)}</div>
-              <div style="font-size:11.5px;color:var(--text-3)">字段级脱敏 + 禁词表兜底（node_registry.FORBIDDEN_WORDS）</div></div>
+              <div style="font-size: calc(11.5px * var(--font-scale));color:var(--text-3)">字段级脱敏 + 禁词表兜底（node_registry.FORBIDDEN_WORDS）</div></div>
               <div style="margin-left:auto">${UI.badge("对客可见", "badge-amber")}</div>
             </div>
             <div class="report-doc-body">
@@ -2658,11 +3592,11 @@
         // 真相是这个岗位压根不在这条治理链上。
         ? `<div class="empty">${UI.icon("info", 30)}
             <div style="margin-top:8px">本岗位不参与治理审批</div>
-            <div style="font-size:11.5px;margin-top:6px">
+            <div style="font-size: calc(11.5px * var(--font-scale));margin-top:6px">
               复线 / 特采 / 8D 关闭 / 对客承诺 / 停机窗口等决策由对应治理岗位确认，
               本岗位无权也不需要处理</div></div>`
         : `<div class="empty">${UI.icon("check", 30)}<div style="margin-top:8px">当前无待审批工单</div>
-            <div style="font-size:11.5px;margin-top:6px">可在「协同问数」发起停线问数，人工确认 节点将生成真实待办</div></div>`;
+            <div style="font-size: calc(11.5px * var(--font-scale));margin-top:6px">可在「协同问数」发起停线问数，人工确认 节点将生成真实待办</div></div>`;
       document.getElementById("hitl-detail").innerHTML = "";
       return;
     }
@@ -2675,7 +3609,7 @@
         : tasks;
       if (!visible.length) {
         listEl.innerHTML = `<div class="empty"><div style="margin-top:8px">没有匹配「${UI.esc(query)}」的待办</div>
-          <div style="font-size:11.5px;margin-top:6px">试试工单号、标题关键词、审批岗位或优先级（如 P1）</div></div>`;
+          <div style="font-size: calc(11.5px * var(--font-scale));margin-top:6px">试试工单号、标题关键词、审批岗位或优先级（如 P1）</div></div>`;
         return;
       }
       if (!st.hitlSelected || !visible.some((t) => t.task_uid === st.hitlSelected)) {
@@ -2822,17 +3756,17 @@
     const UI = ctx.UI;
     const items = loadReportArchive();
     if (!items.length) {
-      box.innerHTML = `<div class="empty" style="font-size:12.3px;color:var(--text-3)">暂无归档——在「协同问数」发起提问后，生成的报告会自动归档到这里</div>`;
+      box.innerHTML = `<div class="empty" style="font-size: calc(12.3px * var(--font-scale));color:var(--text-3)">暂无归档——在「协同问数」发起提问后，生成的报告会自动归档到这里</div>`;
       return;
     }
     box.innerHTML = items.map((r, i) => `
       <div class="qa-archive-item" data-rid="${i}">
         <div class="qar-head">
           <span class="badge badge-blue">${UI.esc(r.scenario)}</span>
-          <span style="font-size:12.5px;font-weight:600">${UI.esc(r.title)}</span>
-          <span style="margin-left:auto;font-size:11px;color:var(--text-3)">${UI.esc((r.ts || "").slice(5, 16).replace("T", " "))}</span>
+          <span style="font-size: calc(12.5px * var(--font-scale));font-weight:600">${UI.esc(r.title)}</span>
+          <span style="margin-left:auto;font-size: calc(11px * var(--font-scale));color:var(--text-3)">${UI.esc((r.ts || "").slice(5, 16).replace("T", " "))}</span>
         </div>
-        <div style="font-size:12px;color:var(--text-2);margin-top:3px">${UI.esc(r.summary)}…</div>
+        <div style="font-size: calc(12px * var(--font-scale));color:var(--text-2);margin-top:3px">${UI.esc(r.summary)}…</div>
         ${r._open ? `<div class="report-block" style="margin-top:9px"><div class="report-block-title">报告全文（${UI.esc(r.strategy || "")} · 溯源 ${r.provenance_count} 条）</div><div class="report-block-body">${UI.esc(r.content)}</div></div>` : ""}
       </div>`).join("");
     box.querySelectorAll("[data-rid]").forEach((it) => {
@@ -3062,7 +3996,7 @@
             ${t.demo ? UI.demoFlag("演示数据") : UI.realFlag("真实工单")}
           </div>
         </div>
-        <div style="margin-top:12px;font-size:12.5px;color:var(--text-2);line-height:1.75">
+        <div style="margin-top:12px;font-size: calc(12.5px * var(--font-scale));color:var(--text-2);line-height:1.75">
           ${UI.icon("info", 13)} 关键决策必须人工确认后放行（规则：分析服务只出建议，不参与审批与过账）。多人会签的动作需全部会签人签署后才可终批，岗位权限由后端工作流引擎校验。
         </div>
         ${approveSummaryHtml(ctx, t)}
@@ -3130,6 +4064,13 @@
   const QUALITY_STAGE_CHIPS = ["SMT", "PCM", "PACK", "整机"];
   const QUALITY_CAT_CHIPS = [["性能不良", "性能"], ["外观不良", "外观"]];
 
+  // 制造看板板级「产品分类 / 工段」筛选白名单（与后端 MFG_PRODUCT_CATEGORIES /
+  // MFG_STAGES 同源：前端只出选项，取值合法性由接口 fail-fast 裁决）。
+  // 后端用固定映射折出这两个维度：工段按产线前缀（SMT-* → SMT、DIP-* → PCM、
+  // PACK-* → PACK、ASSY-* → 整机），产品分类按型号归属。
+  const MFG_STAGE_CHIPS = ["SMT", "PCM", "PACK", "整机"];
+  const MFG_PCAT_OPTIONS = ["消费电子", "智能电源", "储能电源", "车载"];
+
   // 看板通用配置：下钻容器 id + 面包屑首节点名（制造 / 品质 / 订单履约 共用同一套机件）
   const BOARD_CFG = {
     manufacturing: { name: "制造看板", body: "mfg-body", crumb: "mfg-crumb",
@@ -3144,6 +4085,45 @@
 
   // 我的看板内联下钻：复用同一套下钻机件，仅把宿主容器换成工作台的看板区
   const DASHBOARD_CFG = { name: "我的看板", body: "dash-body", crumb: "dash-crumb" };
+
+  // 板级筛选在「2 级及以下下钻」里是否仍然生效（与后端 DRILL_DEFS 的 scope / q_scope 声明同源）：
+  //   window          = 是否跟随顶部「统计口径」（快照口径 / 来料固定全量口径的指标不跟随）；
+  //   stage / category= 品质看板「工段 / 类别」（quality_defect 同源的不良率 / 直通率）；
+  //   product_category= 制造看板「产品分类」（四个 KPI 全部声明了 scope；测试直通率无产线 → 工段不适用）。
+  // 未登记的 KPI = 全不生效 → 2 级看板整条筛选行不渲染（不给「点了没反应」的假控件）。
+  // 后端新增 / 调整筛选声明时，这里必须同步（tests/v2/test_dashboard_drill.py 有交叉校验）。
+  const DRILL_FILTER_SCOPE = {
+    "manufacturing:availability": { window: true, stage: true, product_category: true },
+    "manufacturing:scrap_rate": { window: true, stage: true, product_category: true },
+    "manufacturing:report_rate": { window: true, stage: true, product_category: true },
+    "manufacturing:test_fpy": { window: true, product_category: true },
+    // 制造域另有 oee / production_achieve（仅工作台「我的看板」内联下钻可达）：只跟时间口径，
+    // 不吃板级「工段 / 产品分类」——登记在此，保证与后端 DRILL_DEFS 声明逐项对齐（有交叉校验）。
+    "manufacturing:oee": { window: true },
+    "manufacturing:production_achieve": { window: true },
+    "quality:defect_rate": { window: true, stage: true, category: true },
+    "quality:fpy": { window: true, stage: true, category: true },
+    "quality:incoming_pass_rate": { window: true },
+    "quality:test_pass_rate": { window: true },
+    "quality:std_conformity": { window: true },
+    "quality:incoming_batch_quality": {},
+    "quality:incoming_line_defect": {},
+    "quality:complaint_close_rate": {},
+    // SPC 过程能力看板：两个指标都吃「统计口径 / 工段 / 产品分类」
+    // （后端 DRILL_DEFS 两指标均声明 spc_scope，与 L1 卡片同源）
+    "spc:spc_capability": { window: true, stage: true, product_category: true },
+    "spc:spc_pareto": { window: true, stage: true, product_category: true },
+  };
+  const BOARD_FILTER_ALL = { window: true, stage: true, category: true, product_category: true };
+
+  /** 当前下钻目标吃哪些板级筛选：L1（无下钻）= 全部生效；标准三率 2 级 = 只跟统计口径；
+   *  不良类型下钻的筛选在柏拉图卡片内自选、行自带筛选参数 → 不算板级筛选（整条隐藏）。 */
+  function drillFilterScope(drill) {
+    if (!drill) return BOARD_FILTER_ALL;
+    if (drill.stdStage) return { window: true };
+    if (drill.defectType) return {};
+    return DRILL_FILTER_SCOPE[`${drill.screen}:${drill.kpi}`] || {};
+  }
 
   /** 下钻宿主配置：host=dashboard 用工作台容器，否则按 screen 取对应看板配置。 */
   function boardCfgOf(drill) {
@@ -3213,7 +4193,7 @@
         <div class="stat-trend ${ok ? "down" : "up"}">${UI.icon(ok ? "check" : "warn", 12)} ${UI.esc(delta)}pt · ${UI.esc(dir)}</div>
         ${kpi.scope_note ? `<div class="stat-scope">${UI.icon("info", 11)}${UI.esc(kpi.scope_note)}</div>` : ""}
         <div class="spark-wrap">${mfgSpark(kpi.trend, tone)}</div>
-        <button class="stat-ask-btn" data-ask="${UI.esc(kpi.ask || "")}"
+        <button class="stat-ask-btn" data-ask="${UI.esc(kpi.ask || "")}" data-ask-view="kpi"
                 title="跳转协同问数：${UI.esc(kpi.ask || "")}">
           ${UI.icon("chat", 11)} 问数</button>
       </div>
@@ -3243,7 +4223,7 @@
         <span class="rank-no">${UI.esc(it.rank)}</span>
         <span class="rank-name">${worst ? UI.icon("warn", 12) : ""}${UI.esc(it.name)}</span>
         <span class="rank-val ${UI.esc(it.status)}">${UI.esc(it.value)}${UI.esc(ranking.unit)}</span>
-        <button class="row-ask" data-ask="${UI.esc(ask)}"
+        <button class="row-ask" data-ask="${UI.esc(ask)}" data-ask-view="ranking"
                 title="跳转协同问数：${UI.esc(ask)}">${UI.icon("chat", 11)}问数</button>
       </div>`;
     }).join("");
@@ -3256,9 +4236,51 @@
     </div>`;
   }
 
+  /** 来料质量 TOP10 卡（``view="incoming_top10"`` 专用）：**固定全量口径，不受任何筛选影响**。
+   *  - 卡主体点击 = 2 级看板（该指标按供应商**全量**分解，不只 TOP10）；
+   *  - 行主体点击 = 3 级明细（来料批次合格率 → 详细 IQC 检验数据；上线不良 → 上线不良明细）；
+   *  - 行内「问数」= 跳协同问数。 */
+  function mfgIncomingTopCard(UI, ranking) {
+    const hb = ranking.higher_is_better;
+    const dir = hb ? "越高越好 · 取最低 10" : "越低越好 · 取最高 10";
+    const items = ranking.items || [];
+    const ask = `${ranking.label}最需关注的 10 家供应商分别是哪些？如何推动供应商改善？`;
+    const rows = items.map((it) => {
+      const ent = drillEntity(it);
+      return `<div class="rank-row${it.status === "danger" ? " worst" : ""}"
+          role="button" tabindex="0" data-drill-entity="${UI.esc(ent)}"
+          data-kpi="${UI.esc(ranking.key)}" data-screen="quality"
+          title="点击下钻 3 级明细：${UI.esc(it.name)}">
+        <span class="rank-no">${UI.esc(it.rank)}</span>
+        <span class="rank-name">${UI.icon("warn", 12)}${UI.esc(it.name)}</span>
+        <span class="rank-val ${UI.esc(it.status)}">${UI.esc(it.value)}${UI.esc(ranking.unit)}</span>
+        <button class="row-ask" data-ask="${UI.esc(ask)}" data-ask-view="ranking"
+                title="跳转协同问数：${UI.esc(ask)}">${UI.icon("chat", 11)}问数</button>
+      </div>`;
+    }).join("");
+    return `<div class="card stat-clickable" role="button" tabindex="0"
+        data-kpi="${UI.esc(ranking.key)}" data-screen="quality"
+        title="点击查看「${UI.esc(ranking.label)}」2 级看板（全量供应商分解）">
+      <div class="card-head">
+        <div class="card-title">${UI.icon("box", 16)}${UI.esc(ranking.label)} · TOP10</div>
+        <div class="card-extra">目标 ${hb ? "≥" : "≤"} ${UI.esc(ranking.target)}${UI.esc(ranking.unit)} · ${UI.esc(dir)}</div>
+      </div>
+      <div class="incoming-note">${UI.icon("shield", 11)}固定全量口径 · 不受统计口径 / 工段 / 类别筛选影响
+        · 点卡片看全量供应商 2 级看板 · 点行看详细明细</div>
+      ${rows ? `<div class="rank-list">${rows}</div>` : `<div class="empty">暂无数据</div>`}
+    </div>`;
+  }
+
   /** 标准三率 1 级看板（工段）：整体公式 + 4 个工段卡；点工段卡**下钻**到 2 级班组看板。
    *  符合率 = 完整率 × 完善率 × 遵守率；工段/班组与整体同一套口径（后端 _std_by_stage）。
    *  ``by_stage`` 缺失（后端旧版 / 旧缓存演示数据）时退回原「分型号」表，不白屏。 */
+  /** 三率数值统一 1 位小数：整数 80 → 80.0。
+   *  否则同一屏会出现「88%」与「87.6%」混排，评审看着像口径不一致（其实只是 JS 掉了 .0）。 */
+  function stdPct(v) {
+    const n = Number(v);
+    return Number.isFinite(n) ? (Math.round(n * 10) / 10).toFixed(1) : "—";
+  }
+
   function mfgStdThreeRates(UI, s) {
     if (!s || !s.overall) return "";
     const o = s.overall;
@@ -3269,7 +4291,7 @@
           <span class="std-bar-row"><i>${name}</i>
             <span class="std-bar"><b class="${UI.esc(st.status)}"
               style="width:${Math.max(0, Math.min(100, Number(v) || 0))}%"></b></span>
-            <em>${UI.esc(v)}%</em>
+            <em>${UI.esc(stdPct(v))}%</em>
           </span>`).join("");
       return `<button type="button" class="std-stage" data-std-stage="${UI.esc(st.stage)}"
           title="下钻查看「${UI.esc(st.stage)}」各班组（2 级看板）">
@@ -3277,7 +4299,7 @@
           <span class="std-stage-name">${UI.esc(st.stage)}</span>
           <span class="std-stage-line">${UI.esc(st.line || "—")}</span>
         </span>
-        <span class="std-stage-val std-conform ${UI.esc(st.status)}">${UI.esc(st.conformity_rate)}<i>%</i></span>
+        <span class="std-stage-val std-conform ${UI.esc(st.status)}">${UI.esc(stdPct(st.conformity_rate))}<i>%</i></span>
         <span class="std-stage-bars">${bars}</span>
         <span class="std-stage-foot">${UI.esc(st.team_count)} 个班组 · ${UI.esc(st.audit_rows)} 条审核
           <span class="std-stage-go">班组明细${UI.icon("arrow", 11)}</span></span>
@@ -3285,10 +4307,10 @@
     }).join("");
     const modelRows = (s.by_model || []).map((m) => `<tr>
       <td>${UI.esc(m.model)}</td>
-      <td>${UI.esc(m.completeness_rate)}%</td>
-      <td>${UI.esc(m.perfection_rate)}%</td>
-      <td>${UI.esc(m.compliance_rate)}%</td>
-      <td class="std-conform ${UI.esc(m.status)}">${UI.esc(m.conformity_rate)}%</td>
+      <td>${UI.esc(stdPct(m.completeness_rate))}%</td>
+      <td>${UI.esc(stdPct(m.perfection_rate))}%</td>
+      <td>${UI.esc(stdPct(m.compliance_rate))}%</td>
+      <td class="std-conform ${UI.esc(m.status)}">${UI.esc(stdPct(m.conformity_rate))}%</td>
     </tr>`).join("");
     return `<div class="card std-card">
       <div class="card-head">
@@ -3296,13 +4318,13 @@
         <div class="card-extra">符合率 = 完整率 × 完善率 × 遵守率</div>
       </div>
       <div class="std-formula">
-        <span class="std-term"><b>${UI.esc(o.completeness_rate)}%</b><i>完整率</i></span>
+        <span class="std-term"><b>${UI.esc(stdPct(o.completeness_rate))}%</b><i>完整率</i></span>
         <em>×</em>
-        <span class="std-term"><b>${UI.esc(o.perfection_rate)}%</b><i>完善率</i></span>
+        <span class="std-term"><b>${UI.esc(stdPct(o.perfection_rate))}%</b><i>完善率</i></span>
         <em>×</em>
-        <span class="std-term"><b>${UI.esc(o.compliance_rate)}%</b><i>遵守率</i></span>
+        <span class="std-term"><b>${UI.esc(stdPct(o.compliance_rate))}%</b><i>遵守率</i></span>
         <em>=</em>
-        <span class="std-conform ${UI.esc(o.status)}">${UI.esc(o.conformity_rate)}%</span>
+        <span class="std-conform ${UI.esc(o.status)}">${UI.esc(stdPct(o.conformity_rate))}%</span>
         <span class="std-scope">整体 · ${UI.esc(o.audit_rows || 0)} 条审核记录</span>
       </div>
       ${stages.length ? `<div class="std-level">
@@ -3352,14 +4374,17 @@
     const vsOverall = Math.round((stage.conformity_rate - (o.conformity_rate || 0)) * 10) / 10;
     const rows = teams.map((x, i) => {
       const delta = Math.round((x.conformity_rate - stage.conformity_rate) * 10) / 10;
-      return `<tr>
+      return `<tr class="std-row-click" data-std-team="${UI.esc(x.team)}"
+          data-std-team-stage="${UI.esc(stage.stage)}"
+          title="查看「${UI.esc(x.team)}」的三率拆解与不良原因">
         <td class="std-team">${i < 3 ? `<span class="std-top-tag">TOP${i + 1}</span>` : ""}${
-          x.status === "danger" ? UI.icon("warn", 11) : ""}${UI.esc(x.team)}</td>
-        <td>${UI.esc(x.completeness_rate)}%</td>
-        <td>${UI.esc(x.perfection_rate)}%</td>
-        <td>${UI.esc(x.compliance_rate)}%</td>
-        <td class="std-conform ${UI.esc(x.status)}">${UI.esc(x.conformity_rate)}%</td>
-        <td class="std-delta ${delta < 0 ? "neg" : "pos"}">${delta > 0 ? "+" : ""}${UI.esc(delta)}pt</td>
+          x.status === "danger" ? UI.icon("warn", 11) : ""}${UI.esc(x.team)}
+          <span class="std-row-go">${UI.icon("arrow", 10)}</span></td>
+        <td>${UI.esc(stdPct(x.completeness_rate))}%</td>
+        <td>${UI.esc(stdPct(x.perfection_rate))}%</td>
+        <td>${UI.esc(stdPct(x.compliance_rate))}%</td>
+        <td class="std-conform ${UI.esc(x.status)}">${UI.esc(stdPct(x.conformity_rate))}%</td>
+        <td class="std-delta ${delta < 0 ? "neg" : "pos"}">${delta > 0 ? "+" : ""}${UI.esc(stdPct(delta))}pt</td>
         <td>${UI.badge(MFG_STATUS_CN[x.status] || x.status, MFG_BADGE[x.status] || "badge-gray")}</td>
         <td class="std-dim">${UI.esc(x.audit_rows)} 条 · ${UI.esc(x.audit_items)} 项</td>
       </tr>`;
@@ -3379,17 +4404,17 @@
         <div class="std-l2-head">
           <span class="std-l2-tag">2 级看板 · 班组</span>
           <span class="std-l2-name">${UI.esc(stage.stage)}${stage.line ? " · " + UI.esc(stage.line) : ""}</span>
-          <span class="std-l2-sum">全厂 ${UI.esc(o.conformity_rate)}% · 该段 ${
-            vsOverall > 0 ? "+" : ""}${UI.esc(vsOverall)}pt ｜ 目标 ${UI.esc(target)}%</span>
+          <span class="std-l2-sum">全厂 ${UI.esc(stdPct(o.conformity_rate))}% · 该段 ${
+            vsOverall > 0 ? "+" : ""}${UI.esc(stdPct(vsOverall))}pt ｜ 目标 ${UI.esc(stdPct(target))}%</span>
         </div>
         <div class="std-formula">
-          <span class="std-term"><b>${UI.esc(stage.completeness_rate)}%</b><i>完整率</i></span>
+          <span class="std-term"><b>${UI.esc(stdPct(stage.completeness_rate))}%</b><i>完整率</i></span>
           <em>×</em>
-          <span class="std-term"><b>${UI.esc(stage.perfection_rate)}%</b><i>完善率</i></span>
+          <span class="std-term"><b>${UI.esc(stdPct(stage.perfection_rate))}%</b><i>完善率</i></span>
           <em>×</em>
-          <span class="std-term"><b>${UI.esc(stage.compliance_rate)}%</b><i>遵守率</i></span>
+          <span class="std-term"><b>${UI.esc(stdPct(stage.compliance_rate))}%</b><i>遵守率</i></span>
           <em>=</em>
-          <span class="std-conform ${UI.esc(stage.status)}">${UI.esc(stage.conformity_rate)}%</span>
+          <span class="std-conform ${UI.esc(stage.status)}">${UI.esc(stdPct(stage.conformity_rate))}%</span>
           <span class="std-scope">该工段汇总 · ${UI.esc(stage.audit_rows)} 条 / ${
             UI.esc(stage.audit_items)} 项审核</span>
         </div>
@@ -3397,26 +4422,192 @@
           <div class="std-mini"><i>班组达标</i><b>${UI.esc(okCnt)} / ${UI.esc(teams.length)}</b>
             <em>未达标 ${UI.esc(badCnt)} 个</em></div>
           <div class="std-mini"><i>最低班组</i>
-            <b class="std-conform ${worst ? UI.esc(worst.status) : ""}">${worst ? UI.esc(worst.conformity_rate) : "—"}%</b>
+            <b class="std-conform ${worst ? UI.esc(worst.status) : ""}">${worst ? UI.esc(stdPct(worst.conformity_rate)) : "—"}%</b>
             <em>${worst ? UI.esc(worst.team) : "无班组数据"}</em></div>
           <div class="std-mini"><i>与目标差</i>
-            <b class="${gap < 0 ? "std-neg" : "std-pos"}">${gap > 0 ? "+" : ""}${UI.esc(gap)}pt</b>
-            <em>目标 ${UI.esc(target)}%</em></div>
+            <b class="${gap < 0 ? "std-neg" : "std-pos"}">${gap > 0 ? "+" : ""}${UI.esc(stdPct(gap))}pt</b>
+            <em>目标 ${UI.esc(stdPct(target))}%</em></div>
           <div class="std-mini"><i>短板环节</i>
-            <b>${UI.esc(Math.min(stage.completeness_rate, stage.perfection_rate, stage.compliance_rate))}%</b>
+            <b>${UI.esc(stdPct(Math.min(stage.completeness_rate, stage.perfection_rate, stage.compliance_rate)))}%</b>
             <em>${stage.completeness_rate <= stage.perfection_rate && stage.completeness_rate <= stage.compliance_rate
               ? "完整率最低（标准缺失）"
               : (stage.perfection_rate <= stage.compliance_rate ? "完善率最低（标准与现场不一致）"
                 : "遵守率最低（现场未按标准作业）")}</em></div>
         </div>
+        ${defBlock}
         ${rows ? `<table class="std-table std-team-table">
           <thead><tr><th>班组</th><th>完整率</th><th>完善率</th><th>遵守率</th><th>符合率</th>
             <th>与工段差</th><th>状态</th><th>审核量</th></tr></thead>
           <tbody>${rows}</tbody></table>
-          <div class="std-l2-note">班组按符合率升序（最差在前，TOP1–3 标出需关注）；审核量 = 审核条数 · 审核项数——样本少时别急着下结论。</div>`
+          <div class="std-l2-note">${teams.length} 个班组按符合率升序（最差在前，TOP1–3 标出需关注）；<b>单击任一班组行</b>可看该班组的三率拆解与不良原因；审核量 = 审核条数 · 审核项数——样本少时别急着下结论。</div>`
           : `<div class="empty">该工段暂无班组级审核记录</div>`}
-        ${defBlock}
       </div>`;
+  }
+
+  /** 班组弹窗正文：三率公式 + 与工段/全厂/目标差 + 按工序拆解 + 不良原因归因 + 逐日趋势。
+   *  离线（接口取不到）时退化为「只有比率」，并在顶部明说缺的是什么——绝不编原因。 */
+  function stdTeamModalBody(UI, d, opts) {
+    const o = d || {};
+    const r = o.rates || {};
+    const w = o.window || {};
+    const t = o.targets || {};
+    const target = o.target_conformity
+      || Math.round((t.completeness_rate || 100) * (t.perfection_rate || 98)
+                    * (t.compliance_rate || 90)) / 10000;
+    const dlt = o.deltas || {};
+    const dims = o.dim_totals || {};
+    const chip = (label, v, unit) => `<span class="std-chip">${UI.esc(label)}
+      <b class="${v > 0 ? "pos" : (v < 0 ? "neg" : "")}">${v > 0 ? "+" : ""}${UI.esc(stdPct(v))}${UI.esc(unit || "pt")}</b></span>`;
+    const offlineTip = opts.offline
+      ? `<div class="std-modal-warn">${UI.icon("warn", 12)}
+         接口未取到该班组明细（后端离线或权限受限），下面只有 2 级看板已缓存的比率，
+         <b>不含</b>工序拆解与原因归因。</div>` : "";
+    if (!o.found && !opts.offline) {
+      return `<div class="std-modal-body">${offlineTip}
+        <div class="empty">${UI.icon("info", 26)}
+          <div style="margin-top:8px">该班组在「${UI.esc(w.label || "当前口径")}」内没有审核记录。</div>
+          <div class="std-modal-hint">换个口径（当日 / 当月）或到 2 级看板看其他班组。</div>
+        </div></div>`;
+    }
+
+    const stepRows = (o.by_step || []).map((s) => `<tr>
+        <td class="std-step-name">${UI.esc(s.step)}</td>
+        <td>${UI.esc(stdPct(s.completeness_rate))}%</td>
+        <td>${UI.esc(stdPct(s.perfection_rate))}%</td>
+        <td>${UI.esc(stdPct(s.compliance_rate))}%</td>
+        <td class="std-conform ${UI.esc(s.status)}">${UI.esc(stdPct(s.conformity_rate))}%</td>
+        <td class="std-dim">${UI.esc(s.nonconform_items)} 项 / ${UI.esc(s.audit_items)}</td>
+      </tr>`).join("");
+
+    const DIM_ORDER = ["completeness", "perfection", "compliance"];
+    const DIM_UNIT = { completeness: "行", perfection: "行", compliance: "项" };
+    const DIM_GAP = { completeness: "缺标准文件", perfection: "标准不完善", compliance: "不符合项" };
+    const groups = DIM_ORDER.map((dim) => {
+      const items = (o.causes || []).filter((c) => c.rate_dim === dim);
+      if (!items.length) return "";
+      const gap = dims[dim] || 0;
+      const bar = items.map((c) => `<div class="std-cause-item">
+          <div class="std-cause-line">
+            <span class="std-cause-name">${c.is_primary ? '<i class="std-cause-flag">主因</i>' : ""}${UI.esc(c.cause)}</span>
+            <b>${UI.esc(c.occurrences)} ${UI.esc(c.unit || "项")}</b>
+          </div>
+          <div class="std-cause-bar"><i style="width:${Math.max(2, Math.min(100, Number(c.share) || 0))}%"></i></div>
+          <div class="std-cause-meta">占本维度 ${UI.esc(stdPct(c.share))}%
+            ${(c.steps || []).length ? `· 涉及 ${c.steps.map((s) => UI.esc(s)).join(" / ")}` : ""}
+            ${c.defect_type ? `· 关联不良 ${UI.esc(c.defect_type)}` : ""}</div>
+        </div>`).join("");
+      return `<div class="std-cause-dim">
+          <div class="std-cause-dim-head">
+            <b>${UI.esc(items[0].rate_dim_label || dim)}</b>
+            <em>${UI.esc(DIM_GAP[dim] || "")} ${UI.esc(gap)} ${UI.esc(DIM_UNIT[dim] || "项")}</em>
+          </div>${bar}
+        </div>`;
+    }).join("");
+
+    const trend = (o.by_day || []).map((x) => x.conformity_rate);
+    const trendVals = trend.filter((v) => typeof v === "number");
+    const first = trendVals.length ? trendVals[0] : null;
+    const last = trendVals.length ? trendVals[trendVals.length - 1] : null;
+    const trendBlock = trendVals.length ? `<div class="std-modal-trend">
+        <span class="std-modal-trend-label">逐日符合率
+          <i>${UI.esc(w.start || "")} ~ ${UI.esc(w.end || "")}</i></span>
+        ${mfgSpark(trend, r.status === "ok" ? "green" : (r.status === "warn" ? "amber" : "red"))}
+        <span class="std-modal-trend-val">首 ${UI.esc(stdPct(first))}% → 末 ${UI.esc(stdPct(last))}%</span>
+      </div>` : "";
+
+    const notes = (o.notes || []).map((n) => `<div class="std-modal-note">${UI.icon("info", 11)}<span>${UI.esc(n)}</span></div>`).join("");
+
+    return `<div class="std-modal-body">${offlineTip}
+      <div class="std-formula">
+        <span class="std-term"><b>${UI.esc(stdPct(r.completeness_rate))}%</b><i>完整率</i></span>
+        <em>×</em>
+        <span class="std-term"><b>${UI.esc(stdPct(r.perfection_rate))}%</b><i>完善率</i></span>
+        <em>×</em>
+        <span class="std-term"><b>${UI.esc(stdPct(r.compliance_rate))}%</b><i>遵守率</i></span>
+        <em>=</em>
+        <span class="std-conform ${UI.esc(r.status)}">${UI.esc(stdPct(r.conformity_rate))}%</span>
+        <span class="std-scope">${UI.esc(w.label || "")} · ${UI.esc(r.audit_rows || 0)} 条 / ${UI.esc(r.audit_items || 0)} 项</span>
+      </div>
+      <div class="std-chips">
+        ${chip("与工段差", dlt.vs_stage || 0)}
+        ${chip("与全厂差", dlt.vs_overall || 0)}
+        ${chip("与目标差", dlt.vs_target || 0)}
+        <span class="std-chip">目标符合率 <b>${UI.esc(stdPct(target))}%</b></span>
+      </div>
+      <div class="std-modal-cols">
+        <div class="std-modal-col">
+          <div class="std-modal-title">${UI.icon("list", 12)}按工序拆解
+            <i>哪道工序把三率拉下来（同口径逐工序重算）</i></div>
+          ${stepRows ? `<table class="std-table std-step-table">
+            <thead><tr><th>工序</th><th>完整率</th><th>完善率</th><th>遵守率</th>
+              <th>符合率</th><th>不符合 / 审核项</th></tr></thead>
+            <tbody>${stepRows}</tbody></table>` : `<div class="empty">该口径内无工序级明细</div>`}
+        </div>
+        <div class="std-modal-col">
+          <div class="std-modal-title">${UI.icon("shield", 12)}不良原因归因
+            <i>按三率维度归因 · 数量与明细可对账</i></div>
+          ${groups || `<div class="empty">该口径内无归因明细</div>`}
+        </div>
+      </div>
+      ${trendBlock}
+      ${notes ? `<div class="std-notes">${notes}</div>` : ""}
+    </div>`;
+  }
+
+  /** 点班组行 → 弹窗。先挂骨架再填数据（接口 200ms~2s，空白等太久会像没反应）。 */
+  async function openStdTeamModal(ctx, stage, team, win) {
+    const UI = ctx.UI;
+    document.querySelectorAll(".std-modal").forEach((el) => el.remove());
+    const overlay = document.createElement("div");
+    overlay.className = "std-modal";
+    overlay.innerHTML = `<div class="std-modal-card" role="dialog" aria-modal="true"
+        aria-label="${UI.esc(team)} 三率明细">
+        <div class="std-modal-head">
+          <span class="std-modal-tag">2 级 · 班组明细</span>
+          <b>${UI.esc(team)}</b>
+          <span class="std-modal-sub">${UI.esc(stage)}${stage ? " · " : ""}三率拆解与不良原因</span>
+          <button type="button" class="std-modal-x" data-std-close aria-label="关闭">×</button>
+        </div>
+        <div class="std-modal-body"><div class="std-modal-loading">
+          ${UI.icon("info", 13)}正在拉取该班组的三率拆解与不良原因…</div></div>
+      </div>`;
+    document.body.appendChild(overlay);
+    const onKey = (e) => { if (e.key === "Escape") close(); };
+    function close() {
+      document.removeEventListener("keydown", onKey);
+      overlay.remove();
+      document.body.classList.remove("std-modal-open");
+    }
+    document.addEventListener("keydown", onKey);
+    document.body.classList.add("std-modal-open");
+    overlay.addEventListener("click", (ev) => {
+      if (ev.target === overlay || (ev.target.closest && ev.target.closest("[data-std-close]"))) close();
+    });
+
+    const body = overlay.querySelector(".std-modal-body");
+    let data = null;
+    let offline = false;
+    try {
+      if (!ctx.api.online()) throw new Error("offline");
+      data = await ctx.api.qualityTeam(stage, team, win || "window");
+    } catch (err) {
+      offline = true;
+    }
+    if (!body.isConnected) return;       // 等待期间被关掉了
+    // 离线兜底：用 2 级看板缓存的该班组比率拼一个只读骨架（明确标注缺工序/原因）
+    if (offline) {
+      const st = (ctx.state.screenState || {}).stdPayload || {};
+      const cached = ((st.data || {}).standard_three_rates || {}).by_stage || [];
+      const hit = (cached.find((x) => x.stage === stage) || {}).teams || [];
+      const t = hit.find((x) => x.team === team) || {};
+      data = {
+        found: !!t.team, window: { label: "演示数据" }, targets: {},
+        rates: t, by_step: [], by_day: [], causes: [], dim_totals: {}, notes: [],
+      };
+    }
+    const holder = document.createElement("div");
+    holder.innerHTML = stdTeamModalBody(UI, data, { offline });
+    if (holder.firstElementChild) body.replaceWith(holder.firstElementChild);
   }
 
   /** 口径说明（后端 notes）：指标定义即口径，保证与真实链路一致。 */
@@ -3430,11 +4621,66 @@
 
   function mfgManufacturingBody(UI, d) {
     const grid = (d.kpis || []).length >= 4 ? "grid grid-4" : "grid grid-2";
-    return `<div class="section-title">核心指标 <span class="section-extra">点卡片看明细分解 · 卡内「问数」可跳协同问数</span></div>
+    const scopeCn = mfgMfgScopeCn(d.filter);
+    const scopeTag = scopeCn ? `汇总口径：${UI.esc(scopeCn)} · ` : "";
+    return `<div class="section-title">核心指标 <span class="section-extra">${scopeTag}与顶部筛选卡同源 · 点卡片看明细分解 · 卡内「问数」可跳协同问数</span></div>
       <div class="${grid}">${(d.kpis || []).map((k) => mfgKpiCard(UI, k, "manufacturing")).join("")}</div>
-      <div class="section-title">重点关注 TOP5 <span class="section-extra">最需关注的最差 5 名 · 点行看实体逐日明细</span></div>
-      <div class="grid grid-2">${(d.rankings || []).map((r) => mfgRankCard(UI, r, "manufacturing", d.window && d.window.label)).join("")}</div>
+      <div class="section-title">重点关注 TOP5 <span class="section-extra">${scopeTag}同口径最需关注的最差 5 名 · 点行看实体逐日明细</span></div>
+      <div class="grid grid-2">${(d.rankings || []).map((r) => mfgRankCard(UI, r, "manufacturing", d.window && d.window.label, scopeCn)).join("")}</div>
+      ${mfgParetoCard(UI, d, "manufacturing", MFG_STOP_PARETO)}
+      ${mfgParetoCard(UI, d, "manufacturing", MFG_SCRAP_PARETO)}
       ${mfgNotes(UI, d.notes)}`;
+  }
+
+  // 制造看板的两张「原因累计柏拉图」配置（与品质不良柏拉图同一套双面板机件、同一份事实表结构；
+  // 制造侧没有缺陷类别维度 → cats:false，原因维度暂无下钻口径 → drillable:false，只保留「问数」）。
+  const MFG_STOP_PARETO = {
+    factKey: "stop_pareto_fact", hostId: "mfg-stop-pareto-fact", stateKey: "mfgStopPareto",
+    title: "停机原因累计柏拉图", label: "停机原因", qtyLabel: "停机(分钟)", valueWord: "停机",
+    askWord: "停机损失", askTail: "的产线 / 型号分布如何？主要集中在哪条线？",
+    emptyWord: "停机", drillable: false, cats: false,
+    extra: "左 · 月别（当月累计） ｜ 右 · 日别（当日） · 顶部产品分类/工段 · 按停机分钟累计 · 行内「问数」可追问根因",
+  };
+  const MFG_SCRAP_PARETO = {
+    factKey: "scrap_pareto_fact", hostId: "mfg-scrap-pareto-fact", stateKey: "mfgScrapPareto",
+    title: "报废原因累计柏拉图", label: "报废原因", qtyLabel: "报废(件)", valueWord: "报废",
+    askWord: "报废损失", askTail: "的产线 / 型号分布如何？主要集中在哪类原因？",
+    emptyWord: "报废", drillable: false, cats: false,
+    extra: "左 · 月别（当月累计） ｜ 右 · 日别（当日） · 顶部产品分类/工段 · 按报废件数累计 · 行内「问数」可追问根因",
+  };
+
+  /** 制造看板板级「产品分类 / 工段」筛选的中文范围标签（缺省 = 空串，表示未筛选）。 */
+  function mfgMfgScopeCn(filter) {
+    const f = filter || {};
+    const bits = [];
+    if (f.product_category) bits.push(`产品分类 ${f.product_category}`);
+    if (f.stage) bits.push(`工段 ${f.stage}`);
+    return bits.join(" · ");
+  }
+
+  /** 制造看板筛选条（图1 形态）：产品分类下拉 + 工段胶囊（全部 / SMT / PCM / PACK / 整机）。
+   *  选中即按该范围重算 4 张 KPI 卡与 TOP5；测试直通率无产线维度，工段对它不适用
+   *  （由后端标注「筛选不适用」，前端不伪造分项）。
+   *  ``fs`` = 当前下钻目标吃哪些板级筛选（见 drillFilterScope）：下钻态下只出真正生效的项。 */
+  function mfgMfgScopeChips(UI, st, fs) {
+    const scope = fs || BOARD_FILTER_ALL;
+    const pcat = st.mfgProdCat || "";
+    const stage = st.mfgMStage || "";
+    const chip = (val, label, on) => `<button class="chip${on ? " active" : ""}"
+      data-mstage="${UI.esc(val)}" title="按「工段 ${UI.esc(label)}」范围汇总 4 张 KPI 卡">${UI.esc(label)}</button>`;
+    const pcatGroup = scope.product_category
+      ? `<span class="chip-row-label">产品分类</span>`
+        + `<select class="chip-select" data-pcat title="按「产品分类」范围汇总 4 张 KPI 卡">`
+        + `<option value="">全部</option>`
+        + MFG_PCAT_OPTIONS.map((p) => `<option value="${UI.esc(p)}"${p === pcat ? " selected" : ""}>${UI.esc(p)}</option>`).join("")
+        + `</select>`
+      : "";
+    const stageGroup = scope.stage
+      ? `<span class="chip-row-label">工段</span>`
+        + chip("", "全部", !stage)
+        + MFG_STAGE_CHIPS.map((s) => chip(s, s, stage === s)).join("")
+      : "";
+    return pcatGroup + stageGroup;
   }
 
   /** 品质看板板级「工段 / 缺陷类别」筛选的中文范围标签（缺省 = 空串，表示未筛选）。 */
@@ -3447,31 +4693,53 @@
   }
 
   /** 品质看板筛选条：工段（全部 / SMT / PCM / PACK / 整机）+ 类别（全部 / 性能 / 外观）。
-   *  选中即按该范围重算 4 张 KPI 卡的汇总值（无该维度的两项由后端标注「筛选不适用」）。 */
-  function mfgScopeChips(UI, st) {
+   *  选中即按该范围重算 4 张 KPI 卡的汇总值（无该维度的两项由后端标注「筛选不适用」）。
+   *  ``fs`` = 当前下钻目标吃哪些板级筛选（见 drillFilterScope）：下钻态下只出真正生效的项
+   *  （来料 / 客诉 / 标准三率 2 级都不吃工段·类别 → 这两组不渲染）。 */
+  function mfgScopeChips(UI, st, fs) {
+    const scope = fs || BOARD_FILTER_ALL;
     const stage = st.mfgStage || "";
     const cat = st.mfgCat || "";
     const chip = (attr, val, label, on) => `<button class="chip${on ? " active" : ""}"
       ${attr}="${UI.esc(val)}" title="按「${UI.esc(label)}」范围汇总 4 张 KPI 卡">${UI.esc(label)}</button>`;
-    return `<span class="chip-row-label">工段</span>`
-      + chip("data-stage", "", "全部", !stage)
-      + QUALITY_STAGE_CHIPS.map((s) => chip("data-stage", s, s, stage === s)).join("")
-      + `<span class="chip-row-label">类别</span>`
-      + chip("data-cat", "", "全部", !cat)
-      + QUALITY_CAT_CHIPS.map(([v, cn]) => chip("data-cat", v, cn, cat === v)).join("");
+    const stageGroup = scope.stage
+      ? `<span class="chip-row-label">工段</span>`
+        + chip("data-stage", "", "全部", !stage)
+        + QUALITY_STAGE_CHIPS.map((s) => chip("data-stage", s, s, stage === s)).join("")
+      : "";
+    const catGroup = scope.category
+      ? `<span class="chip-row-label">类别</span>`
+        + chip("data-cat", "", "全部", !cat)
+        + QUALITY_CAT_CHIPS.map(([v, cn]) => chip("data-cat", v, cn, cat === v)).join("")
+      : "";
+    return stageGroup + catGroup;
   }
 
   function mfgQualityBody(UI, d) {
     const grid = (d.kpis || []).length >= 4 ? "grid grid-4" : "grid grid-2";
     const scopeCn = mfgScopeCn(d.filter);
     const scopeTag = scopeCn ? `汇总口径：${UI.esc(scopeCn)} · ` : "";
+    // 来料质量 TOP10（``incoming_top10``）：独立字段、固定全量口径，L1 只出 TOP10；
+    // 已并入 TOP10 的配套榜（``view="merged_into_top10"``，如来料批次合格率）跳过不画，
+    // 否则同一指标会出两张卡。全量供应商改在 2 级看板看，不再渲染全量排序表。
+    const ranks = d.rankings || [];
+    const incomingRanks = d.incoming_top10 || [];
+    const cardRanks = ranks.filter((r) => r.view !== "merged_into_top10");
     // 主体一：核心指标 + 重点关注 TOP5 —— 二者共用顶部筛选卡片（统计口径 / 工段 / 类别）同源同口径
+    // 三张 TOP5 卡凑成一排；凑不满三张时回落两列，避免出现半行空位。
+    const rankGrid = cardRanks.length === 3 ? "grid grid-3" : "grid grid-2";
     const bodyTop = `<div class="mfg-group" data-mfg-group="metrics">
       <div class="section-title">核心指标 <span class="section-extra">${scopeTag}与顶部筛选卡同源 · 点卡片看明细分解 · 卡内「问数」可跳协同问数</span></div>
       <div class="${grid}">${(d.kpis || []).map((k) => mfgKpiCard(UI, k, "quality")).join("")}</div>
       <div class="section-title">重点关注 TOP5 <span class="section-extra">${scopeTag}同口径最需关注的最差 5 名 · 点行看实体逐日明细</span></div>
-      <div class="grid grid-2">${(d.rankings || []).map((r) => mfgRankCard(UI, r, "quality", d.window && d.window.label, scopeCn)).join("")}</div>
+      <div class="${rankGrid}">${cardRanks.map((r) => mfgRankCard(UI, r, "quality", d.window && d.window.label, scopeCn)).join("")}</div>
     </div>`;
+    // 主体一之二：来料质量 TOP10（左 = 来料批次合格率 / 右 = 来料上线不良率）——
+    // **固定全量口径**，不受板级统计口径与工段 / 类别 / 柏拉图筛选影响；L1 只出 TOP10。
+    const bodyIncoming = incomingRanks.length ? `<div class="mfg-group" data-mfg-group="incoming">
+      <div class="section-title">来料质量关注 TOP10 <span class="section-extra">固定全量口径 · 不受统计口径 / 工段 / 类别 / 柏拉图筛选影响 · 点卡片看全量供应商 2 级看板</span></div>
+      <div class="grid grid-2">${incomingRanks.map((r) => mfgIncomingTopCard(UI, r)).join("")}</div>
+    </div>` : "";
     // 主体二：标准三率（不受筛选影响，独立居中）
     const bodyStd = `<div class="mfg-group" data-mfg-group="standard">
       ${mfgStdThreeRates(UI, d.standard_three_rates)}
@@ -3480,7 +4748,7 @@
     const bodyPareto = `<div class="mfg-group" data-mfg-group="pareto">
       ${mfgParetoCard(UI, d, "quality")}
     </div>`;
-    return bodyTop + bodyStd + bodyPareto + mfgNotes(UI, d.notes);
+    return bodyTop + bodyIncoming + bodyStd + bodyPareto + mfgNotes(UI, d.notes);
   }
 
   /* ---------------- 二级 / 三级下钻（看板内就地展开，不跳协同问数） ---------------- */
@@ -3559,6 +4827,8 @@
       const rows = (st.steps || []).map((sp) => `<tr class="drill-row" role="button" tabindex="0"
               data-drill-step="${UI.esc(sp.step)}" data-drill-entity="${ent}"
               data-kpi="${UI.esc(d.kpi)}" data-screen="${UI.esc(d.screen)}"
+              ${d.screen === "manufacturing"
+                ? `data-mfg-modal="4" data-mfg-name="${UI.esc(sp.step)}"` : ""}
               title="点击查看「${UI.esc(sp.step)}」的工位明细">
         <td class="drill-name">${sp.status === "danger" ? UI.icon("warn", 11) : ""}${UI.esc(sp.step)}</td>
         <td class="drill-val ${UI.esc(sp.status)}">${UI.esc(sp.value)}${UI.esc(d.unit)}</td>
@@ -3589,6 +4859,8 @@
     const rows = list.map((s) => `<tr class="drill-row" role="button" tabindex="0"
             data-drill-station="${UI.esc(s.station_no)}" data-drill-step="${UI.esc(s.step)}"
             data-drill-entity="${ent}" data-kpi="${UI.esc(d.kpi)}" data-screen="${UI.esc(d.screen)}"
+            ${d.screen === "manufacturing"
+              ? `data-mfg-modal="5" data-mfg-name="${UI.esc(s.station_name || s.station_no)}"` : ""}
             title="点击查看「${UI.esc(s.station_name || s.station_no)}」逐日明细 + 过站记录">
       ${hideStep ? "" : `<td class="drill-name">${UI.esc(s.step)}</td>`}
       <td>${UI.esc(s.station_no)}</td>
@@ -3648,6 +4920,14 @@
       dots += `<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="3" class="pdot"/>`;
     });
     const ty = padT + ph - (threshold / 100) * ph;
+    // X 轴下方：每根柱标出该类型的**占比**（与右侧列表「占比」列同源）——
+    // 避免读图时要来回对照列表才知道哪根柱占了多少。缺 share 的旧数据不标，不编造。
+    const shares = list.map((x, i) => {
+      if (x.share === undefined || x.share === null) return "";
+      const cx = padL + band * (i + 0.5);
+      return `<text x="${cx.toFixed(1)}" y="${(padT + ph + 13).toFixed(1)}"`
+        + ` class="pshare" text-anchor="middle">${UI.esc(x.share)}%</text>`;
+    }).join("");
     const grid = [0, 50, 100].map((p) => {
       const y = padT + ph - (p / 100) * ph;
       return `<line x1="${padL}" y1="${y.toFixed(1)}" x2="${W - padR}" y2="${y.toFixed(1)}" class="paxis"/>`
@@ -3672,26 +4952,34 @@
       ${thr}
       <path d="${line.trim()}" class="pline"/>
       ${dots}
+      ${shares}
     </svg></div>`;
   }
 
   /** 累计柏拉图卡（分发）：有 ``pareto_fact`` 预聚合事实表 → 交互式分析组件
-   *  （左右两块「月别 / 日别」 + 产品分类/类别/工段 本地筛选，零网络往返）；否则回退静态渲染。 */
-  function mfgParetoCard(UI, d, screen) {
-    const fact = d && d.pareto_fact;
-    if (fact && (fact.rows || []).length) return mfgParetoFactCard(UI, d);
-    return mfgParetoStaticCard(UI, d, screen);
+   *  （左右两块「月别 / 日别」 + 产品分类/类别/工段 本地筛选，零网络往返）；否则回退静态渲染。
+   *  ``opt`` 用于「同构但不同源」的复用（制造看板的停机 / 报废原因事实表）：
+   *  ``factKey`` 事实表字段名、``hostId``/``stateKey`` 容器与筛选状态键、``title``/``label`` 文案、
+   *  ``qtyLabel`` 损失量列名、``drillable`` 行是否可下钻、``cats`` 是否显示缺陷类别筛选。 */
+  function mfgParetoCard(UI, d, screen, opt) {
+    const o = opt || {};
+    const fact = d && d[o.factKey || "pareto_fact"];
+    if (fact && (fact.rows || []).length) return mfgParetoFactCard(UI, d, o);
+    return o.factKey ? "" : mfgParetoStaticCard(UI, d, screen);
   }
 
   /** 交互式柏拉图外壳：顶部筛选卡（产品分类下拉 + 工段 chips）+ 左右两块并排面板
    *  （左 · 月别 = 当月累计；右 · 日别 = 当日）+ 底部筛选（缺陷类别：性能不良 / 外观不良）。
    *  已去掉「粒度」切换与「期间」下拉；控件与内容由 mfgParetoBind 渲染。 */
-  function mfgParetoFactCard(UI, d) {
-    return `<div class="section-title">不良累计柏拉图
-        <span class="section-extra">左 · 月别（当月累计） ｜ 右 · 日别（当日） · 顶部产品分类/工段 · 底部缺陷类别 · 点类型下钻产线 · 型号分解</span></div>
-      <div class="card" id="mfg-pareto-fact">
+  function mfgParetoFactCard(UI, d, opt) {
+    const o = opt || {};
+    const extra = o.extra
+      || "左 · 月别（当月累计） ｜ 右 · 日别（当日） · 顶部产品分类/工段 · 底部缺陷类别 · 只列前 10 名（其余并入「其他」） · 点类型下钻产线 · 型号分解";
+    return `<div class="section-title">${UI.esc(o.title || "不良累计柏拉图")}
+        <span class="section-extra">${UI.esc(extra)}</span></div>
+      <div class="card" id="${UI.esc(o.hostId || "mfg-pareto-fact")}">
         <div class="card-head">
-          <div class="card-title">${UI.icon("list", 16)}${UI.esc(d.pareto_label || "不良类型")}累计柏拉图</div>
+          <div class="card-title">${UI.icon("list", 16)}${UI.esc(o.label || d.pareto_label || "不良类型")}累计柏拉图</div>
         </div>
         <div data-p-body><div class="empty">${UI.spinner("lg")}<div style="margin-top:8px">绘制中…</div></div></div>
       </div>`;
@@ -3701,21 +4989,28 @@
    *  关键少数（累计首达阈值）→ 复用 mfgParetoChart 重绘；全程无网络往返。
    *  左块期间 = 最新月（当月）、右块 = 最新日（当日）；行可下钻（``window`` = 本块期间，
    *  叠加 stage/category/prod_category，与当前筛选同口径），行内「问数」跳协同问数。 */
-  function mfgParetoBind(ctx, box, d) {
+  function mfgParetoBind(ctx, box, d, opt) {
+    const o = opt || {};
     const UI = ctx.UI;
-    const host = box.querySelector("#mfg-pareto-fact");
-    const fact = d && d.pareto_fact;
+    const factKey = o.factKey || "pareto_fact";
+    const host = box.querySelector("#" + (o.hostId || "mfg-pareto-fact"));
+    const fact = d && d[factKey];
     if (!host || !fact || !(fact.rows || []).length) return;
     const body = host.querySelector("[data-p-body]");
     if (!body) return;
     const months = fact.months || [], days = fact.days || [];
-    const cats = fact.categories || [], stages = fact.stages || [];
+    const cats = o.cats === false ? [] : (fact.categories || []);
+    const stages = fact.stages || [];
     const pcats = fact.prod_cats || [];
     const threshold = d.pareto_threshold || 80;
     const screen = d.screen || "quality";
     const kpi = d.pareto_kpi || "defect_rate";
+    const qtyLabel = o.qtyLabel || "损失量";
+    const drillable = o.drillable !== false;   // 制造原因维度无对应下钻口径 → 行不可点
+    const askWord = o.askWord || "不良";
     // 控制状态挂 screenState：下钻往返后按原筛选恢复（两块期间固定，不进状态）
-    const st = (ctx.state.screenState.mfgPareto = ctx.state.screenState.mfgPareto || {});
+    const stateKey = o.stateKey || "mfgPareto";
+    const st = (ctx.state.screenState[stateKey] = ctx.state.screenState[stateKey] || {});
     if (st.pcat && pcats.indexOf(st.pcat) < 0) st.pcat = "";
     if (st.cat && cats.indexOf(st.cat) < 0) st.cat = "";
     if (st.stage && stages.indexOf(st.stage) < 0) st.stage = "";
@@ -3723,7 +5018,9 @@
     const chip = (on, attr, val, label) => `<button class="chip${on ? " active" : ""}"
       ${attr}="${UI.esc(val)}">${UI.esc(label)}</button>`;
 
-    /** 单块聚合：期间过滤（月 = 前缀匹配 / 日 = 精确匹配）+ 共享筛选 → 类型降序累计。 */
+    /** 单块聚合：期间过滤（月 = 前缀匹配 / 日 = 精确匹配）+ 共享筛选 → 类型降序累计。
+     *  展示口径与后端 ``_pareto_cum`` 同源：**只保留前 10 项，其余（含数据中本就
+     *  名为「其他」的项）合并为末位「其他」行**（``aggregated`` → 不可下钻）。 */
     const paneOf = (gran, period) => {
       const rows = (fact.rows || []).filter((r) => (gran === "month"
         ? String(r.d || "").slice(0, 7) === period : r.d === period)
@@ -3732,17 +5029,28 @@
       const byType = {};
       rows.forEach((r) => { byType[r.type] = (byType[r.type] || 0) + (r.qty || 0); });
       const total = Object.keys(byType).reduce((a, k) => a + byType[k], 0);
-      let acc = 0;
-      const list = Object.keys(byType).map((name) => ({ name: name, value: byType[name] }))
+      const head = [], rest = [];
+      Object.keys(byType).map((name) => ({ name: name, value: byType[name] }))
         .sort((a, b) => b.value - a.value)
-        .map((x) => {
-          const share = total ? Math.round((x.value / total) * 1000) / 10 : 0;
-          acc = Math.round((acc + share) * 10) / 10;
-          return { name: x.name, value: x.value, share: share, cum: acc };
+        .forEach((x) => {
+          if (x.name === "其他") { rest.push(x); return; }   // 数据中已有的「其他」并入
+          if (head.length < 10) head.push(x); else rest.push(x);
         });
+      if (rest.length) {
+        head.push({ name: "其他", aggregated: true, folded: rest.length,
+                    value: rest.reduce((a, b) => a + b.value, 0) });
+      }
+      let acc = 0;
+      const list = head.map((x) => {
+        const share = total ? Math.round((x.value / total) * 1000) / 10 : 0;
+        acc = Math.round((acc + share) * 10) / 10;
+        return { name: x.name, value: x.value, share: share, cum: acc,
+                 aggregated: !!x.aggregated, folded: x.folded };
+      });
       // 关键少数 = 累计占比首达阈值（含该项）——与后端 _pareto_cum/_vital_few 同源口径
       const vital = [];
       for (let i = 0; i < list.length; i += 1) {
+        if (list[i].aggregated) break;   // 「其他」是合并桶，不作为关键少数
         vital.push(list[i].name);
         if (list[i].cum >= threshold) break;
       }
@@ -3752,9 +5060,10 @@
 
     const paneHtml = (gran, title, period) => {
       const p = paneOf(gran, period);
-      const scopeCn = [st.pcat || "全部产品分类", st.stage || "全部工段",
-                       st.cat || "全部类别", period || "—"].join(" · ");
-      const askOf = (t) => `${scopeCn} 的「${t}」不良按产线 · 型号分布如何？`;
+      const scopeCn = [st.pcat || "全部产品分类", st.stage || "全部工段"]
+        .concat(cats.length ? [st.cat || "全部类别"] : [])
+        .concat([period || "—"]).join(" · ");
+      const askOf = (t) => `${scopeCn} 的「${t}」${askWord}${o.askTail || "按产线 · 型号分布如何？"}`;
       const head = `<div class="pareto-pane-head">
         <span class="pareto-pane-title">${UI.esc(title)}</span>
         <span class="pareto-pane-meta">${UI.esc(period || "—")}</span>
@@ -3763,31 +5072,45 @@
       if (!p.list.length) {
         return `<div class="pareto-pane" data-p-pane="${UI.esc(gran)}">${head}
           <div class="empty">${UI.icon("warn", 22)}
-            <div style="margin-top:8px">该筛选条件下暂无不良明细</div></div></div>`;
+            <div style="margin-top:8px">该筛选条件下暂无${UI.esc(o.emptyWord || "不良")}明细</div></div></div>`;
       }
       const rows = p.list.map((x, i) => {
-        const hot = p.vital.indexOf(x.name) >= 0;
-        return `<div class="pareto-row${hot ? " vital" : ""} drillable" role="button" tabindex="0"
+        const hot = !x.aggregated && p.vital.indexOf(x.name) >= 0;
+        // 行下钻只对「有对应下钻口径」的模块开放（品质不良类型 → 产线·型号分解）；
+        // 制造原因维度（停机 / 报废）暂无该口径 → 行不带 data-drill-*，改开「明细弹窗」：
+        // 该原因按 日期 · 产品分类 · 工段 本地切片（与当前筛选同口径），不再点了没反应。
+        const rowAttrs = drillable
+          ? ` drillable" role="button" tabindex="0"
           data-drill-pareto="${UI.esc(x.name)}" data-kpi="${UI.esc(kpi)}"
           data-screen="${UI.esc(screen)}" data-drill-window="${UI.esc(gran)}"
           data-drill-stage="${UI.esc(st.stage)}" data-drill-category="${UI.esc(st.cat)}"
           data-drill-prod-cat="${UI.esc(st.pcat)}"
-          title="点击下钻：${UI.esc(x.name)} 在 ${UI.esc(scopeCn)} 下的产线 · 型号分解">
+          title="点击下钻：${UI.esc(x.name)} 在 ${UI.esc(scopeCn)} 下的产线 · 型号分解`
+          : ` drillable" role="button" tabindex="0"
+          data-p-reason="1" data-p-type="${UI.esc(x.name)}"
+          data-p-fact="${UI.esc(factKey)}" data-p-state="${UI.esc(stateKey)}"
+          data-p-win="${UI.esc(gran)}" data-p-ref="${UI.esc(period || "")}"
+          data-p-qtylabel="${UI.esc(qtyLabel)}" data-p-valueword="${UI.esc(o.valueWord || "损失")}"
+          title="点击查看「${UI.esc(x.name)}」明细：按日期 · 产品分类 · 工段分解（当前 ${UI.esc(x.value)} · 占比 ${UI.esc(x.share)}%）`;
+        // 归并行（「其他」）无单一口径可下钻 → 只做展示，不给假入口。
+        const aggAttrs = `" title="${UI.esc(`其余 ${x.folded} 类合并 · 占比 ${x.share}% · 不参与下钻`)}"`;
+        return `<div class="pareto-row${hot ? " vital" : ""}${x.aggregated ? aggAttrs : rowAttrs}>
           <span class="pareto-no">${i + 1}</span>
-          <span class="pareto-name" title="损失 ${UI.esc(x.value)} · 占比 ${UI.esc(x.share)}% · 累计 ${UI.esc(x.cum)}%"
+          <span class="pareto-name" title="${UI.esc(o.valueWord || "损失")} ${UI.esc(x.value)} · 占比 ${UI.esc(x.share)}% · 累计 ${UI.esc(x.cum)}%"
             >${UI.esc(x.name)}</span>
           <span class="pareto-bar"><i style="width:${((x.value / p.max) * 100).toFixed(1)}%"></i></span>
           <span class="pareto-val">${UI.esc(x.value)}</span>
           <span class="pareto-share">${UI.esc(x.share)}%</span>
           <span class="pareto-cum">${UI.esc(x.cum)}%</span>
-          <button class="row-ask pareto-ask" data-ask="${UI.esc(askOf(x.name))}"
-            title="跳转协同问数：${UI.esc(askOf(x.name))}">${UI.icon("chat", 11)}问数</button>
+          ${x.aggregated ? `<span class="pareto-ask"></span>`
+            : `<button class="row-ask pareto-ask" data-ask="${UI.esc(askOf(x.name))}"
+            title="跳转协同问数：${UI.esc(askOf(x.name))}">${UI.icon("chat", 11)}问数</button>`}
         </div>`;
       }).join("");
       return `<div class="pareto-pane" data-p-pane="${UI.esc(gran)}">${head}
         ${mfgParetoChart(UI, p.list, p.max, threshold, p.vital.length, { w: 560, h: 170 })}
         <div class="pareto-head"><span class="pareto-no">#</span><span class="pareto-name">类型</span>
-          <span class="pareto-bar">损失量</span><span class="pareto-val">数量</span>
+          <span class="pareto-bar">${UI.esc(qtyLabel)}</span><span class="pareto-val">数量</span>
           <span class="pareto-share">占比</span><span class="pareto-cum">累计</span>
           <span class="pareto-ask"></span></div>
         <div class="pareto-list">${rows}</div></div>`;
@@ -3808,8 +5131,9 @@
       <span class="chip-row-note">· 顶部筛选同时作用于月别 / 日别两块</span>
     </div>`;
 
-    // 底部筛选：缺陷类别（性能不良 / 外观不良）—— 只作为本柏拉图的筛选，不影响上方指标与 TOP5
-    const bottomFilter = `<div class="pareto-bottom-filter">
+    // 底部筛选：缺陷类别（性能不良 / 外观不良）—— 只作为本柏拉图的筛选，不影响上方指标与 TOP5。
+    // ``cats`` 为空（制造停机 / 报废原因）时不渲染这一行：不给没有选项的空筛选条。
+    const bottomFilter = (o.cats === false || !cats.length) ? "" : `<div class="pareto-bottom-filter">
       <span class="chip-row-label">缺陷类别</span>
       ${chip(!st.cat, "data-p-cat", "", "全部")}
       ${cats.map((c) => chip(st.cat === c, "data-p-cat", c, c)).join("")}
@@ -3822,8 +5146,17 @@
         ${paneHtml("day", "日别 · 当日", days[0] || "")}
       </div>` + bottomFilter;
       // 控件重绑（每次重绘 DOM 全换）
+      // 产品分类下拉：重绘后**显式回写**选中值（不依赖 <option selected> 属性的解析结果），
+      // 并把状态里已不存在于选项集的值收敛回「全部」——避免「选了分类，下拉却显示全部」。
       const sel = body.querySelector("[data-p-pcat]");
-      if (sel) sel.addEventListener("change", () => { st.pcat = sel.value; paint(); });
+      if (sel) {
+        if (st.pcat && pcats.indexOf(st.pcat) < 0) st.pcat = "";
+        sel.value = st.pcat || "";
+        sel.addEventListener("change", () => {
+          st.pcat = pcats.indexOf(sel.value) >= 0 ? sel.value : "";
+          paint();
+        });
+      }
       body.querySelectorAll("[data-p-cat]").forEach((b) => b.addEventListener("click", () => {
         if (st.cat === b.dataset.pCat) return;
         st.cat = b.dataset.pCat; paint();
@@ -3847,7 +5180,8 @@
     const list = items.map((x) => {
       const share = x.share === undefined ? 0 : x.share;
       acc = x.cum_share === undefined ? Math.round((acc + share) * 10) / 10 : x.cum_share;
-      return { name: x.name, value: x.value || 0, share: share, cum: acc };
+      return { name: x.name, value: x.value || 0, share: share, cum: acc,
+               aggregated: !!x.aggregated, folded: x.folded_count };
     });
     const total = list.reduce((a, b) => a + b.value, 0) || 1;
     const max = Math.max.apply(null, list.map((x) => x.value)) || 1;
@@ -3855,22 +5189,27 @@
     const vitalOf = (arr) => {
       const out = [];
       for (let i = 0; i < arr.length; i += 1) {
+        if (arr[i].aggregated) break;   // 「其他」是合并桶，不作为关键少数
         out.push(arr[i].name);
         if (arr[i].cum >= threshold) break;
       }
       return out;
     };
-    const vital = (d.pareto_vital && d.pareto_vital.length) ? d.pareto_vital : vitalOf(list);
+    const vital = (d.pareto_vital && d.pareto_vital.length)
+      ? d.pareto_vital.filter((n) => n !== "其他") : vitalOf(list);
     const drillable = !!(screen && d.pareto_kpi);
     const rows = list.map((x, i) => {
-      const hot = vital.indexOf(x.name) >= 0;
-      const attrs = drillable
-        ? ` role="button" tabindex="0" data-drill-pareto="${UI.esc(x.name)}"`
-          + ` data-kpi="${UI.esc(d.pareto_kpi)}" data-screen="${UI.esc(d.screen || screen)}"`
-          + ` title="点击下钻：${UI.esc(x.name)} 的产线 · 型号分解"`
-        : ` title="${UI.esc(x.name)}：损失 ${UI.esc(x.value)} · 占比 ${UI.esc(x.share)}%`
-          + ` · 累计 ${UI.esc(x.cum)}%"`;
-      return `<div class="pareto-row${hot ? " vital" : ""}${drillable ? " drillable" : ""}"${attrs}>
+      const hot = !x.aggregated && vital.indexOf(x.name) >= 0;
+      const clickable = drillable && !x.aggregated;   // 归并行无单一口径可下钻
+      const attrs = x.aggregated
+        ? ` title="其余 ${UI.esc(x.folded || 0)} 类合并 · 占比 ${UI.esc(x.share)}% · 不参与下钻"`
+        : (clickable
+          ? ` role="button" tabindex="0" data-drill-pareto="${UI.esc(x.name)}"`
+            + ` data-kpi="${UI.esc(d.pareto_kpi)}" data-screen="${UI.esc(d.screen || screen)}"`
+            + ` title="点击下钻：${UI.esc(x.name)} 的产线 · 型号分解"`
+          : ` title="${UI.esc(x.name)}：损失 ${UI.esc(x.value)} · 占比 ${UI.esc(x.share)}%`
+            + ` · 累计 ${UI.esc(x.cum)}%"`);
+      return `<div class="pareto-row${hot ? " vital" : ""}${clickable ? " drillable" : ""}"${attrs}>
         <span class="pareto-no">${i + 1}</span>
         <span class="pareto-name"${hot ? ` title="关键少数：累计占比首达 ${threshold}%"` : ""}
           >${UI.esc(x.name)}</span>
@@ -3881,7 +5220,7 @@
       </div>`;
     }).join("");
     return `<div class="section-title">${UI.esc(d.pareto_label || "缺陷模式")}累计柏拉图
-        <span class="section-extra">按损失量降序 · 累计占比 = 前 N 类 ÷ 合计${drillable
+        <span class="section-extra">按损失量降序 · 前 10 名以外并入「其他」 · 累计占比 = 前 N 类 ÷ 合计${drillable
           ? " · 点类型下钻产线 · 型号分解" : ""}</span></div>
       <div class="card">
         <div class="card-head">
@@ -3898,9 +5237,140 @@
       </div>`;
   }
 
+  /** 制造看板「停机 / 报废原因」柏拉图行明细弹窗：该原因按 日期 · 产品分类 · 工段
+   *  本地切片（数据取自同一次看板载荷的原因事实表，零网络往返，离线同样可用）。
+   *  行「点了没反应」的假入口由此收口——凡是能看见的原因行，都能点开看明细。 */
+  function openMfgReasonModal(ctx, el, payload) {
+    const UI = ctx.UI;
+    const fact = (payload || {})[el.dataset.pFact || ""] || null;
+    const type = el.dataset.pType || "";
+    const gran = el.dataset.pWin === "month" ? "month" : "day";
+    const period = el.dataset.pRef || "";
+    const qtyLabel = el.dataset.pQtylabel || "损失量";
+    const valueWord = el.dataset.pValueword || "损失";
+    const st = ((ctx.state.screenState || {})[el.dataset.pState || ""]) || {};
+    const pcatCn = st.pcat || "全部产品分类";
+    const stageCn = st.stage || "全部工段";
+    const shell = openOrderModalShell(ctx, "原因明细", type || "—",
+      `${pcatCn} · ${stageCn} · ${period || "—"} · 按日期 · 产品分类 · 工段分解`);
+    if (!shell.body) return;
+    const rows = fact ? (fact.rows || []).filter((r) => r.type === type
+      && (gran === "month" ? String(r.d || "").slice(0, 7) === period : r.d === period)
+      && (!st.pcat || r.pc === st.pcat) && (!st.stage || r.stage === st.stage)) : [];
+    if (!rows.length) {
+      fillOrderModal(shell, `<div class="std-modal-body"><div class="empty">
+        ${UI.icon("info", 26)}
+        <div style="margin-top:8px">该原因在当前口径下暂无明细数据</div>
+        <div class="std-modal-hint">换个期间（月别 / 日别）或调整顶部产品分类 / 工段筛选后重试。</div>
+      </div></div>`);
+      return;
+    }
+    const total = rows.reduce((a, b) => a + (b.qty || 0), 0) || 1;
+    const byKey = (key) => {
+      const m = {};
+      rows.forEach((r) => { const k = r[key] || "—"; m[k] = (m[k] || 0) + (r.qty || 0); });
+      return Object.keys(m).map((k) => ({ name: k, qty: m[k] })).sort((a, b) => b.qty - a.qty);
+    };
+    const table = (list, head) => `<table class="std-table">
+        <thead><tr><th>${UI.esc(head)}</th><th>${UI.esc(qtyLabel)}</th><th>占比</th></tr></thead>
+        <tbody>${list.map((x) => `<tr>
+          <td>${UI.esc(x.name)}</td><td class="num">${UI.esc(x.qty)}</td>
+          <td class="num">${(Math.round((x.qty / total) * 1000) / 10).toFixed(1)}%</td>
+        </tr>`).join("")}</tbody></table>`;
+    const dayList = byKey("d");
+    const scopeList = byKey("pc");
+    const stageList = byKey("stage");
+    const ask = `${pcatCn} · ${stageCn} · ${period || "—"} 的「${type}」${valueWord}合计 ${total}，`
+      + `按产线 · 型号分布如何？如何降低该类${valueWord}？`;
+    fillOrderModal(shell, `<div class="std-modal-body">
+      <div class="std-chips">
+        <span class="std-chip">${UI.esc(qtyLabel)}合计 <b>${UI.esc(total)}</b></span>
+        <span class="std-chip">涉及天数 <b>${UI.esc(dayList.length)}</b></span>
+        <span class="std-chip">产品分类 <b>${UI.esc(scopeList.length)}</b></span>
+        <span class="std-chip">工段 <b>${UI.esc(stageList.length)}</b></span>
+      </div>
+      <div class="std-modal-cols">
+        <div class="std-modal-col">
+          <div class="std-modal-title">${UI.icon("list", 12)}按日期（降序）</div>
+          ${table(dayList, "日期")}
+        </div>
+        <div class="std-modal-col">
+          <div class="std-modal-title">${UI.icon("layers", 12)}按产品分类 · 工段</div>
+          ${table(scopeList, "产品分类")}
+          <div style="margin-top:10px">${table(stageList, "工段")}</div>
+        </div>
+      </div>
+      <div class="std-notes">${UI.icon("info", 12)}
+        <span>口径与左侧柏拉图同源（同一份原因事实表本地切片）：期间 ${UI.esc(period || "—")}，
+          筛选 ${UI.esc(pcatCn)} · ${UI.esc(stageCn)}。制造原因维度暂无「按产线 · 型号」下钻口径，
+          故以明细弹窗呈现，不做整页下钻。</span></div>
+      <div class="std-chips" style="margin-top:12px">
+        <button type="button" class="row-ask" data-ask="${UI.esc(ask)}"
+          title="跳转协同问数：${UI.esc(ask)}">${UI.icon("chat", 12)} 问数</button>
+      </div>
+    </div>`);
+    // 弹窗挂在 <body> 下、不在看板容器里，行内「问数」需补绑一次（同 openMfgDrillModal）。
+    const host = document.querySelector(".std-modal");
+    if (host) mfgBind(ctx, host, payload, "");
+  }
+
+  /** 品质看板「不良类型下钻」明细行弹窗：该 产线 · 型号 行在该不良类型下的
+   *  分子 ÷ 分母 · 不良率 · 逐日趋势（行数据即 L2 载荷本身，不再点了没反应）。 */
+  function openParetoTermModal(ctx, row, payload) {
+    const UI = ctx.UI;
+    const d = payload || {};
+    const r = row || {};
+    const tone = MFG_TONE[r.status] || "blue";
+    const typeCn = `${d.pareto_label || "不良类型"}「${d.defect_type || ""}」`;
+    const shell = openOrderModalShell(ctx, "明细行", r.name || "—",
+      `${typeCn} · 按${d.dimension || "产线 · 型号"}分解`);
+    if (!shell.body) return;
+    const w = d.window || {};
+    const trend = (r.trend || []).filter((v) => typeof v === "number" && !Number.isNaN(v));
+    const first = trend.length ? trend[0] : null;
+    const last = trend.length ? trend[trend.length - 1] : null;
+    const trendBlock = trend.length >= 2 ? `<div class="std-modal-trend">
+        <span class="std-modal-trend-label">逐日${UI.esc(d.label || "")}
+          <i>${UI.esc(w.start || "")} ~ ${UI.esc(w.end || "")}</i></span>
+        ${mfgSpark(trend, tone)}
+        <span class="std-modal-trend-val">首 ${UI.esc(first)}${UI.esc(d.unit || "")}
+          → 末 ${UI.esc(last)}${UI.esc(d.unit || "")}</span>
+      </div>` : "";
+    const ask = `${typeCn}在「${r.name || ""}」的不良率 ${r.value}${d.unit || ""}，如何降低？`;
+    fillOrderModal(shell, `<div class="std-modal-body">
+      <div class="drill-hero">
+        <div class="drill-hero-main">
+          <div class="drill-hero-label">${UI.esc(d.label || "")} · ${UI.esc(typeCn)}</div>
+          <div class="drill-hero-value"><span class="big ${UI.esc(r.status)}">${UI.esc(r.value)}</span>
+            <span class="stat-unit">${UI.esc(d.unit || "")}</span></div>
+          <div class="drill-hero-sub">目标 ${UI.esc(d.target)}${UI.esc(d.unit || "")}
+            · 分子 ÷ 分母 ${UI.esc(r.numerator)} ÷ ${UI.esc(r.denominator)}</div>
+        </div>
+        <div class="drill-hero-side">
+          ${UI.badge(MFG_STATUS_CN[r.status] || r.status || "—", MFG_BADGE[r.status] || "badge-gray")}
+          <div class="drill-def">${UI.icon("info", 12)}<span>${UI.esc(d.definition || "")}</span></div>
+        </div>
+      </div>
+      ${trendBlock}
+      <div class="std-notes">${UI.icon("info", 12)}
+        <span>该行即「${UI.esc(typeCn)} × ${UI.esc(r.name || "")}」的明细口径（分子 = 该类型不良数，
+          分母 = 该实体受检总数）。本层为不良类型维度终点，继续按实体分解请返回看板从
+          「${UI.esc(d.label || "")}」2 级入口进入。</span></div>
+      <div class="std-chips" style="margin-top:12px">
+        <button type="button" class="row-ask" data-ask="${UI.esc(ask)}"
+          title="跳转协同问数：${UI.esc(ask)}">${UI.icon("chat", 12)} 问数</button>
+      </div>
+    </div>`);
+    const host = document.querySelector(".std-modal");
+    if (host) mfgBind(ctx, host, payload, "");
+  }
+
   /** 下钻 hero 卡（3/4/5 级共用）：大字值 + 状态 + 口径 + 去问数。 */
   function mfgDrillHero(UI, d, title) {
     const delta = (d.delta > 0 ? "+" : "") + d.delta;
+    // 分子/分母的业务语义标签（后端 num_label/den_label 下发，如「越限条数 ÷ 测量条数」；
+    // 未配置的指标回退「分子 / 分母」——用户反馈：光写「分子÷分母」看不出 8% 是什么）
+    const numCn = d.num_label || "分子", denCn = d.den_label || "分母";
     return `<div class="card drill-hero-card">
         <div class="drill-hero">
           <div class="drill-hero-main">
@@ -3908,7 +5378,7 @@
             <div class="drill-hero-value"><span class="big ${UI.esc(d.status)}">${UI.esc(d.value)}</span>
               <span class="stat-unit">${UI.esc(d.unit)}</span></div>
             <div class="drill-hero-sub">目标 ${UI.esc(d.target)}${UI.esc(d.unit)} · 偏差 ${UI.esc(delta)}pt
-              · 分子 ÷ 分母 ${UI.esc(d.numerator)} ÷ ${UI.esc(d.denominator)}</div>
+              · ${UI.esc(numCn)} ÷ ${UI.esc(denCn)} ${UI.esc(d.numerator)} ÷ ${UI.esc(d.denominator)}</div>
           </div>
           <div class="drill-hero-side">
             ${UI.badge(MFG_STATUS_CN[d.status] || d.status, MFG_BADGE[d.status] || "badge-gray")}
@@ -3916,32 +5386,60 @@
           </div>
         </div>
         <div class="drill-hero-ops">
+          ${(d.screen === "spc" && d.kpi === "spc_capability")
+            ? `<button class="row-ask" role="button" tabindex="0"
+            data-spc-records="overlimit"
+            title="查看本口径下全部越限测量记录（超出规格限的行，按超出幅度降序）">
+            ${UI.icon("warn", 12)} 越限明细（${UI.esc(d.numerator)} 条）</button>` : ""}
           <button class="row-ask" data-ask="${UI.esc(d.ask || "")}"
             title="跳转协同问数：${UI.esc(d.ask || "")}">${UI.icon("chat", 12)} 去问数</button>
         </div>
       </div>`;
   }
 
-  /** 逐日明细卡（3/4/5 级共用）。 */
+  /** 逐日明细卡（3/4/5 级共用）。
+   *  表头用指标的业务语义标签（num_label/den_label，如「越限条数/测量条数」），
+   *  并注明「— = 当日无数据」——用户反馈：光看「分子/分母」与整列「—」不知道在看什么。
+   *  SPC 屏逐日行可单击 → 当日测量明细弹窗（与看板同口径可对账）；其它屏行保持不可点。 */
   function mfgDailyCard(UI, d, title) {
-    const rows = (d.daily || []).map((x) => `<tr>
+    const numCn = d.num_label || "分子", denCn = d.den_label || "分母";
+    // 仅「能力维度」（spc_capability）的逐日来自 spc_measurement → 点行开测量记录弹窗；
+    // 柏拉图维度（spc_pareto）的逐日来自 quality_defect（缺陷检验）→ 点行开测量弹窗
+    // 就是口径错乱，保持行不可点。
+    const spcDay = d.screen === "spc" && d.kpi === "spc_capability";
+    const rows = (d.daily || []).map((x) => {
+      // SPC 逐日行钩子：不带 data-kpi / data-drill-entity → 不与既有绑定链相交
+      const attrs = spcDay
+        ? ` role="button" tabindex="0" data-spc-records="daydetail" data-spc-day="${UI.esc(x.date)}"`
+          + ` data-spc-entity="${UI.esc((d.entity && d.entity.characteristic) || "")}"`
+          + ` title="点击查看 ${UI.esc(x.date)} 的全部测量记录（口径与看板一致）"`
+        : "";
+      return `<tr class="${spcDay ? "drill-row" : ""}"${attrs}>
       <td>${UI.esc(x.date)}</td>
-      <td class="num">${x.numerator === null ? "—" : UI.esc(x.numerator)}</td>
-      <td class="num">${x.denominator === null ? "—" : UI.esc(x.denominator)}</td>
+      <td class="num" title="${UI.esc(numCn)}">${x.numerator === null ? "—" : UI.esc(x.numerator)}</td>
+      <td class="num" title="${UI.esc(denCn)}">${x.denominator === null ? "—" : UI.esc(x.denominator)}</td>
       <td class="drill-val ${UI.esc(x.status)}">${x.value === null ? "—" : UI.esc(x.value) + UI.esc(d.unit)}</td>
-    </tr>`).join("");
-    return `<div class="section-title">${UI.esc(title || "逐日明细（最近 7 天 · 演示窗口）")}</div>
+    </tr>`;
+    }).join("");
+    const defTitle = title || `${d.label ? d.label + " · " : ""}逐日明细（${UI.esc((d.window || {}).label || "最近 7 天 · 演示窗口")}）`;
+    return `<div class="section-title">${UI.esc(defTitle)}${spcDay
+        ? `<span class="section-extra">点行看当日测量明细</span>` : ""}</div>
       <div class="card"><table class="std-table drill-table">
-        <thead><tr><th>日期</th><th>分子</th><th>分母</th><th>值</th></tr></thead>
-        <tbody>${rows || `<tr><td colspan="4" class="empty-cell">暂无逐日数据</td></tr>`}</tbody></table></div>`;
+        <thead><tr><th>日期</th><th>${UI.esc(numCn)}</th><th>${UI.esc(denCn)}</th><th>${UI.esc(d.label || "值")}</th></tr></thead>
+        <tbody>${rows || `<tr><td colspan="4" class="empty-cell">暂无逐日数据</td></tr>`}</tbody></table>
+        <div class="drill-def">${UI.icon("info", 12)}<span>「—」表示当日无数据（无测量 / 无检验记录），并非 0；${UI.esc(d.definition || "")}</span></div></div>`;
   }
 
   /** 关联原始记录卡（3/4/5 级共用）。 */
   function mfgRecordCard(UI, d, extra) {
     const cols = d.columns || [];
     const head = cols.map((c) => `<th>${UI.esc(c.label)}</th>`).join("");
+    // 「数据来源」列展示翻译：demo-seed 是种子装载的内部标记，直出英文会让评审
+    // 误以为是异常值；只做**显示层**翻译，不改原始记录数据（原始性不破坏）。
+    const SOURCE_CN = { "demo-seed": "演示种子", "demo": "演示种子" };
     const rows = (d.records || []).map((r) => `<tr>${cols.map((c) => {
-      const v = r[c.key];
+      const raw = r[c.key];
+      const v = (c.key === "source" && SOURCE_CN[raw]) ? SOURCE_CN[raw] : raw;
       return `<td>${v === null || v === undefined || v === "" ? "—" : UI.esc(v)}</td>`;
     }).join("")}</tr>`).join("");
     return `<div class="section-title">关联原始记录
@@ -3963,13 +5461,58 @@
       const tone = MFG_TONE[r.status] || "blue";
       const ent = drillEntity(r);
       // ``masked`` = 后端已脱敏并移除了该行的下钻实体：与 terminal 同待遇，不再下钻
+      // 订单履约（orders）：行单击打开「该分组订单明细」弹窗（对齐班组三率弹窗模式），
+      // 3 级逐日明细入口收进弹窗内（openOrderGroupModal），行不再直接下钻。
+      // 制造看板（manufacturing）：行单击同样改为弹窗（openMfgDrillModal），弹窗内展示该
+      // 分组的 工段·工序·工位 + 逐日 + 关联原始记录，并保留「进入 3 级看板」入口；
+      // 其余屏保持直下 3 级（品质 / SPC / 我的看板交互不变）。
+      const isOrders = d.screen === "orders";
+      const isMfgModal = d.screen === "manufacturing";
+      const isSpcModal = d.screen === "spc";
+      // SPC 弹窗必须带上**板级筛选维度**（工段 / 产品分类），否则弹窗按全厂全分类取数，
+      // 与「筛选后的 L1 卡片」样本数对不上（实测 100 vs 25）→ 违反口径唯一事实源。
+      // 维度在 L2 响应的**顶层 ``filter``** 里（不在行内，行里没有这两个字段）；
+      // 无板级筛选时 ``filter`` 为 null / 缺省 → 兜底空串（= 全厂口径，与 L1 一致）。
+      const spcFilter = (d && d.filter && typeof d.filter === "object") ? d.filter : {};
+      const spcStage = spcFilter.stage || "";
+      const spcPcat = spcFilter.product_category || "";
+      // 不良类型下钻（terminal）行：后端无「该类型 × 实体」的更细口径 → 不再下钻实体，
+      // 但点行改开「明细弹窗」（该 产线 · 型号 行的分子 ÷ 分母 · 逐日趋势），不再点了没反应。
+      // ``masked`` 行仍不可点：脱敏就是脱敏，弹窗随之降级为脱敏口径的说明。
+      const termRow = term && !r.masked;
       const rowAttrs = (term || r.masked)
-        ? ` title="${UI.esc(r.name)}：${UI.esc(r.value)}${UI.esc(d.unit)}`
-          + ` · ${UI.esc(r.numerator)} ÷ ${UI.esc(r.denominator)}"`
-          + (r.masked ? ` · 已按岗位脱敏，不支持下钻` : "")
-        : ` role="button" tabindex="0" data-drill-entity="${UI.esc(ent)}"`
-          + ` data-kpi="${UI.esc(d.kpi)}" data-screen="${UI.esc(d.screen)}"`
-          + ` title="点击查看「${UI.esc(r.name)}」逐日明细"`;
+        ? (termRow
+          ? ` role="button" tabindex="0" data-p-term="${UI.esc(JSON.stringify({
+              name: r.name, value: r.value, numerator: r.numerator,
+              denominator: r.denominator, status: r.status, trend: r.trend || [] }))}"
+            title="点击查看「${UI.esc(r.name)}」明细：分子 ÷ 分母 · 逐日趋势"`
+          : ` title="${UI.esc(r.name)}：${UI.esc(r.value)}${UI.esc(d.unit)}`
+            + ` · ${UI.esc(r.numerator)} ÷ ${UI.esc(r.denominator)}"`
+            + (r.masked ? ` · 已按岗位脱敏，不支持下钻` : ""))
+        : (isOrders
+          ? ` role="button" tabindex="0" data-order-group="1"`
+            + ` data-kpi="${UI.esc(d.kpi)}" data-screen="${UI.esc(d.screen)}"`
+            + ` data-order-entity="${UI.esc(ent)}"`
+            + ` data-order-row="${UI.esc(JSON.stringify({
+                name: r.name, value: r.value, numerator: r.numerator,
+                denominator: r.denominator, status: r.status }))}"`
+            + ` title="点击查看「${UI.esc(r.name)}」的订单明细弹窗"`
+          : (isMfgModal
+            ? ` role="button" tabindex="0" data-mfg-modal="3"`
+              + ` data-kpi="${UI.esc(d.kpi)}" data-screen="${UI.esc(d.screen)}"`
+              + ` data-drill-entity="${UI.esc(ent)}" data-mfg-name="${UI.esc(r.name)}"`
+              + ` title="点击查看「${UI.esc(r.name)}」明细弹窗（工段·工序·工位 + 逐日 + 原始记录）"`
+            : (isSpcModal
+              ? ` role="button" tabindex="0" data-spc-modal="capability"`
+                + ` data-kpi="${UI.esc(d.kpi)}" data-screen="${UI.esc(d.screen)}"`
+                + ` data-spc-entity="${UI.esc(r.name)}" data-spc-name="${UI.esc(r.name)}"`
+                // 板级维度透传给弹窗钩子（mfgBind 的 [data-spc-modal] 分支读这两个）
+                + ` data-spc-stage="${UI.esc(spcStage)}"`
+                + ` data-spc-pcat="${UI.esc(spcPcat)}"`
+                + ` title="点击查看「${UI.esc(r.name)}」能力明细弹窗（能力指数 + 逐日越限 + 原始记录）"`
+              : ` role="button" tabindex="0" data-drill-entity="${UI.esc(ent)}"`
+                + ` data-kpi="${UI.esc(d.kpi)}" data-screen="${UI.esc(d.screen)}"`
+                + ` title="点击查看「${UI.esc(r.name)}」逐日明细"`)));
       return `<tr class="drill-row"${rowAttrs}>
         <td class="drill-no"><span class="rank-no">${UI.esc(r.rank)}</span></td>
         <td class="drill-name">${r.status === "danger" ? UI.icon("warn", 12) : ""}${UI.esc(r.name)}</td>
@@ -3982,28 +5525,58 @@
             title="跳转协同问数：${UI.esc(d.ask || "")}">${UI.icon("chat", 11)}问数</button></td>
       </tr>`;
     }).join("");
-    return `<div class="section-title">${UI.esc(d.label)}${d.defect_type
+    // 2 级看板补充数据（后端仅对声明了板级筛选的指标下发）：整体汇总 / 整体逐日 / 原始记录；
+    // 离线演示数据不含这三块 → 缺省即不渲染，绝不编造。
+    const s = d.summary || null;
+    const hero = s ? mfgDrillHero(UI, Object.assign({}, d, {
+      value: s.value, numerator: s.numerator, denominator: s.denominator,
+      delta: s.delta, status: s.status,
+    }), `${d.label} · 整体汇总`) : "";
+    const summaryStrip = s ? `<div class="grid grid-4 std-kpis">
+        <div class="std-mini"><i>覆盖${UI.esc(d.dimension)}</i><b>${UI.esc(s.items)}</b>
+          <em>明细行数（全量分组）</em></div>
+        <div class="std-mini"><i>达标 / 预警 / 危险</i>
+          <b>${UI.esc(s.ok)} / ${UI.esc(s.warn)} / ${UI.esc(s.danger)}</b>
+          <em>目标 ${UI.esc(s.target)}${UI.esc(s.unit)}</em></div>
+        <div class="std-mini"><i>整体值</i>
+          <b class="std-conform ${UI.esc(s.status)}">${UI.esc(s.value)}${UI.esc(s.unit)}</b>
+          <em>${UI.esc(d.num_label || "分子")} ÷ ${UI.esc(d.den_label || "分母")} ${UI.esc(s.numerator)} ÷ ${UI.esc(s.denominator)}</em></div>
+        <div class="std-mini"><i>最需关注</i>
+          <b class="std-conform ${s.worst ? UI.esc(s.worst.status) : ""}">${
+            s.worst ? UI.esc(s.worst.name) : "—"}</b>
+          <em>${s.worst ? UI.esc(s.worst.value) + UI.esc(s.unit) : "无明细行"}</em></div>
+      </div>` : "";
+    const dailyCard = s ? mfgDailyCard(UI, d, `${UI.esc(d.label)} · 整体逐日明细（${UI.esc((d.window || {}).label || "")}）`) : "";
+    const recordCard = s ? mfgRecordCard(UI, d, "筛选范围内 · 最多 20 条 · 与聚合同源") : "";
+    return hero + summaryStrip + `<div class="section-title">${UI.esc(d.label)}${d.defect_type
         ? ` · ${UI.esc(d.pareto_label || "不良类型")}「${UI.esc(d.defect_type)}」` : ""} · 按${UI.esc(d.dimension)}分解
         <span class="section-extra">共 ${(d.rows || []).length} 项 · ${term
-          ? "该不良类型下的明细 · 返回看板可切换类型" : "点行看逐日明细 · 行内「问数」可跳协同问数"}</span></div>
+          ? "该不良类型下的明细 · 返回看板可切换类型" : (d.screen === "orders"
+            ? "点行看该分组订单明细弹窗 · 行内「问数」可跳协同问数"
+            : (d.screen === "manufacturing"
+              ? "点行看明细弹窗（工段·工序·工位 + 逐日 + 原始记录）· 弹窗内可进入 3 级看板 · 行内「问数」可跳协同问数"
+              : (d.screen === "spc"
+                ? "点行看该特性的能力明细弹窗（能力指数 + 逐日越限 + 原始记录）· 弹窗内可进入 3 级看板 · 行内「问数」可跳协同问数"
+                : "点行看逐日明细 · 行内「问数」可跳协同问数")))}</span></div>
       <div class="card">
         <div class="card-head">
           <div class="card-title">${UI.icon("list", 16)}${UI.esc(d.label)} · 明细分解</div>
           <div class="card-extra">目标 ${UI.esc(d.target)}${UI.esc(d.unit)}</div>
         </div>
         ${rows ? `<div class="drill-scroll"><table class="std-table drill-table">
-          <thead><tr><th>序号</th><th>${UI.esc(d.dimension)}</th><th>值</th><th>目标</th>
-            <th>状态</th><th>分子 ÷ 分母</th><th>${trendCol}</th><th>操作</th></tr></thead>
+          <thead><tr><th>序号</th><th>${UI.esc(d.dimension)}</th><th>${UI.esc(d.label || "值")}</th><th>目标</th>
+            <th>状态</th><th>${UI.esc(d.num_label || "分子")} ÷ ${UI.esc(d.den_label || "分母")}</th><th>${trendCol}</th><th>操作</th></tr></thead>
           <tbody>${rows}</tbody></table></div>`
         : `<div class="empty">${UI.icon("warn", 22)}<div style="margin-top:8px">${term
           ? "该不良类型在当前筛选范围内无明细记录" : "该指标暂无分组明细"}</div></div>`}
         <div class="drill-def">${UI.icon("info", 12)}<span>口径：${UI.esc(d.definition || "")}</span></div>
-      </div>`;
+      </div>` + dailyCard + recordCard;
   }
 
   /** L3：单实体明细（工段·工序分解 + 工位明细 + 帕累托 + 逐日 + 原始记录）。 */
   function mfgDrillL3Body(UI, d) {
-    return mfgDrillHero(UI, d, (d.entity && d.entity.name) || "")
+    // hero 标题必须带**指标名**（用户反馈：只显示实体名时，大数字看不出是越限率还是 Cpk）
+    return mfgDrillHero(UI, d, drillHeroTitle(d, (d.entity && d.entity.name) || ""))
       + mfgStageCard(UI, d)
       + mfgStationCard(UI, d)
       + mfgParetoCard(UI, d)
@@ -4013,7 +5586,7 @@
 
   /** L4：单工序明细（该工序工位表 + 逐日 + 过站记录）。 */
   function mfgDrillL4Body(UI, d) {
-    return mfgDrillHero(UI, d, (d.parent && d.parent.name) || "")
+    return mfgDrillHero(UI, d, drillHeroTitle(d, (d.parent && d.parent.name) || ""))
       + mfgStationCard(UI, d, "该工序工位明细", "点工位行下钻到逐日 + 过站记录", true)
       + mfgDailyCard(UI, d, "该工序逐日明细（最近 7 天）")
       + mfgRecordCard(UI, d, "该工序过站记录 · 最多 20 条");
@@ -4021,10 +5594,15 @@
 
   /** L5：单工位明细（班次对比 + 逐日 + 过站记录）。 */
   function mfgDrillL5Body(UI, d) {
-    return mfgDrillHero(UI, d, (d.parent && d.parent.name) || "")
+    return mfgDrillHero(UI, d, drillHeroTitle(d, (d.parent && d.parent.name) || ""))
       + mfgShiftCard(UI, d)
       + mfgDailyCard(UI, d, "该工位逐日明细（最近 7 天）")
       + mfgRecordCard(UI, d, "该工位过站记录 · 最多 20 条");
+  }
+
+  /** 下钻 hero 标题：**指标名 · 实体名**（指标名缺省时退回纯实体名，兼容旧演示数据）。 */
+  function drillHeroTitle(d, entityName) {
+    return (d && d.label) ? `${d.label} · ${entityName || ""}` : (entityName || "");
   }
 
   /**
@@ -4256,30 +5834,70 @@
   function mfgBind(ctx, box, payload, host) {
     const h = host || "";   // 宿主透传：我的看板内联下钻时回写 dashboard，保证返回/再下钻不串屏
     // 板级时间口径：下钻与所看档位同口径（当日/当月/最近7天）。
-    // 订单履约看板自带独立口径状态，其余看板（制造/品质/SPC/我的看板）沿用 mfgWindow。
+    // 订单履约看板与 SPC 看板各自带独立口径状态，其余看板（制造/品质/我的看板）沿用 mfgWindow。
     const st = ctx.state.screenState || {};
-    const win = (((payload && payload.screen) === "orders")
-      ? st.ordersWindow : st.mfgWindow) || "window";
+    const screenId = (payload && payload.screen) || "";
+    const win = (screenId === "orders" ? st.ordersWindow
+      : (screenId === "spc" ? st.spcWindow : st.mfgWindow)) || "window";
     box.querySelectorAll("[data-ask]").forEach((btn) => {
       btn.addEventListener("click", (ev) => {
         ev.stopPropagation();
         const q = btn.dataset.ask;
         if (!q) return;
-        try { sessionStorage.setItem("chat_prefill", q); } catch (e) { /* 隐私模式忽略 */ }
+        // 结构化问数上下文：从按钮所在的 KPI 卡/排行行读取口径标识，
+        // 叠加板级档位与筛选——后端命中看板 KPI 时直接复用看板聚合函数
+        // （口径同源，不经 LLM），未命中则静默回落自然语言链路。
+        const card = btn.closest("[data-kpi]");
+        const screen = (card && card.dataset.screen) || (payload && payload.screen) || "";
+        const askCtx = {
+          module: h === "dashboard" ? "dashboard" : "mfgboard",
+          screen: screen,
+          kpi: (card && card.dataset.kpi) || "",
+          view: btn.dataset.askView || "kpi",
+          window: win,
+          // 筛选按屏取：SPC 屏用自己的 spcStage / spcProdCat（不与制造/品质混用），
+          // 否则「看板显示 SMT 的数、问数却给全厂的数」= 口径不一致缺陷
+          filters: (screen === "spc"
+            ? { stage: st.spcStage || "", category: "", prod_cat: st.spcProdCat || "" }
+            : { stage: st.mfgStage || st.mfgMStage || "",
+                category: st.mfgCat || "",
+                prod_cat: st.mfgProdCat || "" }),
+        };
+        writeAskPrefill(q, askCtx);
         ctx.navigate("chat");
+      });
+    });
+    // 2 级看板班组行 → 班组三率明细弹窗（口径跟随当前档位）
+    box.querySelectorAll("[data-std-team]").forEach((tr) => {
+      tr.setAttribute("role", "button");
+      tr.setAttribute("tabindex", "0");
+      tr.addEventListener("click", () => {
+        openStdTeamModal(ctx, tr.dataset.stdTeamStage || "", tr.dataset.stdTeam, win);
+      });
+      tr.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); tr.click(); }
       });
     });
     const entOf = (el) => {
       try { return JSON.parse(el.dataset.drillEntity || "{}"); } catch (e) { return {}; }
     };
-    const goL2 = (el) => () => setDrill(ctx, {
-      level: 2, host: h, screen: el.dataset.screen, kpi: el.dataset.kpi, window: win,
-    });
-    const goL3 = (el) => () => setDrill(ctx, {
-      level: 3, host: h, screen: el.dataset.screen, kpi: el.dataset.kpi,
-      entity: entOf(el), window: win,
-    });
-    const goL4L5 = (el) => () => {
+    // 行内点击必须 stopPropagation：来料质量 TOP10 卡的行既带 data-drill-entity（L3），
+    // 又嵌在带 data-kpi（L2）的卡片里，不拦截会冒泡触发卡片的 L2，把用户带回上一级。
+    const goL2 = (el) => (ev) => {
+      if (ev && ev.stopPropagation) ev.stopPropagation();
+      setDrill(ctx, {
+        level: 2, host: h, screen: el.dataset.screen, kpi: el.dataset.kpi, window: win,
+      });
+    };
+    const goL3 = (el) => (ev) => {
+      if (ev && ev.stopPropagation) ev.stopPropagation();
+      setDrill(ctx, {
+        level: 3, host: h, screen: el.dataset.screen, kpi: el.dataset.kpi,
+        entity: entOf(el), window: win,
+      });
+    };
+    const goL4L5 = (el) => (ev) => {
+      if (ev && ev.stopPropagation) ev.stopPropagation();
       const station = el.dataset.drillStation || "";
       setDrill(ctx, {
         level: station ? 5 : 4, host: h, screen: el.dataset.screen, kpi: el.dataset.kpi,
@@ -4302,25 +5920,113 @@
     const keyGo = (fn) => (ev) => {
       if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); fn(); }
     };
+    // 制造看板「停机 / 报废原因」柏拉图行（不可下钻）→ 明细弹窗（本地切片，与柏拉图同源）。
+    box.querySelectorAll("[data-p-reason]").forEach((el) => {
+      const fn = (ev) => {
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        openMfgReasonModal(ctx, el, payload);
+      };
+      el.addEventListener("click", fn);
+      el.addEventListener("keydown", keyGo(fn));
+    });
+    // 品质看板「不良类型下钻」明细行（terminal）→ 明细弹窗（分子 ÷ 分母 · 逐日趋势）。
+    box.querySelectorAll("[data-p-term]").forEach((el) => {
+      const fn = (ev) => {
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        let row = {};
+        try { row = JSON.parse(el.dataset.pTerm || "{}"); } catch (e) { row = {}; }
+        openParetoTermModal(ctx, row, payload);
+      };
+      el.addEventListener("click", fn);
+      el.addEventListener("keydown", keyGo(fn));
+    });
     box.querySelectorAll("[data-drill-pareto]").forEach((el) => {
       const fn = goPareto(el);
       el.addEventListener("click", fn);
       el.addEventListener("keydown", keyGo(fn));
     });
+    // 订单履约 2 级看板行 → 该分组订单明细弹窗（口径跟随当前档位；
+    // 行缓存值一并透传，离线时降级为「只有该行比率」并明确标注）。
+    // 必须先于 [data-kpi] 的 L2 绑定排除，否则点行会同时触发展开 2 级下钻。
+    box.querySelectorAll("[data-order-group]").forEach((el) => {
+      const fn = (ev) => {
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        openOrderGroupModal(ctx, el.dataset.kpi, el.dataset.orderEntity || "{}",
+          win, el.dataset.orderRow || "");
+      };
+      el.addEventListener("click", fn);
+      el.addEventListener("keydown", keyGo(fn));
+    });
+    // 制造看板 2/3/4 级行 → 明细弹窗（该分组的工段·工序·工位 + 逐日 + 关联原始记录），
+    // 弹窗内保留「进入 N 级看板」入口；行不再直接整页下钻（对齐订单 / 班组弹窗模式）。
+    // 同样必须先于 [data-drill-entity]/[data-drill-step] 的绑定排除，避免同一次点击触发两次。
+    box.querySelectorAll("[data-mfg-modal]").forEach((el) => {
+      const fn = (ev) => {
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        openMfgDrillModal(ctx, {
+          level: parseInt(el.dataset.mfgModal, 10) || 3,
+          screen: el.dataset.screen, kpi: el.dataset.kpi,
+          entity: entOf(el), step: el.dataset.drillStep || "",
+          station: el.dataset.drillStation || "", win: win,
+          name: el.dataset.mfgName || "",
+        });
+      };
+      el.addEventListener("click", fn);
+      el.addEventListener("keydown", keyGo(fn));
+    });
+    // SPC 2 级看板行 → 该特性的能力明细弹窗（能力指数 + 逐日越限 + 原始记录，
+    // 口径跟随当前档位与板级筛选；弹窗内保留「进入 3 级看板」入口）。
+    // 同样必须先于 [data-kpi]/[data-drill-entity] 的绑定排除，避免同一次点击触发两次。
+    box.querySelectorAll("[data-spc-modal]").forEach((el) => {
+      const fn = (ev) => {
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        openSpcCapabilityModal(ctx, {
+          characteristic: el.dataset.spcEntity || "",
+          name: el.dataset.spcName || "",
+          win: win,
+          stage: el.dataset.spcStage || "",
+          productCategory: el.dataset.spcPcat || "",
+        });
+      };
+      el.addEventListener("click", fn);
+      el.addEventListener("keydown", keyGo(fn));
+    });
+    // SPC 测量记录弹窗（越限明细 / 单日明细）：hero「越限明细」按钮与逐日表行。
+    // 钩子只带 data-spc-records（**不带** data-kpi / data-drill-entity）→ 与既有
+    // L2/L3/L4-L5 绑定链零交集，无需改任何排除选择器（E3 安全）。板级筛选直接读
+    // spcStage/spcProdCat（板级状态即唯一事实源，L1/L2/L3 全部同源）。
+    box.querySelectorAll("[data-spc-records]").forEach((el) => {
+      const fn = (ev) => {
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        openSpcRecordsModal(ctx, {
+          win: win,
+          stage: st.spcStage || "",
+          productCategory: st.spcProdCat || "",
+          characteristic: el.dataset.spcEntity || "",
+          day: el.dataset.spcDay || "",
+          overOnly: el.dataset.spcRecords === "overlimit",
+        });
+      };
+      el.addEventListener("click", fn);
+      el.addEventListener("keydown", keyGo(fn));
+    });
     // 仅 KPI 卡走 L2；带 data-drill-entity 的行（L1 TOP5 / L2 明细行）一律直下 L3
-    box.querySelectorAll("[data-kpi]:not([data-drill-entity]):not([data-drill-pareto])")
+    box.querySelectorAll("[data-kpi]:not([data-drill-entity]):not([data-drill-pareto])"
+        + ":not([data-order-group]):not([data-mfg-modal]):not([data-spc-modal])")
       .forEach((el) => {
         const fn = goL2(el);
         el.addEventListener("click", fn);
         el.addEventListener("keydown", keyGo(fn));
       });
     // 工序行 / 工位行带 data-drill-step，优先绑定（避免被下面的 L3 绑定覆盖）
-    box.querySelectorAll("[data-drill-step]").forEach((el) => {
-      const fn = goL4L5(el);
-      el.addEventListener("click", fn);
-      el.addEventListener("keydown", keyGo(fn));
-    });
-    box.querySelectorAll("[data-drill-entity]:not([data-drill-step])").forEach((el) => {
+    box.querySelectorAll("[data-drill-step]:not([data-mfg-modal]):not([data-spc-modal])")
+      .forEach((el) => {
+        const fn = goL4L5(el);
+        el.addEventListener("click", fn);
+        el.addEventListener("keydown", keyGo(fn));
+      });
+    box.querySelectorAll("[data-drill-entity]:not([data-drill-step])"
+        + ":not([data-mfg-modal]):not([data-spc-modal])").forEach((el) => {
       const fn = goL3(el);
       el.addEventListener("click", fn);
       el.addEventListener("keydown", keyGo(fn));
@@ -4344,13 +6050,23 @@
     const defectType = lvl === 2 ? (drill.defectType || "") : "";
     // 时间口径与所看板级一致；不良类型下钻可为 "all"（不限窗口）或本块期间（月别 month /
     // 日别 day）+ stage/category/prod_category 筛选。
-    // 订单履约看板自带独立口径状态，其余看板沿用制造综合看板的 mfgWindow。
+    // 订单看板有独立口径状态，SPC 看板也有（spcWindow），其余看板沿用 mfgWindow。
     const ss = ctx.state.screenState || {};
-    const fallbackWin = (drill.screen === "orders") ? ss.ordersWindow : ss.mfgWindow;
-    const windowKey = drill.window || fallbackWin || "window";
-    const stage = drill.stage || "";
-    const category = drill.category || "";
-    const prodCat = drill.prodCat || "";
+    const fbWin = (drill.screen === "orders") ? ss.ordersWindow
+      : ((drill.screen === "spc") ? ss.spcWindow : ss.mfgWindow);
+    const windowKey = drill.window || fbWin || "window";
+    // 板级筛选随下钻：只有「该下钻目标声明生效」的项才跟随板级状态（见 DRILL_FILTER_SCOPE）；
+    // 其余（含不良类型下钻——筛选在柏拉图卡片内自选、行自带参数）一律以 drill 自带的值为准，
+    // 绝不把板级筛选悄悄带进来。工作台「我的看板」内联下钻宿主不同屏，同样不跟随。
+    const fs = drillFilterScope(drill);
+    const onBoard = !drill.host;
+    const stage = drill.stage || (drill.screen === "manufacturing" ? (ss.mfgMStage || "")
+      : (drill.screen === "spc" ? (onBoard && fs.stage ? (ss.spcStage || "") : "")
+        : (onBoard && fs.stage ? (ss.mfgStage || "") : "")));
+    const category = drill.category || (onBoard && fs.category ? (ss.mfgCat || "") : "");
+    const prodCat = drill.prodCat || (drill.screen === "manufacturing" ? (ss.mfgProdCat || "")
+      : (drill.screen === "spc" ? (onBoard && fs.product_category ? (ss.spcProdCat || "") : "")
+        : ""));
     let payload = null, source = "real", reason = "";
 
     if (ctx.api.online()) {
@@ -4428,7 +6144,9 @@
     }
 
     // 报告中心「就地生成报告」载荷：把当前看板口径 + 模块作为溯源引用归档
-    const scopeCn = isQ ? mfgScopeCn({ stage: st.mfgStage, category: st.mfgCat }) : "";
+    const scopeCn = isQ
+      ? mfgScopeCn({ stage: st.mfgStage, category: st.mfgCat })
+      : mfgMfgScopeCn({ stage: st.mfgMStage, product_category: st.mfgProdCat });
     const rpBoardPayload = UI.esc(JSON.stringify({
       source_module: "kpi",
       context: {
@@ -4439,6 +6157,22 @@
         refs: [isQ ? "dashboard:quality" : "dashboard:manufacturing"],
       },
     }));
+
+    // 板级筛选在 2 级及以下下钻里只保留**该模块真正生效**的项（见 drillFilterScope 说明）；
+    // 全不生效时（来料固定全量口径 / 客诉快照口径 / 标准三率 2 级）整条不渲染——
+    // 不给「点了没反应、点了还退回看板首页」的假控件。
+    const fs = drillFilterScope(drill);
+    const winGroup = fs.window
+      ? `<span class="chip-row-label">统计口径</span>`
+        + WINDOW_KEYS.map((k) => `<button class="chip${k === winKey ? " active" : ""}"
+            data-window="${k}">${UI.icon("clock", 13)}${WINDOW_CN[k]}</button>`).join("")
+        + `<span class="chip-row-note">· ${drill ? "下钻与所看口径同源" : "KPI / TOP5 均按所选口径"}</span>`
+      : "";
+    const scopeGroup = isQ ? mfgScopeChips(UI, st, fs) : mfgMfgScopeChips(UI, st, fs);
+    const windowRow = (winGroup || scopeGroup)
+      ? `<div class="chip-row mfg-windows" id="mfg-windows" style="margin-bottom:14px">
+          ${winGroup}${scopeGroup}
+        </div>` : "";
 
     root.innerHTML = `
       <div class="content-inner">
@@ -4455,13 +6189,7 @@
           <button class="chip${isQ ? "" : " active"}" data-tab="manufacturing">${UI.icon("cpu", 14)}制造看板</button>
           <button class="chip${isQ ? " active" : ""}" data-tab="quality">${UI.icon("shield", 14)}品质看板</button>
         </div>
-        <div class="chip-row mfg-windows" id="mfg-windows" style="margin-bottom:14px">
-          <span class="chip-row-label">统计口径</span>
-          ${WINDOW_KEYS.map((k) => `<button class="chip${k === winKey ? " active" : ""}"
-            data-window="${k}">${UI.icon("clock", 13)}${WINDOW_CN[k]}</button>`).join("")}
-          <span class="chip-row-note">· KPI / TOP5 均按所选口径</span>
-          ${isQ ? mfgScopeChips(UI, st) : ""}
-        </div>
+        ${windowRow}
         <div id="mfg-crumb"></div>
         <div id="mfg-body">
           <div class="empty">${UI.spinner("lg")}<div style="margin-top:10px">正在加载看板数据…</div></div>
@@ -4488,13 +6216,15 @@
       });
     });
 
-    // 品质看板板级「工段 / 类别」筛选：改的是 KPI 汇总口径，与「统计口径」同法复位下钻层级——
-    // 否则卡片说 SMT、下钻却是全厂分解，两个口径对不上。
+    // 品质看板板级「工段 / 类别」筛选：改的是 quality_defect 同源指标的汇总口径，
+    // 后端已把这两个筛选折进下钻 WHERE → 下钻态下**保持当前层级**并按新范围就地重取，
+    // 不再复位回看板首页（此前一律复位，导致「进 2 级看板点筛选就退回主界面」）。
+    // 不吃这两个筛选的下钻模块（来料 / 客诉 / 标准三率 2 级）只渲染统计口径，选项根本不出现。
     root.querySelectorAll("#mfg-windows [data-stage]").forEach((btn) => {
       btn.addEventListener("click", () => {
         if ((st.mfgStage || "") === btn.dataset.stage) return;
         st.mfgStage = btn.dataset.stage;
-        st.boardDrill = null;
+        if (drill) drill.stage = st.mfgStage;
         ctx.refreshScreen();
       });
     });
@@ -4502,7 +6232,27 @@
       btn.addEventListener("click", () => {
         if ((st.mfgCat || "") === btn.dataset.cat) return;
         st.mfgCat = btn.dataset.cat;
-        st.boardDrill = null;
+        if (drill) drill.category = st.mfgCat;
+        ctx.refreshScreen();
+      });
+    });
+
+    // 制造看板板级「产品分类 / 工段」筛选（图1 形态）：制造四个 KPI 都声明了 scope，
+    // 下钻与板级筛选同口径（否则卡片说 SMT、下钻却是全厂分解）；下钻态同样就地重取不回首页。
+    const pcatSel = root.querySelector("#mfg-windows [data-pcat]");
+    if (pcatSel) {
+      pcatSel.addEventListener("change", () => {
+        if ((st.mfgProdCat || "") === pcatSel.value) return;
+        st.mfgProdCat = pcatSel.value;
+        if (drill) drill.prodCat = st.mfgProdCat;
+        ctx.refreshScreen();
+      });
+    }
+    root.querySelectorAll("#mfg-windows [data-mstage]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        if ((st.mfgMStage || "") === btn.dataset.mstage) return;
+        st.mfgMStage = btn.dataset.mstage;
+        if (drill) drill.stage = st.mfgMStage;
         ctx.refreshScreen();
       });
     });
@@ -4526,16 +6276,18 @@
     const tabLabel = isQ ? "品质看板" : "制造综合看板";
     // 时间口径：默认最近 7 天（与后端 resolve_window 同键），非法值回落 "window"
     const win = ["day", "month", "window"].indexOf(windowKey) >= 0 ? windowKey : "window";
-    // 板级「工段 / 缺陷类别」筛选（仅品质看板有该维度；制造看板不参与）
+    // 板级筛选：品质 = 「工段 / 缺陷类别」，制造 = 「产品分类 / 工段」（两 Tab 各自独立的状态键，
+    // 避免切 Tab 时把另一个口径的筛选带过来）
     const st = ctx.state.screenState || {};
-    const stage = isQ ? (st.mfgStage || "") : "";
+    const stage = isQ ? (st.mfgStage || "") : (st.mfgMStage || "");
     const category = isQ ? (st.mfgCat || "") : "";
+    const pcat = isQ ? "" : (st.mfgProdCat || "");
     let payload = null, source = "real", reason = "", scopeMeta = null;
 
     if (ctx.api.online()) {
       try {
         const d = isQ ? await ctx.api.qualityDashboard(win, stage, category)
-                      : await ctx.api.manufacturingDashboard(win);
+                      : await ctx.api.manufacturingDashboard(win, stage, pcat);
         if (d && !d.degraded && (d.kpis || []).length) {
           payload = d;
           scopeMeta = d.scope || null;
@@ -4558,10 +6310,10 @@
     if (!payload) {
       source = "demo";
       payload = (ctx.DEMO.DASHBOARD || {})[tab];
-      // 演示数据是静态快照，没有工段 / 类别维度的分母，无法按筛选重算 → 如实标注，
+      // 演示数据是静态快照，没有工段 / 类别 / 产品分类维度的分母，无法按筛选重算 → 如实标注，
       // 不让「选了筛选、值却是全厂」看起来像真实汇总。
-      if (payload && (stage || category)) {
-        reason = `${reason || "演示数据"} · 离线演示数据不支持工段/类别筛选`;
+      if (payload && (stage || category || pcat)) {
+        reason = `${reason || "演示数据"} · 离线演示数据不支持板级筛选`;
       }
     }
     if (!payload) {
@@ -4588,6 +6340,11 @@
     mfgBind(ctx, box, payload);
     // 品质看板交互式柏拉图（日别/月别 + 期间 + 类别/工段本地筛选）—— 独立于板级口径
     mfgParetoBind(ctx, box, payload);
+    // 制造看板两张「原因累计柏拉图」（停机 / 报废）：同一套双面板机件，各自独立筛选状态
+    if (!isQ) {
+      mfgParetoBind(ctx, box, payload, MFG_STOP_PARETO);
+      mfgParetoBind(ctx, box, payload, MFG_SCRAP_PARETO);
+    }
     // 标准三率两级看板（1 级工段 → 点卡下钻 2 级班组）
     if (isQ) {
       // 缓存本口径的整份载荷：下钻 2 级时直接就地切片，不再回后端取一遍
@@ -4605,6 +6362,10 @@
   // 判定 verdict → 视觉 tone（与后端 _verdict_status 同口径）
   const SPC_VERDICT = { "合格": "ok", "偏低": "warn", "不合格": "danger", "不可判定": "empty" };
 
+  // SPC 屏的三档统计口径（与后端 WINDOWS 键集同源：window/day/month）
+  const SPC_WINDOW_KEYS = ["day", "month", "window"];
+  const SPC_WINDOW_CN = { day: "当日", month: "当月", window: "最近7天" };
+
   /** L1 正文：逐特性 KPI 卡 + 过程能力明细 + 不良柏拉图 + TOP5 + 口径说明。 */
   function spcBody(UI, d) {
     const grid = (d.kpis || []).length >= 4 ? "grid grid-4" : "grid grid-3";
@@ -4621,7 +6382,31 @@
       ? `<div class="card"><div class="kpi-def"><div class="kpi-def-row">${UI.icon("warn", 12)}
           <span>存在数据缺口（缺测量值 / 缺规格限）的特性，其能力指数不可判定，未做编造。</span></div></div></div>` : "";
 
-    return kpiHtml + gapHtml + spcCapCard(UI, d.capabilities)
+    // L2 入口（2 级看板）：SPC 屏**唯一**承担「进入 2 级看板」职责的元素。
+    // 为什么必须单独设一个（真实缺陷，2026-10-20 主理人复核定位）：
+    //   mfgBind 的 L2 链是 `[data-kpi]:not([data-drill-entity])…` —— 只有「带
+    //   data-kpi 且**不带** data-drill-entity」的元素才会被 L2 链捕获；而 SPC 的
+    //   L1 逐特性 KPI 卡传了 `k.entity` → 卡上带 data-drill-entity → 落 L3 链，
+    //   明细表行 / 柏拉图行 / TOP5 行同样都带 → **L1 上没有任何元素能被 L2 链
+    //   捕获** ⇒ 2 级看板永不可达 ⇒ 2 级行的弹窗钩子写得再对也点不出来。
+    //   订单 / 制造 / 品质看板的 mfgKpiCard 不传 ent，故它们的 L2 可达。
+    // 硬约束：① data-kpi 必须是字面量（可被静态守卫守住）②**绝不带**
+    //   data-drill-entity（带了就被 L3 链抢走）③ 必须渲染进 #spc-body 容器
+    //   （mfgBind 只在 box 内 querySelectorAll）。
+    const l2EntryHtml = `<div class="section-title">过程能力明细
+        <span class="section-extra">Cp/Cpk 用组内 σ · Pp/Ppk 用整体 σ · 判定：≥1.33 合格 / ≥1.00 偏低 / &lt;1.00 不合格 · 规格限为演示规格限，工艺侧待给定</span>
+        <button class="chip" role="button" tabindex="0"
+          data-kpi="spc_capability" data-screen="spc"
+          title="进入 2 级看板：按特性全量分解（子组超差率），点行看该特性的能力明细弹窗">
+          ${UI.icon("layers", 13)}2 级看板 · 按特性分解</button>
+        <button class="chip" role="button" tabindex="0"
+          data-spc-records="overlimit"
+          title="查看本口径下全部越限测量记录（超出规格限的行，按超出幅度降序）——不必进 2 级看板即可查看">
+          ${UI.icon("warn", 13)}全厂越限明细</button></div>`;
+
+    // 顺序：KPI 卡区 → 数据缺口 → 【过程能力明细 标题+2级看板入口 + 表格】→ 柏拉图 → TOP5 → notes
+    // （标题与表格必须相邻 —— 入口语义是「看该表格的全量分解」，隔开 KPI 区会误导）
+    return kpiHtml + gapHtml + l2EntryHtml + spcCapCard(UI, d.capabilities)
       + spcParetoCard(UI, d.pareto) + rankHtml + mfgNotes(UI, d.notes);
   }
 
@@ -4655,15 +6440,16 @@
             title="跳转协同问数：${UI.esc(ask)}">${UI.icon("chat", 11)}问数</button></td>
       </tr>`;
     }).join("");
-    return `<div class="section-title">过程能力明细
-        <span class="section-extra">Cp/Cpk 用组内 σ · Pp/Ppk 用整体 σ · 判定：≥1.33 合格 / ≥1.00 偏低 / &lt;1.00 不合格</span></div>
-      <div class="card"><div class="drill-scroll"><table class="std-table drill-table">
+    // 标题区（含 2 级看板入口）由 spcBody 统一输出 → 此处只出表格本体
+    // （避免两个 section-title 重复渲染同一个标题）。
+    return `<div class="card"><div class="drill-scroll"><table class="std-table drill-table">
         <thead><tr><th>特性</th><th>判定</th><th>Cp</th><th>Cpk</th><th>Pp</th><th>Ppk</th>
-          <th>σ组内</th><th>σ整体</th><th>样本数</th><th>子组数</th><th>规格限</th><th>操作</th></tr></thead>
+          <th>σ组内</th><th>σ整体</th><th>样本数</th><th>子组数</th><th>规格限（演示）</th><th>操作</th></tr></thead>
         <tbody>${rows}</tbody></table></div></div>`;
   }
 
-  /** 不良柏拉图：按不良数降序 + 占比条 + 累计占比；条目点击 = L3（该不良类型原始记录）。 */
+  /** 不良柏拉图：按不良数降序 + 占比条 + 累计占比；条目点击 = L3（该不良类型原始记录）。
+   *  归并行（「其他」= 前 10 名以外的合并桶）只做展示，不带下钻入口。 */
   function spcParetoCard(UI, pareto) {
     const items = pareto || [];
     if (!items.length) return "";
@@ -4671,21 +6457,25 @@
     const rows = items.map((x, i) => {
       const ent = (x.entity && Object.keys(x.entity).length) ? x.entity : { defect_type: x.name };
       const ask = x.ask || `最近7天「${x.name}」不良 ${x.value} 件、占比 ${x.share}%，如何降低该类缺陷？`;
-      return `<div class="pareto-row clickable" role="button" tabindex="0"
+      const openTag = x.aggregated
+        ? `<div class="pareto-row" title="其余 ${UI.esc(x.folded_count || 0)} 类合并 · 占比 ${UI.esc(x.share)}% · 不参与下钻">`
+        : `<div class="pareto-row clickable" role="button" tabindex="0"
               data-drill-entity="${UI.esc(JSON.stringify(ent))}" data-kpi="spc_pareto" data-screen="spc"
-              title="点击查看「${UI.esc(x.name)}」关联原始记录">
+              title="点击查看「${UI.esc(x.name)}」关联原始记录">`;
+      return `${openTag}
         <span class="pareto-no">${i + 1}</span>
         <span class="pareto-name">${UI.esc(x.name)}</span>
         <span class="pareto-bar"><i style="width:${(((x.value || 0) / max) * 100).toFixed(1)}%"></i></span>
         <span class="pareto-val">${UI.esc(x.value)}</span>
         <span class="pareto-share">${UI.esc(x.share)}%</span>
         <span class="pareto-cum">累计 ${UI.esc(x.cum_share)}%</span>
-        <button class="row-ask" data-ask="${UI.esc(ask)}"
-          title="跳转协同问数：${UI.esc(ask)}">${UI.icon("chat", 11)}问数</button>
+        ${x.aggregated ? `<span class="pareto-ask"></span>`
+          : `<button class="row-ask" data-ask="${UI.esc(ask)}"
+          title="跳转协同问数：${UI.esc(ask)}">${UI.icon("chat", 11)}问数</button>`}
       </div>`;
     }).join("");
     return `<div class="section-title">不良柏拉图
-        <span class="section-extra">按不良数降序 · 占比 = 该类型 ÷ 合计 · 累计首达 80% 为关键少数</span></div>
+        <span class="section-extra">按不良数降序 · 占比 = 该类型 ÷ 合计 · 累计首达 80% 为关键少数 · 前 10 名以外并入「其他」</span></div>
       <div class="card spc-pareto"><div class="pareto-list">${rows}</div></div>`;
   }
 
@@ -4698,6 +6488,13 @@
       drill = null; st.boardDrill = null;
     }
 
+    // 板级筛选 state（SPC 专属，不与制造/品质的 mfg* 变量混用 —— 跨屏复用会让
+    // 别的屏改掉本屏的筛选口径）。
+    const winKey = ["day", "month", "window"].indexOf(st.spcWindow) >= 0
+      ? st.spcWindow : "window";
+    const pcat = st.spcProdCat || "";
+    const stage = st.spcStage || "";
+
     root.innerHTML = `
       <div class="content-inner">
         <div class="page-head">
@@ -4707,11 +6504,55 @@
             <span id="spc-window">统计窗口加载中…</span>
             <span id="spc-flag"></span><span id="spc-gen" class="mfg-gen"></span></div>
         </div>
+        <div class="chip-row mfg-windows" id="spc-windows" style="margin-bottom:14px">
+          <span class="chip-row-label">统计口径</span>
+          ${SPC_WINDOW_KEYS.map((k) => `<button class="chip${k === winKey ? " active" : ""}"
+            data-window="${k}">${UI.icon("clock", 13)}${SPC_WINDOW_CN[k]}</button>`).join("")}
+          <span class="chip-row-note">· KPI / TOP5 / 过程能力明细 / 不良柏拉图 均按所选口径</span>
+          <span class="chip-row-label">产品分类</span>
+          <select class="chip-select" data-pcat title="按「产品分类」范围汇总">
+            <option value="">全部</option>
+            ${MFG_PCAT_OPTIONS.map((p) => `<option value="${UI.esc(p)}"${p === pcat ? " selected" : ""}>${UI.esc(p)}</option>`).join("")}
+          </select>
+          <span class="chip-row-label">工段</span>
+          <button class="chip${stage ? "" : " active"}" data-stage="" title="按全工段范围汇总">全部</button>
+          ${MFG_STAGE_CHIPS.map((s) => `<button class="chip${stage === s ? " active" : ""}"
+            data-stage="${UI.esc(s)}" title="按「工段 ${UI.esc(s)}」范围汇总">${UI.esc(s)}</button>`).join("")}
+        </div>
         <div id="spc-crumb"></div>
         <div id="spc-body">
           <div class="empty">${UI.spinner("lg")}<div style="margin-top:10px">正在加载看板数据…</div></div>
         </div>
       </div>`;
+
+    // 事件绑定：改 state → 若在下钻态则同步改 drill.*（**不复位下钻层级**）
+    // → ctx.refreshScreen() 同层刷新（与订单 / 制造看板同纪律）。
+    root.querySelectorAll("#spc-windows [data-window]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        if (winKey === btn.dataset.window) return;
+        st.spcWindow = btn.dataset.window;
+        if (drill) drill.window = btn.dataset.window;
+        else st.boardDrill = null;
+        ctx.refreshScreen();
+      });
+    });
+    const pcatSel = root.querySelector("#spc-windows [data-pcat]");
+    if (pcatSel) {
+      pcatSel.addEventListener("change", () => {
+        if ((st.spcProdCat || "") === pcatSel.value) return;
+        st.spcProdCat = pcatSel.value;
+        if (drill) drill.prodCat = st.spcProdCat;
+        ctx.refreshScreen();
+      });
+    }
+    root.querySelectorAll("#spc-windows [data-stage]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        if ((st.spcStage || "") === btn.dataset.stage) return;
+        st.spcStage = btn.dataset.stage;
+        if (drill) drill.stage = st.spcStage;
+        ctx.refreshScreen();
+      });
+    });
 
     if (drill) loadMfgDrill(ctx, drill);
     else loadSpcDashboard(ctx);
@@ -4719,18 +6560,24 @@
 
   /**
    * SPC 看板 L1 数据加载（真实优先 + 演示降级，全程不抛）：
-   * 在线且未降级 → /api/v2/dashboard/spc；否则 → DEMO.SPC_DASHBOARD（与接口同构）。
+   * 在线且未降级 → /api/v2/dashboard/spc（带板级筛选参数）；
+   * 否则 → DEMO.SPC_DASHBOARD（与接口同构，**不支持板级筛选**，显式标注）。
    */
   async function loadSpcDashboard(ctx) {
     const UI = ctx.UI;
     const cfg = BOARD_CFG.spc;
     const box = document.getElementById(cfg.body);
     if (!box) return;
+    const st = ctx.state.screenState;
+    const win = ["day", "month", "window"].indexOf(st.spcWindow) >= 0
+      ? st.spcWindow : "window";
+    const pcat = st.spcProdCat || "";
+    const stage = st.spcStage || "";
     let payload = null, source = "real", reason = "", scopeMeta = null;
 
     if (ctx.api.online()) {
       try {
-        const d = await ctx.api.spcDashboard();
+        const d = await ctx.api.spcDashboard(win, stage, pcat);
         if (d && !d.degraded && (d.kpis || []).length) {
           payload = d;
           scopeMeta = d.scope || null;
@@ -4764,10 +6611,15 @@
       winEl.textContent = `${payload.window.label}（${payload.window.start} ~ ${payload.window.end}）`;
     }
     const flagEl = document.getElementById(cfg.flag);
+    // 离线演示数据**不支持板级筛选**（快照是固定口径）→ 显式说明，
+    // 绝不假装这是「筛选后的汇总」
+    const demoNote = (source === "demo" && (win !== "window" || pcat || stage))
+      ? UI.demoFlag("离线演示数据不支持板级筛选，当前显示固定口径快照")
+      : "";
     if (flagEl) {
       flagEl.innerHTML = (source === "demo"
         ? UI.demoFlag(reason || "演示数据")
-        : "") + maskedFlag(UI, scopeMeta && scopeMeta.masked);
+        : "") + demoNote + maskedFlag(UI, scopeMeta && scopeMeta.masked);
     }
     const genEl = document.getElementById(cfg.gen);
     if (genEl && payload.generated_at) genEl.textContent = " · 生成于 " + payload.generated_at;

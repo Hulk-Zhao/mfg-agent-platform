@@ -35,9 +35,24 @@
     { name: "query_metric", desc: "查平台统一口径指标（当前：otd_rate 准交率）", kind: "只读" },
     { name: "list_available_queries", desc: "列出全部预注册查询（含 keywords 与参数）", kind: "只读" },
     { name: "run_registered_query", desc: "执行预注册查询（参数化、走表级 ACL 与脱敏）", kind: "只读" },
-    { name: "explore_data", desc: "自然语言明细探查（SQL 生成 → 八道防线审核）", kind: "只读" },
+    { name: "explore_data", desc: "自然语言明细探查（SQL 生成 → 八道防线 + 语义 lint → 只读执行）", kind: "只读" },
     { name: "list_scenarios", desc: "列出平台协同场景（复杂闭环入口指引）", kind: "只读" },
     { name: "create_hitl_task", desc: "发起人工确认工单（Agent 只发起，永不放行）", kind: "写/HITL" },
+    { name: "search_knowledge", desc: "检索知识库（财务/行政制度；工程知识随接入扩展）", kind: "只读" },
+    { name: "query_project_milestones", desc: "查项目/NPI 里程碑（EVT/DVT/PVT/MP 阶段与状态）", kind: "只读" },
+    { name: "query_test_records", desc: "查测试记录（可靠性/执行结果，引用记录编号）", kind: "只读" },
+    // V4 工具层并轨：域智能体附加工具（经 ToolRegistry 装配，与 MCP / A2A 同源）
+    { name: "quality__trace", desc: "批次全链路质量追溯（不良/客诉/测试记录串联）", kind: "只读" },
+    { name: "quality__8d", desc: "8D 报告结构与进展查询（D1-D8 阶段留痕）", kind: "只读" },
+    { name: "spc__capability", desc: "SPC 过程能力（Cp/Cpk 双西格玛口径；缺规格返 data_gap）", kind: "只读" },
+    { name: "spc__pareto", desc: "不良柏拉图（按缺陷类型降序累积与关键少数）", kind: "只读" },
+    { name: "asset__status", desc: "设备状态与参数查询（稼动/告警/维保）", kind: "只读" },
+    { name: "equipment__predict", desc: "设备健康预测（异常风险与建议动作）", kind: "只读" },
+    { name: "inventory__atp", desc: "ATP 可承诺量（库存 − 已预留，按型号）", kind: "只读" },
+    { name: "supply__risk", desc: "供应风险评估（缺料/交期/齐套风险清单）", kind: "只读" },
+    { name: "schedule__what_if", desc: "排产 What-if 模拟（产能/插单可行性测算）", kind: "只读" },
+    { name: "metric__dict", desc: "指标字典（平台全部口径定义与负责域）", kind: "只读" },
+    { name: "doc__extract", desc: "文档要点提取（工艺文件/报告的结构化摘取）", kind: "只读" },
     { name: "list_rooms", desc: "按容量/设备筛选会议室（含位置与是否需授权）", kind: "只读" },
     { name: "find_available_rooms", desc: "查某时段可用会议室（含冲突规避）", kind: "只读" },
     { name: "list_my_bookings", desc: "查我的会议室预订", kind: "只读" },
@@ -81,10 +96,15 @@
       const tc = o.titleColor || "#1F3B57";
       const lc = o.lineColor || "#42566B";
       const fs = o.fontSize || 11;
-      let s = `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="10" fill="${fill}" stroke="${stroke}" stroke-width="1.4"/>`;
-      s += `<text x="${x + w / 2}" y="${y + 25}" text-anchor="middle" font-size="13" font-weight="700" fill="${tc}">${esc(title)}</text>`;
+      /* o.cls / o.titleCls / o.lineCls：主题自适应钩子（类选择器优先级高于
+         SVG presentation attribute，app.css 据此在亮色主题下翻转强块配色） */
+      const cls = o.cls ? ` class="${o.cls}"` : "";
+      const tCls = o.titleCls ? ` class="${o.titleCls}"` : "";
+      const lCls = o.lineCls ? ` class="${o.lineCls}"` : "";
+      let s = `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="10" fill="${fill}" stroke="${stroke}" stroke-width="1.4"${cls}/>`;
+      s += `<text x="${x + w / 2}" y="${y + 25}" text-anchor="middle" font-size="13" font-weight="700" fill="${tc}"${tCls}>${esc(title)}</text>`;
       (o.lines || []).forEach((t, i) => {
-        s += `<text x="${x + 16}" y="${y + 45 + i * 16}" font-size="${fs}" fill="${lc}">${esc(t)}</text>`;
+        s += `<text x="${x + 16}" y="${y + 45 + i * 16}" font-size="${fs}" fill="${lc}"${lCls}>${esc(t)}</text>`;
       });
       return s;
     };
@@ -100,61 +120,70 @@
     const note = (x, y, t, color) =>
       `<text x="${x}" y="${y}" font-size="10.5" fill="${color || "#6B7C8D"}">${esc(t)}</text>`;
 
-    return `<svg viewBox="0 0 880 950" style="width:100%;max-width:900px;display:block;margin:0 auto" xmlns="http://www.w3.org/2000/svg">
+    return `<svg class="help-arch" viewBox="0 0 880 1036" style="width:100%;max-width:900px;display:block;margin:0 auto" xmlns="http://www.w3.org/2000/svg">
       <defs><marker id="arrowHelp" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#5B7E9E"/></marker></defs>
 
-      ${box(24, 8, 256, 56, "#185FA5", "#124A85", "员工门户 · Web", { lines: ["制造问数 · 协同场景 · 办公自助"], titleColor: "#fff", lineColor: "rgba(255,255,255,.85)" })}
-      ${box(312, 8, 256, 56, "#185FA5", "#124A85", "外部智能体 · A2A", { lines: ["message/send · tasks/get"], titleColor: "#fff", lineColor: "rgba(255,255,255,.85)" })}
-      ${box(600, 8, 256, 56, "#185FA5", "#124A85", "MCP 客户端", { lines: ["JSON-RPC 2.0 over stdio"], titleColor: "#fff", lineColor: "rgba(255,255,255,.85)" })}
-      ${note(24, 78, "旁路端点（不进总路由）：/kbqa 制度问答 · /cases/* 案例检索 · /office/chat 办公")}
-      ${arrow(440, 64, 440, 104, "提问")}
+      ${box(24, 8, 256, 56, "#185FA5", "#124A85", "员工门户 · Web", { cls: "arch-portal", titleCls: "arch-portal-title", lineCls: "arch-portal-line", lines: ["制造问数 · 协同场景 · 办公自助 · ask_ctx"], titleColor: "#fff", lineColor: "rgba(255,255,255,.85)" })}
+      ${box(312, 8, 256, 56, "#185FA5", "#124A85", "外部智能体 · A2A", { cls: "arch-portal", titleCls: "arch-portal-title", lineCls: "arch-portal-line", lines: ["message/send · tasks/get"], titleColor: "#fff", lineColor: "rgba(255,255,255,.85)" })}
+      ${box(600, 8, 256, 56, "#185FA5", "#124A85", "MCP 客户端", { cls: "arch-portal", titleCls: "arch-portal-title", lineCls: "arch-portal-line", lines: ["JSON-RPC 2.0 over stdio"], titleColor: "#fff", lineColor: "rgba(255,255,255,.85)" })}
+      ${note(24, 78, "旁路端点（不进总路由）：/kbqa · /cases/* · /office/chat")}
+      ${arrow(440, 64, 440, 104, "提问 + ask_ctx")}
 
-      ${box(24, 106, 832, 126, "#E8F1FA", "#6E9CC7", "两级路由 TwoLevelRouter —— 按代价分派，简单问题不跑重型链路", {
+      ${box(24, 106, 832, 146, "#E8F1FA", "#6E9CC7", "两级路由 TwoLevelRouter —— 按代价分派，简单问题不跑重型链路", {
       lines: [
-        "① 制造数据速查词命中        → 数据直答（qa）",
-        "② 场景触发词 / V1 规则命中   → 协同场景（scenario）",
-        "③ 办公关键词命中            → 办公助手（office）",
-        "④ L1 LLM 闭集分类（6 类 + few-shot）→ 域组 / 闲聊",
-        "⑤ 全部未命中                → 关键词模糊降级（degrade）",
+        "⓪ 结构化上下文 ask_ctx 命中看板 KPI  → 看板口径直查（board，毫秒级）",
+        "① 制造数据速查词命中            → 数据直答（qa）",
+        "② 场景触发词 / V1 规则命中       → 协同场景（scenario）",
+        "③ 办公关键词命中                → 办公助手（office）",
+        "④ 开放式态势汇总（无实体的「最需关注 / 整体情况 / 有什么风险」）→ 汇总问数（digest）",
+        "⑤ L1 LLM 闭集分类 → 域组 / 闲聊；⑥ 全未命中 → 关键词模糊降级（degrade）",
       ]
     })}
 
-      ${arrow(122, 232, 122, 270, "① 协同场景")}
-      ${arrow(334, 232, 334, 270, "② 数据直答")}
-      ${arrow(546, 232, 546, 270, "③ 办公事务")}
-      ${arrow(758, 232, 758, 270, "④ 闲聊/转人工")}
+      ${arrow(122, 252, 122, 292, "① 协同场景")}
+      ${arrow(334, 252, 334, 292, "② 数据直答")}
+      ${arrow(546, 252, 546, 292, "③ 办公事务")}
+      ${arrow(758, 252, 758, 292, "④ 闲聊/转人工")}
 
-      ${box(24, 272, 196, 120, "#FDF6E7", "#C9A94E", "协同场景 DAG", {
+      ${box(24, 294, 196, 120, "#FDF6E7", "#C9A94E", "协同场景 DAG", {
       lines: ["7 个 YAML 声明式场景", "运行时编译为 LangGraph", "5 类节点 agent/fan-out", "fan_in/workflow/hitl", "产出：工单 + 报告"], titleColor: "#6B5000", lineColor: "#7A5B00"
     })}
-      ${box(236, 272, 196, 120, "#EAF6EF", "#6FAE88", "数据直答", {
-      lines: ["指标库 → 注册查询", "→ 明细探查（三通道）", "Text2SQL 八道防线", "秒级 · 无工单", "confidence 0.95/0.85/0.6"], titleColor: "#155E35", lineColor: "#1F6B41"
+      ${box(236, 294, 196, 120, "#EAF6EF", "#6FAE88", "数据直答", {
+      lines: ["⓪ 看板口径直查（同源函数）", "→ 指标库 → 注册查询", "→ 明细探查（四通道递进）", "八道防线 + 语义 lint", "秒级 · 无工单"], titleColor: "#155E35", lineColor: "#1F6B41"
     })}
-      ${box(448, 272, 196, 120, "#F0EBFA", "#9D82C9", "办公助手", {
+      ${box(448, 294, 196, 120, "#F0EBFA", "#9D82C9", "办公助手", {
       lines: ["会议室 / 订餐 / 报销", "请假 / 补考勤", "独立 ReAct Agentic", "写操作限本人名下", "高影响 → 人工确认"], titleColor: "#43326E", lineColor: "#4E3D7A"
     })}
-      ${box(660, 272, 196, 120, "#F4F6F8", "#9FB0C0", "闲聊 / 转人工", {
+      ${box(660, 294, 196, 120, "#F4F6F8", "#9FB0C0", "闲聊 / 转人工", {
       lines: ["轻回应 + 引导回领域", "域内查不到 → 转人工", "不臆造结论", "", ""], titleColor: "#3A4A5A", lineColor: "#55646F"
     })}
 
-      ${arrow(440, 392, 440, 430, "直答查不到 → 域智能体接管")}
+      ${arrow(440, 414, 440, 452, "直答查不到 → 跨域协同 / 域智能体")}
 
-      ${box(24, 432, 832, 84, "#EAF6EF", "#6FAE88", "Agentic 域智能体 · 17 个域 + 1 个综合办公助手", {
+      ${box(24, 454, 832, 62, "#E5F3FD", "#5E9BD6", "协同规划器 Planner —— 跨域问题拆 ≤4 个单域子任务，多域智能体并行取证，汇总器分节聚合", {
+      lines: ["冲突不仲裁（不同口径如实并列）· 缺口合并标注 · 子任务间不互调（浅层星型，防递归失控）"],
+      titleColor: "#0F4C81", lineColor: "#2C6186"
+    })}
+
+      ${arrow(440, 516, 440, 554, "子任务分发")}
+
+      ${box(24, 556, 832, 84, "#EAF6EF", "#6FAE88", "Agentic 域智能体 · 17 个域 + 1 个综合办公助手", {
       lines: [
         "ReAct 工具循环（bind_tools → 调用 → 结果回灌），最多 8 步、单步超时 45s",
         "步数耗尽输出「已尽力结论 + 数据缺口」，不编造；提示词即边界：意图 / 职责 / 工具 / HITL 准则",
       ], titleColor: "#155E35", lineColor: "#1F6B41"
     })}
 
-      ${arrow(440, 516, 440, 554, "工具调用")}
+      ${arrow(440, 640, 440, 678, "工具调用")}
 
-      ${box(24, 556, 832, 68, "#fff", "#A9BFD3", "统一工具层 ToolRegistry · tier 0/1/2 治理分级", {
-      lines: ["HTTP / MCP / A2A 三端同源 · 每个工具必带 user_ctx · 一次注册，多处暴露，能力边界 = 工具边界"]
+      ${box(24, 680, 832, 68, "#fff", "#A9BFD3", "统一工具层 ToolRegistry · tier 0/1/2 治理分级", {
+      cls: "arch-toolbox", titleCls: "arch-toolbox-title", lineCls: "arch-toolbox-line",
+      lines: ["HTTP / MCP / A2A / 域智能体四端同源装配 · 每个工具必带 user_ctx · 一次注册，多处暴露，能力边界 = 工具边界"]
     })}
 
-      ${arrow(440, 624, 440, 662, "只读访问 · 权限同源")}
+      ${arrow(440, 748, 440, 786, "只读访问 · 权限同源")}
 
-      ${box(24, 664, 408, 120, "#FFF9EC", "#D9B45B", "知识层 · 检索", {
+      ${box(24, 788, 408, 120, "#FFF9EC", "#D9B45B", "知识层 · 检索", {
       lines: [
         "主 RAG：Milvus + BGE-M3 混合召回 + Reranker 重排",
         "案例库：memory / chroma / milvus 三实现可插拔",
@@ -162,19 +191,20 @@
         "目的：能确定性答的不交给模型，交给模型的必可溯源",
       ], titleColor: "#6B5000", lineColor: "#7A5B00", fontSize: 10.5
     })}
-      ${box(448, 664, 408, 120, "#F0F5FA", "#8FAFC9", "数据层 · 只读", {
+      ${box(448, 788, 408, 120, "#F0F5FA", "#8FAFC9", "数据层 · 只读", {
       lines: [
         "DataSource 契约：演示 SQLite ⇄ 真实 ERP/MES/QMS",
-        "表级 ACL（17 张表，fail-closed）+ 字段按岗位脱敏",
+        "表级 ACL + 看板 data_scope 裁决 + 字段按岗位脱敏",
         "只读执行 row_cap=200 · 结果校验 · provenance 溯源",
         "目的：宁可转人工，也不放宽校验返回错误数字",
       ], titleColor: "#1F3B57", lineColor: "#42566B", fontSize: 10.5
     })}
 
-      ${box(24, 812, 832, 84, "#1F3B57", "#123049", "治理底盘 · 贯穿全流程", {
+      ${box(24, 936, 832, 84, "#1F3B57", "#123049", "治理底盘 · 贯穿全流程", {
+      cls: "arch-base", titleCls: "arch-base-title", lineCls: "arch-base-line",
       lines: [
         "HITL 8 槽位 · 工作流状态机 / SLA / 会签 · 三套权限分域（业务数据 / 治理待办 / 案例访问）· 审计留痕",
-        "Agent 只发起不放行 · 关键决策人工在环 · 私有化部署，数据不出厂",
+        "Agent 只发起不放行 · 协同取证只读不处置 · 关键决策人工在环 · 私有化部署，数据不出厂",
       ], titleColor: "#fff", lineColor: "rgba(255,255,255,.85)"
     })}
     </svg>`;
@@ -233,22 +263,22 @@
     root.innerHTML = `
       <div class="content-inner content-wide">
         <div class="page-title">帮助中心</div>
-        <div class="page-desc">平台由 <b>18 个智能体</b>协同（17 个域智能体 + 1 个综合办公助手）。核心设计不是"一个大模型包打天下"，而是<b>按代价分派链路、按权限前置检索、按槽位管住决策</b>：能确定性回答的不交给模型，交给模型的必须可溯源，涉及关键决策的一律人工在环。下面每一块都说明<b>用了什么技术</b>与<b>为什么这么设计</b>。</div>
+        <div class="page-desc">平台由 <b>18 个智能体</b>协同（17 个域智能体 + 1 个综合办公助手）。核心设计不是"一个大模型包打天下"，而是<b>按代价分派链路、按权限前置检索、按槽位管住决策</b>：能确定性回答的不交给模型，交给模型的必须可溯源，涉及关键决策的一律人工在环。看板点进来的问题走<b>结构化口径直查</b>（与看板同源同函数），跨部门问题由<b>协同规划器</b>拆解后多域智能体并行取证。下面每一块都说明<b>用了什么技术</b>与<b>为什么这么设计</b>。</div>
 
         <div class="section-title">协同架构 <span class="section-extra">分层视图 · 与代码现状对齐</span></div>
         <div class="card" style="padding:14px">${architectureSvg()}</div>
 
         <div class="section-title">悬浮帮助助手 <span class="section-extra">场景识别 · 预置答疑 · 可拖动</span></div>
-        <div class="card" style="padding:13px;font-size:12.5px;line-height:2;color:var(--text-2)">
+        <div class="card" style="padding:13px;font-size: calc(12.5px * var(--font-scale));line-height:2;color:var(--text-2)">
           屏幕右侧的<b style="color:var(--text)">悬浮帮助助手</b>（<code>float-help.js</code>）：按住按钮或面板顶栏可拖到任意位置，位置存 <code>localStorage</code>，首次打开默认在最右边；助手定时识别 <code>state.screen</code>（含生态链场景屏），<b style="color:var(--text)">切换场景即开新会话</b>——历史问答清空，换成当前场景的问候语与预置答疑选项（同场景内关闭再打开则保留会话）；点击选项后，预置答案以约 120 字/秒流式输出，答完后选项保留并自动收起，点「＋」重新展开。<b style="color:var(--text)">答疑内容为静态预置、不调后端</b>，与帮助中心同一纪律：改屏内交互 / 链路 / 权限口径时，必须同步改 <code>float-help.js</code> 里的 KB，否则助手会失真。
         </div>
 
-        <div class="section-title">路由：一句话进来，先判断代价 <span class="section-extra">TwoLevelRouter · 五步判定</span></div>
+        <div class="section-title">路由：一句话进来，先判断代价 <span class="section-extra">TwoLevelRouter · 七步判定</span></div>
         <div class="grid grid-2">
-          <div class="card" style="padding:13px"><b style="color:var(--primary)">五步判定，命中即返回</b>
+          <div class="card" style="padding:13px"><b style="color:var(--primary)">七步判定，命中即返回</b>
             ${techGoal(
-        "① 制造数据速查词 → <b>qa</b>　② 场景触发词 / V1 规则 → <b>scenario</b>　③ 办公关键词 → <b>office</b>　④ L1 LLM 闭集分类（6 类 + few-shot）→ 域组 / <b>chitchat</b>　⑤ 全未命中 → 关键词模糊降级（<b>degrade</b>）。LLM 不可用时自动跳过第 ④ 步。",
-        "路由的意义是<b>别让简单问题跑重型链路</b>：查个库存不该触发跨部门取证和工单。前三步是毫秒级纯规则，只有规则判不了才花钱调模型；模型挂了还有第 ⑤ 步兜底，不会整个平台不可用。")}
+        "⓪ 结构化上下文 ask_ctx 命中看板 KPI → <b>board</b>（复用看板聚合函数，口径同源）　① 制造数据速查词 → <b>qa</b>　② 场景触发词 / V1 规则 → <b>scenario</b>　③ 办公关键词 → <b>office</b>　④ 开放式态势汇总（含「最需关注 / 整体情况 / 有什么风险」等词、且<b>不含具体型号/线体/编码</b>）→ <b>digest</b>（跨域汇总问数）　⑤ L1 LLM 闭集分类（6 类 + few-shot）→ 域组 / <b>chitchat</b>　⑥ 全未命中 → 关键词模糊降级（<b>degrade</b>）。LLM 不可用时自动跳过第 ⑤ 步；第 ⑥ 步只在<b>场景触发词真命中</b>时才走 scenario，否则按数据直答处理。",
+        "路由的意义是<b>别让简单问题跑重型链路</b>：查个库存不该触发跨部门取证和工单。第 ⓪ 步是看板问数的专属快路——你在看板上点什么 KPI，问数就用<b>同一个聚合函数</b>回答（当日/当月/最近7天档位、工段/类别筛选与你所看完全一致），不经 LLM、不重写 SQL、毫秒级返回；权限与脱敏和看板同一套裁决。第 ④ 步专门兜住管理者的开放式提问（「本月度最需关注什么」），此前它会落到「回一句问候」，或被降级路径<b>隐式指派</b>某个场景跑成一整套无关的 8D 链路——现在改为用各看板口径给出<b>有数据支撑的未达标清单</b>，且只读、不建工单。")}
           </div>
           <div class="card" style="padding:13px"><b style="color:var(--primary)">另有两条旁路端点，不进总路由</b>
             ${techGoal(
@@ -269,12 +299,17 @@
         "服务端把身份编译成过滤条件<b>下推给向量库</b>（召回前生效，不是召回后筛）→ 混合召回（受控词表归一 + 同义扩展）→ <b>确定性重排</b>（状态权重 × 新鲜度 × 有效性，同案例去重 ≤ 2 块）→ 关系库 ACL <b>二次授权</b> → 引用校验（案例ID / 块ID / 内容版本三元组）。",
         "案例是隐性知识，也是竞争资产，所以<b>授权必须发生在检索之前</b>：无权案例统一 404，连「存在性」都不泄漏；候选不足时如实返回并附 hidden_count，<b>绝不放宽过滤重试补齐</b>。可看 ≠ 可带走——导出默认拒绝，外发恒定拒绝。")}
           </div>
-          <div class="card" style="padding:13px"><b style="color:var(--primary)">③ 制造数据问答（Text2SQL）· 三通道 + 八道防线</b>
+          <div class="card" style="padding:13px"><b style="color:var(--primary)">③ 制造数据问答（Text2SQL）· 四通道 + 八道防线 + 语义 lint</b>
             ${techGoal(
-        "三通道降级：指标库（confidence 0.95）→ 预注册查询（0.85）→ 明细探查（0.6）。八道防线：user_ctx 校验 → 正则禁用词 / 多语句 / 仅 SELECT → 结构检查（禁 SELECT INTO）→ <b>表级 ACL（17 张表，sqlglot AST 解析，解析失败 fail-closed）</b> → 只读执行 + row_cap 200 → 结果校验（空结果 / 行数爆炸）→ 字段脱敏（按角色，含别名映射）→ 失败转人工工单 + provenance 全溯源。",
-        "自然语言转 SQL 最大的风险<b>不是查不出来，是查错了还自信地返回数字</b>。所以宁可转人工，也不放宽校验——业务宁可等一条工单，也不能拿错数字去对客承诺。")}
+        "四通道递进：看板口径直查（<b>board</b>，复用看板聚合函数，毫秒级）→ 指标库（confidence 0.95）→ 预注册查询（0.85）→ 明细探查（0.6）。八道防线：user_ctx 校验 → 正则禁用词 / 多语句 / 仅 SELECT → 结构检查 → <b>表级 ACL（sqlglot AST 解析，fail-closed）</b> → 只读执行 + row_cap → 结果校验 → 字段脱敏 → 失败转人工工单 + provenance 全溯源。明细探查另加<b>语义 lint</b>：聚合函数进 WHERE、混聚缺 GROUP BY 直接拦截（这类 SQL 语法合法但口径必错）；缺 LIMIT 软警告提示复核。",
+        "自然语言转 SQL 最大的风险<b>不是查不出来，是查错了还自信地返回数字</b>——「最近7天 OTD 最低的 5 个型号」曾经被生成出没有 GROUP BY、把 COUNT(*)&gt;0 写进 WHERE 的 SQL，还慢（17 秒）。所以宁可转人工，也不放宽校验——业务宁可等一条工单，也不能拿错数字去对客承诺。")}
           </div>
-          <div class="card" style="padding:13px"><b style="color:var(--primary)">④ 协同场景（scenario）· 声明式 DAG</b>
+          <div class="card" style="padding:13px"><b style="color:var(--primary)">④ 多 Agent 协同取证（Planner）· 跨域问题并行编排</b>
+            ${techGoal(
+        "直答查不到且命中 <b>≥2 个域信号</b> → 协同规划器拆 ≤4 个单域子任务（LLM 语义拆解，不可用退化为按域关键词规则拆）→ 多域智能体<b>线程池并行</b> ReAct 取证（事件流实时显示各域进度）→ 汇总器分节聚合：结论按域呈现、数据缺口合并去重、<b>冲突不仲裁</b>（不同域口径不同时如实并列）。单域失败不拖垮整体；需要闭环处置时仍转对应协同场景。",
+        "跨域问题（「不良率升高的同时 OTD 也降了，缺料对排产有什么影响」）单交给任何一个域智能体都是<b>答非所问</b>。Planner 是编排者不是同事：子任务之间不互相调用、不递归触发规划——协同结构恒为「规划器 → 执行者」浅层星型，防止 Agent 自由组网的递归失控；取证只读不处置，治理铁律（只发起不放行、步数受限、每步留痕）全部继承。")}
+          </div>
+          <div class="card" style="padding:13px"><b style="color:var(--primary)">⑤ 协同场景（scenario）· 声明式 DAG</b>
             ${techGoal(
         "7 个 YAML 场景，运行时编译为 LangGraph <code>StateGraph</code>；5 类节点 <code>agent / fan_out / fan_in / workflow / hitl</code>；节点级 <code>timeout_s</code> + <code>on_error: degrade|abort</code> 韧性策略；条件分支走受限 AST 白名单求值；<b>加载期校验 HITL 槽位</b>，场景里写了不存在的槽位直接启动失败。",
         "把编排知识从代码里搬到 YAML，<b>新增场景零代码</b>。加载期校验而不是运行期报错，是为了让「配错了」在开发阶段就暴露，而不是在客户面前演到一半才炸。")}
@@ -287,24 +322,24 @@
             <thead><tr><th style="width:19%">用途</th><th style="width:53%">技术栈</th><th style="width:28%">当前部署</th></tr></thead>
             <tbody>
               <tr>
-                <td><b>主 RAG</b><br/><span style="font-size:11px;color:var(--text-3)">制度 / 案例全文</span></td>
+                <td><b>主 RAG</b><br/><span style="font-size: calc(11px * var(--font-scale));color:var(--text-3)">制度 / 案例全文</span></td>
                 <td><b>Milvus</b> · BGE-M3 <b>稠密 + 稀疏混合召回</b>（<code>WeightedRanker(0.7, 0.3)</code>，候选数 <code>max(12, k×3)</code>）→ <b>BGE-Reranker-v2-M3</b> 交叉编码重排 → 按分降序截断</td>
-                <td><b style="color:var(--ok)">Milvus</b><br/><span style="font-size:11px;color:var(--text-3)">.env: VECTOR_BACKEND=milvus</span></td>
+                <td><b style="color:var(--ok)">Milvus</b><br/><span style="font-size: calc(11px * var(--font-scale));color:var(--text-3)">.env: VECTOR_BACKEND=milvus</span></td>
               </tr>
               <tr>
-                <td><b>制造案例索引</b><br/><span style="font-size:11px;color:var(--text-3)">case assistant</span></td>
+                <td><b>制造案例索引</b><br/><span style="font-size: calc(11px * var(--font-scale));color:var(--text-3)">case assistant</span></td>
                 <td><code>CaseIndex</code> 契约三实现：<b>memory</b>（哈希 256 维 + 2-gram，<code>0.6×余弦 + 0.4×关键词</code>，先过滤后打分）／ <b>chroma</b>（本地持久化）／ <b>milvus</b>（生产规模，dim 1024）</td>
-                <td><b style="color:var(--ok)">memory</b>（默认）<br/><span style="font-size:11px;color:var(--text-3)">CASE_VECTOR_BACKEND 未显式配置</span></td>
+                <td><b style="color:var(--ok)">memory</b>（默认）<br/><span style="font-size: calc(11px * var(--font-scale));color:var(--text-3)">CASE_VECTOR_BACKEND 未显式配置</span></td>
               </tr>
               <tr>
                 <td><b>重排</b></td>
                 <td><code>deterministic</code>（默认，状态权重 × 新鲜度 × 有效性，纯函数、可复现）／ <code>bge</code>（交叉编码模型，可注入替换）</td>
-                <td><b style="color:var(--ok)">deterministic</b><br/><span style="font-size:11px;color:var(--text-3)">CASE_RERANK 默认</span></td>
+                <td><b style="color:var(--ok)">deterministic</b><br/><span style="font-size: calc(11px * var(--font-scale));color:var(--text-3)">CASE_RERANK 默认</span></td>
               </tr>
               <tr>
                 <td><b>关系库</b></td>
                 <td><code>DataSource</code> 契约：SQLite（演示）⇄ MySQL / 真实 ERP · MES · QMS，环境变量切换零改码</td>
-                <td><b style="color:var(--ok)">SQLite</b><br/><span style="font-size:11px;color:var(--text-3)">演示数据集</span></td>
+                <td><b style="color:var(--ok)">SQLite</b><br/><span style="font-size: calc(11px * var(--font-scale));color:var(--text-3)">演示数据集</span></td>
               </tr>
             </tbody>
           </table>
@@ -320,12 +355,12 @@
 
         <div class="section-title">智能体可用工具 <span class="section-extra">与 MCP / A2A 同源 · 能力边界 = 工具边界</span></div>
         <div class="card" style="padding:6px 14px 10px">
-          <div style="font-size:12px;color:var(--text-3);padding:6px 0 4px">工具由 <code>ToolRegistry</code> 一次注册、多处暴露（HTTP / MCP / A2A），按 tier 0/1/2 治理分级；每个工具调用必带 <code>user_ctx</code>，因此<b>工具不是权限后门</b>。清单实时同步自后端，数量随部署形态变化。</div>
+          <div style="font-size: calc(12px * var(--font-scale));color:var(--text-3);padding:6px 0 4px">工具由 <code>ToolRegistry</code> 一次注册、多处暴露（HTTP / MCP / A2A / <b>域智能体 function calling</b>），按 tier 0/1/2 治理分级；域智能体的附加工具（SPC 过程能力、质量追溯、ATP、供应风险等）直接从同一注册表按域装配——单一事实源，新增工具四处生效。每个工具调用必带 <code>user_ctx</code>，因此<b>工具不是权限后门</b>；含终批动作的治理工具（workflow.act）不对智能体开放。清单实时同步自后端，数量随部署形态变化。</div>
           <div id="help-tools-body"></div>
         </div>
 
         <div class="section-title">治理与安全</div>
-        <div class="card" style="padding:13px;font-size:12.5px;line-height:2;color:var(--text-2)">
+        <div class="card" style="padding:13px;font-size: calc(12.5px * var(--font-scale));line-height:2;color:var(--text-2)">
           <b style="color:var(--text)">关键决策人工在环</b>：8 个 HITL 槽位（复线 / 对客 ETA / 来料处置 / 8D 关闭 / 对客回复 / 交期承诺 / 停机窗口 / SPC 处置），每槽位三个动词 propose · cosign · approve，共 24 条权限；权限注册表在<b>构造期</b>就禁止 Agent 持有任何 <code>*.approve</code>——智能体只发起、不放行。<br/>
           <b style="color:var(--text)">三套权限各管一域，互不替代</b>：<b>业务数据</b>看 <code>data_scope</code>（看板 allow_roles + 字段脱敏，未登记看板 fail-closed）；<b>治理待办</b>看 <code>workflow_scope</code>（判据是"你是否持有该 HITL 槽位的权限"，跨域一律 404）；<b>案例访问</b>看 <code>case_acl</code>（6 个动词各声明可见状态白名单）。三者正交——一个岗位可以"能看全厂订单，但只管停机窗口"。<br/>
           <b style="color:var(--text)">全程可审计</b>：工作流审计落 <code>platform_workflow_task</code>（含状态机历史）；案例检索落 <code>CaseAuditLog</code>（只记哈希不记正文，支持一键校验审计链对账）；问答落 <code>kbqa_query_log</code>（含 channel 与耗时）。每次查询都记录 SQL 原文、命中行、脱敏标记与耗时（结果卡「数据溯源」可展开）。<br/>

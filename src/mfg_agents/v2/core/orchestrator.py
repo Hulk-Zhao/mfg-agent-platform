@@ -10,6 +10,7 @@ NotificationService）、不做审批判断（必须经 WorkflowEngine）。
 from __future__ import annotations
 
 import logging
+import re
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -23,7 +24,13 @@ from .node_registry import build_handlers
 from .router import RouteResult, TwoLevelRouter
 from .shared_context import SharedContext
 from .yaml_dag import DagRunResult, YamlDagExecutor
-from ..services.notification import LogNotificationChannel, NotificationService
+from ..services.notification import (
+    BoardNotificationChannel,
+    IMGroupNotificationChannel,
+    LogNotificationChannel,
+    MultiChannel,
+    NotificationService,
+)
 from ..services.text2sql import (
     MetricLibrary,
     QueryLibrary,
@@ -39,11 +46,61 @@ _V2_DIR = Path(__file__).resolve().parent.parent
 # 项目根（data/*.sql 所在；布局：src/mfg_agents/v2 → 根需上溯 3 级）
 _DATA_DIR = _V2_DIR.parents[2] / "data"
 # 按序执行的种子（幂等 INSERT OR IGNORE）：主扩充 + 工段/工序/工位明细 + 库存域
+# + 制造/品质看板万行体量扩充 + 不良柏拉图（日/月别 · 类别/工段）扩充
+# + 不良柏拉图产品分类（消费电子/智能电源/储能电源/车载）扩充 + 订单履约体量扩充
 _SEED_SQLS = [
     _DATA_DIR / "seed_v3.sql",
     _DATA_DIR / "seed_station_detail.sql",
     _DATA_DIR / "seed_inventory.sql",
+    _DATA_DIR / "seed_board_mfg_volume.sql",
+    _DATA_DIR / "seed_quality_pareto.sql",
+    _DATA_DIR / "seed_quality_pareto_pcat.sql",
+    _DATA_DIR / "seed_board_orders_volume.sql",
+    _DATA_DIR / "seed_std_three_rates.sql",
+    _DATA_DIR / "seed_incoming_defect.sql",
+    _DATA_DIR / "seed_std_team_cause.sql",
+    # V3.9：制造看板体量/维度二次扩容（8 线 × 12 型号、9 月历史、station_detail
+    # 全覆盖、整机 ASSY-1、equipment_run_time 停机原因）；见 seed_board_mfg_volume2.sql
+    _DATA_DIR / "seed_board_mfg_volume2.sql",
+    # V3.10：SPC 测量值维度扩量（工段 / 产品分类 + 全月覆盖 10-01~10-15）；
+    # 由 tools/gen_spc_dimensions_seed.py 生成。须排在 seed_v3.sql 之后
+    # （表已建 + _ensure_columns 已补列），否则新列无处可写。
+    _DATA_DIR / "seed_spc_dimensions.sql",
 ]
+
+
+def _ensure_columns(conn) -> None:
+    """PRAGMA 守卫的幂等补列（老演示库不重建，就地升级）。
+
+    在**每个种子文件执行前**调用一次：表尚未创建时 ``PRAGMA table_info`` 为空集则跳过，
+    待前置种子建表后再回到这里补列——因此对「老库升级」与「全新库首建」都成立
+    （全新库：seed_v3 建表 → 下一次调用补列 → 后续种子即可写入新列）。
+    """
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(quality_defect)")}
+    if cols and "process_stage" not in cols:
+        conn.execute("ALTER TABLE quality_defect ADD COLUMN process_stage TEXT")
+    if cols and "defect_category" not in cols:
+        conn.execute("ALTER TABLE quality_defect ADD COLUMN defect_category TEXT")
+    if cols and "product_category" not in cols:
+        conn.execute("ALTER TABLE quality_defect ADD COLUMN product_category TEXT")
+    # 标准三率两级看板：老库补齐工段 / 班组两列（同法 PRAGMA 守卫，表不存在则跳过）
+    std_cols = {r[1] for r in conn.execute("PRAGMA table_info(std_standard_audit)")}
+    if std_cols and "process_stage" not in std_cols:
+        conn.execute("ALTER TABLE std_standard_audit ADD COLUMN process_stage TEXT")
+    if std_cols and "team" not in std_cols:
+        conn.execute("ALTER TABLE std_standard_audit ADD COLUMN team TEXT")
+    # V3.9：设备运行补 ``stop_reason``（停机原因，8 类）供制造侧原因柏拉图事实表
+    eq_cols = {r[1] for r in conn.execute("PRAGMA table_info(equipment_run_time)")}
+    if eq_cols and "stop_reason" not in eq_cols:
+        conn.execute("ALTER TABLE equipment_run_time ADD COLUMN stop_reason TEXT")
+    # SPC 过程能力看板：老库补齐 工段 / 产品分类 两列（同法 PRAGMA 守卫，表不存在则跳过）
+    # 说明：``CREATE TABLE IF NOT EXISTS`` 对老库不生效，不在此补列则老库永远缺这两列，
+    # 板级「工段 / 产品分类」筛选将无数据可筛。
+    spc_cols = {r[1] for r in conn.execute("PRAGMA table_info(spc_measurement)")}
+    if spc_cols and "process_stage" not in spc_cols:
+        conn.execute("ALTER TABLE spc_measurement ADD COLUMN process_stage TEXT")
+    if spc_cols and "product_category" not in spc_cols:
+        conn.execute("ALTER TABLE spc_measurement ADD COLUMN product_category TEXT")
 
 
 def _apply_seed(db_path: str) -> None:
@@ -54,6 +111,14 @@ def _apply_seed(db_path: str) -> None:
     由 tests/v2/test_scenarios_v2.py 的数据红线测试守护。
     V3.5：追加 ``seed_station_detail.sql``，把六指标按 工段/工序/工位×班次
     拆分入库（拆分式，求和回原值），供三级看板下钻。
+    V3.6：追加 ``seed_board_mfg_volume.sql``（制造四表万行）+ ``seed_quality_pareto.sql``
+    （不良柏拉图日/月别·类别/工段数据集）；老演示库不重建，故先做 **PRAGMA 守卫的
+    幂等 ALTER** 为 ``quality_defect`` 补 ``process_stage`` / ``defect_category`` 两列。
+    V3.7：追加 ``seed_quality_pareto_pcat.sql``（柏拉图产品分类：消费电子/智能电源/
+    储能电源/车载，含老行幂等回填 UPDATE）；同法补 ``product_category`` 一列。
+    V3.8：追加 ``seed_std_three_rates.sql``——标准三率改为「1 级 = 4 工段 / 2 级 = 各班组」
+    两级看板，同法为 ``std_standard_audit`` 补 ``process_stage`` / ``team`` 两列，
+    并按 4 工段 × 3 班组 × 17 工序 × 15 天补齐班组级审核明细（765 行）。
     """
     import sqlite3
 
@@ -63,7 +128,11 @@ def _apply_seed(db_path: str) -> None:
     try:
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         with sqlite3.connect(db_path, timeout=10.0) as conn:
+            # 幂等补列：老库（已存在表但缺新列）就地升级，跨 SQLite 版本安全
+            # （不使用 ADD COLUMN IF NOT EXISTS）；表不存在时空集 → 跳过。
+            # 每个种子文件执行前补一次：覆盖「老库升级」与「全新库先建表后补列」两种路径。
             for p in seeds:
+                _ensure_columns(conn)
                 conn.executescript(p.read_text(encoding="utf-8"))
                 logger.info("[seed] 演示数据扩充完成: %s", p.name)
     except Exception as exc:  # noqa: BLE001 —— 种子失败不阻断启动（演示库可能只读）
@@ -122,7 +191,16 @@ class V2Runtime:
             scenario_registry=scenario_registry,
             data_registry=data_registry,
             text2sql=Text2SQLService(data_registry, metrics, queries),
-            notifier=NotificationService(LogNotificationChannel()),
+            # 通知通道并联：日志留痕（demo outbox，既有行为不变）+ 现场看板
+            # （仅当 target 命中工段白名单才落推送行见 BoardNotificationChannel）
+            # + 现场群（按 im_groups.yaml 把工段解析到企微群，逐条记账：
+            # 未配 IM_GROUP_KEY_<SLUG> 时如实 skipped，只落站内，不静默丢弃；
+            # 配了企业应用凭据时，群内「责任人」投递走真实应用消息 API）。
+            notifier=NotificationService(MultiChannel([
+                LogNotificationChannel(),
+                BoardNotificationChannel(),
+                IMGroupNotificationChannel(gateway=_build_im_push_gateway(settings)),
+            ])),
             workflow=workflow,
             office=office_backend,
         )
@@ -168,14 +246,7 @@ class OrchestratorResult:
 
 # qa 直答通道 → 中文（业务语言）
 _QA_CHANNEL_CN: dict[str, str] = {
-    "metric": "指标库（口径统一）",
-    "registered": "预注册查询",
-    "detail": "明细探查",
-    "fallback": "人工兜底",
-}
-
-# qa 直答通道 → 中文（业务语言）
-_QA_CHANNEL_CN: dict[str, str] = {
+    "board": "看板口径直查（与看板同源）",
     "metric": "指标库（口径统一）",
     "registered": "预注册查询",
     "detail": "明细探查",
@@ -225,24 +296,45 @@ class V2Orchestrator:
         self.runtime = runtime
 
     def handle(self, query: str, user_ctx: Optional[dict] = None,
-               sink: Optional[Any] = None) -> OrchestratorResult:
-        """处理一次请求：路由 → 场景 DAG → 聚合（含 provenance/HITL/降级标记）。"""
+               sink: Optional[Any] = None,
+               ask_ctx: Optional[dict] = None) -> OrchestratorResult:
+        """处理一次请求：路由 → 场景 DAG → 聚合（含 provenance/HITL/降级标记）。
+
+        ``ask_ctx``（V4 结构化问数上下文）：前端各模块问数入口并行携带的
+        module / kpi / window / filters / view——看板问数命中 KPI 时直接复用
+        看板聚合函数（口径同源、毫秒级），未命中则静默回落自然语言链路。
+        """
         t0 = time.perf_counter()
         run_id = f"run-{uuid.uuid4().hex[:12]}"
         route = self.runtime.router.route(query, user_ctx)
         result = OrchestratorResult(
             query=query, run_id=run_id, route=route.to_dict(),
             scenario_key=route.scenario_key)
+        if ask_ctx:
+            # 审计留痕：结构化上下文并入 route（前端结果卡「执行方式」可见来源）
+            result.route = dict(result.route, ask_ctx=ask_ctx)
         result.degraded_reasons = self._degraded_reasons(route)
+
+        # 通道⓪：看板口径直查——**早于策略分派**。结构化上下文（screen+kpi）
+        # 是比文本关键词更强的意图信号：用户从看板点某个 KPI 进来，哪怕文案里
+        # 含"交期/发货"等场景触发词（会被 L0 判成 scenario），也应回该看板的口径
+        # 而不是被文本抢走跑去跑重型链路。命中即以 strategy="board" 返回。
+        if ask_ctx:
+            board = self._try_board_ask(result, query, user_ctx, ask_ctx, t0)
+            if board is not None:
+                return board
 
         if route.strategy == "chitchat":
             return self._handle_chitchat(result, query, t0)
 
         if route.strategy == "qa":
-            return self._handle_qa(result, query, user_ctx, t0)
+            return self._handle_qa(result, query, user_ctx, t0, sink=sink)
 
         if route.strategy == "office":
             return self._handle_office(result, query, user_ctx, t0)
+
+        if route.strategy == "digest":
+            return self._handle_digest(result, query, user_ctx, t0)
 
         if route.scenario_key is None:
             result.fallback = "manual_ticket"
@@ -312,21 +404,76 @@ class V2Orchestrator:
         logger.info("[orchestrator] %s 闲聊轻回应（不建工单）", result.run_id)
         return result
 
+    def _try_board_ask(self, result: OrchestratorResult, query: str,
+                       user_ctx: Optional[dict], ask_ctx: dict,
+                       t0: float) -> Optional[OrchestratorResult]:
+        """看板口径直查（通道⓪）：命中返回结果，未命中返回 None。
+
+        复用看板聚合函数（dashboard.build_*_dashboard）——口径与看板完全同源，
+        不经 LLM、不重写 SQL；权限与脱敏走看板同一套 data_scope 裁决。
+        """
+        from ..services.board_qa import answer_board_ask
+
+        board = answer_board_ask(self.runtime.data_registry, ask_ctx, user_ctx)
+        if board is None:
+            return None
+        result.route = dict(result.route, strategy="board")
+        result.internal_brief = {
+            "回答通道": _QA_CHANNEL_CN.get(board.channel, board.channel),
+            "数据行数": len(board.rows or []),
+            "口径来源": "与看板同源（dashboard 聚合函数）",
+            "脱敏": board.masked,
+        }
+        result.provenance = [board.to_dict()]
+        result.report = self._qa_report(query, board)
+        result.degraded_reasons = list(board.warnings or [])
+        result.degraded = bool(result.degraded_reasons)
+        result.elapsed_ms = (time.perf_counter() - t0) * 1000
+        logger.info("[orchestrator] %s 看板口径直查: kpi=%s view=%s %.1fms",
+                    result.run_id, ask_ctx.get("kpi"), ask_ctx.get("view"),
+                    result.elapsed_ms)
+        return result
+
     def _handle_qa(self, result: OrchestratorResult, query: str,
-                   user_ctx: Optional[dict], t0: float) -> OrchestratorResult:
+                   user_ctx: Optional[dict], t0: float,
+                   sink: Optional[Any] = None) -> OrchestratorResult:
         """数据直答（qa 策略）：轻量路径——不跑场景 DAG、不建工单、无 HITL。
 
         头脑风暴结论（2026-10-17）："今天A型号的质量怎么样"这类查询型问题
         被硬套客诉 8D 链路（10 节点+双 HITL+工单）是答非所问。简单数据
         查询走 Text2SQL 统一通道（指标库→注册查询→明细探查）直接回答。
+
+        V4 递进：① 直答能答就答；② 直答全失败且命中 ≥2 个域信号 → 协同
+        规划器并行取证（跨域结论分节汇总）；③ 单域 → Agentic 域智能体接管。
+        （看板口径直查已在 handle() 早于策略分派处执行，不在此重复。）
         """
         t2s = self.runtime.text2sql
         qr = t2s.query(query, user_ctx=user_ctx)
-        # 三层递进：直答能答就直接答（指标/注册/明细）→ 全部失败才由
-        # Agentic 域智能体接管（自主决定查什么/组合什么/何时 HITL）→ 人工
+        # 三层递进：直答能答就直接答（指标/注册/明细）→ 跨域协同（≥2 域信号，
+        # 多域并行取证）→ 单域 Agentic 接管 → 人工
         light_hit = (qr.channel in ("metric", "registered", "detail")
                      and qr.rows and qr.fallback is None)
         if not light_hit and qr.fallback == "manual_ticket":
+            collab = self._run_collaborative(query, user_ctx, sink)
+            if collab is not None:
+                result.route = dict(result.route, strategy="collab")
+                result.internal_brief = {
+                    "执行方式": "多域协同取证（Planner 并行编排）",
+                    "参与域": "、".join(collab["domains"]),
+                    "工具调用步数": len(collab["steps"]),
+                    "数据缺口": "；".join(collab["data_gaps"]) or "无",
+                }
+                result.provenance = collab["steps"]
+                result.report = collab["report"]
+                result.degraded_reasons = (["存在数据缺口：" + "；".join(collab["data_gaps"])]
+                                           if collab["data_gaps"] else [])
+                result.degraded = bool(result.degraded_reasons)
+                result.hitl = [self._agentic_hitl_card(t, result.run_id)
+                               for t in collab["hitl_tasks"]]
+                result.elapsed_ms = (time.perf_counter() - t0) * 1000
+                logger.info("[orchestrator] %s 协同取证完成: domains=%s steps=%d",
+                            result.run_id, collab["domains"], len(collab["steps"]))
+                return result
             agentic = self._run_agentic(result.route.get("domain"), query, user_ctx, result.run_id)
             if agentic is not None:
                 result.route = dict(result.route, strategy="agentic")
@@ -362,6 +509,86 @@ class V2Orchestrator:
         result.elapsed_ms = (time.perf_counter() - t0) * 1000
         logger.info("[orchestrator] %s qa 直答: channel=%s rows=%d",
                     result.run_id, qr.channel, len(qr.rows or []))
+        return result
+
+    def _handle_digest(self, result: OrchestratorResult, query: str,
+                       user_ctx: Optional[dict], t0: float) -> OrchestratorResult:
+        """跨域态势汇总（digest）：回答"本月度最需关注什么"这类决策支持型提问。
+
+        这类问题既无场景触发词也无具体实体——旧行为落到 chitchat（只回一句问候）
+        或被隐式指派到某个场景跑重型 DAG。本通道给出**有数据支撑**的"最需关注"清单：
+        各看板未达标 KPI（口径与看板同源）+ SPC 能力不足/不可判定 + 待我确认的工单。
+
+        只读：不建工单、不发起 HITL；无权看板如实标注"不可见"，缺口如实标注。
+        """
+        from ..services.digest import build_digest, pick_window
+
+        roles = [str(r) for r in ((user_ctx or {}).get("roles") or []) if str(r)]
+        window = pick_window(query)
+        data = build_digest(self.runtime.data_registry, self.runtime.workflow,
+                           roles, window=window, query=query)
+        if data is None:
+            # 无任何可见看板：不臆造态势，如实说明并回落（转人工/引导）
+            result.fallback = "manual_ticket"
+            result.report = ("当前岗位没有可见的看板数据范围，无法给出态势汇总。"
+                            "如需查看，请申请相应数据权限或联系对应岗位。")
+            result.suggestions = self._route_suggestions(query)
+            result.elapsed_ms = (time.perf_counter() - t0) * 1000
+            return result
+
+        items = data["items"]
+        win_meta = data.get("window") or {}
+        win_label = f"{win_meta.get('label') or ''}"
+        if win_meta.get("start") and win_meta.get("end"):
+            win_label += f"（{win_meta.get('start')} ~ {win_meta.get('end')}）"
+        lines: list[str] = []
+        if items:
+            lines.append(f"按当前口径（{win_label or '最近7天'}）共 "
+                         f"{data['total_not_ok']} 项未达标，最需关注：")
+            for i, it in enumerate(items, 1):
+                flag = "严重" if it["status"] == "danger" else "关注"
+                gap_txt = f"，缺口 {abs(it['gap'])}pt" if it.get("gap") else ""
+                lines.append(f"{i}. 【{flag}】{it['board']} · {it['label']} "
+                             f"{it['value']}（目标 {it['target']}{gap_txt}）"
+                             + (f" —— {it['note']}" if it.get("note") else ""))
+        else:
+            lines.append(f"按当前口径（{win_label or '最近7天'}）各看板指标均已达标，"
+                         "暂无明显需要升级的项。")
+        for note in data.get("spc_notes") or []:
+            lines.append(f"· {note}")
+        todo = data.get("todo") or {}
+        if todo.get("mine"):
+            lines.append(f"· 有 {todo['mine']} 项待你确认的工单（见审批确认中心）")
+        elif todo.get("visible"):
+            lines.append(f"· 治理域内有 {todo['visible']} 项待办（多不在你的处置范围）")
+        if data.get("skipped"):
+            lines.append(f"· 以下看板当前岗位不可见，未纳入汇总："
+                         f"{'、'.join(data['skipped'])}")
+        for gap in data.get("gaps") or []:
+            lines.append(f"· 数据缺口：{gap}")
+        lines.append("（需要逐项下钻时，点对应看板的卡片；或把问题带上型号 / 线体 / "
+                     "批号等具体对象，走对象级链路。）")
+
+        result.internal_brief = {
+            "回答通道": "跨域态势汇总（汇总问数）",
+            "覆盖看板": "、".join(data["boards"]),
+            "未达标项": data["total_not_ok"],
+            "待我确认": todo.get("mine", 0),
+            "口径": win_label or "最近7天",
+        }
+        result.provenance = [{
+            "channel": "digest", "boards": data["boards"],
+            "window": win_meta, "not_ok": data["total_not_ok"],
+            "items": items,
+            "source": "各看板聚合函数（与看板同源口径）+ SPC 能力 + 治理待办",
+        }]
+        result.report = "\n".join(lines)
+        result.degraded_reasons = list(data.get("gaps") or [])
+        result.degraded = bool(result.degraded_reasons)
+        result.elapsed_ms = (time.perf_counter() - t0) * 1000
+        logger.info("[orchestrator] %s 态势汇总: boards=%s 未达标=%d %.1fms",
+                    result.run_id, data["boards"], data["total_not_ok"],
+                    result.elapsed_ms)
         return result
 
     def _handle_office(self, result: OrchestratorResult, query: str,
@@ -429,6 +656,25 @@ class V2Orchestrator:
         ("customer_service", ("客诉受理", "客服", "客户服务", "售后", "维修服务", "退换货")),
     ]
 
+    def _run_collaborative(self, query, user_ctx, sink):
+        """跨域协同取证（V4）：≥2 个域信号命中时由协同规划器并行编排。
+
+        Planner 拆解 ≤4 个单域子任务 → 多域智能体并行 ReAct 取证 → 汇总器
+        分节聚合（冲突不仲裁、缺口如实标注）。子智能体之间不互相调用、
+        不递归触发 Planner——协同结构恒为「规划器 → 执行者」浅层星型。
+        未达协同条件或全部失败时返回 None，回落单域 Agentic / 人工兜底。
+        """
+        from .planner import CollaborativePlanner
+
+        planner = CollaborativePlanner(self)
+        if not planner.should_collaborate(query):
+            return None
+        try:
+            return planner.run(query, user_ctx=user_ctx, sink=sink)
+        except Exception as exc:  # noqa: BLE001 —— 协同失败回落原链路（降级不崩）
+            logger.warning("[orchestrator] 协同取证执行失败: %s", exc)
+            return None
+
     def _run_agentic(self, domain, query, user_ctx, run_id):
         """运行域组 Agentic Agent；无对应域（function/None）返回 None 走原兜底。
 
@@ -475,23 +721,107 @@ class V2Orchestrator:
 
     @staticmethod
     def _qa_report(query: str, qr: Any) -> str:
-        """把 QueryResult 组装为可读直答（数字来自查询，带口径与脱敏说明）。"""
+        """把 QueryResult 组装为可读直答（数字来自查询，带口径与脱敏说明）。
+
+        **首行必须是业务结论**：前端取首句当卡片标题（``terms.headline``）。
+        此前首行恒为「已通过{通道}查询（N 行）：」这类实现细节——标题里没有答案
+        （截图反馈：OTD 直答标题写成"已通过指标库（口径统一）查询（1 行）"）。
+        单行结果（指标库命中 / 看板口径直查）改由 :meth:`_single_row_report`
+        出结论句；多行明细仍走「查询通道 + 逐行列出」。
+        """
         if qr.fallback == "manual_ticket":
             return ("该问题需要人工跟进（明细探查通道当前不可用），"
                     "已生成人工兜底工单。")
+        rows = qr.rows or []
+        if len(rows) == 1 and isinstance(rows[0], dict):
+            verdict = V2Orchestrator._single_row_report(qr, rows[0])
+            if verdict:
+                return verdict
         lines: list[str] = []
         channel_cn = _QA_CHANNEL_CN.get(qr.channel, qr.channel)
-        lines.append(f"已通过{channel_cn}查询（{len(qr.rows or [])} 行）：")
-        for i, row in enumerate((qr.rows or [])[:5], 1):
+        lines.append(f"已通过{channel_cn}查询（{len(rows)} 行）：")
+        for i, row in enumerate(rows[:5], 1):
             kv = "；".join(f"{k}={v}" for k, v in list(row.items())[:6])
             lines.append(f"{i}. {kv}")
-        if len(qr.rows or []) > 5:
-            lines.append(f"…共 {len(qr.rows)} 行，可在数据溯源中查看完整结果")
+        if len(rows) > 5:
+            lines.append(f"…共 {len(rows)} 行，可在数据溯源中查看完整结果")
         if qr.masked:
             lines.append("（结果含敏感字段，已按你的岗位权限脱敏）")
         for w in (qr.warnings or [])[:2]:
             lines.append(f"注意：{w}")
         return "\n".join(lines)
+
+    @staticmethod
+    def _single_row_report(qr: Any, row: dict) -> str:
+        """单行直答 → 结论句 + 口径/明细行；无法判定口径时返回 ``""``。
+
+        只对**口径已知**的单行结果拼结论：看板口径直查（行内含「指标/值/目标/状态」）
+        与指标库命中（provenance 带 metric_name/unit/target/window）。其余单行
+        （注册查询 / 明细探查）保持通用列表——不把列名当结论臆造。
+        """
+        prov = qr.provenance or {}
+        if qr.channel == "board" and row.get("指标") and row.get("值"):
+            head = V2Orchestrator._verdict_headline(
+                str(row.get("口径") or ""), str(row.get("指标")),
+                str(row.get("值")), row.get("状态"), row.get("目标"))
+            lines = [head]
+            for k, v in row.items():
+                if k in ("指标", "值", "目标", "状态", "口径") or not v:
+                    continue
+                lines.append(f"{k}：{v}")
+            return "\n".join(lines)
+        if qr.channel == "metric" and prov.get("metric_name"):
+            unit = str(prov.get("metric_unit") or "")
+            first = next(iter(row.values()), "")
+            value = (f"{first}{unit}"
+                     if unit and not str(first).endswith(unit) else str(first))
+            # 窗口标签只在指标 SQL 真的按窗口取数时才有意义（如 OTD 的 :start/:end）；
+            # 否则「最近7天 来料检验合格率」会暗示一个并不存在的口径。
+            scoped = ":start" in str(qr.sql or "")
+            win = prov.get("window") or {}
+            head = V2Orchestrator._verdict_headline(
+                str(win.get("label") or "") if scoped else "",
+                str(prov.get("metric_name") or ""), value, None,
+                prov.get("metric_target"), unit,
+                bool(prov.get("metric_higher_is_better", True)))
+            lines = [head]
+            if prov.get("metric_desc"):
+                lines.append(f"口径：{prov['metric_desc']}")
+            if scoped and win.get("start") and win.get("end"):
+                lines.append(f"统计窗口：{win['start']} ~ {win['end']}")
+            rest = list(row.items())[1:]
+            if rest:
+                lines.append("数据明细：" + " · ".join(f"{k} {v}" for k, v in rest))
+            if prov.get("owner"):
+                lines.append(f"指标归属：{prov['owner']}")
+            return "\n".join(lines)
+        return ""
+
+    @staticmethod
+    def _verdict_headline(scope: str, name: str, value: str,
+                          status: Any = None, target: Any = None,
+                          unit: str = "", higher: bool = True) -> str:
+        """结论句：「{窗口} {指标} {数值}（达标状态，目标 ≥…）」。"""
+        head = " ".join(b for b in (scope, name, value) if b)
+        target_txt = ""
+        if target not in (None, ""):
+            t_val = (f"{target}{unit}"
+                     if unit and not str(target).endswith(unit) else str(target))
+            target_txt = f"目标 {'≥' if higher else '≤'}{t_val}"
+        state = str(status or "") or (
+            V2Orchestrator._verdict_state(value, target, higher) if target_txt else "")
+        suffix = "，".join(b for b in (state, target_txt) if b)
+        return f"{head}（{suffix}）" if suffix else head
+
+    @staticmethod
+    def _verdict_state(value: str, target: Any, higher: bool = True) -> str:
+        """数值 vs 目标 → 「达标 / 未达标」（解析不出数字则不给判定，不臆造）。"""
+        try:
+            v = float(re.findall(r"-?\d+(?:\.\d+)?", str(value))[0])
+            t = float(target)
+        except (ValueError, IndexError, TypeError):
+            return ""
+        return "达标" if (v >= t if higher else v <= t) else "未达标"
 
     @staticmethod
     def _degraded_reasons(route: RouteResult) -> list[str]:
@@ -581,6 +911,29 @@ class V2Orchestrator:
                           "elapsed_ms": elapsed_ms,
                           "status": dag.node_status.get(node_id, "ok")})
         return items
+
+
+def _build_im_push_gateway(settings_obj: Any) -> Any:
+    """按**企业应用凭据**构造真实推送网关（应用消息 / @ 责任人）；缺凭据返回 ``None``。
+
+    需要 corp_id（缺省回落 ``IM_APPID``：回调侧该字段即企业 CorpID）
+    + ``IM_AGENT_ID`` + ``IM_CORP_SECRET``。三者不齐返回 ``None``——现场群通道据此
+    如实记账为 failed 并写明原因，**不静默、也不假装 @ 到了人**。
+
+    返回的是 ``WeComPushClient``（与 ``IMGateway.push`` 同签名），因此"只有推送凭据、
+    没有回调凭据"的部署不必为了推送去凑 AES 密钥。
+    """
+    corp_id = str(getattr(settings_obj, "IM_CORP_ID", "")
+                  or getattr(settings_obj, "IM_APPID", "") or "")
+    agent_id = str(getattr(settings_obj, "IM_AGENT_ID", "") or "")
+    secret = str(getattr(settings_obj, "IM_CORP_SECRET", "") or "")
+    if not (corp_id and agent_id and secret):
+        return None
+    from ..contracts.adapters.wecom import WeComPushClient
+
+    client = WeComPushClient(corp_id, agent_id, secret)
+    logger.info("[runtime] 企业应用凭据已就绪：现场群「责任人」投递走真实应用消息")
+    return client
 
 
 def create_default_orchestrator() -> V2Orchestrator:

@@ -33,13 +33,13 @@ _SRC = Path(__file__).resolve().parents[2] / "src" / "mfg_agents"
 _EXPECTED = {
     "manufacturing": {
         "gm", "manufacturing", "equipment", "equipment_manager", "maintenance_tech",
-        "quality_director", "pqe", "product_engineering", "ie_engineer",
+        "quality_director", "qa_manager", "qa", "sqe", "pqe", "product_engineering", "ie_engineer",
         "test_engineer", "rd_manager", "rd_engineering", "me_engineer",
         "rd_test_engineer", "npi_engineer", "project_manager", "ehs",
     },
     "quality": {
         "gm", "manufacturing", "equipment", "equipment_manager", "maintenance_tech",
-        "quality_director", "pqe", "product_engineering", "ie_engineer",
+        "quality_director", "qa_manager", "qa", "sqe", "pqe", "product_engineering", "ie_engineer",
         "test_engineer", "rd_manager", "rd_engineering", "me_engineer",
         "rd_test_engineer", "npi_engineer", "project_manager", "ehs",
     },
@@ -58,6 +58,11 @@ _EXPECTED = {
 #: 承担对客 / 收款责任、可见客户真名的岗位
 _CUSTOMER_VISIBLE = {"gm", "sales", "customer_service", "project_manager",
                      "finance", "finance_manager"}
+
+#: 同在这份目录里、但不是 `/dashboard/*` 看板的**现场看板**（客诉推送队列）。
+#: 它的角色集合刻意与制造/品质看板同源（现场是这两屏的落点），因此不单列一份
+#: 授权口径，只把它纳入"目录键集合"的核对——多出/少掉一个键仍必须红。
+_EXTRA_SCOPE_KEYS = {"site_board"}
 
 
 @pytest.fixture(scope="module")
@@ -155,9 +160,19 @@ dashboards:
 # ============================================================
 
 def test_allow_sets_match_product_decision(registry):
-    assert set(registry.keys()) == set(_EXPECTED)
+    assert set(registry.keys()) == set(_EXPECTED) | _EXTRA_SCOPE_KEYS
     for key, expected in _EXPECTED.items():
         assert set(registry.get(key).allow_roles) == expected, key
+
+
+def test_site_board_scope_shares_manufacturing_audience(registry):
+    """现场看板与制造看板同一批受众（刻意）：另立一套角色会让"看板能看、现场 403"成常态。"""
+    assert (set(registry.get("site_board").allow_roles)
+            == set(registry.get("manufacturing").allow_roles))
+    # 客户名与订单看板同一套 keep_roles：只有承担对客责任的岗位看得到真名
+    rule = registry.get("site_board").masks[0]
+    assert rule.path == "rows[].customer"
+    assert set(rule.keep_roles) == _CUSTOMER_VISIBLE
 
 
 def test_manufacturing_and_quality_share_role_set(registry):
@@ -191,6 +206,8 @@ def test_api_endpoints_are_all_declared(registry):
     """``api.py`` 里新增看板端点却忘了登记 → 该端点对所有人 403。
 
     这条守卫的意义：让「新增看板」这件事无法悄悄绕过数据范围目录。
+    现场看板（``/api/v2/site-board`` 的读与两个回写端点）同样纳入：
+    读了目录却漏登记的端点，会直接 403 而不是"先上线再说"。
     """
     source = (_SRC / "v2" / "demo" / "api.py").read_text(encoding="utf-8")
     declared = set(re.findall(r'@app\.get\("/api/v2/dashboard/([a-z_]+)"\)', source))
@@ -198,6 +215,12 @@ def test_api_endpoints_are_all_declared(registry):
     assert declared, "未扫到任何看板端点，正则失效？"
     missing = declared - set(registry.keys())
     assert not missing, f"这些看板端点未在 data_scope.yaml 登记: {missing}"
+
+    # 现场看板：读 + ack + feedback 三个端点都挂在 site_board 这一份裁决下
+    site_board_routes = re.findall(
+        r'@app\.(?:get|post)\("(/api/v2/site-board[^"]*)"\)', source)
+    assert site_board_routes, "未扫到现场看板端点，正则失效？"
+    assert "site_board" in registry.keys(), "现场看板未在 data_scope.yaml 登记"
 
 
 # ============================================================
@@ -331,9 +354,21 @@ def test_mask_does_not_touch_other_dashboards(registry):
 _UI = _SRC / "v2" / "demo" / "ui"
 
 
-def _fn_block(source: str, header: str, size: int = 2200) -> str:
+def _fn_block(source: str, header: str, size: int = 0) -> str:
+    """函数体提取。
+
+    缺省（``size=0``）按「下一个同级 ``function`` 声明」切边界——固定字符
+    窗口会把长大的函数截断（``loadMfgDrill`` 加了筛选跟随注释后，
+    ``scopedDenied`` 被切出窗外造成误报）。显式传 ``size`` 时保持旧的
+    定长窗口行为（调用方明确知道块很小时用）。
+    """
     start = source.index(header)
-    return source[start:start + size]
+    if size:
+        return source[start:start + size]
+    tail = source[start + len(header):]
+    ends = [tail.find("\n  " + kw) for kw in ("async function ", "function ")]
+    ends = [x for x in ends if x != -1]
+    return tail[:min(ends)] if ends else tail
 
 
 @pytest.mark.parametrize("fn", ["loadOrdersDashboard", "loadSpcDashboard",
@@ -359,7 +394,14 @@ def test_dashboard_api_uses_scoped_getter(method):
     看板的降级兜底，于是"刚重启后端"看到的是演示数据却标着真实链路。
     """
     src = (_UI / "app.js").read_text(encoding="utf-8")
-    block = _fn_block(src, f"{method}()", 240)
+    # 制造/品质看板客户端方法带时间口径入参（``(window)``），故按 ``method(`` 定位函数块
+    # ``spcDashboard`` 后来新增了 ``stage`` / ``product_category`` 两个入参，函数体
+    # 变长 → 定长 240 字符窗口会切掉 ``_getScoped(``（误报「未走补签重试」）。
+    # 故**只对 spc 这一个**放宽为「按下一个 function 声明切边界」（``size=0``，
+    # 本文件 ``_fn_block`` 文档串推荐的方式），其余三个方法保持 240 定长窗口不变
+    # → 不削弱其它三个方法的检查强度。
+    size = 0 if method == "spcDashboard" else 240
+    block = _fn_block(src, f"{method}(", size)
     assert "_getScoped(" in block, f"{method} 未走补签重试"
 
 

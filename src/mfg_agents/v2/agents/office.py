@@ -32,8 +32,16 @@ from ..services.office import (
     _ATTENDANCE_FIX_TYPES,
     _EXPENSE_CATEGORIES,
     _LEAVE_TYPES,
+    SERVICE_ASSIGNEE,
+    SERVICE_ATTACHMENT_KINDS,
+    SERVICE_FIELD_LABELS,
+    SERVICE_KIND_NAMES,
+    SERVICE_KINDS,
+    SERVICE_REQUIRED,
+    SERVICE_URGENCIES,
     OfficeBackend,
     OfficeError,
+    get_attachment_store,
     get_office_backend,
 )
 from .agentic import AgenticStep, AgenticDomainAgent
@@ -61,17 +69,62 @@ _OFFICE_FLOW: dict[str, list[tuple[str, str, int]]] = {
     "attendance": [("office_intent", "办公助手 · 意图识别", 5_000),
                    ("office_att_fill", "办公助手 · 补卡单整理", 13_000),
                    ("office_att_approve", "HR · 考勤核验", 22_000)],
+    # OA 服务工单（IT 报修 / 账号权限 / 设备领用 / 车位 / 访客车辆 / 公务用车）：识别 → 归口受理
+    "it_repair": [("office_intent", "办公助手 · 意图识别", 5_000),
+                  ("office_it_triage", "IT 运维 · 故障分级与派单", 12_000),
+                  ("office_it_handle", "IT 运维 · 上门/远程处理", 24_000)],
+    "it_access": [("office_intent", "办公助手 · 意图识别", 5_000),
+                  ("office_it_access_check", "IT 运维 · 账号与权限核验", 13_000),
+                  ("office_it_access_grant", "IT 运维 · 权限开通", 23_000)],
+    "it_device": [("office_intent", "办公助手 · 意图识别", 5_000),
+                  ("office_it_asset_check", "IT 资产 · 库存与领用核验", 12_000),
+                  ("office_it_asset_issue", "IT 资产 · 设备发放", 22_000)],
+    "parking": [("office_intent", "办公助手 · 意图识别", 5_000),
+                ("office_parking_check", "行政后勤 · 车位余量与资质核验", 13_000),
+                ("office_parking_assign", "行政后勤 · 车位分配", 23_000)],
+    "visitor_vehicle": [("office_intent", "办公助手 · 意图识别", 5_000),
+                        ("office_visitor_check", "行政后勤 · 来访信息核对", 11_000),
+                        ("office_visitor_pass", "行政后勤 · 车辆放行报备", 20_000)],
+    "business_car": [("office_intent", "办公助手 · 意图识别", 5_000),
+                     ("office_car_check", "行政后勤 · 车辆与司机排班", 13_000),
+                     ("office_car_dispatch", "行政后勤 · 派车办理", 23_000)],
     "default": [("office_intent", "办公助手 · 意图识别", 5_000),
                 ("office_handle", "办公助手 · 事务办理", 18_000)],
 }
 _OFFICE_CATEGORY_CN = {"room": "会议室预订", "meal": "订餐",
                        "expense": "费用报销", "leave": "请假申请",
-                       "attendance": "补考勤打卡"}
+                       "attendance": "补考勤打卡",
+                       # 服务工单：类别名直接取 kind 的中文名（与单据/徽标同口径）
+                       **SERVICE_KIND_NAMES}
 
 # 各类事项的审批归口（按事项性质分派，而非一律行政专员）
 _OFFICE_ASSIGNEE = {"room": "行政专员", "meal": "行政专员",
                     "expense": "财务专员", "leave": "部门主管",
-                    "attendance": "HR 专员"}
+                    "attendance": "HR 专员",
+                    # 服务工单：IT 类 → IT 运维专员；停车/车辆类 → 行政后勤专员
+                    **SERVICE_ASSIGNEE}
+
+
+# ---------- OA 服务工单（IT / 停车 / 车辆）：口语关键词 + 规范选项 ----------
+_IT_REPAIR_HINTS = ("报修", "报障", "故障", "坏了", "黑屏", "蓝屏", "宕机",
+                    "死机", "断网", "打不开", "连不上")
+_IT_ACCESS_HINTS = ("权限", "账号", "账户", "密码", "开通", "授权")
+_IT_DEVICE_HINTS = ("领用", "资产", "笔记本", "电脑", "台式机", "显示器",
+                    "打印机", "扫码枪", "门禁卡", "工牌")
+_PARKING_HINTS = ("车位", "停车", "月租车位", "固定车位")
+_VISITOR_HINTS = ("访客", "来访", "报备", "放行", "客人")
+_CAR_HINTS = ("公务用车", "派车", "用车", "还车", "公车")
+_IT_PERMISSION_ITEMS = ["查询", "录入", "审批", "导出", "管理员"]
+_IT_DEVICE_TYPES = ["笔记本电脑", "台式机", "显示器", "打印机", "扫码枪", "工牌/门禁卡"]
+_PARKING_TYPES = ["固定车位", "月租车位", "临时车位"]
+_PARKING_AREAS = ["A 栋地面", "B 栋地面", "C 栋地面", "D 栋地面", "地库 B1", "地库 B2"]
+
+
+def _find_plate(text: str) -> str:
+    """抽取车牌号（如 苏A12345 / 沪B88888 / 京AD12345）。"""
+    m = re.search(r"([京津沪渝冀豫云辽黑湘皖鲁新苏浙赣鄂桂甘晋蒙陕吉闽贵粤青藏川宁琼]"
+                  r"[A-Z][A-Z0-9]{4,6})", text)
+    return m.group(1) if m else ""
 
 
 def _clarify_options(key: str, label: str) -> list[str]:
@@ -89,6 +142,17 @@ def _clarify_options(key: str, label: str) -> list[str]:
     if "假" in text and ("类型" in text or "类别" in text
                         or key in ("leave_type", "leave_kind")):
         return list(_LEAVE_TYPES)
+    # ---- OA 服务工单（IT / 停车 / 车辆）----
+    if key in ("urgency", "level") or "紧急" in text:
+        return list(SERVICE_URGENCIES)
+    if key in ("permission", "permissions", "permission_items"):
+        return list(_IT_PERMISSION_ITEMS)
+    if key in ("device_type", "asset_type"):
+        return list(_IT_DEVICE_TYPES)
+    if key in ("parking_type", "spot_type"):
+        return list(_PARKING_TYPES)
+    if key in ("area", "parking_area"):
+        return list(_PARKING_AREAS)
     return []
 
 
@@ -113,6 +177,44 @@ _CLARIFY_SLOTS: dict[str, list[dict]] = {
         {"key": "work_date", "label": "补卡日期", "type": "date", "required": True},
         {"key": "time", "label": "补卡时间", "type": "time", "required": True},
     ],
+    # ---- OA 服务工单（IT 报修 / 账号权限 / 设备领用 / 车位 / 访客车辆 / 公务用车）----
+    # key 与工具入参对齐：title/location/urgency 走显式入参，其余结构化字段放 extra
+    "it_repair": [
+        {"key": "title", "label": "故障现象", "type": "text", "required": True},
+        {"key": "location", "label": "设备与位置", "type": "text", "required": True},
+        {"key": "urgency", "label": "紧急程度", "type": "select",
+         "options": list(SERVICE_URGENCIES), "required": False},
+    ],
+    "it_access": [
+        {"key": "title", "label": "申请事由", "type": "text", "required": True},
+        {"key": "system", "label": "系统（如 MES / OA / ERP）", "type": "text", "required": True},
+        {"key": "permission", "label": "权限项", "type": "multiselect",
+         "options": list(_IT_PERMISSION_ITEMS), "required": True},
+    ],
+    "it_device": [
+        {"key": "title", "label": "领用用途", "type": "text", "required": True},
+        {"key": "device_type", "label": "设备类型", "type": "select",
+         "options": list(_IT_DEVICE_TYPES), "required": True},
+    ],
+    "parking": [
+        {"key": "title", "label": "申请事由", "type": "text", "required": True},
+        {"key": "parking_type", "label": "车位类型", "type": "select",
+         "options": list(_PARKING_TYPES), "required": False},
+        {"key": "area", "label": "区域", "type": "select",
+         "options": list(_PARKING_AREAS), "required": False},
+        {"key": "plate", "label": "车牌号", "type": "text", "required": True},
+    ],
+    "visitor_vehicle": [
+        {"key": "title", "label": "来访事由", "type": "text", "required": True},
+        {"key": "plate", "label": "车牌号", "type": "text", "required": True},
+        {"key": "visit_date", "label": "来访日期", "type": "date", "required": True},
+    ],
+    "business_car": [
+        {"key": "title", "label": "用车事由", "type": "text", "required": True},
+        {"key": "dest", "label": "目的地", "type": "text", "required": True},
+        {"key": "use_from", "label": "用车起始时间（YYYY-MM-DD HH:MM）", "type": "text",
+         "required": True},
+    ],
 }
 _LEAVE_HINTS = ("请假", "休假", "年假", "事假", "病假", "调休", "婚假", "产假")
 
@@ -124,6 +226,19 @@ def _detect_flow(text: str) -> str:
         return "attendance"
     if any(h in text for h in _LEAVE_HINTS):
         return "leave"
+    # OA 服务工单（顺序即优先级：先报修/权限，再访客/用车，最后车位/设备领用）
+    if any(h in text for h in _IT_REPAIR_HINTS):
+        return "it_repair"
+    if any(h in text for h in _IT_ACCESS_HINTS):
+        return "it_access"
+    if any(h in text for h in _VISITOR_HINTS):
+        return "visitor_vehicle"
+    if any(h in text for h in _CAR_HINTS):
+        return "business_car"
+    if any(h in text for h in _PARKING_HINTS):
+        return "parking"
+    if any(h in text for h in _IT_DEVICE_HINTS):
+        return "it_device"
     return ""
 
 
@@ -217,6 +332,20 @@ def _known_values(flow: str, text: str) -> dict[str, str]:
         tm = _find_time(text)
         if tm:
             known["time"] = tm
+    elif flow in SERVICE_KINDS:
+        # 服务工单：紧急程度 / 车牌号 / 日期时段（日期只做确定性预填，不替用户推理业务）
+        urge = _find_enum(text, SERVICE_URGENCIES)
+        if urge and urge != "一般":
+            known["urgency"] = urge
+        plate = _find_plate(text)
+        if plate:
+            known["plate"] = plate
+        if dates:
+            known["visit_date"] = dates[0]
+            known["use_from"] = dates[0]
+        tm = _find_time(text)
+        if tm and dates:
+            known["use_from"] = f"{dates[0]} {tm}"
     return known
 
 
@@ -261,13 +390,16 @@ OFFICE_TOOLS_META: list[dict[str, str]] = [
     {"name": "cancel_order", "desc": "取消本人订餐订单", "kind": "写/留痕"},
     # ---- OA 自助办理（报销/请假/补考勤；三类均走人工确认） ----
     {"name": "get_current_time", "desc": "查当前日期与时间（含星期）；把'今天/明天/后天'等相对时间换算为具体日期时先调它", "kind": "只读·时间"},
-    {"name": "submit_expense", "desc": "提交费用报销单（类别/金额/日期/事由，返回报销号）", "kind": "写/HITL"},
+    {"name": "organize_expense", "desc": "整理报销科目（按事由拆二级科目 + 必传/选传材料核对），提交报销前先调它", "kind": "只读·规则"},
+    {"name": "submit_expense", "desc": "提交费用报销单（类别/金额/日期/事由/材料，返回报销号）", "kind": "写/HITL"},
     {"name": "list_my_expenses", "desc": "查我的报销单与状态", "kind": "只读"},
     {"name": "apply_leave", "desc": "提交请假申请（类型/起止日期/事由，返回请假单号）", "kind": "写/HITL"},
     {"name": "list_my_leaves", "desc": "查我的请假申请与状态", "kind": "只读"},
     {"name": "get_leave_balance", "desc": "查我的年假/调休余额", "kind": "只读"},
+    {"name": "supplement_leave_document", "desc": "为请假单补件（如病假条，需先上传取得 attachment_id）", "kind": "写/HITL"},
     {"name": "submit_attendance_fix", "desc": "提交补考勤打卡申请（上班/下班补卡 + 日期时间）", "kind": "写/HITL"},
     {"name": "list_my_attendance_fixes", "desc": "查我的补卡申请与状态", "kind": "只读"},
+    {"name": "submit_service_request", "desc": "提交 OA 服务工单（IT 报修 / 账号权限 / 设备领用 / 车位申请 / 访客车辆报备 / 公务用车），按 kind 归口 IT 运维或行政后勤", "kind": "写/HITL"},
     {"name": "ask_user", "desc": "关键信息缺失时向用户反问（弹窗式多选/输入），补齐后再提交", "kind": "只读·澄清"},
     {"name": "request_approval", "desc": "发起人工确认（高影响事项：报告厅/客餐/超预算；报销/请假/补卡一律发起）", "kind": "写/HITL"},
     # ---- 制造数据只读速查（V3.7；转发统一注册查询，受岗位数据权限约束） ----
@@ -289,9 +421,10 @@ OFFICE_AGENT_CONFIG: dict[str, str] = {
     "role": ("你是企业的综合事务助手智能体，服务全体员工与管理人员。"
              "意图有两类：① 办公事务——帮员工预订会议室、查询会议室可用情况、"
              "订餐（食堂/商务餐厅）、查询自己的预订与订单、取消本人预订/订单，"
-             "以及 **OA 自助办理**（费用报销、请假申请、补考勤打卡）与高影响办公"
-             "事项的人工确认；② 制造数据速查（只读）——查询材料库存、成品库存与"
-             "可发量、来料批次与检验结论、库龄呆滞、缺料缺口、批次追溯。"),
+             "以及 **OA 自助办理**（费用报销、请假申请、补考勤打卡）与 **OA 服务工单**"
+             "（IT 故障报修、账号与权限申请、设备领用申请、车位申请、访客车辆报备、"
+             "公务用车申请），以及高影响办公事项的人工确认；② 制造数据速查（只读）——"
+             "查询材料库存、成品库存与可发量、来料批次与检验结论、库龄呆滞、缺料缺口、批次追溯。"),
     "boundary": ("边界：制造数据查询一律**只读**——不得改动任何库存/批次数据，"
                  "不得承诺出入库/调拨/盘点等写操作；若用户要求这类操作，如实说明"
                  "本助手不办理并引导走对应系统。只读查询受岗位数据权限约束，越权"
@@ -299,6 +432,11 @@ OFFICE_AGENT_CONFIG: dict[str, str] = {
                  "不得代他人下单、取消、报销或请假。会议室时段冲突时不得静默覆盖，"
                  "必须改选并如实告知冲突原因。报销/请假/补卡单**禁止臆造**金额、"
                  "日期、事由或类型——关键字段缺失时先用 ask_user 反问补齐，再提交。"
+                 "OA 服务工单（IT 报修/账号权限/设备领用/车位/访客车辆/公务用车）的关键"
+                 "字段（系统、权限项、设备类型、车牌号、来访日期、用车时间、目的地）同样"
+                 "**禁止臆造**，缺失时先 ask_user 反问补齐。"
+                 "上传材料（attachment_id）只能绑定**本人上传**的材料，不得借用/臆造"
+                 "他人材料编号。"
                  "相对时间（今天/明天/后天/大后天/昨天/下周等）**必须先调 get_current_time**"
                  "取回当前日期再换算成具体 YYYY-MM-DD 后办理；「明天是哪一天」不是缺失"
                  "信息，禁止因此反问用户，也禁止臆造日期。"),
@@ -309,6 +447,9 @@ OFFICE_AGENT_CONFIG: dict[str, str] = {
                   "可直接办理，无需 HITL。**报销/请假/补考勤三类申请提交后一律**停下"
                   "调 request_approval 发起人工确认（报销 category=expense、请假 "
                   "category=leave、补卡 category=attendance），不得直接放行。"
+                  "**OA 服务工单提交后同样一律**停下调 request_approval 发起人工确认"
+                  "（category 用该工单的 kind：it_repair/it_access/it_device/parking/"
+                  "visitor_vehicle/business_car），不得直接放行。"
                   "制造数据为只读查询，不触发 HITL。"),
 }
 
@@ -331,15 +472,18 @@ _SYSTEM_TEMPLATE = """{role}
 
 ### OA 自助办理（报销/请假/补考勤；提交后一律走人工确认）
 - get_current_time()：查当前日期与时间（含星期）——把"今天/明天/后天/大后天/昨天/下周"等相对时间换算为具体日期时**先调它**取基准
-- submit_expense(category, amount, expense_date, note, invoice_no?)：提交报销单（category∈{{差旅/招待/办公用品/交通/其他}}，返回报销号）
+- organize_expense(category, amount, note?, attachment_kinds?)：整理报销科目——按事由拆二级科目明细、给出该类别必传/选传材料核对（attachment_kinds 缺省用本次已上传材料的类别）
+- submit_expense(category, amount, expense_date, note, invoice_no?, attachment_ids?, subject?, breakdown?)：提交报销单（category∈{{差旅/招待/办公用品/交通/其他}}；attachment_ids=本次已上传材料的编号列表；返回报销号）
 - list_my_expenses()：查我的报销单与状态
-- apply_leave(leave_type, start_date, end_date, reason, days?)：提交请假单（leave_type∈{{年假/事假/病假/调休/婚假/产假}}；days 缺省按自然日含端点，返回请假号）
+- apply_leave(leave_type, start_date, end_date, reason, days?, attachment_ids?)：提交请假单（leave_type∈{{年假/事假/病假/调休/婚假/产假}}；days 缺省按自然日含端点；attachment_ids=本次已上传材料；返回请假号）
 - list_my_leaves()：查我的请假申请
 - get_leave_balance()：查我的年假/调休余额
+- supplement_leave_document(leave_id, attachment_id?)：给请假单补件（如病假条；attachment_id 缺省用本次已上传材料；返回补件后的请假单）
 - submit_attendance_fix(fix_type, work_date, time, reason)：提交补卡申请（fix_type∈{{上班补卡/下班补卡}}，返回补卡号）
 - list_my_attendance_fixes()：查我的补卡申请
+- submit_service_request(kind, title, detail?, urgency?, location?, extra?, attachment_ids?)：提交 OA 服务工单（kind∈{{it_repair/it_access/it_device/parking/visitor_vehicle/business_car}}；title=一句话事由或故障现象；location=设备与位置（IT 报修必填）；urgency∈{{一般/紧急/非常紧急}}；extra=结构化字段对象，按 kind 放 system/permission/device_type/plate（车牌）/visit_date（来访日期）/use_from（用车起始时间）/dest（目的地）；attachment_ids=本次已上传材料；返回服务工单号）
 - ask_user(question, fields)：关键信息缺失时向用户反问（弹窗式多选/输入）；fields=[{{"key","label","type"(select/multiselect/date/时间/number/text),"options"?,"required"?}}]
-- request_approval(title, prompt, category)：发起人工确认（category∈{{room/meal/expense/leave/attendance}}；你只发起，绝不放行）
+- request_approval(title, prompt, category)：发起人工确认（category∈{{room/meal/expense/leave/attendance/it_repair/it_access/it_device/parking/visitor_vehicle/business_car}}；你只发起，绝不放行）
 
 ### 制造数据速查（只读；转发统一口径注册查询，受岗位数据权限约束）
 - query_material_stock(part_no?, keyword?)：查材料库存——不传参给全量；传料号给该料号各仓在库/预留/冻结/可用/安全库存/库龄；用户给的是口语名称/规格（如"螺栓""TYPE-C"）时用 keyword 模糊搜索
@@ -350,12 +494,14 @@ _SYSTEM_TEMPLATE = """{role}
 - query_batch_trace(batch_no)：按批号做批次追溯（来料综合→传统检验结论→不良记录）
 
 ## 工作方式（ReAct）
-1. 先判断需要什么：订会议室先查可用（find_available_rooms），订餐先看菜单（get_menu）；查数据先选对工具（材料/成品/来料/库龄/缺料/追溯）；报销/请假/补卡先确认关键字段是否齐全；
+1. 先判断需要什么：订会议室先查可用（find_available_rooms），订餐先看菜单（get_menu）；查数据先选对工具（材料/成品/来料/库龄/缺料/追溯）；报销/请假/补卡/服务工单先确认关键字段是否齐全；
+   - **材料（附件）**：用户本次已上传材料时，消息里会带「本次已上传材料（attachment_ids）」。报销/病假提交时把 attachment_ids **原样**传入对应工具（不得臆造或借用编号）；报销前可先调 organize_expense 整理二级科目并把结果讲给用户听；报销缺**必传材料（发票）**时如实提示、不阻断提交；病假缺病假条时可提示"提交后用上传入口补交"，或用 supplement_leave_document 补挂已上传的病假条；
    - **相对时间先换算（重要）**：用户说"今天/明天/后天/大后天/昨天/下周/本周末"等相对时间时，必须先调 get_current_time() 取当前日期，再换算成具体 YYYY-MM-DD（如"明天"=返回日期的次日）；单日请假（"明天请假"）的 start_date 与 end_date 填同一天。反问预填与最终办理一律使用换算后的具体日期；**不得**因"明天不具体"反问用户"哪天"，也不得臆造日期；回答中回显日期（如"2026-10-20（明天，周二）"）；
 2. **关键信息缺失时必须先用 ask_user 反问**（弹窗式补齐），不要臆造日期、金额、类型或事由，也不要直接把缺失项写进最终回答——反问是一次独立工具调用，调用后即结束本轮，等用户补齐再继续；
    - 报销缺什么就问什么：类别、金额、发生日期、事由；
    - 请假缺什么就问什么：假期类型、开始日期、结束日期、事由；
    - 补卡缺什么就问什么：补卡类型（上班/下班）、补卡日期、补卡时间、事由；
+   - 服务工单缺什么就问什么：IT 报修→故障现象 + 设备与位置（紧急程度选填）；账号与权限申请→系统 + 权限项（多选）+ 事由；设备领用→设备类型 + 用途；车位申请→车牌号（车位类型/区域选填）；访客车辆报备→车牌号 + 来访日期 + 来访事由；公务用车→用车起始时间 + 目的地 + 事由；
    - 会议室的日期/时段缺失、订餐日期缺失同样可用 ask_user 反问；
    - **一次反问必须把该事项的全部缺失字段一次列全**（禁止挤牙膏式多轮追问）；类型/类别类字段一律用 type="select" 并给出 options（请假类型 options=["年假","事假","病假","调休","婚假","产假"]、报销类别 options=["差旅","招待","办公用品","交通","其他"]、补卡类型 options=["上班补卡","下班补卡"]）；
    - **能解析出的字段必须预填**：调用 ask_user 时，凡能从用户原话中解析出的字段值，一律写进该 field 的 `value`（弹窗据此自动填入，用户只补真正缺失项）；例：用户说"我要请年假 3 天"→ leave_type.value="年假"，并从已有日期/默认近日推算 start_date/end_date 的 value，只让用户补事由；用户说"帮我给明天请假"→ 先 get_current_time 换算"明天"的具体日期，start_date/end_date 都预填该日期（单日），只让用户补假期类型与事由；
@@ -365,15 +511,15 @@ _SYSTEM_TEMPLATE = """{role}
 4. 制造数据为只读：只陈述查询结果并标注口径（可用量=在库-预留，库龄按天），不得编造、不得承诺写操作；工具返回"无权限"时如实转述，不得绕过；
 5. {hitl_rule}
 6. 完成或达到边界时，输出最终 JSON（不要输出其他文字）：
-{{"answer": "面向员工的完整中文回答（含预订号/订单号/报销号/请假号/补卡号、时间、地点、金额等关键信息；数据查询含关键数值与口径）",
+{{"answer": "面向员工的完整中文回答（含预订号/订单号/报销号/请假号/补卡号/服务工单号、时间、地点、金额等关键信息；数据查询含关键数值与口径）",
   "data_used": ["用到的工具与关键数据，如 query_shortage() 5 项低于安全库存"],
   "needs_hitl": true/false,
   "hitl_title": "需人工确认事项标题（needs_hitl=true 时必填）",
   "hitl_prompt": "给审批人的说明（needs_hitl=true 时必填）",
-  "hitl_category": "room|meal|expense|leave|attendance 之一（needs_hitl=true 时必填）",
+  "hitl_category": "room|meal|expense|leave|attendance|it_repair|it_access|it_device|parking|visitor_vehicle|business_car 之一（needs_hitl=true 时必填）",
   "data_gaps": ["未能办理/获取的信息及原因"]}}
 
-注意：只输出一个 JSON 对象；预订号/订单号/报销号/请假号/补卡号必须来自工具返回；不得编造会议室、菜品、价格、库存数值、报销金额、假期日期或补卡时间。"""
+注意：只输出一个 JSON 对象；预订号/订单号/报销号/请假号/补卡号/服务工单号必须来自工具返回；不得编造会议室、菜品、价格、库存数值、报销金额、假期日期或补卡时间。"""
 
 
 @dataclass
@@ -396,6 +542,8 @@ class OfficeAssistantAgent:
         self._llm = None
         self.user_ctx: dict[str, Any] = {}
         self._active_query: str = ""     # 本轮用户原话（供 ask_user 解析已知值预填）
+        # 本次请求携带的上传材料（已解析为本人材料元数据；提交报销/病假时绑定）
+        self._pending_attachments: list[dict[str, Any]] = []
 
     # ---------- LLM（懒加载；工具循环不需要深度思考） ----------
 
@@ -548,31 +696,69 @@ class OfficeAssistantAgent:
                     "weekday": f"星期{'一二三四五六日'[now.weekday()]}",
                     "note": "今天=date；明天=date+1；后天=date+2"}
 
-        def submit_expense(category: str, amount: float, expense_date: str,
-                           note: str = "", invoice_no: str = "") -> dict:
+        def _resolve_attachments(ids: Any) -> tuple[list[dict], list[str]]:
+            """把 attachment_ids 解析为**本人**材料元数据；缺省用本次请求携带的材料。
+
+            返回 ``(metadas, invalid_ids)``：他人材料 / 臆造 id 一律剔除（fail-closed）。
+            """
+            if ids:
+                return get_attachment_store().resolve(ids, self._actor())
+            return [dict(a) for a in self._pending_attachments], []
+
+        def organize_expense(category: str, amount: float, note: str = "",
+                             attachment_kinds: Optional[list[str]] = None) -> dict:
+            """整理报销科目（确定性规则）：二级科目拆分 + 必传/选传材料核对。"""
+            from ..services.office import organize_expense as _organize
+            kinds = attachment_kinds
+            if kinds is None:
+                kinds = [str(a.get("kind") or "") for a in self._pending_attachments]
             try:
-                expense = be.submit_expense(category, amount, expense_date, note,
-                                            self._actor(), invoice_no)
+                return _organize(category, amount, note, kinds)
             except OfficeError as exc:
                 return self._fail(exc)
-            return {"ok": True, "expense": expense,
-                    "need_approval": expense.get("need_approval", False),
-                    "high_value": expense.get("high_value", False)}
+
+        def submit_expense(category: str, amount: float, expense_date: str,
+                           note: str = "", invoice_no: str = "",
+                           attachment_ids: Optional[list[str]] = None,
+                           subject: str = "",
+                           breakdown: Optional[list[dict]] = None) -> dict:
+            metas, invalid = _resolve_attachments(attachment_ids)
+            try:
+                expense = be.submit_expense(category, amount, expense_date, note,
+                                            self._actor(), invoice_no, metas,
+                                            subject, breakdown)
+            except OfficeError as exc:
+                return self._fail(exc)
+            out: dict[str, Any] = {"ok": True, "expense": expense,
+                                   "need_approval": expense.get("need_approval", False),
+                                   "high_value": expense.get("high_value", False)}
+            if expense.get("missing_required"):
+                out["missing_required_kinds"] = expense["missing_required"]
+            if invalid:
+                out["invalid_attachment_ids"] = invalid
+            return out
 
         def list_my_expenses() -> dict:
             items = be.list_expenses(self._actor())
             return {"expenses": items, "count": len(items)}
 
         def apply_leave(leave_type: str, start_date: str, end_date: str,
-                        reason: str = "", days: Optional[float] = None) -> dict:
+                        reason: str = "", days: Optional[float] = None,
+                        attachment_ids: Optional[list[str]] = None) -> dict:
+            metas, invalid = _resolve_attachments(attachment_ids)
             try:
                 leave = be.apply_leave(leave_type, start_date, end_date,
-                                       self._actor(), reason, days)
+                                       self._actor(), reason, days, metas)
             except OfficeError as exc:
                 return self._fail(exc)
-            return {"ok": True, "leave": leave,
-                    "need_approval": leave.get("need_approval", False),
-                    "long_leave": leave.get("long_leave", False)}
+            out: dict[str, Any] = {"ok": True, "leave": leave,
+                                   "need_approval": leave.get("need_approval", False),
+                                   "long_leave": leave.get("long_leave", False)}
+            if leave.get("sick_note_pending"):
+                out["sick_note_pending"] = True
+            if invalid:
+                out["invalid_attachment_ids"] = invalid
+            return out
 
         def list_my_leaves() -> dict:
             items = be.list_leaves(self._actor())
@@ -580,6 +766,19 @@ class OfficeAssistantAgent:
 
         def get_leave_balance() -> dict:
             return {"ok": True, "balance": be.leave_balance(self._actor())}
+
+        def supplement_leave_document(leave_id: str,
+                                      attachment_id: str = "") -> dict:
+            """给请假单补件（如病假条）：仅限本人单据；材料需为本人上传。"""
+            metas, invalid = _resolve_attachments([attachment_id] if attachment_id else None)
+            if not metas:
+                return {"ok": False,
+                        "error": f"材料无效或不属于本人：{attachment_id or '（无）'}"}
+            try:
+                leave = be.supplement_leave_document(leave_id, metas[0], self._actor())
+            except OfficeError as exc:
+                return self._fail(exc)
+            return {"ok": True, "leave": leave, "attachment": metas[0]}
 
         def submit_attendance_fix(fix_type: str, work_date: str, time: str,
                                   reason: str = "") -> dict:
@@ -594,6 +793,30 @@ class OfficeAssistantAgent:
         def list_my_attendance_fixes() -> dict:
             items = be.list_attendance_fixes(self._actor())
             return {"fixes": items, "count": len(items)}
+
+        def submit_service_request(kind: str, title: str = "", detail: str = "",
+                                   urgency: str = "", location: str = "",
+                                   extra: Optional[dict] = None,
+                                   attachment_ids: Optional[list[str]] = None) -> dict:
+            """提交 OA 服务工单（IT 报修/账号权限/设备领用/车位/访客车辆/公务用车）。
+
+            一个工具覆盖 6 类服务：kind 决定归口（IT 运维 / 行政后勤）与单号前缀；
+            必填校验在后端 fail-closed（见 SERVICE_REQUIRED），缺项即结构化返回原因供反问。
+            """
+            metas, invalid = _resolve_attachments(attachment_ids)
+            try:
+                req = be.submit_service_request(
+                    kind=kind, title=title, detail=detail, applicant=self._actor(),
+                    urgency=urgency or "一般", location=location,
+                    extra=dict(extra or {}), attachments=metas)
+            except OfficeError as exc:
+                return self._fail(exc)
+            out: dict[str, Any] = {"ok": True, "service_request": req,
+                                   "need_approval": req.get("need_approval", False),
+                                   "assignee": req.get("assignee", "")}
+            if invalid:
+                out["invalid_attachment_ids"] = invalid
+            return out
 
         def ask_user(question: str, fields: list[dict]) -> dict:
             """关键信息缺失时反问：返回弹窗所需字段定义（前端渲染下拉/多选/输入）。
@@ -771,6 +994,16 @@ class OfficeAssistantAgent:
                 "required": ["order_id"]}),
             "list_my_orders": (list_my_orders, {"type": "object", "properties": {}}),
             "get_current_time": (get_current_time, {"type": "object", "properties": {}}),
+            "organize_expense": (organize_expense, {
+                "type": "object",
+                "properties": {"category": {"type": "string",
+                                           "enum": ["差旅", "招待", "办公用品", "交通", "其他"]},
+                               "amount": {"type": "number", "description": "金额（元）"},
+                               "note": {"type": "string", "description": "报销事由（含明细，如 高铁 980 + 住宿 306）"},
+                               "attachment_kinds": {"type": "array",
+                                                    "items": {"type": "string"},
+                                                    "description": "本次材料类别（缺省用本次已上传材料的类别）"}},
+                "required": ["category", "amount"]}),
             "submit_expense": (submit_expense, {
                 "type": "object",
                 "properties": {"category": {"type": "string",
@@ -778,7 +1011,18 @@ class OfficeAssistantAgent:
                                "amount": {"type": "number", "description": "金额（元）"},
                                "expense_date": {"type": "string", "description": "发生日期 YYYY-MM-DD"},
                                "note": {"type": "string", "description": "事由"},
-                               "invoice_no": {"type": "string", "description": "发票号（可选）"}},
+                               "invoice_no": {"type": "string", "description": "发票号（可选）"},
+                               "attachment_ids": {"type": "array",
+                                                  "items": {"type": "string"},
+                                                  "description": "本次已上传材料的编号（如 ['ATT00001']）"},
+                               "subject": {"type": "string", "description": "主要二级科目（可选）"},
+                               "breakdown": {"type": "array",
+                                             "items": {"type": "object",
+                                                       "properties": {
+                                                           "subject": {"type": "string"},
+                                                           "amount": {"type": "number"},
+                                                           "note": {"type": "string"}}},
+                                             "description": "整理后的科目明细（可选，来自 organize_expense）"}},
                 "required": ["category", "amount", "expense_date", "note"]}),
             "list_my_expenses": (list_my_expenses, {"type": "object", "properties": {}}),
             "apply_leave": (apply_leave, {
@@ -788,10 +1032,18 @@ class OfficeAssistantAgent:
                                "start_date": {"type": "string", "description": "开始日期 YYYY-MM-DD"},
                                "end_date": {"type": "string", "description": "结束日期 YYYY-MM-DD"},
                                "reason": {"type": "string", "description": "请假事由"},
-                               "days": {"type": "number", "description": "天数（缺省按自然日含端点计算）"}},
+                               "days": {"type": "number", "description": "天数（缺省按自然日含端点计算）"},
+                               "attachment_ids": {"type": "array", "items": {"type": "string"},
+                                                  "description": "本次已上传材料编号（如病假条）"}},
                 "required": ["leave_type", "start_date", "end_date", "reason"]}),
             "list_my_leaves": (list_my_leaves, {"type": "object", "properties": {}}),
             "get_leave_balance": (get_leave_balance, {"type": "object", "properties": {}}),
+            "supplement_leave_document": (supplement_leave_document, {
+                "type": "object",
+                "properties": {"leave_id": {"type": "string", "description": "请假单号（如 QJ00001）"},
+                               "attachment_id": {"type": "string",
+                                                 "description": "补件材料编号（缺省用本次已上传材料）"}},
+                "required": ["leave_id"]}),
             "submit_attendance_fix": (submit_attendance_fix, {
                 "type": "object",
                 "properties": {"fix_type": {"type": "string",
@@ -802,6 +1054,27 @@ class OfficeAssistantAgent:
                 "required": ["fix_type", "work_date", "time", "reason"]}),
             "list_my_attendance_fixes": (list_my_attendance_fixes,
                                          {"type": "object", "properties": {}}),
+            "submit_service_request": (submit_service_request, {
+                "type": "object",
+                "properties": {
+                    "kind": {"type": "string", "enum": list(SERVICE_KINDS),
+                             "description": "服务类型：it_repair=IT 故障报修 / it_access=账号与权限申请 / "
+                                            "it_device=设备领用申请 / parking=车位申请 / "
+                                            "visitor_vehicle=访客车辆报备 / business_car=公务用车申请"},
+                    "title": {"type": "string",
+                              "description": "一句话事由（报修填故障现象、申请填事由）"},
+                    "detail": {"type": "string", "description": "补充说明（可选）"},
+                    "urgency": {"type": "string", "enum": list(SERVICE_URGENCIES),
+                                "description": "紧急程度（缺省 一般）"},
+                    "location": {"type": "string",
+                                 "description": "设备与位置（IT 报修必填，如「SMT 车间 2 号线」）"},
+                    "extra": {"type": "object",
+                              "description": "结构化补充字段：system / permission / device_type / "
+                                             "plate（车牌）/ visit_date（来访日期）/ use_from（用车起始）"
+                                             " / dest（目的地）等，必填项见各 kind 口径"},
+                    "attachment_ids": {"type": "array", "items": {"type": "string"},
+                                       "description": "本次已上传材料编号（如故障照片 / 行驶证 / 授权审批单）"}},
+                "required": ["kind", "title"]}),
             "ask_user": (ask_user, {
                 "type": "object",
                 "properties": {
@@ -871,10 +1144,17 @@ class OfficeAssistantAgent:
 
     # ---------- 主循环 ----------
 
-    def run(self, query: str, user_ctx: Optional[dict] = None) -> dict[str, Any]:
-        """执行一次办公任务；返回 {answer, report, steps, hitl_task, data_gaps, ...}。"""
+    def run(self, query: str, user_ctx: Optional[dict] = None,
+            attachments: Optional[list[dict[str, Any]]] = None) -> dict[str, Any]:
+        """执行一次办公任务；返回 {answer, report, steps, hitl_task, data_gaps, ...}。
+
+        ``attachments``：本次请求携带的**本人上传材料**元数据（服务端已解析校验）。
+        提交报销/病假时绑定到单据；未传 ``attachment_ids`` 的工具调用自动用这批材料。
+        """
         self.user_ctx = dict(user_ctx or {})
         self._active_query = query
+        self._pending_attachments = [dict(a) for a in (attachments or [])
+                                     if isinstance(a, dict)]
         t0 = time.perf_counter()
         steps: list[AgenticStep] = []
         hitl_task: Optional[dict] = None
@@ -888,6 +1168,13 @@ class OfficeAssistantAgent:
         from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 
         user_line = f"员工问题：{query}"
+        if self._pending_attachments:
+            desc = "、".join(
+                f"{a.get('attachment_id')}({a.get('kind')}·{a.get('filename')})"
+                for a in self._pending_attachments)
+            user_line += (f"\n本次已上传材料（提交报销/病假时请把 attachment_ids 原样传入，"
+                          f"如 attachment_ids=[\"{self._pending_attachments[0].get('attachment_id')}\"]）："
+                          f"{desc}")
         if answered:
             user_line += ("\n（该问题已附用户通过表单补充的信息：视为反问已补齐，"
                           "请勿再调用 ask_user，直接用已有信息调用相应工具办理。）")

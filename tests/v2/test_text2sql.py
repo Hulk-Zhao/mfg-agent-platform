@@ -41,15 +41,24 @@ def test_metric_channel_otd(service):
     assert result.channel == "metric"
     assert result.confidence == 0.95
     assert result.sql.upper().startswith("SELECT")
-    assert result.rows and "otd_rate_pct" in result.rows[0]
+    # 结果行按指标定义映射为业务列名（口径即代码：直答不暴露 otd_rate_pct 这类别名）。
+    # 口径对齐订单履约看板：order_fulfillment.on_time，窗口缺省 = 最近 7 天。
+    assert result.rows and "OTD 准时交付率" in result.rows[0]
     assert result.provenance["metric_id"] == "otd_rate"
-    assert result.provenance["tables"] == ["shipment"]
+    assert result.provenance["tables"] == ["order_fulfillment"]
+    assert result.provenance["metric_target"] == 98.0
+    assert result.provenance["window"]["label"] == "最近7天"
 
 
 def test_metric_keyword_match_pipeline(service):
-    """统一入口：问题命中指标关键词 → 走指标库。"""
+    """统一入口：问题命中指标关键词 → 走指标库，且统计窗口随问题口径走。"""
     result = service.query("现在的OTD准时交付率是多少", MANAGER_CTX)
     assert result.channel == "metric"
+    assert result.provenance["window"]["label"] == "最近7天"
+
+    month = service.query("本月OTD准时交付率是多少", MANAGER_CTX)
+    assert month.channel == "metric"
+    assert month.provenance["window"]["label"] == "当月"
 
 
 # ---------- 通道②：注册查询 ----------

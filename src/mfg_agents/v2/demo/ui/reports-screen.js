@@ -638,7 +638,11 @@
     if (map.prefill && ref) {
       try { sessionStorage.setItem(map.prefill, ref); } catch (e) { /* 忽略 */ }
     } else if (ref) {
-      try { sessionStorage.setItem("chat_prefill", "请核查报告关联对象「" + ref + "」的处置进展"); } catch (e) { /* 忽略 */ }
+      // 结构化来源标注：报告回链问数（携关联对象，供审计与后续上下文关联）
+      try {
+        sessionStorage.setItem("chat_prefill", "请核查报告关联对象「" + ref + "」的处置进展");
+        sessionStorage.setItem("chat_ask_ctx", JSON.stringify({ module: "reports", ref: String(ref) }));
+      } catch (e) { /* 忽略 */ }
     }
     ctx.navigate(map.screen);
   }
@@ -650,7 +654,10 @@
 
     if (act === "ask") {
       var q = "关于「" + r.title + "」，请补充说明结论的数据依据与风险影响。";
-      try { sessionStorage.setItem("chat_prefill", q); } catch (e) { /* 忽略 */ }
+      try {
+        sessionStorage.setItem("chat_prefill", q);
+        sessionStorage.setItem("chat_ask_ctx", JSON.stringify({ module: "reports", report_id: r.report_id || "" }));
+      } catch (e) { /* 忽略 */ }
       ctx.navigate("chat");
       return;
     }

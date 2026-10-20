@@ -398,6 +398,62 @@ def test_nav_check_js_syntax():
 
 
 # ============================================================
+# 5b. 案例屏折叠态必须进 state（2026-10-20「案例单击后就自动收缩」事故护栏）
+#
+# 事故链路：`<details>` 的开合只活在 DOM 上，而 render 每次整块重写 innerHTML，
+# open 只按 S.chatView / 硬编码默认值计算 ⇒ 用户手动展开的旧轮，以及卡内的
+# 「展开 N 个片段 / 相关案例 / 技术详情」，只要点一下案例（openDetail → repaint）
+# 就全部被重画成收起，现场看到的就是「案例单击后自动收缩」。
+# 修法：折叠态落 S.folds，每处 `<details>` 用 fold(S, key, 默认值) 渲染，
+# 并在捕获阶段接 toggle 事件回写——三件事缺一件，事故就复现。
+# ============================================================
+
+def test_case_screen_details_carry_state_key():
+    """案例屏每处 `<details>` 都必须挂 fold(S, ...)，否则 repaint 会收回用户展开的内容。"""
+    src = (UI_DIR / "case-screen.js").read_text(encoding="utf-8")
+    real, offenders = 0, []
+    for chunk in src.split("<details")[1:]:
+        head = chunk.split(">", 1)[0]
+        if 'class="case-' not in head:     # 注释/文档里提到的 `<details>` 不算真实标签
+            continue
+        real += 1
+        if "fold(S" not in head:
+            offenders.append(head[:90].strip())
+    assert real >= 8, f"只认出 {real} 处真实 <details>，断言失去意义"
+    assert not offenders, (
+        "这些 <details> 没挂 fold(S, key, 默认值)：repaint 后会被收回 -> " + repr(offenders))
+
+
+def test_case_screen_writes_fold_state_back():
+    """toggle 事件必须在捕获阶段监听并回写 S.folds（toggle 不冒泡，写不回就白改）。"""
+    src = (UI_DIR / "case-screen.js").read_text(encoding="utf-8")
+    m = re.search(r'addEventListener\("toggle".*?\}, true\);', src, re.S)
+    assert m, "未找到捕获阶段的 toggle 监听：折叠态无法回写"
+    assert ".folds" in m.group(0), "toggle 回调未写入 state.folds：下一次 repaint 仍按默认值重画"
+    assert "data-fold" in m.group(0), "toggle 回调必须按 data-fold 认键，否则对不上渲染时的键"
+
+
+def test_case_screen_chat_is_chronological_bubbles():
+    """案例问答已改为制度助手式大对话框（2026-10-20）：时间序气泡 + 底部输入条。
+
+    旧形态（新提问置顶、逐轮 <details> 折叠）已废弃——大对话框要求
+    「问-答」按时间序滚动感（最新在底部），检索细节改为每轮回答下方
+    默认收起的「智能体检索」抽屉（class="case-agent"，仍走 fold(S, ...)）。
+    """
+    src = (UI_DIR / "case-screen.js").read_text(encoding="utf-8")
+    # 气泡布局：用户右气泡 + 智能体左气泡必须存在
+    assert "case-msg-user" in src and "case-msg-bot" in src, "聊天必须使用气泡布局（case-msg-*）"
+    # 旧的置顶折叠轮次不允许回归
+    assert "case-chat-turn" not in src, "旧「置顶折叠轮次」已废弃，不得回归"
+    # 大对话框形态标志：页签切换 + 底部固定输入条
+    assert 'data-act="view-' in src, "缺少智能问答/案例检索页签"
+    assert '"view-ask"' in src and '"view-search"' in src, "缺少 ask/search 视图切换动作"
+    assert "case-inputbar" in src and 'id="case-question"' in src, "缺少底部输入条"
+    # 智能体检索细节抽屉（本体增强链路摘要 + 按需展开）
+    assert "case-agent" in src and "case-pipe-step" in src, "缺少智能体检索抽屉/管线摘要"
+
+
+# ============================================================
 # 6. POST 必须有超时（2026-10-18「思考中」事故护栏）
 #
 # 事故链路：kbqa 提问走 _post（无超时）→ 后端冷启动/Milvus 悬挂

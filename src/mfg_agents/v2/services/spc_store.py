@@ -32,16 +32,29 @@ CREATE TABLE IF NOT EXISTS spc_measurement (
     measured_at VARCHAR(30),
     source VARCHAR(40),
     ingested_by VARCHAR(40),
-    ingested_at VARCHAR(30) NOT NULL
+    ingested_at VARCHAR(30) NOT NULL,
+    process_stage VARCHAR(20),
+    product_category VARCHAR(20)
 );
 CREATE INDEX IF NOT EXISTS idx_spc_measurement_char
     ON spc_measurement (characteristic);
 """
 
+# 老库升级：``CREATE TABLE IF NOT EXISTS`` 对已存在的表不生效，老库永远缺这两列。
+# 与 core/orchestrator.py::_ensure_columns 同法做 PRAGMA 守卫的幂等补列 ——
+# 受治理写入通道是「平台唯一 SPC 写入通道」，它自己必须能自愈老库，
+# 不能只依赖 orchestrator 启动时补列。
+_ALTER_COLUMNS = (
+    ("process_stage", "ALTER TABLE spc_measurement ADD COLUMN process_stage TEXT"),
+    ("product_category",
+     "ALTER TABLE spc_measurement ADD COLUMN product_category TEXT"),
+)
+
 _INSERT_SQL = (
     f"INSERT INTO {MEASUREMENTS_TABLE} "
     "(characteristic, subgroup_no, seq, value, usl, lsl, measured_at, source, "
-    "ingested_by, ingested_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    "ingested_by, ingested_at, process_stage, product_category) "
+    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
 )
 
 
@@ -54,11 +67,23 @@ def _connect(db_path: str) -> sqlite3.Connection:
 
 
 def ensure_measurements_table(db_path: str) -> None:
-    """幂等建表（种子未执行或全新库时的兜底；不写入任何数据行）。"""
+    """幂等建表（种子未执行或全新库时的兜底；不写入任何数据行）。
+
+    老库（表已存在但缺新列）会就地补列 —— 与 ``core/orchestrator.py::_ensure_columns``
+    同法。缺省补列失败不阻断（表可能只读），由调用方的写入异常兜底。
+    """
     conn = _connect(db_path)
     try:
         with conn:
             conn.executescript(_DDL)
+            cols = {r[1] for r in conn.execute(
+                f"PRAGMA table_info({MEASUREMENTS_TABLE})")}
+            for name, alter in _ALTER_COLUMNS:
+                if name not in cols:
+                    try:
+                        conn.execute(alter)
+                    except sqlite3.OperationalError:
+                        pass  # 老库只读 / 已被并发补列：交由调用方兜底
     finally:
         conn.close()
 
@@ -69,6 +94,9 @@ def append_measurements(db_path: str, rows: list[dict[str, Any]], *,
 
     仅接收 ``core/spc.normalize_measurements`` 产出的 accepted 行；不做二次校验、
     不编造缺失字段（缺 usl/lsl/measured_at 时按 NULL 落库）。
+
+    维度列 ``process_stage`` / ``product_category`` 为**可选**：缺键即落 NULL
+    （老调用方 ``spc.ingest`` 未传维度时行为逐字段不变，只多了两个 NULL 列）。
     """
     if not rows:
         return 0
@@ -76,7 +104,8 @@ def append_measurements(db_path: str, rows: list[dict[str, Any]], *,
     payload = [
         (str(r["characteristic"]), int(r["subgroup_no"]), int(r["seq"]),
          float(r["value"]), r.get("usl"), r.get("lsl"),
-         r.get("measured_at"), r.get("source"), str(ingested_by), ts)
+         r.get("measured_at"), r.get("source"), str(ingested_by), ts,
+         r.get("process_stage"), r.get("product_category"))
         for r in rows
     ]
     ensure_measurements_table(db_path)

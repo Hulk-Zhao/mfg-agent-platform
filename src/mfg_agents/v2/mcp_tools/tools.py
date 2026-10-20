@@ -870,7 +870,9 @@ def _h_spc_ingest(orch: V2Orchestrator) -> Callable[..., dict]:
             subgroup_size=size, usl=_first_number(args.get("usl")),
             lsl=_first_number(args.get("lsl")),
             measured_at=(str(args.get("measured_at") or "").strip() or None),
-            source=(str(args.get("source") or "").strip() or None))
+            source=(str(args.get("source") or "").strip() or None),
+            process_stage=(str(args.get("process_stage") or "").strip() or None),
+            product_category=(str(args.get("product_category") or "").strip() or None))
         accepted, rejected = norm["accepted"], norm["rejected"]
         if not accepted:
             return {"data_gap": True, "table": _SPC_MEASUREMENTS_TABLE,
@@ -1477,17 +1479,44 @@ def _h_office_submit_attendance(orch: V2Orchestrator) -> Callable[..., dict]:
     return handler
 
 
+def _h_office_submit_service_request(orch: V2Orchestrator) -> Callable[..., dict]:
+    """OA 服务工单（IT 报修 / 账号权限 / 设备领用 / 车位 / 访客车辆 / 公务用车）。
+
+    kind 决定归口与单号前缀；必填校验在 OfficeBackend 侧 fail-closed（缺项返回可读原因）。
+    """
+    def handler(args: dict, user_ctx: dict) -> dict:
+        from ..services.office import OfficeError
+        be = _runtime(orch).office
+        kind = str(args.get("kind") or "").strip()
+        if not kind:
+            raise ValueError("缺少 kind（it_repair/it_access/it_device/parking/"
+                             "visitor_vehicle/business_car）")
+        try:
+            req = be.submit_service_request(
+                kind, str(args.get("title") or ""), str(args.get("detail") or ""),
+                _office_actor(user_ctx), str(args.get("urgency") or "一般"),
+                str(args.get("location") or ""), args.get("extra") or {})
+        except OfficeError as exc:
+            return _office_error(exc)
+        return {"ok": True, "service_request": req,
+                "need_approval": req.get("need_approval", False),
+                "assignee": req.get("assignee", "")}
+    return handler
+
+
 def _h_office_my_requests(orch: V2Orchestrator) -> Callable[..., dict]:
-    """本人 OA 申请汇总（报销/请假/补卡 + 假期余额；只读）。"""
+    """本人 OA 申请汇总（报销/请假/补卡/服务工单 + 假期余额；只读）。"""
     def handler(args: dict, user_ctx: dict) -> dict:
         be = _runtime(orch).office
         actor = _office_actor(user_ctx)
         expenses = be.list_expenses(actor)
         leaves = be.list_leaves(actor)
         fixes = be.list_attendance_fixes(actor)
+        services = be.list_service_requests(actor)
         return {"expenses": expenses, "leaves": leaves, "attendance_fixes": fixes,
+                "service_requests": services,
                 "leave_balance": be.leave_balance(actor),
-                "count": len(expenses) + len(leaves) + len(fixes)}
+                "count": len(expenses) + len(leaves) + len(fixes) + len(services)}
     return handler
 
 
@@ -1709,7 +1738,14 @@ def build_platform_tools(orchestrator: V2Orchestrator) -> list[Tool]:
                  "usl": {"type": "number", "description": "规格上限（随行落库，供后续分析）"},
                  "lsl": {"type": "number", "description": "规格下限"},
                  "measured_at": {"type": "string", "description": "测量时间（可选）"},
-                 "source": {"type": "string", "description": "数据来源（可选，如 设备/手工）"}},
+                 "source": {"type": "string", "description": "数据来源（可选，如 设备/手工）"},
+                 "process_stage": {"type": "string",
+                                   "description": "工段（可选）：SMT/PCM/PACK/整机；"
+                                                  "缺省不写该列，非法值整批拒绝"},
+                 "product_category": {"type": "string",
+                                      "description": "产品分类（可选）：消费电子/智能电源/"
+                                                     "储能电源/车载；缺省不写该列，"
+                                                     "非法值整批拒绝"}},
                  "user_ctx": _USER_SCHEMA},
              handler=_h_spc_ingest(orchestrator), domain="spc",
              readonly=False, tier=2),
@@ -1910,8 +1946,31 @@ def build_platform_tools(orchestrator: V2Orchestrator) -> list[Tool]:
                  "user_ctx": _USER_SCHEMA}},
              handler=_h_office_submit_attendance(orchestrator), domain="office",
              readonly=False, tier=2),
+        Tool(name="office.submit_service_request",
+             description="提交 OA 服务工单（IT 故障报修 / 账号与权限申请 / 设备领用申请 / "
+                         "车位申请 / 访客车辆报备 / 公务用车申请），返回服务工单号；"
+                         "按 kind 归口 IT 运维专员或行政后勤专员，一律需人工确认",
+             input_schema={"type": "object",
+                           "required": ["kind", "title"],
+                           "properties": {
+                 "kind": {"type": "string",
+                          "enum": ["it_repair", "it_access", "it_device",
+                                   "parking", "visitor_vehicle", "business_car"],
+                          "description": "服务类型（it_repair=IT 报修 / it_access=账号权限 / "
+                                         "it_device=设备领用 / parking=车位 / "
+                                         "visitor_vehicle=访客车辆 / business_car=公务用车）"},
+                 "title": {"type": "string", "description": "一句话事由或故障现象"},
+                 "detail": {"type": "string", "description": "补充说明"},
+                 "urgency": {"type": "string", "enum": ["一般", "紧急", "非常紧急"]},
+                 "location": {"type": "string", "description": "设备与位置（IT 报修必填）"},
+                 "extra": {"type": "object",
+                           "description": "结构化补充：system/permission/device_type/plate/"
+                                          "visit_date/use_from/dest 等"},
+                 "user_ctx": _USER_SCHEMA}},
+             handler=_h_office_submit_service_request(orchestrator), domain="office",
+             readonly=False, tier=2),
         Tool(name="office.my_requests",
-             description="查本人的 OA 申请汇总（报销/请假/补卡单据 + 年假余额）",
+             description="查本人的 OA 申请汇总（报销/请假/补卡/服务工单单据 + 年假余额）",
              input_schema={"type": "object", "properties": {"user_ctx": _USER_SCHEMA}},
              handler=_h_office_my_requests(orchestrator), domain="office",
              readonly=True, tier=0),
@@ -1936,9 +1995,10 @@ DOMAIN_TOOLSETS: dict[str, list[str]] = {
                "office.book_room", "office.cancel_booking", "office.my_bookings",
                "office.list_restaurants", "office.menu", "office.place_order",
                "office.cancel_order", "office.my_orders",
-               # OA 自助办理（报销/请假/补考勤）
+               # OA 自助办理（报销/请假/补考勤）与服务工单（IT 报修/账号权限/设备领用/车位/访客车辆/公务用车）
                "office.submit_expense", "office.apply_leave",
-               "office.submit_attendance_fix", "office.my_requests"],
+               "office.submit_attendance_fix", "office.submit_service_request",
+               "office.my_requests"],
 }
 
 

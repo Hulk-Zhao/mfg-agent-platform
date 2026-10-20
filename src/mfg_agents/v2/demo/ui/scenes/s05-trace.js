@@ -42,76 +42,76 @@
       + " transition: stroke-width .2s ease, stroke .2s ease; }",
     ".s05-node:hover .s05-node-rect { stroke-width: 2.2; }",
     ".s05-graph-wrap.is-located .s05-node-rect { stroke-width: 2.4; }",
-    ".s05-node-label { font-size: 12px; fill: var(--text-3); }",
-    ".s05-node-value { font-size: 13.5px; font-weight: 700; fill: var(--text); }",
-    ".s05-node-hint { font-size: 10.5px; fill: var(--text-3); }",
+    ".s05-node-label { font-size: calc(12px * var(--font-scale)); fill: var(--text-3); }",
+    ".s05-node-value { font-size: calc(13.5px * var(--font-scale)); font-weight: 700; fill: var(--text); }",
+    ".s05-node-hint { font-size: calc(10.5px * var(--font-scale)); fill: var(--text-3); }",
     ".s05-t-red .s05-node-rect { stroke: var(--danger); }",
     ".s05-t-blue .s05-node-rect { stroke: var(--primary); }",
     ".s05-t-purple .s05-node-rect { stroke: var(--purple); }",
     ".s05-t-green .s05-node-rect { stroke: var(--ok); }",
     ".s05-t-gray .s05-node-rect { stroke: var(--border-strong); }",
     ".s05-edge { stroke: var(--border-strong); stroke-width: 1.6; fill: none; }",
-    ".s05-edge-label { font-size: 11px; fill: var(--text-3); }",
+    ".s05-edge-label { font-size: calc(11px * var(--font-scale)); fill: var(--text-3); }",
     ".s05-arrow { fill: var(--border-strong); }",
     ".s05-graph-wrap { overflow-x: auto; padding-bottom: 4px; }",
     /* 定位动作行 */
     ".s05-locate-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 10px 0 2px; }",
-    ".s05-locate-state { font-size: 12px; color: var(--text-3); }",
+    ".s05-locate-state { font-size: calc(12px * var(--font-scale)); color: var(--text-3); }",
     ".s05-locate-state.is-done { color: var(--ok); font-weight: 600; }",
     /* 追溯链步骤 */
     ".s05-steps { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }",
-    ".s05-step { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-2);"
+    ".s05-step { display: flex; align-items: center; gap: 6px; font-size: calc(12px * var(--font-scale)); color: var(--text-2);"
       + " background: var(--primary-light); border: 1px solid var(--border); border-radius: 999px;"
       + " padding: 3px 10px 3px 6px; }",
     ".s05-step-no { width: 17px; height: 17px; border-radius: 50%; background: var(--primary); color: #fff;"
-      + " font-size: 10.5px; font-weight: 700; display: inline-flex; align-items: center;"
+      + " font-size: calc(10.5px * var(--font-scale)); font-weight: 700; display: inline-flex; align-items: center;"
       + " justify-content: center; flex: none; }",
     /* 明细小表 */
     ".s05-list { margin-top: 8px; border-top: 1px solid var(--border); }",
     ".s05-list-row { display: flex; gap: 10px; padding: 7px 2px; border-bottom: 1px solid var(--border);"
-      + " font-size: 12.4px; align-items: flex-start; }",
+      + " font-size: calc(12.4px * var(--font-scale)); align-items: flex-start; }",
     ".s05-list-k { flex: none; color: var(--text-3); width: 112px; }",
     ".s05-list-v { flex: 1; color: var(--text); word-break: break-word; }",
     ".s05-list-row.is-clickable { cursor: pointer; }",
     ".s05-list-row.is-clickable:hover .s05-list-v { color: var(--primary); }",
     /* 点击路径 */
     ".s05-path { margin: 4px 0 0 0; padding-left: 20px; }",
-    ".s05-path li { font-size: 12.6px; color: var(--text-2); line-height: 1.9; }",
+    ".s05-path li { font-size: calc(12.6px * var(--font-scale)); color: var(--text-2); line-height: 1.9; }",
     ".s05-path li b { color: var(--text); }",
-    ".s05-degrade-note { font-size: 11.5px; color: var(--text-3); margin-top: 6px; }",
+    ".s05-degrade-note { font-size: calc(11.5px * var(--font-scale)); color: var(--text-3); margin-top: 6px; }",
     /* T18 智能体层：取证书签 / 案例卡 / 检索轨迹 / 治理卡 */
     ".s05-badges { margin-top: 12px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }",
-    ".s05-badges-title { flex-basis: 100%; font-size: 12.4px; color: var(--text-2); font-weight: 600; }",
+    ".s05-badges-title { flex-basis: 100%; font-size: calc(12.4px * var(--font-scale)); color: var(--text-2); font-weight: 600; }",
     ".s05-badges-extra { margin-left: 8px; font-weight: 400; color: var(--text-3); }",
     ".s05-badge { display: inline-flex; flex-direction: column; gap: 2px; text-align: left;"
       + " border: 1px dashed var(--border-strong); background: var(--card); border-radius: 8px;"
-      + " padding: 6px 10px; cursor: pointer; font-size: 12px; color: var(--text); }",
+      + " padding: 6px 10px; cursor: pointer; font-size: calc(12px * var(--font-scale)); color: var(--text); }",
     ".s05-badge:hover { border-color: var(--primary); color: var(--primary); }",
     ".s05-badge-label { font-weight: 600; }",
-    ".s05-badge-agent { color: var(--text-2); font-size: 11.4px; }",
+    ".s05-badge-agent { color: var(--text-2); font-size: calc(11.4px * var(--font-scale)); }",
     ".s05-case-list { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }",
     ".s05-case { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; background: var(--card); }",
     ".s05-case-head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }",
-    ".s05-case-id { font-size: 11.6px; color: var(--text-3); }",
-    ".s05-case-title { font-weight: 600; font-size: 13.2px; color: var(--text); }",
-    ".s05-case-score { margin-left: auto; font-size: 11.6px; color: var(--text-2); }",
-    ".s05-case-meta { margin-top: 4px; font-size: 12.2px; color: var(--text-2); }",
-    ".s05-case-reason { margin-top: 3px; font-size: 12px; color: var(--text-3); }",
-    ".s05-trace-title { margin-top: 12px; font-size: 12.4px; font-weight: 600; color: var(--text-2); }",
+    ".s05-case-id { font-size: calc(11.6px * var(--font-scale)); color: var(--text-3); }",
+    ".s05-case-title { font-weight: 600; font-size: calc(13.2px * var(--font-scale)); color: var(--text); }",
+    ".s05-case-score { margin-left: auto; font-size: calc(11.6px * var(--font-scale)); color: var(--text-2); }",
+    ".s05-case-meta { margin-top: 4px; font-size: calc(12.2px * var(--font-scale)); color: var(--text-2); }",
+    ".s05-case-reason { margin-top: 3px; font-size: calc(12px * var(--font-scale)); color: var(--text-3); }",
+    ".s05-trace-title { margin-top: 12px; font-size: calc(12.4px * var(--font-scale)); font-weight: 600; color: var(--text-2); }",
     ".s05-trace-steps { margin: 6px 0 0 0; padding-left: 20px; }",
-    ".s05-trace-steps li { font-size: 12.4px; color: var(--text-2); line-height: 1.9; }",
+    ".s05-trace-steps li { font-size: calc(12.4px * var(--font-scale)); color: var(--text-2); line-height: 1.9; }",
     ".s05-trace-steps li b { color: var(--text); }",
-    ".s05-explain { margin-top: 10px; font-size: 12.4px; color: var(--text-2); }",
+    ".s05-explain { margin-top: 10px; font-size: calc(12.4px * var(--font-scale)); color: var(--text-2); }",
     ".s05-explain summary { cursor: pointer; color: var(--text); font-weight: 600; }",
     ".s05-explain ul { margin: 6px 0 0 0; padding-left: 20px; }",
     ".s05-explain li { line-height: 1.9; }",
     ".s05-hitl { margin-top: 8px; }",
     ".s05-hitl-head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }",
-    ".s05-hitl-slot { font-size: 11.6px; color: var(--primary); background: var(--primary-light);"
+    ".s05-hitl-slot { font-size: calc(11.6px * var(--font-scale)); color: var(--primary); background: var(--primary-light);"
       + " border-radius: 999px; padding: 1px 8px; }",
-    ".s05-hitl-vis { margin-left: auto; font-size: 11.8px; color: var(--text-2); }",
-    ".s05-hitl-meta { margin-top: 5px; font-size: 12.2px; color: var(--text-2); }",
-    ".s05-hitl-ro { margin-top: 5px; font-size: 11.8px; color: var(--text-3); }",
+    ".s05-hitl-vis { margin-left: auto; font-size: calc(11.8px * var(--font-scale)); color: var(--text-2); }",
+    ".s05-hitl-meta { margin-top: 5px; font-size: calc(12.2px * var(--font-scale)); color: var(--text-2); }",
+    ".s05-hitl-ro { margin-top: 5px; font-size: calc(11.8px * var(--font-scale)); color: var(--text-3); }",
     ".s05-d8-node text { pointer-events: none; }",
   ].join("\n");
 
@@ -1004,13 +1004,13 @@
         + '<rect class="s05-node-rect" x="' + n.x + '" y="' + n.y + '" width="' + n.w
         + '" height="' + n.h + '" rx="10" style="fill:var(--card,#FFFFFF);stroke:' + color + '"/>'
         + '<text class="s05-node-label" x="' + cx(n) + '" y="' + (n.y + 22)
-        + '" text-anchor="middle" style="fill:var(--text-3,#8B98AB);font-size:12px">'
+        + '" text-anchor="middle" style="fill:var(--text-3,#8B98AB);font-size: calc(12px * var(--font-scale))">'
         + K.esc(n.label) + "</text>"
         + '<text class="s05-node-value" x="' + cx(n) + '" y="' + (n.y + 41)
         + '" text-anchor="middle" style="fill:var(--text,#1F2733);font-size:' + valueSize
         + 'px;font-weight:700">' + K.esc(v.value) + "</text>"
         + '<text class="s05-node-hint" x="' + cx(n) + '" y="' + (n.y + 57)
-        + '" text-anchor="middle" style="fill:var(--text-3,#8B98AB);font-size:10.5px">'
+        + '" text-anchor="middle" style="fill:var(--text-3,#8B98AB);font-size: calc(10.5px * var(--font-scale))">'
         + K.esc(Array.isArray(v.hint) ? v.hint.join(" · ") : v.hint) + "</text>"
         + "</g>";
     }).join("");

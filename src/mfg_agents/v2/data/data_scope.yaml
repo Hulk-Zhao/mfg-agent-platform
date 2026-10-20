@@ -37,6 +37,9 @@ dashboards:
       - equipment_manager
       - maintenance_tech
       - quality_director
+      - qa_manager
+      - qa
+      - sqe
       - pqe
       - product_engineering
       - ie_engineer
@@ -60,6 +63,9 @@ dashboards:
       - equipment_manager
       - maintenance_tech
       - quality_director
+      - qa_manager
+      - qa
+      - sqe
       - pqe
       - product_engineering
       - ie_engineer
@@ -122,6 +128,61 @@ dashboards:
         pseudo: customers
         compose_sep: " · "
         also_drop: [entity]
+      # 「状态管道 · 点环节」弹窗（/dashboard/orders/stage）：清单行带客户身份，
+      # 与 risk_orders[] 同一套 keep_roles —— 看板里被脱敏的客户，弹窗清单里也看不到。
+      - path: orders[].customer
+        label: 客户名称
+        keep_roles: [gm, sales, customer_service, project_manager, finance, finance_manager]
+        pseudo: customers
+      - path: orders[].customer_level
+        label: 客户等级
+        keep_roles: [gm, sales, customer_service, project_manager, finance, finance_manager]
+        literal: "—"
+      # 「风险订单 · 点行」弹窗（/dashboard/orders/detail）：单订单全字段同理。
+      - path: order.customer
+        label: 客户名称
+        keep_roles: [gm, sales, customer_service, project_manager, finance, finance_manager]
+        pseudo: customers
+      - path: order.customer_level
+        label: 客户等级
+        keep_roles: [gm, sales, customer_service, project_manager, finance, finance_manager]
+        literal: "—"
+
+  # ---------- 现场看板（客诉 → 责任工段推送队列 / 现场 ack 与闭环回写）----------
+  # 岗位口径**刻意与制造/品质看板同源**：现场看板是这两屏的"现场落点"，同一批受众
+  # （制造/品质/工程/计划…）。另立一份角色集合会让"看板能看、现场看板 403"成为常态，
+  # 而这份目录的铁律是角色一律取自 permissions.yaml 的 32 个 key——不新造命名。
+  # 客户身份与订单看板同一口径：只有承担对客责任的岗位能看到客户名，
+  # 其余岗位看到「客户 A / 客户 B」。正文里也不内联客户名（脱敏规则改不动自由文本）。
+  site_board:
+    name: 现场看板
+    screen: mfgboard
+    allow_roles:
+      - gm
+      - manufacturing
+      - equipment
+      - equipment_manager
+      - maintenance_tech
+      - quality_director
+      - qa_manager
+      - qa
+      - sqe
+      - pqe
+      - product_engineering
+      - ie_engineer
+      - test_engineer
+      - rd_manager
+      - rd_engineering
+      - me_engineer
+      - rd_test_engineer
+      - npi_engineer
+      - project_manager
+      - ehs
+    mask:
+      - path: rows[].customer
+        label: 客户名称
+        keep_roles: [gm, sales, customer_service, project_manager, finance, finance_manager]
+        pseudo: customers
 
   # ---------- SPC 过程能力看板 ----------
   spc:

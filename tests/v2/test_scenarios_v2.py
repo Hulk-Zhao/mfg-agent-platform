@@ -257,3 +257,28 @@ def test_data_redline_inventory_count_unchanged():
     n = conn.execute("SELECT COUNT(*) FROM inventory").fetchone()[0]
     conn.close()
     assert n == 2
+
+
+def test_data_redline_quality_pareto_product_category():
+    """产品分类扩充：电池域行必须全部标注 4 类之一，且不得引入 SMT-1 + A型号 组合。
+
+    红线三条：
+    1. ``SMT-1 + A型号`` 的行数保持 5（line_stop / 8D 主导不良断言依赖）；
+    2. ``process_stage IS NOT NULL`` 的行必须有 product_category，否则前端下拉会漏数据；
+    3. 缺陷类型词表不得扩到 11 个（SPC 柏拉图契约 = 10 类）。
+    """
+    conn = sqlite3.connect(DB_PATH)
+    bad = conn.execute("SELECT COUNT(*) FROM quality_defect "
+                       "WHERE line_code = 'SMT-1' AND product_model = 'A型号'").fetchone()[0]
+    unlabeled = conn.execute(
+        "SELECT COUNT(*) FROM quality_defect WHERE process_stage IS NOT NULL "
+        "AND (product_category IS NULL OR product_category = '')").fetchone()[0]
+    cats = {r[0] for r in conn.execute(
+        "SELECT DISTINCT product_category FROM quality_defect "
+        "WHERE process_stage IS NOT NULL")}
+    types = {r[0] for r in conn.execute("SELECT DISTINCT defect_type FROM quality_defect")}
+    conn.close()
+    assert bad == 5, f"SMT-1 + A型号 行数被改变（红线）: {bad}"
+    assert unlabeled == 0, f"电池域行未标注产品分类: {unlabeled} 行"
+    assert cats == {"消费电子", "智能电源", "储能电源", "车载"}, f"产品分类集合异常: {cats}"
+    assert len(types) == 10, f"缺陷类型词表被扩到 {len(types)} 个（SPC 契约 = 10）"

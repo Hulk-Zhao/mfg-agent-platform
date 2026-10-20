@@ -4,9 +4,21 @@ metrics:
   - id: otd_rate
     name: OTD 准时交付率
     owner: 供应链域
-    desc: "按时交付订单占比。演示口径：以 shipment.eta 为客户要求日，已安排发货（已发货/在途）且 eta 未逾期记为按时；真实口径需订单要求日与实际发货日两字段（数据就绪后升级）。"
-    tables: [shipment]
+    # 2026-10-20 口径修正：原定义查 shipment（4 行演示小表）且把「在途且未逾期」
+    # 记为按时，`eta >= date('now')` 恒不命中 → 直答恒为 0.0%，与订单履约看板
+    # 的 OTD（68~70%）自相矛盾。现对齐看板口径：order_fulfillment.on_time
+    # （准时 = 实际发货日 ≤ 客户要求交付日），窗口按 due_date 归属。
+    desc: "准时交付（实际发货日 ≤ 客户要求交付日）订单数 ÷ 窗口内订单总数；窗口按客户要求交付日 due_date 归属，与订单履约看板同源。"
+    tables: [order_fulfillment]
     keywords: [OTD, 准时交付, 交付率, 订单达成]
-    sql: "SELECT ROUND(100.0 * SUM(CASE WHEN ship_status IN ('已发货', '在途') AND eta >= date('now') THEN 1 ELSE 0 END) / COUNT(*), 1) AS otd_rate_pct, COUNT(*) AS total_orders FROM shipment"
+    # :start / :end = 统计窗口（Text2SQLService 按问题里的「当日/当月/最近7天」解析，
+    # 缺省回落最近 7 天；窗口定义与 dashboard.resolve_window 同源）。
+    sql: "SELECT ROUND(100.0 * SUM(on_time) / COUNT(*), 1) AS otd_rate_pct, SUM(on_time) AS on_time_orders, COUNT(*) AS total_orders FROM order_fulfillment WHERE due_date BETWEEN :start AND :end"
     unit: "%"
     higher_is_better: true
+    target: 98.0
+    # 结果列 → 业务列名（直答的表格与结论用业务语言呈现，不暴露 SQL 别名）
+    columns:
+      - {key: otd_rate_pct, label: "OTD 准时交付率", unit: "%", primary: true}
+      - {key: on_time_orders, label: "准时交付订单数", unit: "单"}
+      - {key: total_orders, label: "订单总数", unit: "单"}

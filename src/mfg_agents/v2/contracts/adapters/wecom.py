@@ -1,18 +1,28 @@
 """企业微信适配器：实现真实回调协议（验签 / AES 解密 / 被动回复 XML 组装）。
 
-覆盖企业微信自建应用回调的三类交互：
+覆盖企业微信自建应用回调的四类交互：
 1. GET  URL 校验：echostr + SHA1(token/timestamp/nonce) 签名，解密后回显；
 2. POST 消息接收：加密 XML → 验签 → AES-256-CBC 解密 → InboundMessage；
-3. 被动回复：ReplyCard → 文本 XML → 加密 → 组装 <Encrypt> 响应体。
+3. 被动回复：ReplyCard → 文本 XML → 加密 → 组装 <Encrypt> 响应体；
+4. **主动推送（应用消息）**：``WeComPushClient`` 走 ``gettoken → message/send``，
+   把卡片文本推给 userid（**@ 责任人**的真实发送路径）。
 
-安全边界：验签失败 / appid 不匹配 / 补位非法一律拒绝（抛 WeComCryptoError）。
-主动推送（push）为预留能力：记录日志，真实实现走企业微信应用消息 API。
+安全边界：验签失败 / appid 不匹配 / 补位非法一律拒绝（抛 WeComCryptoError）；
+推送凭据（corp_id + agent_id + corp_secret）只从环境变量注入，不入库。
+
+分层：``WeComAdapter`` 是**回调**实现（签名/加解密）；``WeComPushClient`` 是**应用消息**
+实现。两者都在本文件内，因为凭据体系与协议细节（错误码、token 缓存）同源；
+``WeComAdapter(push_client=…)`` 可把主动推送委托给它——同一个适配器既能收也能推。
 """
 from __future__ import annotations
 
+import json
 import logging
 import time
-from typing import Any, Optional
+import urllib.error
+import urllib.parse
+import urllib.request
+from typing import Any, Callable, Optional
 from xml.etree import ElementTree
 
 from ..im_gateway import IMGateway, InboundMessage, ReplyCard
@@ -25,10 +35,143 @@ from .wecom_crypto import (
 
 logger = logging.getLogger(__name__)
 
+#: 企业微信服务端根地址（可覆盖用于自建代理 / 测试替身）
+DEFAULT_BASE_URL = "https://qyapi.weixin.qq.com"
+
+#: access_token 默认有效期（企微 7200s；提前 300s 过期重取）
+_TOKEN_TTL_S = 7200
+_TOKEN_SKEW_S = 300
+
 
 def _cdata(text: str) -> str:
     """XML CDATA 包裹（内容含 ]]> 时按平台惯例原样包裹，边界由测试覆盖）。"""
     return f"<![CDATA[{text}]]>"
+
+
+# ---------------- 传输层（默认 stdlib urllib；可注入替身，离线可测） ----------------
+
+class WeComTransportError(RuntimeError):
+    """传输层失败（网络 / HTTP 非 2xx）。"""
+
+
+def urllib_transport(method: str, path: str, *,
+                     params: Optional[dict[str, str]] = None,
+                     payload: Optional[dict[str, Any]] = None,
+                     base_url: str = DEFAULT_BASE_URL,
+                     timeout_s: float = 8.0) -> dict[str, Any]:
+    """默认传输：stdlib urllib（不引入 requests/httpx，与 feishu_calendar 同法）。"""
+    url = base_url.rstrip("/") + path
+    if params:
+        url += "?" + urllib.parse.urlencode(params)
+    data = None
+    headers = {"Accept": "application/json"}
+    if payload is not None:
+        data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    request = urllib.request.Request(url, data=data, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(request, timeout=timeout_s) as resp:  # noqa: S310
+            raw = resp.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:  # 4xx/5xx 也带 JSON 体，尽量解析出来
+        raw = exc.read().decode("utf-8", errors="replace")
+        raise WeComTransportError(f"HTTP {exc.code}: {raw[:200]}") from exc
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        raise WeComTransportError(f"网络失败: {exc}") from exc
+    try:
+        return json.loads(raw or "{}")
+    except json.JSONDecodeError as exc:
+        raise WeComTransportError(f"响应不是 JSON: {raw[:200]}") from exc
+
+
+# ---------------- 应用消息（主动推送 / @ 责任人） ----------------
+
+class WeComPushClient:
+    """企业微信**应用消息**客户端：``gettoken`` → ``message/send``。
+
+    参数（全部来自环境变量注入的凭据，**不入库**）：
+
+    - ``corp_id``：企业 ID（CorpID）；
+    - ``agent_id``：自建应用 AgentId；
+    - ``corp_secret``：自建应用 Secret；
+    - ``transport``：可注入的传输实现（默认 ``urllib_transport``，测试注入替身）。
+
+    行为纪律：
+
+    - token 带 TTL 缓存（企微 7200s，提前 300s 重取），避免每次推送都换 token；
+    - 企微接口的 ``errcode != 0`` 一律抛 ``WeComTransportError``（fail-explicit：
+      推不出去要让调用方记账，绝不静默当成功）；
+    - 凭据缺失时构造期即报错——配置错误不该等到"要发消息的那一刻"才暴露。
+    """
+
+    GET_TOKEN_PATH = "/cgi-bin/gettoken"
+    SEND_PATH = "/cgi-bin/message/send"
+
+    def __init__(self, corp_id: str, agent_id: str, corp_secret: str,
+                 *, base_url: str = DEFAULT_BASE_URL,
+                 transport: Optional[Callable[..., dict[str, Any]]] = None,
+                 timeout_s: float = 8.0) -> None:
+        if not (str(corp_id).strip() and str(agent_id).strip()
+                and str(corp_secret).strip()):
+            raise WeComTransportError(
+                "应用消息凭据不完整：需要 corp_id + agent_id + corp_secret"
+                "（环境变量 IM_CORP_ID / IM_AGENT_ID / IM_CORP_SECRET）")
+        self.corp_id = str(corp_id).strip()
+        self.agent_id = str(agent_id).strip()
+        self.corp_secret = str(corp_secret).strip()
+        self.base_url = base_url
+        self.timeout_s = float(timeout_s)
+        self._transport = transport or urllib_transport
+        self._token = ""
+        self._token_expire_at = 0.0
+
+    # ---------- 令牌 ----------
+
+    def access_token(self, force: bool = False) -> str:
+        """取（并缓存）企业微信 access_token；``force=True`` 跳过缓存重取。"""
+        if not force and self._token and time.time() < self._token_expire_at:
+            return self._token
+        resp = self._transport(
+            "GET", self.GET_TOKEN_PATH,
+            params={"corpid": self.corp_id, "corpsecret": self.corp_secret},
+            base_url=self.base_url, timeout_s=self.timeout_s)
+        token = str(resp.get("access_token") or "")
+        if not token or int(resp.get("errcode") or 0) != 0:
+            raise WeComTransportError(
+                f"获取 access_token 失败: [{resp.get('errcode')}] {resp.get('errmsg')}")
+        expire = int(resp.get("expires_in") or _TOKEN_TTL_S)
+        self._token = token
+        self._token_expire_at = time.time() + max(60, expire - _TOKEN_SKEW_S)
+        logger.info("[wecom] access_token 已刷新（有效 %ds）", expire)
+        return token
+
+    # ---------- 发送 ----------
+
+    def send_text(self, to_user: str, content: str, *,
+                  safe: int = 0) -> dict[str, Any]:
+        """发一条文本应用消息给 ``to_user``（企微 userid，多个用 ``|`` 分隔）。"""
+        if not str(to_user or "").strip():
+            raise WeComTransportError("应用消息收件人（userid）为空")
+        resp = self._transport(
+            "POST", self.SEND_PATH,
+            params={"access_token": self.access_token()},
+            payload={"touser": str(to_user), "msgtype": "text",
+                     "agentid": int(self.agent_id),
+                     "text": {"content": str(content)}, "safe": int(safe)},
+            base_url=self.base_url, timeout_s=self.timeout_s)
+        if int(resp.get("errcode") or 0) != 0:
+            raise WeComTransportError(
+                f"应用消息发送失败: [{resp.get('errcode')}] {resp.get('errmsg')} "
+                f"（invaliduser={resp.get('invaliduser') or '—'}）")
+        return resp
+
+    def push(self, user_id: str, card: ReplyCard) -> None:
+        """``IMGateway.push`` 同签名：把卡片文本推给该 userid（供通道直接当网关用）。
+
+        这样"只有应用消息凭据、没有回调凭据"的部署也能直接把它交给
+        ``IMGroupNotificationChannel(gateway=…)``——不必为了推送去凑 ASE 密钥。
+        """
+        self.send_text(user_id, WeComAdapter.card_to_text(card))
+
 
 
 class WeComAdapter(IMGateway):
@@ -40,12 +183,15 @@ class WeComAdapter(IMGateway):
         appid:     AgentID / 企业 ID（解密后归属校验）
     """
 
-    def __init__(self, token: str, aes_key: str, appid: str) -> None:
+    def __init__(self, token: str, aes_key: str, appid: str,
+                 push_client: Optional["WeComPushClient"] = None) -> None:
         if not token or not aes_key or not appid:
             raise ValueError("token / aes_key / appid 均不能为空")
         self.token = token
         self.aes_key = aes_key
         self.appid = appid
+        # 可选：配齐企业应用凭据后，主动推送走真实应用消息（见 WeComPushClient）
+        self.push_client = push_client
 
     # ---------- IMGateway 契约 ----------
 
@@ -87,12 +233,22 @@ class WeComAdapter(IMGateway):
         return self.build_reply_xml(text_xml, timestamp, nonce)
 
     def push(self, user_id: str, card: ReplyCard) -> None:
-        """主动推送（预留）：记录通知日志，真实实现调应用消息 API。"""
-        logger.info("[IM push] -> %s | %s | %s", user_id, card.title,
-                    card.body[:80])
+        """主动推送：配了 ``push_client`` → 走真实应用消息 API；否则**只留痕并告警**。
+
+        为什么保留"只留痕"这条路径：未配企业应用凭据时（演示态默认），推送不该
+        假装成功也不该直接抛断链路——适配器记录 ``self.pushed`` 并打 WARNING，
+        由上层（``IMGroupNotificationChannel``）据此如实记账为 failed/skipped。
+        """
+        if self.push_client is not None:
+            self.push_client.push(user_id, card)
+            return
+        logger.warning("[IM push] 未配置企业应用凭据（IM_CORP_ID/IM_AGENT_ID/"
+                       "IM_CORP_SECRET），本次推送只留痕不真发 -> %s | %s",
+                       user_id, card.title)
         self.pushed: list[dict[str, Any]] = getattr(self, "pushed", [])
         self.pushed.append({"user_id": user_id, "title": card.title,
-                            "body": card.body, "actions": card.actions})
+                            "body": card.body, "actions": card.actions,
+                            "delivered": False})
 
     # ---------- 企业微信协议细节 ----------
 

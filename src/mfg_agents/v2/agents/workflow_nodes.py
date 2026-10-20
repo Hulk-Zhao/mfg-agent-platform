@@ -28,6 +28,18 @@ def make_workflow_handler(engine: Any, notifier: Any) -> Callable:
         wf_id = str(step.get("workflow") or step.get("id") or "workflow")
         title = str(step.get("title") or wf_id)
         assignees = [str(a) for a in step.get("assignees", [])]
+        # 动态责任人（可选）：从共享上下文追加"按判定结果生成"的责任单元，
+        # 如现场分派节点写下的 ``site_assignees``（归因工段）。去重且不改写静态清单；
+        # 归因不到时不追加——工单责任人始终保持"谁牵头"的静态口径。
+        extra_key = str(step.get("assignees_from") or "")
+        if extra_key:
+            extra = ctx.get(extra_key) or []
+            if isinstance(extra, str):
+                extra = [extra]
+            for item in extra:
+                name = str(item or "").strip()
+                if name and name not in assignees:
+                    assignees.append(name)
         level = str(step.get("notify_level", "P1"))
         sla_hours = float(step.get("sla_hours", 2))
         context: dict[str, Any] = {

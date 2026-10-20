@@ -8,7 +8,10 @@ from .text2sql import (
     Text2SQLService,
 )
 from .notification import (
+    BoardNotificationChannel,
+    IMGroupNotificationChannel,
     LogNotificationChannel,
+    MultiChannel,
     NotificationChannel,
     NotificationService,
 )
@@ -23,6 +26,9 @@ __all__ = [
     "NotificationService",
     "NotificationChannel",
     "LogNotificationChannel",
+    "BoardNotificationChannel",
+    "IMGroupNotificationChannel",
+    "MultiChannel",
     "WorkflowEngine",
     "WorkflowTask",
     "WorkflowTransitionError",

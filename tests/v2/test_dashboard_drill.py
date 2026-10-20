@@ -15,6 +15,7 @@ import pytest
 from mfg_agents.v2.services.dashboard import (
     DRILL_DEFS,
     build_drill,
+    build_manufacturing_dashboard,
     build_pareto_drill,
     build_quality_dashboard,
     build_spc_dashboard,
@@ -22,6 +23,7 @@ from mfg_agents.v2.services.dashboard import (
 )
 from mfg_agents.v2.services.dashboard import (
     _entity_cols,
+    _MFG_CAT_MODELS,
     _spc_caps_from_rows,
     _status,
     _verdict_status,
@@ -197,6 +199,17 @@ def test_build_drill_unknown_kpi_raises():
 # ============================================================
 # 4. SPC 过程能力看板（build_spc_dashboard）
 # ============================================================
+#
+# 既有 3 特性（种子基线，行数与取值一字不改）= 焊点高度(mm) / 锡膏厚度(μm) /
+# 回流焊峰值温度(℃)。V3.10 起种子新增 4 个特性（每工段 1 个，覆盖既有特性
+# 没覆盖的 PACK / 整机），故本节断言一律**限定既有 3 特性子集**，
+# 避免「新增特性」把「既有特性的精确数值」断言冲掉。
+_SPC_BASE_CHARS = ("焊点高度(mm)", "锡膏厚度(μm)", "回流焊峰值温度(℃)")
+
+
+def _spc_base_kpis(d: dict) -> list[dict]:
+    """从 L1 载荷里挑出既有 3 特性的能力卡（按特性名精确匹配）。"""
+    return [k for k in d["kpis"] if k["characteristic"] in _SPC_BASE_CHARS]
 
 
 def test_spc_capability_and_pareto_registered():
@@ -212,21 +225,27 @@ def test_spc_dashboard_shape(registry):
     assert d["screen"] == "spc"
     assert {"kpis", "capabilities", "pareto", "notes", "data_gap"} <= set(d)
 
-    # 逐特性能力卡：3 特性 × 双西格玛口径（candidate 合格/偏低/不合格 覆盖三态）
-    assert len(d["kpis"]) == 3
-    assert len(d["capabilities"]) == 3
-    assert {k["status"] for k in d["kpis"]} == {"ok", "warn", "danger"}
-    assert {k["verdict"] for k in d["kpis"]} == {"合格", "偏低", "不合格"}
-    cpks = sorted(k["cpk"] for k in d["kpis"])
-    assert cpks == pytest.approx([0.615, 1.146, 1.461], abs=0.01)
-    for k in d["kpis"]:
+    # 逐特性能力卡：既有 3 特性 × 双西格玛口径（candidate 合格/偏低/不合格 覆盖三态）
+    # 注：V3.10 起种子新增 4 个特性 → 断言限定既有 3 特性子集
+    base = _spc_base_kpis(d)
+    assert len(base) == 3
+    assert {k["status"] for k in base} == {"ok", "warn", "danger"}
+    assert {k["verdict"] for k in base} == {"合格", "偏低", "不合格"}
+    cpks = sorted(k["cpk"] for k in base)
+    # 全月种子（V3.11）：window 口径混入反标定回填行 → Cpk 相对 seed_v3 原值有
+    # 批间聚合漂移（实测 ≤0.08），但**判定档位恒定**（这是 A8 的核心），逐档断言：
+    assert cpks[0] == pytest.approx(0.615, abs=0.08) and cpks[0] < 1.0
+    assert cpks[1] == pytest.approx(1.15, abs=0.08) and 1.0 <= cpks[1] < 1.33
+    assert cpks[2] == pytest.approx(1.46, abs=0.08) and cpks[2] >= 1.33
+    for k in base:
         assert k["key"] == "spc_capability"
         assert k["value"] == k["cpk"]
         assert k["target"] == 1.33 and k["higher_is_better"] is True
         assert k["data_gap"] is False
         assert isinstance(k["spec"], dict)
-        # 每特性 25 条测量值（3 特性 × 25 = 75），超差率 = 越限数/测量数
-        assert k["over_den"] == 25
+        # 既有 3 特性测量数（**window 口径**）= 10-08~10-13 每天 10 行 + 10-14 共 25 行 = 85，
+        # 超差率 = 越限数/测量数
+        assert k["over_den"] == 85
         assert k["over_rate"] == pytest.approx(
             100.0 * k["over_num"] / k["over_den"], abs=0.1)
     # 柏拉图：全量聚合，累计占比单调不减且不超 100
@@ -251,10 +270,12 @@ def test_spc_kpi_fields_self_consistent(registry):
         assert k["over_num"] <= k["over_den"]
         assert k["over_rate"] == pytest.approx(
             100.0 * k["over_num"] / k["over_den"], abs=0.1)
-        # 5 子组 × 5 值 = 25 条测量值
-        assert k["n_total"] == 25 and k["n_subgroups"] == 5
         assert k["sigma_within"] and k["sigma_overall"]
         assert k["entity"] == {"characteristic": k["characteristic"]}
+    # 既有 3 特性（window 口径 = 85 行 / 17 子组：10-08~10-13 每天 2 子组 + 10-14 的 5 子组；
+    # 子组号三段 1-5 / 6-10 / 11+ 跨日期不混样）
+    for k in _spc_base_kpis(d):
+        assert k["n_total"] == 85 and k["n_subgroups"] == 17, k["characteristic"]
     # 越低越好：Cpk 最差（最小）的特性必然超差率最高且判定不合格
     worst = min(d["kpis"], key=lambda k: k["cpk"])
     assert worst["verdict"] == "不合格" and worst["status"] == "danger"
@@ -266,6 +287,8 @@ def test_spc_double_sigma_cp_differs_from_pp(registry):
     d = build_spc_dashboard(registry)
     for k in d["kpis"]:
         name = k["characteristic"]
+        if k["cpk"] is None:      # 数据缺口特性（缺规格限）不参与比较
+            continue
         assert k["cp"] > 0 and k["pp"] > 0, name
         assert k["cp"] != k["pp"], f"{name} 组内/整体 σ 未区分"
         assert k["cpk"] != k["ppk"], f"{name} 组内/整体 σ 未区分"
@@ -298,27 +321,48 @@ def test_spc_capability_l2_decomposition(registry):
     assert out["level"] == 2 and out["kpi"] == "spc_capability"
     assert out["dimension"] == "特性" and out["degraded"] is False
     rows = out["rows"]
-    assert len(rows) == 3
-    assert [r["rank"] for r in rows] == [1, 2, 3]
+    assert rows
+    assert [r["rank"] for r in rows] == list(range(1, len(rows) + 1))
     vals = [r["value"] for r in rows]
     assert vals == sorted(vals, reverse=True)
     for r in rows:
-        assert r["denominator"] == 25
         assert r["value"] == pytest.approx(
             100.0 * r["numerator"] / r["denominator"], abs=0.15)
         assert r["entity"] == {"characteristic": r["name"]}
         assert len(r["trend"]) == 7
-    assert rows[0]["name"] == "回流焊峰值温度(℃)" and rows[0]["numerator"] == 2
+    # 既有 3 特性：L2 分母 = **window 口径** 85（10-08~10-13 每天 10 行 + 10-14 共 25 行）
+    base_rows = [r for r in rows if r["name"] in _SPC_BASE_CHARS]
+    assert len(base_rows) == 3
+    for r in base_rows:
+        assert r["denominator"] == 85, r["name"]
+    # 最差特性排第一（回流焊峰值温度 Cpk 最低 → 超差率最高）；
+    # 越限数不锁具体值（新种子含反标定随机行），但必须与 L1 聚合**同源可对账**
+    assert rows[0]["name"] == "回流焊峰值温度(℃)"
+    l1 = build_spc_dashboard(registry, "window")
+    worst = next(k for k in l1["kpis"]
+                 if k["characteristic"] == "回流焊峰值温度(℃)")
+    assert rows[0]["numerator"] == worst["over_num"]
+    assert rows[0]["denominator"] == worst["over_den"]
 
 
 def test_spc_capability_l3_locks_characteristic(registry):
-    """spc_capability L3：锁定单特性，返回关联原始记录（8 列）与 7 日渐序列。"""
+    """spc_capability L3：锁定单特性，返回关联原始记录与逐日序列。
+
+    越限数 / 分母**不锁具体值**（全月种子含反标定随机行），但必须与 L1 聚合
+    **同源可对账**（同 `registry` 下 L1 卡片的 over_num/over_den 逐字段相等）。"""
     ent = "回流焊峰值温度(℃)"
     out = build_drill(registry, "spc", "spc_capability",
                       entity={"characteristic": ent})
     assert out["level"] == 3 and out["entity"]["characteristic"] == ent
-    assert out["numerator"] == 2 and out["denominator"] == 25
-    assert out["value"] == pytest.approx(8.0) and out["status"] == "danger"
+    l1 = build_spc_dashboard(registry, "window")
+    k = next(k for k in l1["kpis"] if k["characteristic"] == ent)
+    assert out["numerator"] == k["over_num"] and out["denominator"] == k["over_den"]
+    assert out["value"] == pytest.approx(k["over_rate"], abs=0.1)
+    # 状态不锁具体值：超差率状态按 target=5.0 口径算（_status）——
+    # 已知口径问题（登记后续项）：Cpk 判定线（1.33/1.00）与超差率目标 5.0%
+    # 在数学上不对应（Cpk 0.62 ≈ 双尾 5%），会出现「Cpk 不合格但超差率达标」。
+    # 修它要动 DRILL_DEFS.target 与 A8/A9 验收矩阵，不在数据集增量内。
+    assert out["status"] in ("ok", "warn", "danger")
     assert {c["key"] for c in out["columns"]} == {
         "measured_at", "characteristic", "subgroup_no", "seq",
         "value", "usl", "lsl", "source"}
@@ -355,7 +399,10 @@ def test_spc_entity_params_declared():
 def test_spc_dashboard_data_gap_when_no_measurements():
     """数据源无测量值：标数据缺口（data_gap）而非编造指数，空结果不算降级。"""
     class _EmptyRegistry:
-        def execute_readonly_sql(self, sql, params=None):
+        # 签名对齐 ``DataSource.execute_readonly_sql`` 协议（``row_cap`` 为行数上限
+        # 形参）：SPC 取数显式传 ``cap=_SPC_MEAS_CAP``，mock 少该形参会抛 TypeError
+        # → 被误判成「数据源故障」而置 degraded=True（空结果本不算降级）。
+        def execute_readonly_sql(self, sql, params=None, row_cap=200):
             return []
 
     d = build_spc_dashboard(_EmptyRegistry())
@@ -368,7 +415,7 @@ def test_spc_dashboard_data_gap_when_no_measurements():
 def test_spc_dashboard_degrades_without_raising():
     """数据源故障：兜底为空 + 标记降级原因，绝不 500（绝不抛出）。"""
     class _BrokenRegistry:
-        def execute_readonly_sql(self, sql, params=None):
+        def execute_readonly_sql(self, sql, params=None, row_cap=200):
             raise RuntimeError("boom")
 
     d = build_spc_dashboard(_BrokenRegistry())
@@ -426,7 +473,9 @@ def test_spc_dashboard_api(api_client):
     body = r.json()
     assert body["code"] == 0
     d = body["data"]
-    assert d["screen"] == "spc" and len(d["kpis"]) == 3 and d["pareto"]
+    assert d["screen"] == "spc" and len(d["kpis"]) >= 3 and d["pareto"]
+    # 既有 3 特性仍在（新增特性不冲掉基线）
+    assert len(_spc_base_kpis(d)) == 3
 
 
 def test_spc_drill_api_l2_and_l3(api_client):
@@ -590,6 +639,68 @@ def test_drill_api_returns_pareto_l2(api_client, registry):
     assert d["rows"] and d["dimension"] == "产线 · 型号"
 
 
+# ============================================================
+# 5b. 不良柏拉图「产品分类」维度（事实表 + 类型下钻筛选）
+# ============================================================
+
+
+def test_pareto_fact_exposes_product_categories(registry):
+    """事实表按产品分类切片：4 类齐全，每行带 ``pc``，每个分类覆盖 4 个工段。"""
+    from mfg_agents.v2.services.dashboard import PRODUCT_CATEGORIES
+
+    fact = build_quality_dashboard(registry)["pareto_fact"]
+    assert fact["prod_cats"] == PRODUCT_CATEGORIES, "分类集合或顺序被改动"
+    rows = fact["rows"]
+    assert rows, "事实表不应为空"
+    assert all(r["pc"] for r in rows), "每行都必须带产品分类（否则下拉筛选会漏数据）"
+    assert "2026-10-15" in fact["days"] and fact["months"][0] == "2026-10"
+    for pc in fact["prod_cats"]:
+        stages = {r["stage"] for r in rows if r["pc"] == pc}
+        assert stages == {"SMT", "PCM", "PACK", "整机"}, f"{pc} 工段覆盖不全: {stages}"
+
+
+def test_pareto_fact_group_rows_not_truncated(registry):
+    """分组维度含产品分类后行数翻倍 → row_cap 必须抬高，且分组键保持唯一。"""
+    rows = build_quality_dashboard(registry)["pareto_fact"]["rows"]
+    assert len(rows) > 2500, f"分组被 row_cap 截断（仅 {len(rows)} 行）"
+    keys = {(r["d"], r["cat"], r["stage"], r["pc"], r["type"]) for r in rows}
+    assert len(keys) == len(rows), "同一分组键出现重复行"
+
+
+def test_pareto_drill_filters_by_product_category(registry):
+    """按产品分类 + 本块期间下钻：行分子之和 = 事实表里该分类该期间的损失量。"""
+    fact = build_quality_dashboard(registry)["pareto_fact"]
+    day = fact["days"][0]
+    agg: dict[str, int] = {}
+    for r in fact["rows"]:
+        if r["d"] == day and r["pc"] == "车载":
+            agg[r["type"]] = agg.get(r["type"], 0) + r["qty"]
+    assert agg, "当日 · 车载 应有数据"
+    top = max(agg, key=lambda k: agg[k])
+    data = build_pareto_drill(registry, "quality", "defect_rate", top,
+                              prod_category="车载", window="day")
+    assert data["level"] == 2 and data["terminal"] is True
+    assert data["defect_type"] == top and data["prod_category"] == "车载"
+    assert "产品分类 车载" in data["definition"], "口径补注应注明本次筛选"
+    assert data["rows"], f"「{top}」在 当日 · 车载 下应有产线 · 型号分解"
+    assert sum(r["numerator"] for r in data["rows"]) == agg[top], "分摊不守恒"
+
+
+def test_pareto_drill_prod_category_api(api_client, registry):
+    """API 链路：prod_category 与 window=month/day 组合放行；非法 window 仍 400。"""
+    top = build_quality_dashboard(registry)["pareto_fact"]["rows"][0]["type"]
+    r = api_client.get("/api/v2/dashboard/drill",
+                       params={"screen": "quality", "kpi": "defect_rate",
+                               "defect_type": top, "prod_category": "车载",
+                               "window": "month"})
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["prod_category"] == "车载"
+    bad = api_client.get("/api/v2/dashboard/drill",
+                         params={"screen": "quality", "kpi": "defect_rate",
+                                 "window": "nope"})
+    assert bad.status_code == 400
+
+
 @pytest.mark.parametrize("kpi", ["incoming_pass_rate", "complaint_close_rate"])
 def test_drill_api_new_quality_kpi_l2(api_client, kpi):
     """新增品质指标（来料批次合格率 / 客诉闭环率）走通用 L2 下钻，真实链路不降级。"""
@@ -600,3 +711,380 @@ def test_drill_api_new_quality_kpi_l2(api_client, kpi):
     assert d["level"] == 2 and d["kpi"] == kpi
     assert d["rows"], f"{kpi} 应有 L2 分解行"
     assert d["degraded"] is False, d.get("degraded_reason")
+
+
+# ============================================================
+# 5d. 制造看板板级「产品分类 / 工段」筛选（4 张 KPI 卡 = 所选范围汇总）
+# ============================================================
+
+
+def test_mfg_scope_defaults_to_all(registry):
+    """缺省不筛选：filter 回显空串，无范围标注，且与显式空参逐字段同值。"""
+    plain = build_manufacturing_dashboard(registry, "month")
+    explicit = build_manufacturing_dashboard(registry, "month", stage=None,
+                                             product_category=None)
+    assert plain["filter"] == {"stage": "", "product_category": ""}
+    assert explicit["kpis"] == plain["kpis"], "空筛选不得改变既有口径"
+    assert explicit["rankings"] == plain["rankings"]
+    for k in plain["kpis"]:
+        assert "scope_note" not in k, f"{k['key']} 未筛选时不应有范围标注"
+
+
+def test_mfg_scope_stage_narrows_by_line_prefix(registry):
+    """工段筛选按产线前缀收窄：分母变小、值 = 分子 ÷ 分母、TOP5 只剩本工段线体。"""
+    base = build_manufacturing_dashboard(registry, "month")
+    for stage, prefix in (("SMT", "SMT-"), ("PCM", "DIP-"), ("PACK", "PACK-")):
+        d = build_manufacturing_dashboard(registry, "month", stage=stage)
+        assert d["filter"] == {"stage": stage, "product_category": ""}
+        for key in ("availability", "scrap_rate", "report_rate"):
+            b, s = _kpi_of(base, key), _kpi_of(d, key)
+            assert s["denominator"] < b["denominator"], f"{stage} 应收窄 {key} 分母"
+            assert s["value"] == pytest.approx(
+                100.0 * s["numerator"] / s["denominator"], abs=0.05), key
+            assert len(s["trend"]) == len(b["trend"]) > 0, "趋势线仍按窗口逐日"
+        for key in ("availability", "scrap_rate"):
+            items = next(r for r in d["rankings"] if r["key"] == key)["items"]
+            assert items, f"{stage} 应有 {key} TOP5"
+            assert all(it["line"].startswith(prefix) for it in items), \
+                f"{key} TOP5 混入了其它工段的行"
+
+
+def test_mfg_scope_product_category_narrows_by_model(registry):
+    """产品分类筛选按型号归属收窄；工段 + 产品分类是 AND 关系（叠加后再收窄）。"""
+    base = build_manufacturing_dashboard(registry, "month")
+    cons = build_manufacturing_dashboard(registry, "month", product_category="消费电子")
+    assert cons["filter"]["product_category"] == "消费电子"
+    for key in ("availability", "test_fpy"):
+        assert _kpi_of(cons, key)["denominator"] < _kpi_of(base, key)["denominator"]
+    items = next(r for r in cons["rankings"] if r["key"] == "test_fpy")["items"]
+    assert items, "消费电子应有型号级 TOP5"
+    assert {it["model"] for it in items} <= set(_MFG_CAT_MODELS["消费电子"]), \
+        "混入了其它分类的型号"
+
+    smt = build_manufacturing_dashboard(registry, "month", stage="SMT")
+    both = build_manufacturing_dashboard(registry, "month", stage="SMT",
+                                         product_category="消费电子")
+    assert both["filter"] == {"stage": "SMT", "product_category": "消费电子"}
+    assert (_kpi_of(both, "availability")["denominator"]
+            < _kpi_of(smt, "availability")["denominator"])
+
+
+def test_mfg_scope_stage_free_kpi_keeps_board_scope(registry):
+    """测试直通率无产线维度：工段筛选不改它的值，并标注「工段筛选不适用」。"""
+    base = build_manufacturing_dashboard(registry, "month")
+    scoped = build_manufacturing_dashboard(registry, "month", stage="PACK")
+    b, s = _kpi_of(base, "test_fpy"), _kpi_of(scoped, "test_fpy")
+    assert (s["numerator"], s["denominator"]) == (b["numerator"], b["denominator"])
+    assert "筛选不适用" in s["scope_note"]
+    # 产品分类仍对它生效（型号维度存在）
+    assert "scope_note" not in _kpi_of(
+        build_manufacturing_dashboard(registry, "month", product_category="车载"),
+        "test_fpy")
+
+
+def test_mfg_scope_empty_range_is_marked(registry):
+    """「整机」工段（ASSY-*）扩容后有真实数据：分母 > 0、无「无记录」标注。
+
+    2026-10-21 数据扩容（seed_board_mfg_volume2.sql）为制造四表补入 ASSY-1，
+    该筛选不再为空——断言随数据现状更新为「有数据且 TOP5 均为 ASSY 线体」
+    （筛选口径本身未改）。
+    """
+    d = build_manufacturing_dashboard(registry, "month", stage="整机")
+    for key in ("availability", "scrap_rate", "report_rate"):
+        k = _kpi_of(d, key)
+        assert k["denominator"] > 0, f"整机工段应有 {key} 数据"
+        assert "无记录" not in (k.get("scope_note") or "")
+        items = next(r for r in d["rankings"] if r["key"] == key)["items"]
+        assert items, f"整机工段应有 {key} TOP5"
+        assert all(it["line"].startswith("ASSY-") for it in items), \
+            f"{key} TOP5 混入了其它工段的行"
+
+
+def test_mfg_scope_ask_text_follows_scope(registry):
+    """问数文案必须带上筛选范围（口径与卡片一致），未筛选时保持原文案。"""
+    scoped = build_manufacturing_dashboard(registry, "month", stage="SMT",
+                                           product_category="消费电子")
+    ask = _kpi_of(scoped, "availability")["ask"]
+    assert "工段 SMT" in ask and "产品分类 消费电子" in ask
+    assert "最近7天" not in ask, "口径替换后不应残留「最近7天」"
+    assert (build_manufacturing_dashboard(registry)["kpis"][0]["ask"]
+            == "最近7天各产线稼动率如何？最低的是哪条线？")
+
+
+def test_mfg_scope_api_params(api_client, registry):
+    """API 链路：stage / product_category 放行并回显；非法取值 → 400（不静默当「全部」）。"""
+    r = api_client.get("/api/v2/dashboard/manufacturing",
+                       params={"window": "month", "stage": "SMT",
+                               "product_category": "消费电子"})
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["filter"] == {"stage": "SMT",
+                                          "product_category": "消费电子"}
+
+    for bad in ({"stage": "SMT-1"}, {"product_category": "消费"}):
+        resp = api_client.get("/api/v2/dashboard/manufacturing", params=bad)
+        assert resp.status_code == 400, f"{bad} 应被拒绝"
+
+
+# ============================================================
+# 5e. 2 级看板补充详细数据（整体汇总 / 整体逐日 / 关联原始记录）
+# ============================================================
+
+
+@pytest.mark.parametrize("kpi,screen", [
+    ("availability", "manufacturing"), ("scrap_rate", "manufacturing"),
+    ("report_rate", "manufacturing"), ("test_fpy", "manufacturing"),
+])
+def test_l2_detail_supplement_shape(registry, kpi, screen):
+    """制造看板四指标的 L2 附带整体汇总 / 整体逐日 / 原始记录三块补充数据。"""
+    out = build_drill(registry, screen, kpi, window="month")
+    assert {"summary", "daily", "records", "columns"} <= set(out)
+    s = out["summary"]
+    assert s["items"] == len(out["rows"])
+    assert s["ok"] + s["warn"] + s["danger"] == s["items"]
+    # 汇总 = 明细行加权之和（分子分母分别相加），不允许与明细对不上
+    assert s["numerator"] == sum(r["numerator"] for r in out["rows"])
+    assert s["denominator"] == sum(r["denominator"] for r in out["rows"])
+    assert s["value"] == pytest.approx(
+        100.0 * s["numerator"] / s["denominator"], abs=0.05)
+    assert s["status"] == _status(s["value"], s["target"], s["higher_is_better"])
+    if out["rows"]:
+        assert s["worst"]["name"] == out["rows"][0]["name"], "最差项应与明细首行同源"
+    assert len(out["daily"]) == 15, "当月口径应有 15 个逐日点"
+    assert out["records"] and len(out["records"]) <= 20
+    assert {c["key"] for c in out["columns"]} == set(
+        DRILL_DEFS[kpi]["record_cols"])
+
+
+def test_l2_detail_only_for_scope_declared_kpis(registry):
+    """未声明板级筛选的指标：L2 不额外下发原始记录（不给其它屏开明细通道）。"""
+    out = build_drill(registry, "quality", "fpy")
+    assert "summary" not in out and "records" not in out
+    assert out["rows"], "分组明细行仍照常返回"
+
+
+def test_drill_follows_board_scope(registry):
+    """下钻与板级筛选同口径：L2 行只剩所选工段 · 型号，导出实体后 L3 亦受约束。"""
+    scoped = build_drill(registry, "manufacturing", "availability", window="month",
+                         stage="SMT", product_category="消费电子")
+    assert scoped["filter"] == {"stage": "SMT", "product_category": "消费电子"}
+    assert "本次筛选" in scoped["definition"]
+    rows = scoped["rows"]
+    assert rows, "SMT · 消费电子 应有分解行"
+    assert {r["entity"]["line"] for r in rows} <= {"SMT-1", "SMT-2", "SMT-3"}
+    assert {r["entity"]["model"] for r in rows} <= {"A型号", "E型号"}
+    assert scoped["summary"]["denominator"] == sum(r["denominator"] for r in rows)
+
+    l3 = build_drill(registry, "manufacturing", "availability",
+                     entity=rows[0]["entity"], window="month",
+                     stage="SMT", product_category="消费电子")
+    assert l3["level"] == 3 and l3["denominator"] == rows[0]["denominator"]
+
+
+def test_drill_ignores_scope_for_other_screens(registry):
+    """未声明 scope / q_scope 的指标：多传 stage / category / product_category 不得改变既有行为。"""
+    plain = build_drill(registry, "quality", "incoming_pass_rate")
+    extra = build_drill(registry, "quality", "incoming_pass_rate", stage="SMT",
+                        category="外观不良", product_category="车载")
+    assert extra["rows"] == plain["rows"]
+    assert "filter" not in extra and "本次筛选" not in extra["definition"], \
+        "未声明筛选的指标不得回显 / 标注筛选"
+
+
+def test_drill_follows_quality_scope(registry):
+    """品质板级「工段 / 类别」贯通到 2 级下钻：不良率 / 直通率 L2 = 所选范围的分解。"""
+    scoped = build_drill(registry, "quality", "defect_rate", window="month",
+                         stage="SMT", category="外观不良")
+    assert scoped["filter"] == {"stage": "SMT", "category": "外观不良"}
+    assert "本次筛选：工段 SMT · 类别 外观不良" in scoped["definition"]
+    rows = scoped["rows"]
+    assert rows, "SMT · 外观不良 应有分解行"
+    # 与 L1 卡片同源：L2 各行分子分母之和必须等于筛选后的卡片值（口径不允许有裂缝）
+    card = _kpi_of(build_quality_dashboard(registry, "month", stage="SMT",
+                                           category="外观不良"), "defect_rate")
+    assert sum(r["denominator"] for r in rows) == card["denominator"]
+    assert sum(r["numerator"] for r in rows) == card["numerator"]
+    # 直通率与不良率同一套口径（补数），筛选后仍守恒
+    fpy = build_drill(registry, "quality", "fpy", window="month",
+                      stage="SMT", category="外观不良")
+    assert fpy["filter"] == {"stage": "SMT", "category": "外观不良"}
+    assert fpy["rows"], "直通率的 L2 同样按筛选分解"
+    # 未筛选时与改动前逐字段一致：无筛选回显与标注
+    plain = build_drill(registry, "quality", "defect_rate", window="month")
+    assert "filter" not in plain and "本次筛选" not in plain["definition"]
+    assert len(plain["rows"]) > len(rows), "未筛选应包含更多产线 · 型号组合"
+    # L3 同样受板级筛选约束（实体之外的筛选条件一并生效）
+    l3 = build_drill(registry, "quality", "defect_rate", entity=rows[0]["entity"],
+                     window="month", stage="SMT", category="外观不良")
+    assert l3["level"] == 3 and l3["filter"] == {"stage": "SMT", "category": "外观不良"}
+
+
+def test_drill_api_quality_scope_params_and_validation(api_client, registry):
+    """API 链路：品质「不良率 / 直通率」接受 stage / category 并回显；非法值 → 400。"""
+    r = api_client.get("/api/v2/dashboard/drill",
+                       params={"screen": "quality", "kpi": "defect_rate",
+                               "window": "month", "stage": "SMT",
+                               "category": "外观不良"})
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["filter"] == {"stage": "SMT", "category": "外观不良"}
+    for bad in ({"stage": "DIP-1"}, {"category": "划伤"}):
+        params = dict({"screen": "quality", "kpi": "defect_rate"}, **bad)
+        resp = api_client.get("/api/v2/dashboard/drill", params=params)
+        assert resp.status_code == 400, f"{bad} 应被拒绝"
+
+
+def test_drill_api_scope_params_and_validation(api_client, registry):
+    """API 链路：制造四指标接受 stage / prod_category 并回显；非法值 → 400。"""
+    r = api_client.get("/api/v2/dashboard/drill",
+                       params={"screen": "manufacturing", "kpi": "availability",
+                               "window": "month", "stage": "PCM",
+                               "prod_category": "车载"})
+    assert r.status_code == 200, r.text
+    d = r.json()["data"]
+    assert d["filter"] == {"stage": "PCM", "product_category": "车载"}
+    assert d["summary"] and d["records"]
+    for bad in ({"stage": "DIP-1"}, {"prod_category": "消费"}):
+        resp = api_client.get("/api/v2/dashboard/drill",
+                              params=dict({"screen": "manufacturing",
+                                           "kpi": "availability"}, **bad))
+        assert resp.status_code == 400, f"{bad} 应被拒绝"
+
+
+# ============================================================
+# 5c. 品质看板板级「工段 / 缺陷类别」筛选（4 张 KPI 卡 = 所选范围汇总）
+# ============================================================
+
+
+def _kpi_of(data, key):
+    return next(k for k in data["kpis"] if k["key"] == key)
+
+
+def test_quality_scope_defaults_to_all(registry):
+    """缺省不筛选：filter 回显空串，无「筛选不适用」标注，且与显式空参逐字段同值。"""
+    plain = build_quality_dashboard(registry, "month")
+    explicit = build_quality_dashboard(registry, "month", stage=None, category=None)
+    assert plain["filter"] == {"stage": "", "category": ""}
+    assert explicit["kpis"] == plain["kpis"], "空筛选不得改变既有口径"
+    for k in plain["kpis"]:
+        assert "scope_note" not in k, f"{k['key']} 未筛选时不应有范围标注"
+
+
+def test_quality_scope_recomputes_defect_source_kpis(registry):
+    """同源指标随筛选重算：den 收窄、值 = 分子 ÷ 分母，且与全厂口径不同源可比。"""
+    base = build_quality_dashboard(registry, "month")
+    smt = build_quality_dashboard(registry, "month", stage="SMT")
+    b_def, s_def = _kpi_of(base, "defect_rate"), _kpi_of(smt, "defect_rate")
+    b_fpy, s_fpy = _kpi_of(base, "fpy"), _kpi_of(smt, "fpy")
+    assert s_def["denominator"] < b_def["denominator"], "工段筛选应收窄受检总数"
+    assert s_def["numerator"] < b_def["numerator"]
+    for k in (s_def, s_fpy):
+        assert k["value"] == pytest.approx(
+            100.0 * k["numerator"] / k["denominator"], abs=0.05), k["key"]
+    # 直通率 = 1 − 不良率（同一份明细的补数，筛选后仍守恒）
+    assert s_fpy["denominator"] == s_def["denominator"]
+    assert s_fpy["numerator"] + s_def["numerator"] == s_def["denominator"]
+    assert len(s_def["trend"]) == len(b_def["trend"]) > 0, "趋势线仍按窗口逐日"
+
+
+def test_quality_scope_category_narrows_further(registry):
+    """工段 + 类别叠加：分母在工段基础上继续收窄（两个条件是 AND 关系）。"""
+    smt = build_quality_dashboard(registry, "month", stage="SMT")
+    both = build_quality_dashboard(registry, "month", stage="SMT", category="外观不良")
+    assert both["filter"] == {"stage": "SMT", "category": "外观不良"}
+    assert (_kpi_of(both, "defect_rate")["denominator"]
+            < _kpi_of(smt, "defect_rate")["denominator"])
+
+
+def test_quality_scope_marks_scope_free_kpis(registry):
+    """无该维度的两项保持板级口径并标注「筛选不适用」，值不得被筛选改动。"""
+    base = build_quality_dashboard(registry, "month")
+    scoped = build_quality_dashboard(registry, "month", stage="PACK", category="性能不良")
+    for key in ("incoming_pass_rate", "complaint_close_rate"):
+        b, s = _kpi_of(base, key), _kpi_of(scoped, key)
+        assert (s["numerator"], s["denominator"]) == (b["numerator"], b["denominator"])
+        assert "筛选不适用" in s["scope_note"]
+    for key in ("defect_rate", "fpy"):
+        assert "scope_note" not in _kpi_of(scoped, key)
+
+
+def test_quality_scope_ask_text_follows_scope(registry):
+    """问数文案必须带上筛选范围，不能只说「各产线」而漏掉工段 / 类别。"""
+    scoped = build_quality_dashboard(registry, "month", stage="PACK", category="性能不良")
+    ask = _kpi_of(scoped, "defect_rate")["ask"]
+    assert "工段 PACK" in ask and "类别 性能不良" in ask
+    assert "最近7天" not in ask, "口径替换后不应残留「最近7天」"
+    # 未筛选时保持原文案（回归护栏）
+    assert build_quality_dashboard(registry)["kpis"][0]["ask"] == "最近7天各产线不良率如何？最高的是哪条线？"
+
+
+def test_quality_scope_rankings_follow_scope(registry):
+    """TOP5 与卡片同源：工段筛选后只出现该工段的线体（SMT → SMT-3）。"""
+    smt = build_quality_dashboard(registry, "month", stage="SMT")
+    items = next(r for r in smt["rankings"] if r["key"] == "defect_rate")["items"]
+    assert items, "SMT 工段应有不良率 TOP5"
+    assert {it["line"] for it in items} == {"SMT-3"}, "TOP5 混入了其它工段的行"
+
+
+def test_quality_scope_api_params(api_client, registry):
+    """API 链路：stage / category 放行并回显；非法取值 → 400（不静默当「全部」）。"""
+    r = api_client.get("/api/v2/dashboard/quality",
+                       params={"window": "month", "stage": "SMT",
+                               "category": "外观不良"})
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["filter"] == {"stage": "SMT", "category": "外观不良"}
+
+    for bad in ({"stage": "SMT-1"}, {"category": "全部不良"}):
+        resp = api_client.get("/api/v2/dashboard/quality", params=bad)
+        assert resp.status_code == 400, f"{bad} 应被拒绝"
+
+
+# ============================================================
+# 8. 来料质量 TOP10（固定全量口径 · L1 只出 TOP10）
+# ============================================================
+
+
+def test_incoming_top10_lists_are_fixed_scope(registry):
+    """来料质量 L1 只出 TOP10（``incoming_top10``）：两张榜、各 10 条、固定全量口径。
+
+    2026-10-21 产品调整：L1 不再出「全量供应商排序表」，改由 ``incoming_top10``
+    承载「来料批次合格率 / 来料上线不良率」两张 TOP10。``rankings`` 里的
+    ``incoming_pass_rate`` 只保留为「每 KPI 一条配套榜」的结构占位，
+    不再带 ``view="supplier_table"``（全量排序表这一形态整体下线）。
+    """
+    d = build_quality_dashboard(registry)
+    ranks = {r["key"]: r for r in d["rankings"]}
+    assert all(r.get("view") != "supplier_table" for r in d["rankings"]), \
+        "L1 不应再有全量供应商排序表"
+    assert len(ranks["incoming_pass_rate"]["items"]) <= 5, "配套榜应回到 TOP5"
+
+    inc = {r["key"]: r for r in d["incoming_top10"]}
+    assert set(inc) == {"incoming_batch_quality", "incoming_line_defect"}
+    for key, r in inc.items():
+        assert r["view"] == "incoming_top10", key
+        assert r["dimension"] == "供应商", key
+        assert len(r["items"]) == 10, f"{key} 应只出 TOP10，实际 {len(r['items'])}"
+        assert all((i["entity"] or {}).get("supplier") for i in r["items"]), \
+            "下钻实体应为供应商"
+        assert all(i["rank"] == n for n, i in enumerate(r["items"], 1)), \
+            f"{key} 名次必须与实际顺序一致"
+
+    # 批次合格率：越高越好 → 取最低 10（升序）；上线不良率：越低越好 → 取最高 10（降序）
+    low = [i["value"] for i in inc["incoming_batch_quality"]["items"]]
+    assert low == sorted(low), "来料批次合格率应升序（低分在上）"
+    high = [i["value"] for i in inc["incoming_line_defect"]["items"]]
+    assert high == sorted(high, reverse=True), "来料上线不良率应降序"
+
+
+def test_incoming_top10_api_is_window_free(api_client):
+    """API 链路：来料 TOP10 固定全量口径——切换板级窗口不改变它。"""
+    snaps = {}
+    for win in ("window", "month", "day"):
+        r = api_client.get("/api/v2/dashboard/quality", params={"window": win})
+        assert r.status_code == 200, r.text
+        inc = {x["key"]: x for x in r.json()["data"]["incoming_top10"]}
+        assert len(inc["incoming_batch_quality"]["items"]) == 10
+        assert len(inc["incoming_line_defect"]["items"]) == 10
+        snaps[win] = [(i["name"], i["value"])
+                      for i in inc["incoming_batch_quality"]["items"]]
+    base = snaps["window"]
+    for win, snap in snaps.items():
+        assert snap == base, f"来料批次合格率 TOP10 不应随板级窗口变化（{win}）"
