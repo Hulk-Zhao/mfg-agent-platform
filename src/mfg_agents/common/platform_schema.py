@@ -97,6 +97,88 @@ _METRIC_UPSERT = (
     "VALUES (:id, :name, :owner, :desc, :tables, :keywords, :sql, :unit, 1, :now)"
 )
 
+#: MySQL 版指标播种（``INSERT OR REPLACE`` 是 SQLite 方言；MySQL 用 ON DUPLICATE KEY）。
+_METRIC_UPSERT_MYSQL = (
+    "INSERT INTO platform_metric_def "
+    "(id, name, owner, description, tables_json, keywords_json, `sql`, unit, version, updated_at) "
+    "VALUES (:id, :name, :owner, :desc, :tables, :keywords, :sql, :unit, 1, :now) "
+    "ON DUPLICATE KEY UPDATE name=VALUES(name), owner=VALUES(owner), "
+    "description=VALUES(description), tables_json=VALUES(tables_json), "
+    "keywords_json=VALUES(keywords_json), `sql`=VALUES(`sql`), unit=VALUES(unit), "
+    "version=VALUES(version), updated_at=VALUES(updated_at)"
+)
+
+#: MySQL / InnoDB 平台表（D15 MySQL 参考实现的前置）：SQLite 的 AUTOINCREMENT、
+#: TEXT 默认值与 ``CREATE INDEX IF NOT EXISTS`` 在 MySQL 均不合法，必须单独一份。
+#: 长度说明：``task_uid`` / ``role_key`` / ``actor`` / ``verb`` 参与唯一索引，
+#: utf8mb4 下总字节数需 < 3072（InnoDB 大前缀），当前 1152 / 896 均安全。
+MYSQL_PLATFORM_DDL: tuple[str, ...] = (
+    """
+    CREATE TABLE IF NOT EXISTS platform_workflow_task (
+      id BIGINT NOT NULL AUTO_INCREMENT,
+      task_uid VARCHAR(64) NOT NULL,
+      wf_id VARCHAR(128) NOT NULL,
+      title VARCHAR(512) NOT NULL,
+      status VARCHAR(32) NOT NULL DEFAULT 'pending',
+      priority VARCHAR(16) NOT NULL DEFAULT 'P1',
+      assignees TEXT,
+      context_json LONGTEXT,
+      hitl_prompt TEXT,
+      history_json LONGTEXT,
+      governance_json LONGTEXT,
+      owner_scope TEXT,
+      created_at VARCHAR(40) NOT NULL,
+      updated_at VARCHAR(40) NOT NULL,
+      sla_due_at VARCHAR(40) NULL,
+      PRIMARY KEY (id),
+      UNIQUE KEY ux_workflow_task_uid (task_uid)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS platform_metric_def (
+      id VARCHAR(80) NOT NULL,
+      name VARCHAR(255) NOT NULL,
+      owner VARCHAR(128),
+      description TEXT,
+      tables_json TEXT,
+      keywords_json TEXT,
+      `sql` LONGTEXT NOT NULL,
+      unit VARCHAR(32),
+      version INT DEFAULT 1,
+      updated_at VARCHAR(40) NOT NULL,
+      PRIMARY KEY (id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS wf_signoff (
+      id BIGINT NOT NULL AUTO_INCREMENT,
+      task_uid VARCHAR(64) NOT NULL,
+      role_key VARCHAR(64) NOT NULL,
+      role_name VARCHAR(128),
+      actor VARCHAR(128) NOT NULL,
+      actor_id VARCHAR(128) NOT NULL,
+      actor_kind VARCHAR(32),
+      verb VARCHAR(32) NOT NULL,
+      decision VARCHAR(255),
+      comment TEXT,
+      on_behalf_of VARCHAR(128) NULL,
+      overdue_signoff INT DEFAULT 0,
+      ts VARCHAR(40) NOT NULL,
+      PRIMARY KEY (id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    """,
+)
+
+#: MySQL 索引（MySQL 不支持 ``CREATE INDEX IF NOT EXISTS``，先查 information_schema）。
+MYSQL_PLATFORM_INDEXES: tuple[tuple[str, str, str], ...] = (
+    ("wf_signoff", "ux_wf_signoff_role",
+     "CREATE UNIQUE INDEX ux_wf_signoff_role "
+     "ON wf_signoff (task_uid, role_key, actor, verb)"),
+    ("wf_signoff", "ux_wf_signoff_sod",
+     "CREATE UNIQUE INDEX ux_wf_signoff_sod "
+     "ON wf_signoff (task_uid, actor_id, verb)"),
+)
+
 # 幂等加列清单（表名 → {列名: 列定义}）。
 # 治理层（多人会签）新增 governance_json；老演示库已有历史工单，
 # **不允许** DROP 重建，只允许 PRAGMA 探测后 ALTER TABLE ADD COLUMN。
@@ -105,6 +187,15 @@ _ADDITIVE_COLUMNS: dict[str, dict[str, str]] = {
         "governance_json": "TEXT DEFAULT '{}'",
         # R9 行级归属（D13）：岗位/部门/厂区 JSON；空 = 未纳管存量（保持既有可见性）
         "owner_scope": "TEXT DEFAULT '{}'",
+    },
+}
+
+#: MySQL 版补列定义：TEXT 列不允许 DEFAULT（8.0.13 前）且这里只做老库升级，
+#: 新表已含两列；读侧用 ``or "{}"`` 兜底 NULL。
+_ADDITIVE_COLUMNS_MYSQL: dict[str, dict[str, str]] = {
+    "platform_workflow_task": {
+        "governance_json": "LONGTEXT NULL",
+        "owner_scope": "TEXT NULL",
     },
 }
 
@@ -179,36 +270,62 @@ def ensure_platform_schema(db_url: str) -> None:
     """建平台表（幂等）+ 播种指标库。
 
     SQLite（含 :memory:、裸文件路径）：原生 sqlite3，保证与 WorkflowEngine 同一库；
-    其他（MySQL 等）：SQLAlchemy。
+    MySQL：SQLAlchemy + InnoDB 方言 DDL（``AUTOINCREMENT`` / ``TEXT DEFAULT`` /
+    ``CREATE INDEX IF NOT EXISTS`` 在 MySQL 不合法，不能复用 SQLite 那份）。
     """
     if is_sqlite_target(db_url):
         ensure_platform_schema_sqlite(db_url)
         return
     engine = create_engine(db_url)
-    with engine.begin() as conn:
-        for ddl in PLATFORM_DDL:
-            conn.execute(text(ddl))
-        # 非 SQLite（MySQL 等）：用 inspector 探测后幂等加列
-        from sqlalchemy import inspect as sa_inspect
+    dialect = engine.dialect.name
+    if dialect != "mysql":
+        engine.dispose()
+        raise NotImplementedError(
+            f"平台建表暂只支持 SQLite / MySQL，收到方言 {dialect!r}：{db_url!r}")
+    ddl = MYSQL_PLATFORM_DDL
+    additive = _ADDITIVE_COLUMNS_MYSQL
+    upsert = _METRIC_UPSERT_MYSQL
+    try:
+        with engine.begin() as conn:
+            for statement in ddl:
+                conn.execute(text(statement))
+            _ensure_mysql_indexes(conn)
+            # 非 SQLite（MySQL 等）：用 inspector 探测后幂等加列
+            from sqlalchemy import inspect as sa_inspect
 
-        inspector = sa_inspect(engine)
-        for table, columns in _ADDITIVE_COLUMNS.items():
-            try:
-                existing = {c["name"] for c in inspector.get_columns(table)}
-            except Exception:  # noqa: BLE001 - 表不存在时跳过
-                continue
-            for column, definition in columns.items():
-                if column in existing:
+            inspector = sa_inspect(engine)
+            for table, columns in additive.items():
+                try:
+                    existing = {c["name"] for c in inspector.get_columns(table)}
+                except Exception:  # noqa: BLE001 - 表不存在时跳过
                     continue
-                conn.execute(text(
-                    f"ALTER TABLE {table} ADD COLUMN {column} {definition}"))
-                logger.info("[platform] 迁移加列: %s.%s", table, column)
-        for row in _load_metric_rows():
-            conn.execute(text(_METRIC_UPSERT.replace(":", ":")), dict(
-                id=row[0], name=row[1], owner=row[2], desc=row[3],
-                tables=row[4], keywords=row[5], sql=row[6], unit=row[7],
-                now=row[8]))
-    logger.info("[platform] 平台库就绪: %s", db_url)
+                for column, definition in columns.items():
+                    if column in existing:
+                        continue
+                    conn.execute(text(
+                        f"ALTER TABLE {table} ADD COLUMN {column} {definition}"))
+                    logger.info("[platform] 迁移加列: %s.%s", table, column)
+            for row in _load_metric_rows():
+                conn.execute(text(upsert), dict(
+                    id=row[0], name=row[1], owner=row[2], desc=row[3],
+                    tables=row[4], keywords=row[5], sql=row[6], unit=row[7],
+                    now=row[8]))
+    finally:
+        engine.dispose()
+    logger.info("[platform] 平台库就绪（MySQL）: %s", db_url)
+
+
+def _ensure_mysql_indexes(conn) -> None:
+    """MySQL 不支持 ``CREATE INDEX IF NOT EXISTS``：查 information_schema 后补建。"""
+    for table, name, ddl in MYSQL_PLATFORM_INDEXES:
+        exists = conn.execute(
+            text("SELECT COUNT(*) FROM information_schema.statistics "
+                 "WHERE table_schema = DATABASE() AND table_name = :table "
+                 "AND index_name = :name"),
+            {"table": table, "name": name}).scalar()
+        if not exists:
+            conn.execute(text(ddl))
+            logger.info("[platform] 迁移加索引: %s.%s", table, name)
 
 
 def ensure_platform_schema_sqlite(db_url_or_conn) -> None:
