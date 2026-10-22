@@ -24,6 +24,7 @@ from .node_registry import build_handlers
 from .router import RouteResult, TwoLevelRouter
 from .shared_context import SharedContext
 from .yaml_dag import DagRunResult, YamlDagExecutor
+from ..services.db_seed import SQLiteSeedRunner
 from ..services.notification import (
     BoardNotificationChannel,
     IMGroupNotificationChannel,
@@ -64,79 +65,21 @@ _SEED_SQLS = [
     _DATA_DIR / "seed_board_mfg_volume2.sql",
     # V3.10：SPC 测量值维度扩量（工段 / 产品分类 + 全月覆盖 10-01~10-15）；
     # 由 tools/gen_spc_dimensions_seed.py 生成。须排在 seed_v3.sql 之后
-    # （表已建 + _ensure_columns 已补列），否则新列无处可写。
+    # （表已建 + db_seed._ensure_columns 已补列），否则新列无处可写。
     _DATA_DIR / "seed_spc_dimensions.sql",
 ]
 
 
 def _ensure_columns(conn) -> None:
-    """PRAGMA 守卫的幂等补列（老演示库不重建，就地升级）。
+    """已迁移至 ``services/db_seed.py``（D15）；保留占位避免外部脚本导入断裂。"""
+    from ..services.db_seed import _ensure_columns as _impl
 
-    在**每个种子文件执行前**调用一次：表尚未创建时 ``PRAGMA table_info`` 为空集则跳过，
-    待前置种子建表后再回到这里补列——因此对「老库升级」与「全新库首建」都成立
-    （全新库：seed_v3 建表 → 下一次调用补列 → 后续种子即可写入新列）。
-    """
-    cols = {r[1] for r in conn.execute("PRAGMA table_info(quality_defect)")}
-    if cols and "process_stage" not in cols:
-        conn.execute("ALTER TABLE quality_defect ADD COLUMN process_stage TEXT")
-    if cols and "defect_category" not in cols:
-        conn.execute("ALTER TABLE quality_defect ADD COLUMN defect_category TEXT")
-    if cols and "product_category" not in cols:
-        conn.execute("ALTER TABLE quality_defect ADD COLUMN product_category TEXT")
-    # 标准三率两级看板：老库补齐工段 / 班组两列（同法 PRAGMA 守卫，表不存在则跳过）
-    std_cols = {r[1] for r in conn.execute("PRAGMA table_info(std_standard_audit)")}
-    if std_cols and "process_stage" not in std_cols:
-        conn.execute("ALTER TABLE std_standard_audit ADD COLUMN process_stage TEXT")
-    if std_cols and "team" not in std_cols:
-        conn.execute("ALTER TABLE std_standard_audit ADD COLUMN team TEXT")
-    # V3.9：设备运行补 ``stop_reason``（停机原因，8 类）供制造侧原因柏拉图事实表
-    eq_cols = {r[1] for r in conn.execute("PRAGMA table_info(equipment_run_time)")}
-    if eq_cols and "stop_reason" not in eq_cols:
-        conn.execute("ALTER TABLE equipment_run_time ADD COLUMN stop_reason TEXT")
-    # SPC 过程能力看板：老库补齐 工段 / 产品分类 两列（同法 PRAGMA 守卫，表不存在则跳过）
-    # 说明：``CREATE TABLE IF NOT EXISTS`` 对老库不生效，不在此补列则老库永远缺这两列，
-    # 板级「工段 / 产品分类」筛选将无数据可筛。
-    spc_cols = {r[1] for r in conn.execute("PRAGMA table_info(spc_measurement)")}
-    if spc_cols and "process_stage" not in spc_cols:
-        conn.execute("ALTER TABLE spc_measurement ADD COLUMN process_stage TEXT")
-    if spc_cols and "product_category" not in spc_cols:
-        conn.execute("ALTER TABLE spc_measurement ADD COLUMN product_category TEXT")
+    _impl(conn)
 
 
 def _apply_seed(db_path: str) -> None:
-    """执行演示数据扩充（幂等 INSERT OR IGNORE；只补历史数据不碰红线行）。
-
-    V3.1：员工自由提问需要"有东西可查"——扩充历史批次/客诉/产出/设备/
-    停线数据（2026-10-08 ~ 10-14），"今天"（10-15）的行与场景锚点一律不动，
-    由 tests/v2/test_scenarios_v2.py 的数据红线测试守护。
-    V3.5：追加 ``seed_station_detail.sql``，把六指标按 工段/工序/工位×班次
-    拆分入库（拆分式，求和回原值），供三级看板下钻。
-    V3.6：追加 ``seed_board_mfg_volume.sql``（制造四表万行）+ ``seed_quality_pareto.sql``
-    （不良柏拉图日/月别·类别/工段数据集）；老演示库不重建，故先做 **PRAGMA 守卫的
-    幂等 ALTER** 为 ``quality_defect`` 补 ``process_stage`` / ``defect_category`` 两列。
-    V3.7：追加 ``seed_quality_pareto_pcat.sql``（柏拉图产品分类：消费电子/智能电源/
-    储能电源/车载，含老行幂等回填 UPDATE）；同法补 ``product_category`` 一列。
-    V3.8：追加 ``seed_std_three_rates.sql``——标准三率改为「1 级 = 4 工段 / 2 级 = 各班组」
-    两级看板，同法为 ``std_standard_audit`` 补 ``process_stage`` / ``team`` 两列，
-    并按 4 工段 × 3 班组 × 17 工序 × 15 天补齐班组级审核明细（765 行）。
-    """
-    import sqlite3
-
-    seeds = [p for p in _SEED_SQLS if p.exists()]
-    if not seeds:
-        return
-    try:
-        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(db_path, timeout=10.0) as conn:
-            # 幂等补列：老库（已存在表但缺新列）就地升级，跨 SQLite 版本安全
-            # （不使用 ADD COLUMN IF NOT EXISTS）；表不存在时空集 → 跳过。
-            # 每个种子文件执行前补一次：覆盖「老库升级」与「全新库先建表后补列」两种路径。
-            for p in seeds:
-                _ensure_columns(conn)
-                conn.executescript(p.read_text(encoding="utf-8"))
-                logger.info("[seed] 演示数据扩充完成: %s", p.name)
-    except Exception as exc:  # noqa: BLE001 —— 种子失败不阻断启动（演示库可能只读）
-        logger.warning("[seed] 执行失败（不阻断）: %s", exc)
+    """已迁移至 ``services/db_seed.py``（D15）；保留兼容入口。"""
+    SQLiteSeedRunner(_SEED_SQLS).apply(db_path)
 
 
 @dataclass
