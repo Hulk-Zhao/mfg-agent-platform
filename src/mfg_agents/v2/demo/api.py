@@ -1079,6 +1079,38 @@ def api_workflow_task(task_id: str, request: Request) -> dict[str, Any]:
     return {"code": 0, "data": task.to_dict(), "message": "ok"}
 
 
+@app.get("/api/v2/workflow/{task_id}/signoffs")
+def api_workflow_signoffs(task_id: str, request: Request) -> dict[str, Any]:
+    """签名事实账本（只读审计）：`wf_signoff` 的会签 / 终批 / 驳回记录。
+
+    可见性与工单详情同源（``workflow_scope.classify``），不可见统一 404——
+    不把 ID 空间变成可探测信息。
+
+    诚实边界：账本只记**新签名**；存量工单没有历史行时返回空列表，
+    工单判定与前端渲染仍以 ``governance_json`` 为准（见改造留底第十五棒）。
+    """
+    identity = _require_identity(request)
+    engine = _workflow_engine()
+    try:
+        task = engine.get(task_id)
+    except (KeyError, WorkflowTransitionError, ValueError) as exc:
+        _raise_workflow_http(exc)
+        raise  # pragma: no cover - _raise_workflow_http 必定抛出
+    if workflow_scope.classify(
+            engine, task, identity.get("roles") or [],
+            user_ctx=identity) == workflow_scope.VIS_HIDDEN:
+        raise HTTPException(status_code=404, detail="工单不存在")
+    rows = engine.repository.list_signoffs(task_id)
+    return {"code": 0, "data": {
+        "task_uid": task_id,
+        "count": len(rows),
+        "rows": rows,
+        "source": "wf_signoff",
+        "note": ("签名账本只记录新签名；存量工单无历史行时为空，"
+                 "工单判定/渲染仍以 governance_json 为准"),
+    }, "message": "ok"}
+
+
 @app.post("/api/v2/workflow/{task_id}/select-action")
 def api_workflow_select_action(task_id: str, req: WorkflowActionRequest,
                                request: Request) -> dict[str, Any]:

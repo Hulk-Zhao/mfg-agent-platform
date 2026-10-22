@@ -291,7 +291,8 @@ mfg-agent-platform/
   （`(task_uid, role_key, actor, verb)` 与 `(task_uid, actor_id, verb)`），
   重复签名由 DB 兜底（多实例/多连接），进程内 `RLock` 保留作单实例串行化；
   存量工单不补历史签名（判定与渲染仍读 `governance_json`）。
-  **仍待办**：治理库切 MySQL 后，多实例才真正可用（见上一条）。
+  只读审计接口：`GET /api/v2/workflow/{task_id}/signoffs`（可见性与工单详情同源）。
+  多实例前提已满足（治理库可切 MySQL）；业务读路径 MySQL 仍是下一处缺口。
 
 - **看板数据范围**：四个 `/dashboard/*` 端点已接声明式数据范围目录（`v2/data/data_scope.yaml`）：按岗位 allow + 字段级脱敏 + 下钻同源裁决，未登记看板 fail-closed。剩余缺口是**行级**（同一看板内按组织/产线过滤到本人辖区）——当前是"看到全厂该岗位该看的部分"，生产前需把 `data_scope.yaml` 从角色维度扩展到组织维度。
 - **待办数据范围**：`/workflow/pending` 与 `/workflow/{task_id}` 已按 HITL 槽位裁决（令牌为准、`role` 只能收窄、跨域 404、MCP 同口径）。剩余缺口与看板同类——**行级**：同一槽位内按组织归属过滤（华东/华南质量负责人各看各的）；另外**未纳管的历史工单**没有槽位可判，统一进"无主池"（对有治理职责的岗位只读可见），需要一次工单归属回填才能消掉。
