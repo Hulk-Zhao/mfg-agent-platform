@@ -15,6 +15,7 @@ R13 / D14 起增加**写回侧契约**（可选实现）：
 from __future__ import annotations
 
 import logging
+import re
 import sqlite3
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -28,6 +29,7 @@ __all__ = [
     "Receipt",
     "DataSource",
     "SQLiteDataSource",
+    "MySQLDataSource",
     "DataSourceRegistry",
 ]
 
@@ -270,11 +272,144 @@ class SQLiteDataSource(DataSource):
         return rows
 
 
+class MySQLDataSource(DataSource):
+    """MySQL 只读数据源（生产业务库副本 / 只读账号）。
+
+    红线与 ``SQLiteDataSource`` 同源：业务查询通道**只读**。
+
+    - 代码层：只允许 ``SELECT`` / ``WITH``，拒绝写动词；行数上限兜底；
+    - 连接层：生产必须使用**只读数据库账号**（代码检查不是权限的替代品）；
+    - 方言桥接：注册查询里少量 SQLite ``'%' || :kw || '%'`` 写法会映射为
+      ``CONCAT(...)``；其余 SQLite 专属函数/语法不做自动翻译（Text2SQL 的方言
+      提示词仍是后续工作），遇到不兼容 SQL 应如实报错而不是猜。
+    """
+
+    name = "mysql"
+
+    #: 写类动词（只读通道拒绝；真实防线仍是只读账号）
+    _WRITE_WORDS = re.compile(
+        r"\b(insert|update|delete|replace|drop|alter|create|truncate|grant|revoke)\b",
+        re.IGNORECASE)
+    _CONCAT = re.compile(
+        r"'(?P<a>[^']*)'\s*\|\|\s*(?P<b>:\w+)\s*\|\|\s*'(?P<c>[^']*)'")
+    _CONCAT2 = re.compile(r"'(?P<a>[^']*)'\s*\|\|\s*(?P<b>:\w+)")
+
+    def __init__(self, url: str, name: str = "mysql",
+                 queries: Optional[dict[str, str]] = None,
+                 row_cap: int = 200,
+                 meta: Optional[dict[str, Any]] = None) -> None:
+        from sqlalchemy import create_engine
+
+        self.name = name
+        self.url = url
+        self.queries: dict[str, str] = dict(queries or {})
+        self.row_cap = row_cap
+        self.meta: dict[str, Any] = dict(meta or {})
+        self._engine = create_engine(url, pool_pre_ping=True, future=True)
+
+    def list_tables(self) -> list[str]:
+        from sqlalchemy import text
+
+        with self._engine.connect() as conn:
+            rows = conn.execute(text(
+                "SELECT table_name FROM information_schema.tables "
+                "WHERE table_schema = DATABASE() ORDER BY table_name")).fetchall()
+        return [str(r[0]) for r in rows]
+
+    def health(self) -> dict[str, Any]:
+        from sqlalchemy import text
+
+        try:
+            with self._engine.connect() as conn:
+                conn.execute(text("SELECT 1")).fetchone()
+            return {"ok": True, "error": ""}
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": str(exc)[:200]}
+
+    def describe(self) -> dict[str, Any]:
+        """数据源自描述：表清单含字段（information_schema）。"""
+        base = super().describe()
+        if not base["health"]["ok"]:
+            return base
+        from sqlalchemy import text
+
+        try:
+            with self._engine.connect() as conn:
+                rows = conn.execute(text(
+                    "SELECT table_name, column_name, data_type "
+                    "FROM information_schema.columns "
+                    "WHERE table_schema = DATABASE() "
+                    "ORDER BY table_name, ordinal_position")).fetchall()
+            fields: dict[str, list[dict[str, str]]] = {}
+            for table, column, data_type in rows:
+                fields.setdefault(str(table), []).append(
+                    {"name": str(column), "type": str(data_type)})
+            base["tables"] = [
+                {"name": str(t["name"]), "fields": fields.get(str(t["name"]), [])}
+                for t in base["tables"]]
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("MySQL describe 字段信息获取失败（%s）: %s", self.name, exc)
+        return base
+
+    def run_query(self, name: str, params: Optional[dict] = None) -> list[dict]:
+        sql = self.queries.get(name)
+        if sql is None:
+            raise KeyError(f"数据源 {self.name!r} 未注册查询: {name!r}")
+        return self.execute_readonly_sql(sql, params, self.row_cap)
+
+    def execute_readonly_sql(self, sql: str, params: Optional[dict] = None,
+                             row_cap: int = 200) -> list[dict]:
+        from sqlalchemy import text
+
+        cleaned = self._strip_comments(sql).strip().rstrip(";")
+        if not re.match(r"(?is)^(select|with)\b", cleaned):
+            raise ValueError("只读数据源拒绝非查询 SQL（仅允许 SELECT / WITH）")
+        # 去掉字符串字面量后再查写动词，避免 WHERE title='delete' 这类误伤
+        sanitized = re.sub(r"'(?:[^']|'')*'", "''", cleaned)
+        if self._WRITE_WORDS.search(sanitized):
+            raise ValueError("只读数据源拒绝包含写动词的 SQL")
+        translated = self._translate_concat(cleaned)
+        capped = _apply_row_cap(translated, row_cap)
+        with self._engine.connect() as conn:
+            rows = [dict(r) for r in conn.execute(
+                text(capped), params or {}).mappings().fetchmany(row_cap)]
+        if len(rows) >= row_cap:
+            logger.warning("查询结果达到行数上限 %d，可能被截断: %s", row_cap, sql)
+        return rows
+
+    # ---------- 方言桥接 ----------
+
+    @staticmethod
+    def _strip_comments(sql: str) -> str:
+        """去 ``--`` 行注释与 ``/* */`` 块注释（只读前缀判定前先净化）。"""
+        sql = re.sub(r"/\*.*?\*/", " ", sql, flags=re.S)
+        return re.sub(r"--[^\n]*", " ", sql)
+
+    @classmethod
+    def _translate_concat(cls, sql: str) -> str:
+        """SQLite ``'%' || :kw || '%'`` → MySQL ``CONCAT('%', :kw, '%')``。
+
+        只处理注册查询里已知的「字面量 + 命名参数 + 字面量」拼接；列之间的
+        ``||`` 不自动改写，避免把逻辑或误改成字符串拼接。无匹配时原样返回。
+        """
+        translated = cls._CONCAT.sub(
+            lambda m: f"CONCAT('{m.group('a')}', {m.group('b')}, '{m.group('c')}')",
+            sql)
+        return cls._CONCAT2.sub(
+            lambda m: f"CONCAT('{m.group('a')}', {m.group('b')})", translated)
+
+    def close(self) -> None:
+        self._engine.dispose()
+
+
 def _apply_row_cap(sql: str, row_cap: int) -> str:
-    """无 LIMIT 的查询外包一层 LIMIT，防止全表拉取（结果爆炸防线）。"""
+    """无 LIMIT 的查询外包一层 LIMIT，防止全表拉取（结果爆炸防线）。
+
+    派生表必须带别名：SQLite 可省，MySQL 强制（否则 1248 错误）。
+    """
     if row_cap <= 0 or "limit" in sql.lower():
         return sql
-    return f"SELECT * FROM ({sql}) LIMIT {int(row_cap)}"
+    return f"SELECT * FROM ({sql}) AS _mfg_q LIMIT {int(row_cap)}"
 
 
 class DataSourceRegistry:

@@ -174,3 +174,53 @@ def test_mysql_followup_state_machine_and_writeback(tmp_path, monkeypatch):
                     "DELETE FROM procurement_followup WHERE work_order_set = :s"),
                     {"s": work_order_set})
             repo.engine.dispose()
+
+
+def test_mysql_data_source_readonly_contract():
+    """业务读路径：MySQLDataSource 只读契约 + 注册查询方言桥接。"""
+    from sqlalchemy import create_engine
+
+    from mfg_agents.v2.contracts.data_source import MySQLDataSource
+
+    engine = create_engine(MYSQL_URL)
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("DROP TABLE IF EXISTS mfg_atp_demo"))
+            conn.execute(text(
+                "CREATE TABLE mfg_atp_demo ("
+                "product_model VARCHAR(32) NOT NULL, "
+                "on_hand_qty INT NOT NULL, reserved_qty INT NOT NULL)"))
+            conn.execute(text(
+                "INSERT INTO mfg_atp_demo VALUES (:m, :o, :r)"),
+                [{"m": "A型号", "o": 10, "r": 3},
+                 {"m": "B型号", "o": 5, "r": 1}])
+
+        source = MySQLDataSource(MYSQL_URL, queries={
+            "atp": ("SELECT product_model, on_hand_qty - reserved_qty AS available "
+                    "FROM mfg_atp_demo WHERE product_model = :model"),
+            "kw": ("SELECT product_model FROM mfg_atp_demo "
+                   "WHERE product_model LIKE '%' || :kw || '%'"),
+        })
+        try:
+            assert "mfg_atp_demo" in source.list_tables()
+            assert source.health()["ok"] is True
+            assert source.run_query("atp", {"model": "A型号"}) == [
+                {"product_model": "A型号", "available": 7}]
+            assert len(source.run_query("kw", {"kw": "型号"})) == 2
+            assert source.execute_readonly_sql(
+                "SELECT COUNT(*) AS c FROM mfg_atp_demo")[0]["c"] == 2
+
+            description = source.describe()
+            fields = next(t["fields"] for t in description["tables"]
+                          if t["name"] == "mfg_atp_demo")
+            assert any(f["name"] == "on_hand_qty" for f in fields)
+
+            with pytest.raises(ValueError):
+                source.execute_readonly_sql(
+                    "UPDATE mfg_atp_demo SET on_hand_qty = 0")
+        finally:
+            source.close()
+    finally:
+        with engine.begin() as conn:
+            conn.execute(text("DROP TABLE IF EXISTS mfg_atp_demo"))
+        engine.dispose()

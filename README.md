@@ -285,8 +285,10 @@ mfg-agent-platform/
   `WORKFLOW_DB` 显式配成 MySQL 时，`build_workflow_engine` 自动注入仓储；
   工作流 / 报告中心 / 现场看板 / 催交库均按同一地址自动分派方言实现，
   MySQL 8.0 治理链已真库验证。`WorkflowEngine(mysql_url)` 单构造仍 fail-fast
-  （防止 URL 当文件路径静默建库）。剩余：业务读路径仍只有 `SQLiteDataSource`
-  （`DB_URL=mysql` 需另实现只读数据源）；SPC / 案例库各自独立，未迁 MySQL。
+  （防止 URL 当文件路径静默建库）。
+  业务读路径已提供 `MySQLDataSource`（只读副本 + 只读账号 + 代码层只读守卫）；
+  **仍待办**：Text2SQL 提示词/注册查询的 MySQL 方言适配、真实业务表 ACL 登记；
+  SPC / 案例库各自独立，未迁 MySQL。
 - **会签并发与幂等**：已落数据库级签名事实表 `wf_signoff` + 两条唯一索引
   （`(task_uid, role_key, actor, verb)` 与 `(task_uid, actor_id, verb)`），
   重复签名由 DB 兜底（多实例/多连接），进程内 `RLock` 保留作单实例串行化；

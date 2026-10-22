@@ -19,7 +19,11 @@ from typing import Any, Optional
 
 from ...common.config import settings
 from ...common.platform_schema import is_sqlite_target
-from ..contracts.data_source import DataSourceRegistry, SQLiteDataSource
+from ..contracts.data_source import (
+    DataSourceRegistry,
+    MySQLDataSource,
+    SQLiteDataSource,
+)
 from ..contracts.scenario import ScenarioRegistry
 from .node_registry import build_handlers
 from .router import RouteResult, TwoLevelRouter
@@ -113,27 +117,37 @@ class V2Runtime:
 
     @classmethod
     def create_default(cls) -> "V2Runtime":
-        """装配默认依赖（本地 SQLite 数据源 + YAML 场景/指标/查询库）。"""
-        db_path = settings.DB_URL.replace("sqlite:///", "")
-        _apply_seed(db_path)
+        """装配默认依赖（SQLite 演示库 / MySQL 业务只读副本 + YAML 场景/指标/查询库）。"""
         queries = QueryLibrary.load(_V2_DIR / "data" / "queries.yaml")
         metrics = MetricLibrary.load(_V2_DIR / "data" / "metrics")
+        query_sqls = {name: str(spec["sql"])
+                      for name, spec in queries._queries.items()}
         data_registry = DataSourceRegistry()
-        data_registry.register(
-            SQLiteDataSource(db_path, name="dev", queries={
-                name: str(spec["sql"])
-                for name, spec in queries._queries.items()},
-                # 行数上限：数据速查四块各 200+ 行（材料 248 / 成品 241 / 来料 250），
-                # 默认 200 会按 ORDER BY 截断尾部（如料号 U–Z 丢失）。仍保留上限防全表拉取。
-                row_cap=500,
-                meta={
-                    "system": "演示制造数据集（init.sql）",
-                    "domain": "生产/质量/供应链/设备/客诉",
-                    "owner_dept": "平台组",
-                    "note": "替换为真实 ERP/MES 时：实现 DataSource 契约"
-                            "并在 register() 声明 meta，总览页即自动可见",
-                }),
-            default=True)
+        if is_sqlite_target(settings.DB_URL):
+            db_path = settings.DB_URL.replace("sqlite:///", "")
+            _apply_seed(db_path)
+            source = SQLiteDataSource(db_path, name="dev", queries=query_sqls,
+                                      # 行数上限：数据速查四块各 200+ 行（材料 248 /
+                                      # 成品 241 / 来料 250），默认 200 会截断尾部。
+                                      row_cap=500,
+                                      meta={
+                                          "system": "演示制造数据集（init.sql）",
+                                          "domain": "生产/质量/供应链/设备/客诉",
+                                          "owner_dept": "平台组",
+                                          "note": "替换为真实 ERP/MES 时：实现 DataSource 契约"
+                                                  "并在 register() 声明 meta",
+                                      })
+        else:
+            # 业务库显式配成 MySQL：只读副本 + 只读账号（代码层再挡写动词）
+            source = MySQLDataSource(settings.DB_URL, name="dev",
+                                     queries=query_sqls, row_cap=500,
+                                     meta={
+                                         "system": "生产业务库（MySQL 只读副本）",
+                                         "domain": "生产/质量/供应链/设备/客诉",
+                                         "owner_dept": "平台组",
+                                         "note": "必须使用只读账号；SQLite 种子不适用",
+                                     })
+        data_registry.register(source, default=True)
         scenario_registry = ScenarioRegistry(settings.V2_SCENARIOS_DIR)
         scenario_registry.load()
         workflow_url = str(settings.WORKFLOW_DB or "")
