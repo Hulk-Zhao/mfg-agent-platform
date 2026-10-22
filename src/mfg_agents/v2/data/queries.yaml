@@ -65,7 +65,9 @@ queries:
     desc: "SRM：供应商到货/不合格统计（跟催与评级）"
     tables: [material_batch]
     keywords: [供应商, 跟催, 评级, 整改]
-    sql: "SELECT supplier, part_no, part_name, COUNT(*) AS batch_cnt, SUM(CASE WHEN incoming_result='fail' THEN 1 ELSE 0 END) AS fail_cnt FROM material_batch GROUP BY supplier, part_no"
+    # part_name 必须进 GROUP BY：MySQL ONLY_FULL_GROUP_BY 拒绝「选了非聚合列但未分组」，
+    # SQLite 默认放行——同一份 SQL 两库行为不一致，按更严格的一侧写才可移植。
+    sql: "SELECT supplier, part_no, part_name, COUNT(*) AS batch_cnt, SUM(CASE WHEN incoming_result='fail' THEN 1 ELSE 0 END) AS fail_cnt FROM material_batch GROUP BY supplier, part_no, part_name"
 
   inventory_available_all:
     desc: "WMS：库存可用量（on_hand - reserved，替代料/冻结评估）"
@@ -324,7 +326,8 @@ queries:
     desc: "QMS：按批次查不良明细（含产线/工段/时间，质量追溯生产记录一路）"
     tables: [quality_defect]
     keywords: [批次不良明细, 该批次产线, 工段不良]
-    sql: "SELECT batch_no, product_model, line_code, process_stage, defect_type, defected_qty FROM (SELECT batch_no, product_model, line_code, process_stage, defect_type, SUM(defect_qty) AS defected_qty, MAX(inspect_time) AS last_time FROM quality_defect WHERE batch_no = :batch_no GROUP BY batch_no, product_model, line_code, process_stage, defect_type) ORDER BY defected_qty DESC"
+    # 派生表必须带别名：MySQL 8 强制要求（SQLite 放行）——`AS t` 两库都合法。
+    sql: "SELECT batch_no, product_model, line_code, process_stage, defect_type, defected_qty FROM (SELECT batch_no, product_model, line_code, process_stage, defect_type, SUM(defect_qty) AS defected_qty, MAX(inspect_time) AS last_time FROM quality_defect WHERE batch_no = :batch_no GROUP BY batch_no, product_model, line_code, process_stage, defect_type) AS t ORDER BY defected_qty DESC"
 
   equipment_log_by_batch:
     desc: "EAM：批次所属产线近期设备日志（质量追溯设备状态一路，含异常标记）"
