@@ -20,6 +20,7 @@ from sqlalchemy import text
 import mfg_agents.v2 as v2_pkg
 from mfg_agents.v2.contracts.permissions import reset_permission_registry
 from mfg_agents.v2.core.orchestrator import build_workflow_engine
+from mfg_agents.v2.services import procurement_followup as followup_svc
 from mfg_agents.v2.services import report_store, site_board
 from mfg_agents.v2.services.report_repository_sqlalchemy import (
     SQLAlchemyReportRepository,
@@ -139,3 +140,37 @@ def test_mysql_runtime_factory_injects_sqlalchemy_repository():
                 "DELETE FROM platform_workflow_task WHERE task_uid = :u"),
                 {"u": task.task_uid})
         engine.repository.engine.dispose()
+
+
+def test_mysql_followup_state_machine_and_writeback(tmp_path, monkeypatch):
+    """催交库切 MySQL：状态机 + 到货回执（审计台账走独立文件）。"""
+    outbox = tmp_path / "writeback_outbox.jsonl"
+    monkeypatch.setenv("MFG_WRITEBACK_OUTBOX", str(outbox))
+    work_order_set = "SET-MYSQL-IT"
+    gap = {"part_no": "MAT-MYSQL", "supplier": "SUP-MYSQL", "shortage_qty": 20}
+    repo = followup_svc._repo(MYSQL_URL)
+    try:
+        rows = followup_svc.dispatch_followups(
+            work_order_set, [gap], actor="采购员", db_path=MYSQL_URL)
+        fid = rows[0]["followup_id"]
+
+        followup_svc.transition(fid, "reply", actor="采购员",
+                                note="周五到 20 件", db_path=MYSQL_URL)
+        arrived = followup_svc.transition(
+            fid, "arrival", actor="采购员", arrival_qty=20, db_path=MYSQL_URL)
+        assert arrived["status"] == "arrival_confirmed"
+        assert arrived["writeback_receipt"]["status"] == "applied"
+        assert outbox.exists()
+
+        closed = followup_svc.transition(
+            fid, "close", actor="采购员", note="缺口已补齐", db_path=MYSQL_URL)
+        assert closed["status"] == "closed"
+        assert [r["followup_id"] for r in followup_svc.list_followups(
+            status="closed", db_path=MYSQL_URL)] == [fid]
+    finally:
+        if hasattr(repo, "engine"):
+            with repo.engine.begin() as conn:
+                conn.execute(text(
+                    "DELETE FROM procurement_followup WHERE work_order_set = :s"),
+                    {"s": work_order_set})
+            repo.engine.dispose()

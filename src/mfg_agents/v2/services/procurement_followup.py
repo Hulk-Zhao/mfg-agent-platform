@@ -33,10 +33,12 @@ import sqlite3
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable, Iterable, Optional, Union
+from typing import Any, Callable, Iterable, Mapping, Optional, Union
+
+from sqlalchemy import create_engine, text
 
 from ...common.config import settings
-from ...common.platform_schema import sqlite_path_from_url
+from ...common.platform_schema import is_sqlite_target, sqlite_path_from_url
 from .workflow import assert_sqlite_backed
 from .writeback import emit_arrival_receipt
 
@@ -56,6 +58,8 @@ __all__ = [
     "FollowupDataError",
     "ProcurementFollowupRepository",
     "SQLiteProcurementFollowupRepository",
+    "SQLAlchemyProcurementFollowupRepository",
+    "resolve_followup_target",
     "resolve_followup_db",
     "followup_id_for",
     "ensure_followup_table",
@@ -129,6 +133,38 @@ CREATE INDEX IF NOT EXISTS idx_followup_status ON procurement_followup (status);
 CREATE INDEX IF NOT EXISTS idx_followup_set ON procurement_followup (work_order_set);
 """
 
+#: MySQL 版建表（索引内联，幂等）。
+MYSQL_FOLLOWUP_DDL = """
+CREATE TABLE IF NOT EXISTS procurement_followup (
+    id BIGINT NOT NULL AUTO_INCREMENT,
+    followup_id VARCHAR(80) NOT NULL,
+    work_order_set VARCHAR(128) NOT NULL,
+    part_no VARCHAR(80) NOT NULL,
+    part_name VARCHAR(255),
+    supplier VARCHAR(255),
+    shortage_qty DOUBLE NOT NULL DEFAULT 0,
+    available_qty DOUBLE NOT NULL DEFAULT 0,
+    safety_stock DOUBLE NOT NULL DEFAULT 0,
+    owner VARCHAR(64),
+    status VARCHAR(32) NOT NULL DEFAULT 'draft',
+    supplier_reply LONGTEXT,
+    reply_at VARCHAR(40) NULL,
+    arrival_qty DOUBLE NULL,
+    arrival_at VARCHAR(40) NULL,
+    closed_at VARCHAR(40) NULL,
+    close_note LONGTEXT,
+    writeback_mode VARCHAR(16) NOT NULL DEFAULT 'demo',
+    sla_due_at VARCHAR(40) NULL,
+    created_at VARCHAR(40) NOT NULL,
+    updated_at VARCHAR(40) NOT NULL,
+    history_json LONGTEXT,
+    PRIMARY KEY (id),
+    UNIQUE KEY ux_followup_id (followup_id),
+    KEY idx_followup_status (status),
+    KEY idx_followup_set (work_order_set)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+"""
+
 
 class FollowupError(Exception):
     """催交状态机基础异常。"""
@@ -157,44 +193,46 @@ def _iso(dt: datetime) -> str:
     return dt.isoformat(timespec="seconds")
 
 
-def _scope_for_path(path: str) -> str:
-    """按文件路径判库域：演示库文件名含 ``demo``（``demo_governance.db``）。"""
-    name = Path(path).name.lower()
+def _scope_for_target(target: str) -> str:
+    """按目标名判库域：演示库名含 ``demo``（``demo_governance.db``）→ demo。"""
+    name = str(target).replace("\\", "/").rsplit("/", 1)[-1].lower()
     return "demo" if "demo" in name else "governance"
 
 
-def resolve_followup_db(db_path: Optional[Union[str, Path]] = None) -> tuple[str, str]:
-    """解析催交库路径与库域（``demo`` / ``governance``）。
+def resolve_followup_target(
+        db_path: Optional[Union[str, Path]] = None) -> tuple[str, str]:
+    """解析催交库目标（SQLite 路径 / MySQL URL）与库域（``demo`` / ``governance``）。
 
-    D10 双库分工：
-    - 显式 ``MFG_FOLLOWUP_DB``（测试/运维）优先；
+    D10 双库分工不变：
+    - 显式参数 / ``MFG_FOLLOWUP_DB`` 优先；
     - 演示态（``MFG_DEMO_MODE`` 默认开）→ ``DEMO_DB_PATH``；
-    - 真实态 → ``settings.WORKFLOW_DB``。
-
-    ``config_demo`` 的导入放在函数内：演示层依赖服务层，模块级导入会成环；
-    且测试可直接传 ``db_path`` 绕开配置。
+    - 真实态 → ``settings.WORKFLOW_DB``（显式配成 MySQL 时原样返回）。
     """
     if db_path is not None:
         target = str(db_path)
-        assert_sqlite_backed(target)
-        resolved = sqlite_path_from_url(target)
-        return resolved, _scope_for_path(resolved)
+        return target, _scope_for_target(target)
 
     explicit = (os.getenv("MFG_FOLLOWUP_DB") or "").strip()
     if explicit:
-        assert_sqlite_backed(explicit)
-        resolved = sqlite_path_from_url(explicit)
-        return resolved, _scope_for_path(resolved)
+        return explicit, _scope_for_target(explicit)
 
     from ..demo.config_demo import DEMO_DB_PATH, DEMO_MODE
 
     if DEMO_MODE:
-        assert_sqlite_backed(DEMO_DB_PATH)
-        return sqlite_path_from_url(DEMO_DB_PATH), "demo"
+        return str(DEMO_DB_PATH), "demo"
 
     url = str(getattr(settings, "WORKFLOW_DB", "") or "")
-    assert_sqlite_backed(url)
-    return sqlite_path_from_url(url), "governance"
+    return url, "governance"
+
+
+def resolve_followup_db(db_path: Optional[Union[str, Path]] = None) -> tuple[str, str]:
+    """兼容入口：只接受 SQLite 目标，返回 ``(文件路径, 库域)``。
+
+    MySQL 目标用 :func:`resolve_followup_target`（模块内 ``_repo`` 按方言分派）。
+    """
+    target, scope = resolve_followup_target(db_path)
+    assert_sqlite_backed(target)
+    return sqlite_path_from_url(target), scope
 
 
 def followup_id_for(part_no: str, supplier: str, work_order_set: str) -> str:
@@ -324,10 +362,86 @@ class SQLiteProcurementFollowupRepository(ProcurementFollowupRepository):
         return self.get(followup_id) or {}
 
 
+class SQLAlchemyProcurementFollowupRepository(ProcurementFollowupRepository):
+    """跨方言实现：SQLite 复用原生实现，MySQL 用命名参数与 InnoDB DDL。"""
+
+    def __init__(self, db_url: str, scope: str = "governance") -> None:
+        self.db_url = db_url
+        self.scope = scope
+        self.engine = create_engine(db_url, pool_pre_ping=True, future=True)
+        self.ensure_schema()
+
+    def ensure_schema(self) -> None:
+        dialect = self.engine.dialect.name
+        if dialect == "sqlite":
+            SQLiteProcurementFollowupRepository(
+                sqlite_path_from_url(self.db_url), self.scope).ensure_schema()
+            return
+        if dialect != "mysql":
+            raise NotImplementedError(
+                f"催交仓储暂只支持 SQLite / MySQL，收到方言 {dialect!r}")
+        with self.engine.begin() as conn:
+            conn.execute(text(MYSQL_FOLLOWUP_DDL))
+
+    def get(self, followup_id: str) -> Optional[dict[str, Any]]:
+        with self.engine.connect() as conn:
+            row = conn.execute(
+                text(f"SELECT * FROM {FOLLOWUP_TABLE} WHERE followup_id = :fid"),
+                {"fid": followup_id}).mappings().first()
+        return _row_to_dict(dict(row)) if row else None
+
+    def list_rows(self, *, status: Optional[str] = None,
+                  work_order_set: Optional[str] = None,
+                  limit: int = 200) -> list[dict[str, Any]]:
+        sql = f"SELECT * FROM {FOLLOWUP_TABLE} WHERE 1 = 1"
+        params: dict[str, Any] = {}
+        if status:
+            sql += " AND status = :status"
+            params["status"] = status
+        if work_order_set:
+            sql += " AND work_order_set = :set"
+            params["set"] = work_order_set
+        sql += " ORDER BY created_at DESC, id DESC LIMIT :lim"
+        params["lim"] = max(1, min(int(limit), 500))
+        with self.engine.connect() as conn:
+            rows = conn.execute(text(sql), params).mappings().all()
+        return [_row_to_dict(dict(r)) for r in rows]
+
+    def insert(self, row: dict[str, Any]) -> dict[str, Any]:
+        payload = _normalize_row(row, scope=self.scope)
+        payload["history_json"] = json.dumps(payload.pop("history"), ensure_ascii=False)
+        columns = list(payload)
+        with self.engine.begin() as conn:
+            conn.execute(
+                text(f"INSERT INTO {FOLLOWUP_TABLE} ({', '.join(columns)}) "
+                     f"VALUES ({', '.join(':' + c for c in columns)})"),
+                payload)
+        return self.get(str(payload["followup_id"])) or {}
+
+    def update(self, followup_id: str, fields: dict[str, Any],
+               event: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        current = self.get(followup_id)
+        if not current:
+            raise FollowupNotFound(f"催交单不存在: {followup_id}")
+        history = list(current.get("history") or [])
+        if event:
+            history.append(event)
+        payload = dict(fields)
+        payload["updated_at"] = _iso(_now())
+        payload["history_json"] = json.dumps(history, ensure_ascii=False)
+        payload["fid"] = followup_id
+        assignments = ", ".join(f"{k} = :{k}" for k in payload if k != "fid")
+        with self.engine.begin() as conn:
+            conn.execute(
+                text(f"UPDATE {FOLLOWUP_TABLE} SET {assignments} "
+                     f"WHERE followup_id = :fid"), payload)
+        return self.get(followup_id) or {}
+
+
 # ---------------- 行归一化 ----------------
 
 
-def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
+def _row_to_dict(row: Mapping[str, Any]) -> dict[str, Any]:
     data = dict(row)
     try:
         data["history"] = json.loads(data.get("history_json") or "[]")
@@ -370,16 +484,22 @@ def _normalize_row(row: dict[str, Any], *, scope: str) -> dict[str, Any]:
 
 def _repo(db_path: Optional[Union[str, Path]] = None
           ) -> ProcurementFollowupRepository:
-    path, scope = resolve_followup_db(db_path)
-    return SQLiteProcurementFollowupRepository(path, scope=scope)
+    target, scope = resolve_followup_target(db_path)
+    if is_sqlite_target(target):
+        return SQLiteProcurementFollowupRepository(
+            sqlite_path_from_url(target), scope=scope)
+    return SQLAlchemyProcurementFollowupRepository(target, scope=scope)
 
 
 def _outbox_path(repo: ProcurementFollowupRepository) -> str:
-    """回写审计台账：与治理库同目录（空/内存库仅进程内留存）。"""
+    """回写审计台账：SQLite 与治理库同目录；MySQL 用 ``MFG_WRITEBACK_OUTBOX``。
+
+    未配置时返回空串（仅进程内留存），不往容器工作目录乱写文件。
+    """
     db_path = str(getattr(repo, "db_path", "") or "")
-    if not db_path or db_path == ":memory:":
-        return ""
-    return str(Path(db_path).with_name("writeback_outbox.jsonl"))
+    if db_path and db_path != ":memory:":
+        return str(Path(db_path).with_name("writeback_outbox.jsonl"))
+    return (os.getenv("MFG_WRITEBACK_OUTBOX") or "").strip()
 
 
 # ---------------- 缺口清单（数据事实，不编造） ----------------
@@ -469,10 +589,10 @@ def _history_entry(action: str, actor: str, from_status: str,
 
 
 def ensure_followup_table(db_path: Optional[Union[str, Path]] = None) -> str:
-    """幂等建表；返回实际库路径（演示库 / 治理库按 D10 解析）。"""
-    path, _ = resolve_followup_db(db_path)
-    SQLiteProcurementFollowupRepository(path).ensure_schema()
-    return path
+    """幂等建表；返回实际使用的目标（SQLite 路径 / MySQL URL）。"""
+    target, _ = resolve_followup_target(db_path)
+    _repo(target).ensure_schema()
+    return target
 
 
 def plan_followups(work_order_set: str, gaps: Iterable[dict[str, Any]],
