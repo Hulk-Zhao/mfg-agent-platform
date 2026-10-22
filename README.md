@@ -282,7 +282,12 @@ mfg-agent-platform/
 当前为单实例演示实现，治理层已落地（声明式权限目录 + 启动自检 + 一人一签幂等）。上线前待办：
 
 - **治理库切换 MySQL**：`WorkflowEngine` 当前固定 SQLite（`WORKFLOW_DB`，单文件单实例）。已加启动期 fail-fast 拒绝非 SQLite 地址，避免把 MySQL URL 当文件路径静默建库；要落 MySQL 需先抽 `WorkflowRepository` 契约，再实现 SQLAlchemy 后端。
-- **会签并发与幂等**：进程内 `RLock` 串行化需升级为数据库级——签名拆独立表 + 唯一索引 `(task_uid, role_key, actor, verb)` 幂等。**与上一条应一并做**（多实例的前提是签名落库）。
+- **会签并发与幂等**：已落数据库级签名事实表 `wf_signoff` + 两条唯一索引
+  （`(task_uid, role_key, actor, verb)` 与 `(task_uid, actor_id, verb)`），
+  重复签名由 DB 兜底（多实例/多连接），进程内 `RLock` 保留作单实例串行化；
+  存量工单不补历史签名（判定与渲染仍读 `governance_json`）。
+  **仍待办**：治理库切 MySQL 后，多实例才真正可用（见上一条）。
+
 - **看板数据范围**：四个 `/dashboard/*` 端点已接声明式数据范围目录（`v2/data/data_scope.yaml`）：按岗位 allow + 字段级脱敏 + 下钻同源裁决，未登记看板 fail-closed。剩余缺口是**行级**（同一看板内按组织/产线过滤到本人辖区）——当前是"看到全厂该岗位该看的部分"，生产前需把 `data_scope.yaml` 从角色维度扩展到组织维度。
 - **待办数据范围**：`/workflow/pending` 与 `/workflow/{task_id}` 已按 HITL 槽位裁决（令牌为准、`role` 只能收窄、跨域 404、MCP 同口径）。剩余缺口与看板同类——**行级**：同一槽位内按组织归属过滤（华东/华南质量负责人各看各的）；另外**未纳管的历史工单**没有槽位可判，统一进"无主池"（对有治理职责的岗位只读可见），需要一次工单归属回填才能消掉。
 - **现场看板推送的剩余缺口**：链路、接口、前端承载、IM 映射与**应用消息发送**都已落地（客诉 8D 场景 `dispatch_site` 归因工段 → 推送该工段现场看板 → 8D 工单责任人按工段追加 → `GET /api/v2/site-board` 读、`ack` / `feedback` 回写并留痕 → 预警中心第五类「现场推送」现场可直接接收与闭环 → 「工段 → 现场群」映射负责 IM 触达：群机器人 webhook 发群、`WeComPushClient` 走 `gettoken`/`message/send` @ 责任人）。还剩两件：① **真实租户联调**（企业微信后台建自建应用、配 CorpID/AgentId/Secret 与应用可见范围、IP 白名单——代码侧凭据齐即真发，`errcode≠0` 会抛错并记 failed，属部署动作）；② **行级归属**（同一工段内按组织/产线缩到本人辖区，与四个看板同类缺口）。
