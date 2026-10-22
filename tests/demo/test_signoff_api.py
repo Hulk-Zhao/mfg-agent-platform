@@ -54,7 +54,8 @@ def _signed_task(engine: WorkflowEngine) -> str:
     uid = task.task_uid
     engine.select_action(uid, "concession", "王倩", user_ctx=SQE_CTX,
                          comment="加严检验 + 客户告知")
-    engine.cosign(uid, "王倩", user_ctx=PQE_CTX)
+    engine.cosign(uid, "王倩", user_ctx=PQE_CTX, decision="同意",
+                  comment="同意, 加严\n复核")
     return uid
 
 
@@ -88,3 +89,33 @@ def test_signoffs_invisible_task_is_404(client, engine):
     resp = client.get(f"/api/v2/workflow/{uid}/signoffs",
                       headers=_auth("warehouse"))
     assert resp.status_code == 404
+
+
+def test_signoffs_export_requires_token(client):
+    resp = client.get("/api/v2/workflow/any-task/signoffs/export")
+    assert resp.status_code == 401
+
+
+def test_signoffs_export_unknown_task_is_404(client):
+    resp = client.get("/api/v2/workflow/wf-nope/signoffs/export",
+                      headers=_auth("quality"))
+    assert resp.status_code == 404
+
+
+def test_signoffs_export_csv_with_escaping(client, engine):
+    uid = _signed_task(engine)
+    resp = client.get(f"/api/v2/workflow/{uid}/signoffs/export",
+                      headers=_auth("quality"))
+    assert resp.status_code == 200, resp.text
+    assert resp.headers["content-type"].startswith("text/csv")
+    assert "attachment" in resp.headers["content-disposition"]
+    assert f"signoffs-{uid}.csv" in resp.headers["content-disposition"]
+
+    body = resp.content.decode("utf-8")
+    assert body.startswith("\ufeff")  # Excel 中文兼容
+    lines = body.lstrip("\ufeff").splitlines()
+    assert lines[0].startswith(
+        "task_uid,role_key,role_name,actor,actor_id,verb,decision")
+    assert "cosign" in lines[1] and "pqe" in lines[1] and "u-pqe" in lines[1]
+    # 含逗号/换行的 comment 必须被 CSV writer 引号包裹
+    assert '"同意, 加严' in body

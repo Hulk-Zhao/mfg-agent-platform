@@ -1111,6 +1111,43 @@ def api_workflow_signoffs(task_id: str, request: Request) -> dict[str, Any]:
     }, "message": "ok"}
 
 
+@app.get("/api/v2/workflow/{task_id}/signoffs/export")
+def api_workflow_signoffs_export(task_id: str, request: Request) -> Response:
+    """签名账本 CSV 导出（审计留档；可见性/401/404 与只读接口同源）。
+
+    输出带 UTF-8 BOM，Excel 直接打开不乱码；注释里的逗号/换行由 CSV writer 转义。
+    """
+    import csv
+    import io
+
+    identity = _require_identity(request)
+    engine = _workflow_engine()
+    try:
+        task = engine.get(task_id)
+    except (KeyError, WorkflowTransitionError, ValueError) as exc:
+        _raise_workflow_http(exc)
+        raise  # pragma: no cover - _raise_workflow_http 必定抛出
+    if workflow_scope.classify(
+            engine, task, identity.get("roles") or [],
+            user_ctx=identity) == workflow_scope.VIS_HIDDEN:
+        raise HTTPException(status_code=404, detail="工单不存在")
+
+    columns = ("task_uid", "role_key", "role_name", "actor", "actor_id",
+               "verb", "decision", "comment", "on_behalf_of",
+               "overdue_signoff", "ts")
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(columns)
+    for row in engine.repository.list_signoffs(task_id):
+        writer.writerow([row.get(name, "") if row.get(name) is not None else ""
+                         for name in columns])
+    return Response(
+        content="\ufeff" + buffer.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition":
+                 f'attachment; filename="signoffs-{task_id}.csv"'})
+
+
 @app.post("/api/v2/workflow/{task_id}/select-action")
 def api_workflow_select_action(task_id: str, req: WorkflowActionRequest,
                                request: Request) -> dict[str, Any]:
