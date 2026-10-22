@@ -224,3 +224,26 @@ def test_mysql_data_source_readonly_contract():
         with engine.begin() as conn:
             conn.execute(text("DROP TABLE IF EXISTS mfg_atp_demo"))
         engine.dispose()
+
+
+def test_mysql_spc_write_channel():
+    """SPC 受治理写入通道：DB_URL=MySQL 时落 SQLAlchemy 仓储。"""
+    from sqlalchemy import create_engine
+
+    from mfg_agents.v2.services import spc_store
+
+    rows = [
+        {"characteristic": "MySQL特性", "subgroup_no": 1, "seq": 1,
+         "value": 10.0, "usl": 12.0, "lsl": 8.0, "source": "mysql-it"},
+        {"characteristic": "MySQL特性", "subgroup_no": 1, "seq": 2,
+         "value": 10.5, "usl": 12.0, "lsl": 8.0, "source": "mysql-it"},
+    ]
+    try:
+        assert spc_store.append_measurements(
+            MYSQL_URL, rows, ingested_by="qa") == 2
+        assert spc_store.count_measurements(MYSQL_URL, "MySQL特性") == 2
+    finally:
+        engine = create_engine(MYSQL_URL)
+        with engine.begin() as conn:
+            conn.execute(text("DROP TABLE IF EXISTS spc_measurement"))
+        engine.dispose()

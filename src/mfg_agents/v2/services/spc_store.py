@@ -16,31 +16,45 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+from ...common.config import settings
+from ...common.platform_schema import is_sqlite_target, sqlite_path_from_url
 from .spc_repository import (
     MEASUREMENTS_TABLE,
     SpcRepository,
+    SQLAlchemySpcRepository,
     SQLiteSpcRepository,
 )
 
-__all__ = ["MEASUREMENTS_TABLE", "SpcRepository", "ensure_measurements_table",
-           "append_measurements", "count_measurements"]
+__all__ = ["MEASUREMENTS_TABLE", "SpcRepository", "resolve_spc_target",
+           "ensure_measurements_table", "append_measurements",
+           "count_measurements"]
 
 
-def _repo(db_path: str) -> SpcRepository:
-    """构造 SQLite 仓储（D15：模块函数不再持有裸 ``_connect``）。"""
-    return SQLiteSpcRepository(str(db_path))
+def resolve_spc_target(db_path: Optional[str] = None) -> str:
+    """解析 SPC 写入目标（SQLite 路径 / MySQL URL）；缺省 = 业务库 ``DB_URL``。"""
+    if db_path:
+        return str(db_path)
+    return str(getattr(settings, "DB_URL", "") or "")
 
 
-def ensure_measurements_table(db_path: str) -> None:
+def _repo(db_path: Optional[str] = None) -> SpcRepository:
+    """按方言构造仓储（SQLite 原生 / MySQL SQLAlchemy）。"""
+    target = resolve_spc_target(db_path)
+    if is_sqlite_target(target):
+        return SQLiteSpcRepository(sqlite_path_from_url(target))
+    return SQLAlchemySpcRepository(target)
+
+
+def ensure_measurements_table(db_path: Optional[str] = None) -> None:
     """幂等建表（种子未执行或全新库时的兜底；不写入任何数据行）。
 
-    老库（表已存在但缺新列）会就地补列 —— 由 ``SQLiteSpcRepository.ensure_schema``
-    负责；补列失败不阻断（表可能只读），由调用方的写入异常兜底。
+    老库（表已存在但缺新列）会就地补列 —— 由仓储实现负责；补列失败不阻断
+    （表可能只读），由调用方的写入异常兜底。
     """
     _repo(db_path).ensure_schema()
 
 
-def append_measurements(db_path: str, rows: list[dict[str, Any]], *,
+def append_measurements(db_path: Optional[str], rows: list[dict[str, Any]], *,
                         ingested_by: str, ingested_at: Optional[str] = None) -> int:
     """把**已校验**的测量值行写入 ``spc_measurement``（返回写入行数）。
 
@@ -58,7 +72,8 @@ def append_measurements(db_path: str, rows: list[dict[str, Any]], *,
     return repo.append(rows, ingested_by=ingested_by, ingested_at=ts)
 
 
-def count_measurements(db_path: str, characteristic: Optional[str] = None) -> int:
+def count_measurements(db_path: Optional[str],
+                       characteristic: Optional[str] = None) -> int:
     """测量值行数（可选按特性）；用于导入回执的落库核对。"""
     repo = _repo(db_path)
     repo.ensure_schema()

@@ -17,10 +17,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+from sqlalchemy import create_engine, text
+
+from ...common.platform_schema import sqlite_path_from_url
+
 __all__ = [
     "MEASUREMENTS_TABLE",
+    "MYSQL_SPC_DDL",
     "SpcRepository",
     "SQLiteSpcRepository",
+    "SQLAlchemySpcRepository",
 ]
 
 MEASUREMENTS_TABLE = "spc_measurement"
@@ -43,6 +49,27 @@ CREATE TABLE IF NOT EXISTS spc_measurement (
 );
 CREATE INDEX IF NOT EXISTS idx_spc_measurement_char
     ON spc_measurement (characteristic);
+"""
+
+#: MySQL 版建表（索引内联；TEXT 默认值不适用）。
+MYSQL_SPC_DDL = """
+CREATE TABLE IF NOT EXISTS spc_measurement (
+    id BIGINT NOT NULL AUTO_INCREMENT,
+    characteristic VARCHAR(80) NOT NULL,
+    subgroup_no INT NOT NULL,
+    seq INT NOT NULL,
+    value DOUBLE NOT NULL,
+    usl DOUBLE NULL,
+    lsl DOUBLE NULL,
+    measured_at VARCHAR(30) NULL,
+    source VARCHAR(40) NULL,
+    ingested_by VARCHAR(40) NULL,
+    ingested_at VARCHAR(40) NOT NULL,
+    process_stage VARCHAR(20) NULL,
+    product_category VARCHAR(20) NULL,
+    PRIMARY KEY (id),
+    KEY idx_spc_measurement_char (characteristic)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
 """
 
 #: 老库升级：``CREATE TABLE IF NOT EXISTS`` 对已存在的表不生效，老库永远缺这两列。
@@ -138,3 +165,62 @@ class SQLiteSpcRepository(SpcRepository):
             return int(row["c"]) if row else 0
         finally:
             conn.close()
+
+
+class SQLAlchemySpcRepository(SpcRepository):
+    """跨方言实现：SQLite 复用原生实现，MySQL 用命名参数与 InnoDB DDL。"""
+
+    _INSERT = (
+        f"INSERT INTO {MEASUREMENTS_TABLE} "
+        "(characteristic, subgroup_no, seq, value, usl, lsl, measured_at, source, "
+        "ingested_by, ingested_at, process_stage, product_category) "
+        "VALUES (:characteristic, :subgroup_no, :seq, :value, :usl, :lsl, "
+        ":measured_at, :source, :ingested_by, :ingested_at, "
+        ":process_stage, :product_category)"
+    )
+
+    def __init__(self, db_url: str) -> None:
+        self.db_url = db_url
+        self.engine = create_engine(db_url, pool_pre_ping=True, future=True)
+        self.ensure_schema()
+
+    def ensure_schema(self) -> None:
+        dialect = self.engine.dialect.name
+        if dialect == "sqlite":
+            SQLiteSpcRepository(sqlite_path_from_url(self.db_url)).ensure_schema()
+            return
+        if dialect != "mysql":
+            raise NotImplementedError(
+                f"SPC 仓储暂只支持 SQLite / MySQL，收到方言 {dialect!r}")
+        with self.engine.begin() as conn:
+            conn.execute(text(MYSQL_SPC_DDL))
+
+    def append(self, rows: list[dict[str, Any]], *, ingested_by: str,
+               ingested_at: Optional[str] = None) -> int:
+        if not rows:
+            return 0
+        ts = ingested_at or datetime.now(timezone.utc).isoformat(timespec="seconds")
+        payload = [
+            {"characteristic": str(r["characteristic"]),
+             "subgroup_no": int(r["subgroup_no"]), "seq": int(r["seq"]),
+             "value": float(r["value"]), "usl": r.get("usl"),
+             "lsl": r.get("lsl"), "measured_at": r.get("measured_at"),
+             "source": r.get("source"), "ingested_by": str(ingested_by),
+             "ingested_at": ts, "process_stage": r.get("process_stage"),
+             "product_category": r.get("product_category")}
+            for r in rows
+        ]
+        with self.engine.begin() as conn:
+            conn.execute(text(self._INSERT), payload)
+        return len(payload)
+
+    def count(self, characteristic: Optional[str] = None) -> int:
+        if characteristic:
+            sql = (f"SELECT COUNT(*) AS c FROM {MEASUREMENTS_TABLE} "
+                   "WHERE characteristic = :characteristic")
+            params: dict[str, Any] = {"characteristic": characteristic}
+        else:
+            sql = f"SELECT COUNT(*) AS c FROM {MEASUREMENTS_TABLE}"
+            params = {}
+        with self.engine.connect() as conn:
+            return int(conn.execute(text(sql), params).scalar() or 0)

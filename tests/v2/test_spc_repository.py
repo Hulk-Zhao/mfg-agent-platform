@@ -7,6 +7,7 @@ from mfg_agents.v2.services import spc_store
 from mfg_agents.v2.services.spc_repository import (
     MEASUREMENTS_TABLE,
     SpcRepository,
+    SQLAlchemySpcRepository,
     SQLiteSpcRepository,
 )
 
@@ -60,3 +61,13 @@ def test_spc_store_delegates_to_repository(tmp_path):
     assert written == 2
     assert spc_store.count_measurements(db) == 2
     assert spc_store.count_measurements(db, "外壳长度") == 2
+
+
+def test_sqlalchemy_spc_repository_contract(tmp_path):
+    repo = SQLAlchemySpcRepository(f"sqlite:///{tmp_path / 'demo.db'}")
+    assert isinstance(repo, SpcRepository)
+
+    assert repo.append(_rows(3), ingested_by="qa") == 3
+    assert repo.count() == 3
+    assert repo.count("外壳长度") == 3
+    assert repo.append([], ingested_by="qa") == 0
