@@ -20,13 +20,16 @@ from __future__ import annotations
 
 import json
 import logging
-import sqlite3
 from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any, Iterator, Mapping, Optional, Union
+from typing import Any, Mapping, Optional, Union
 
 from ...common.config import settings
 from ...common.platform_schema import sqlite_path_from_url
+from .report_repository import (
+    REPORTS_TABLE,
+    ReportRepository,
+    SQLiteReportRepository,
+)
 from .workflow import assert_sqlite_backed
 
 logger = logging.getLogger(__name__)
@@ -39,6 +42,7 @@ __all__ = [
     "ReportStoreError",
     "ReportNotFound",
     "InvalidReportTransition",
+    "ReportRepository",
     "resolve_report_db",
     "ensure_reports_table",
     "upsert_report",
@@ -48,8 +52,6 @@ __all__ = [
     "transition_status",
     "count_by_status",
 ]
-
-REPORTS_TABLE = "report_record"
 
 #: 报告状态机（``available`` 为终态之外的合法去向）。仿 ``CaseStore.STATUS_TRANSITIONS``。
 STATUS_TRANSITIONS: dict[str, tuple[str, ...]] = {
@@ -83,45 +85,8 @@ _JSON_FIELDS: dict[str, tuple[str, Any]] = {
     "versions_json": ("versions", []),
 }
 
-#: 整数列
-_INT_FIELDS: tuple[str, ...] = ("degraded",)
-
-_DDL = f"""
-CREATE TABLE IF NOT EXISTS {REPORTS_TABLE} (
-    report_id TEXT PRIMARY KEY,
-    scenario_key TEXT NOT NULL DEFAULT '',
-    run_id TEXT NOT NULL DEFAULT '',
-    source_module TEXT NOT NULL DEFAULT '',
-    title TEXT NOT NULL DEFAULT '',
-    visibility TEXT NOT NULL DEFAULT 'internal',
-    status TEXT NOT NULL DEFAULT 'draft',
-    risk_level TEXT NOT NULL DEFAULT '',
-    degraded INTEGER NOT NULL DEFAULT 0,
-    actor TEXT NOT NULL DEFAULT '',
-    internal_brief_json TEXT NOT NULL DEFAULT '{{}}',
-    customer_report TEXT NOT NULL DEFAULT '',
-    mask_map_json TEXT NOT NULL DEFAULT '[]',
-    provenance_json TEXT NOT NULL DEFAULT '[]',
-    data_gaps_json TEXT NOT NULL DEFAULT '[]',
-    linked_json TEXT NOT NULL DEFAULT '{{}}',
-    governing_slot TEXT NOT NULL DEFAULT '',
-    versions_json TEXT NOT NULL DEFAULT '[]',
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_report_created ON {REPORTS_TABLE} (created_at);
-CREATE INDEX IF NOT EXISTS idx_report_status ON {REPORTS_TABLE} (status);
-CREATE INDEX IF NOT EXISTS idx_report_scenario ON {REPORTS_TABLE} (scenario_key);
-CREATE INDEX IF NOT EXISTS idx_report_run ON {REPORTS_TABLE} (run_id);
-"""
-
-_ALL_COLUMNS: tuple[str, ...] = (
-    "report_id", "scenario_key", "run_id", "source_module", "title",
-    "visibility", "status", "risk_level", "degraded", "actor",
-    "internal_brief_json", "customer_report", "mask_map_json",
-    "provenance_json", "data_gaps_json", "linked_json", "governing_slot",
-    "versions_json", "created_at", "updated_at",
-)
+# 注：物理表结构 / 列顺序统一下沉到 ``report_repository``（D15 契约），
+# 本模块只保留业务语义（状态机 / JSON 还原 / 归一化）。
 
 
 class ReportStoreError(Exception):
@@ -157,22 +122,15 @@ def resolve_report_db(db_path: Optional[Union[str, Path]] = None) -> str:
     return sqlite_path_from_url(url)
 
 
-def _connect(db_path: str) -> sqlite3.Connection:
-    Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(db_path, timeout=10.0)
-    conn.row_factory = sqlite3.Row
-    return conn
+def _repo(db_path: Optional[Union[str, Path]] = None) -> ReportRepository:
+    """解析路径并构造仓储（D15：模块函数不再持有裸 ``_connect``）。"""
+    return SQLiteReportRepository(resolve_report_db(db_path))
 
 
 def ensure_reports_table(db_path: Optional[Union[str, Path]] = None) -> str:
     """幂等建表（含索引）；返回实际使用的库路径。"""
     target = resolve_report_db(db_path)
-    conn = _connect(target)
-    try:
-        with conn:
-            conn.executescript(_DDL)
-    finally:
-        conn.close()
+    SQLiteReportRepository(target).ensure_schema()
     return target
 
 
@@ -188,8 +146,8 @@ def _dump(value: Any, fallback: Any) -> str:
         return json.dumps(fallback, ensure_ascii=False)
 
 
-def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
-    """SQLite 行 → API 字典（JSON 列还原为对象；``degraded`` 还原为 bool）。"""
+def _row_to_dict(row: Mapping[str, Any]) -> dict[str, Any]:
+    """仓储行 → API 字典（JSON 列还原为对象；``degraded`` 还原为 bool）。"""
     data: dict[str, Any] = {name: row[name] for name in _TEXT_FIELDS}
     data["degraded"] = bool(row["degraded"])
     for column, (key, empty) in _JSON_FIELDS.items():
@@ -243,29 +201,14 @@ def upsert_report(row: Mapping[str, Any],
     if not report_id:
         raise ReportStoreError("报告缺少 report_id")
     record = _normalize(row, report_id=report_id)
-    target = ensure_reports_table(db_path)
+    repo = _repo(db_path)
+    repo.ensure_schema()
 
     # 已存在的 created_at 不被覆盖（修订不篡改首次归档时间）
-    conn = _connect(target)
-    try:
-        with conn:
-            existing = conn.execute(
-                f"SELECT created_at FROM {REPORTS_TABLE} WHERE report_id = ?",
-                (report_id,)).fetchone()
-            if existing and not row.get("created_at"):
-                record["created_at"] = str(existing["created_at"] or record["created_at"])
-            columns = ", ".join(_ALL_COLUMNS)
-            placeholders = ", ".join("?" for _ in _ALL_COLUMNS)
-            updates = ", ".join(f"{name}=excluded.{name}" for name in _ALL_COLUMNS
-                                if name != "report_id")
-            conn.execute(
-                f"INSERT INTO {REPORTS_TABLE} ({columns}) VALUES ({placeholders}) "
-                f"ON CONFLICT(report_id) DO UPDATE SET {updates}",
-                [record.get(name, 0 if name in _INT_FIELDS else "")
-                 for name in _ALL_COLUMNS],
-            )
-    finally:
-        conn.close()
+    existing = repo.fetch(report_id)
+    if existing and not row.get("created_at"):
+        record["created_at"] = str(existing["created_at"] or record["created_at"])
+    repo.upsert(record)
     return report_id
 
 
@@ -324,14 +267,9 @@ def get_report(report_id: str,
     target_id = str(report_id or "").strip()
     if not target_id:
         raise ReportNotFound("报告 id 为空")
-    target = ensure_reports_table(db_path)
-    conn = _connect(target)
-    try:
-        row = conn.execute(
-            f"SELECT * FROM {REPORTS_TABLE} WHERE report_id = ?",
-            (target_id,)).fetchone()
-    finally:
-        conn.close()
+    repo = _repo(db_path)
+    repo.ensure_schema()
+    row = repo.fetch(target_id)
     if row is None:
         raise ReportNotFound(f"报告不存在: {target_id}")
     return _row_to_dict(row)
@@ -346,56 +284,24 @@ def list_reports(*, scenario_key: str = "", source_module: str = "",
 
     关键字命中范围：标题 / 场景 / 来源模块 / 内部简报全文——够用且不引入全文索引。
     """
-    target = ensure_reports_table(db_path)
-    where: list[str] = []
-    params: list[Any] = []
-    for column, value in (("scenario_key", scenario_key), ("source_module", source_module),
-                          ("status", status), ("visibility", visibility),
-                          ("risk_level", risk_level)):
-        text = str(value or "").strip()
-        if text:
-            where.append(f"{column} = ?")
-            params.append(text)
-    keyword = str(q or "").strip()
-    if keyword:
-        where.append("(title LIKE ? OR scenario_key LIKE ? OR source_module LIKE ? "
-                     "OR internal_brief_json LIKE ?)")
-        params.extend([f"%{keyword}%"] * 4)
-
-    clause = (" WHERE " + " AND ".join(where)) if where else ""
-    safe_limit = max(1, min(int(limit or 50), 200))
-    safe_offset = max(0, int(offset or 0))
-
-    conn = _connect(target)
-    try:
-        total = int(conn.execute(
-            f"SELECT COUNT(*) AS c FROM {REPORTS_TABLE}{clause}",
-            params).fetchone()["c"])
-        rows = conn.execute(
-            f"SELECT * FROM {REPORTS_TABLE}{clause} "
-            f"ORDER BY created_at DESC, report_id DESC LIMIT ? OFFSET ?",
-            [*params, safe_limit, safe_offset]).fetchall()
-    finally:
-        conn.close()
+    repo = _repo(db_path)
+    repo.ensure_schema()
+    rows, total = repo.list_rows(
+        scenario_key=scenario_key, source_module=source_module, status=status,
+        visibility=visibility, risk_level=risk_level, q=q,
+        limit=limit, offset=offset)
     return [_row_to_dict(row) for row in rows], total
 
 
 def count_by_status(db_path: Optional[Union[str, Path]] = None) -> dict[str, int]:
     """各状态报告数 + 含数据缺口数（供顶部 KPI 概览条）。"""
-    target = ensure_reports_table(db_path)
-    conn = _connect(target)
-    try:
-        rows = conn.execute(
-            f"SELECT status, COUNT(*) AS c FROM {REPORTS_TABLE} GROUP BY status"
-        ).fetchall()
-        gaps_row = conn.execute(
-            f"SELECT COUNT(*) AS c FROM {REPORTS_TABLE} "
-            f"WHERE data_gaps_json NOT IN ('', '[]')").fetchone()
-    finally:
-        conn.close()
+    repo = _repo(db_path)
+    repo.ensure_schema()
+    summary = repo.summary()
+    by_status = summary.get("by_status") or {}
     counts = {status: 0 for status in STATUS_TRANSITIONS}
-    for row in rows:
-        counts[str(row["status"])] = int(row["c"])
+    for status, count in by_status.items():
+        counts[str(status)] = int(count)
     counts["total"] = sum(counts[s] for s in STATUS_TRANSITIONS)
-    counts["with_gaps"] = int(gaps_row["c"]) if gaps_row else 0
+    counts["with_gaps"] = int(summary.get("with_gaps") or 0)
     return counts

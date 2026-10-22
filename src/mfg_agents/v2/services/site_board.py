@@ -29,6 +29,12 @@ from typing import Any, Callable, Mapping, Optional, Union
 from ...common.config import settings
 from ...common.platform_schema import is_sqlite_target, sqlite_path_from_url
 from ..core.dimensions import MFG_STAGES
+from .site_board_repository import (
+    SITE_BOARD_COLUMNS,
+    SITE_BOARD_TABLE,
+    SiteBoardRepository,
+    SQLiteSiteBoardRepository,
+)
 from .workflow import assert_sqlite_backed
 
 logger = logging.getLogger(__name__)
@@ -42,6 +48,7 @@ __all__ = [
     "SiteBoardError",
     "PushNotFound",
     "InvalidSiteBoardTransition",
+    "SiteBoardRepository",
     "resolve_stage",
     "resolve_stage_from_batch",
     "push_id_for",
@@ -58,8 +65,6 @@ __all__ = [
     "ack",
     "close",
 ]
-
-SITE_BOARD_TABLE = "site_board_push"
 
 #: 工段白名单（唯一事实源 = ``core/dimensions.MFG_STAGES``，本模块仅再导出）。
 STAGES: tuple[str, ...] = MFG_STAGES
@@ -79,48 +84,9 @@ STATUS_TRANSITIONS: dict[str, tuple[str, ...]] = {
 
 TERMINAL_STATUSES = frozenset({"closed"})
 
-_DDL = """
-CREATE TABLE IF NOT EXISTS site_board_push (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    push_id TEXT NOT NULL UNIQUE,
-    stage TEXT NOT NULL,
-    level TEXT NOT NULL DEFAULT 'P1',
-    title TEXT NOT NULL DEFAULT '',
-    body TEXT NOT NULL DEFAULT '',
-    status TEXT NOT NULL DEFAULT 'pushed',
-    source TEXT NOT NULL DEFAULT '',
-    ref_id TEXT NOT NULL DEFAULT '',
-    complaint_no TEXT NOT NULL DEFAULT '',
-    batch_no TEXT NOT NULL DEFAULT '',
-    customer TEXT NOT NULL DEFAULT '',
-    ack_by TEXT NOT NULL DEFAULT '',
-    ack_at TEXT,
-    closed_by TEXT NOT NULL DEFAULT '',
-    closed_at TEXT,
-    feedback TEXT NOT NULL DEFAULT '',
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_site_board_stage_status
-    ON site_board_push (stage, status);
-CREATE INDEX IF NOT EXISTS idx_site_board_complaint
-    ON site_board_push (complaint_no);
-"""
-
-#: 老库升级（``CREATE TABLE IF NOT EXISTS`` 对已存在的表不生效）：PRAGMA 守卫 + 幂等补列。
-#: 客户名单独成列而不是内联进 ``body``，就是为了让读接口能按岗位脱敏它
-#: （正文是自由文本，脱敏规则改不动）。
-_ALTER_COLUMNS: tuple[tuple[str, str], ...] = (
-    ("customer", "ALTER TABLE site_board_push ADD COLUMN customer TEXT DEFAULT ''"),
-)
-
-_TEXT_FIELDS: tuple[str, ...] = (
-    "push_id", "stage", "level", "title", "body", "status", "source",
-    "ref_id", "complaint_no", "batch_no", "customer", "ack_by", "closed_by",
-    "feedback", "created_at", "updated_at",
-)
-_NULLABLE_FIELDS: tuple[str, ...] = ("ack_at", "closed_at")
-_ALL_COLUMNS: tuple[str, ...] = _TEXT_FIELDS + _NULLABLE_FIELDS
+# 注：物理表结构 / 补列 / 列顺序统一下沉到 ``site_board_repository``（D15 契约），
+# 本模块只保留业务语义（归因 / 状态机 / 脱敏）。
+_ALL_COLUMNS = SITE_BOARD_COLUMNS
 
 
 class SiteBoardError(Exception):
@@ -165,29 +131,15 @@ def _main_db_path() -> str:
     return sqlite_path_from_url(url)
 
 
-def _connect(db_path: str) -> sqlite3.Connection:
-    Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(db_path, timeout=10.0)
-    conn.row_factory = sqlite3.Row
-    return conn
+def _repo(db_path: Optional[Union[str, Path]] = None) -> SiteBoardRepository:
+    """解析路径并构造仓储（D15：模块函数不再持有裸 ``_connect``）。"""
+    return SQLiteSiteBoardRepository(resolve_site_db(db_path))
 
 
 def ensure_site_board_table(db_path: Optional[Union[str, Path]] = None) -> str:
     """幂等建表（含索引 + 老库补列）；返回实际使用的库路径。"""
     target = resolve_site_db(db_path)
-    conn = _connect(target)
-    try:
-        with conn:
-            conn.executescript(_DDL)
-            existing = {r[1] for r in conn.execute(
-                f"PRAGMA table_info({SITE_BOARD_TABLE})")}
-            for column, ddl in _ALTER_COLUMNS:
-                if existing and column not in existing:
-                    conn.execute(ddl)
-                    logger.info("[site_board] 迁移加列: %s.%s",
-                                SITE_BOARD_TABLE, column)
-    finally:
-        conn.close()
+    SQLiteSiteBoardRepository(target).ensure_schema()
     return target
 
 
@@ -310,24 +262,10 @@ def push_message(*, stage: str, title: str = "", body: str = "",
         "feedback": "", "created_at": now, "updated_at": now,
     }
     target = ensure_site_board_table(db_path)
-    conn = _connect(target)
-    try:
-        with conn:
-            columns = ", ".join(_ALL_COLUMNS)
-            placeholders = ", ".join("?" for _ in _ALL_COLUMNS)
-            # 冲突时只刷新内容列；status / ack_* / closed_* / feedback 保持现场已推进的进度。
-            updates = ", ".join(
-                f"{name}=excluded.{name}" for name in
-                ("title", "body", "level", "source", "ref_id",
-                 "complaint_no", "batch_no", "customer", "updated_at"))
-            conn.execute(
-                f"INSERT INTO {SITE_BOARD_TABLE} ({columns}) "
-                f"VALUES ({placeholders}) "
-                f"ON CONFLICT(push_id) DO UPDATE SET {updates}",
-                [record.get(name) for name in _ALL_COLUMNS],
-            )
-    finally:
-        conn.close()
+    repo = SQLiteSiteBoardRepository(target)
+    # 冲突时只刷新内容列；status / ack_* / closed_* / feedback 保持现场已推进的进度
+    # （SQL 细节在 site_board_repository 内，模块层不再拼 SQL）。
+    repo.upsert_push(record)
     return pid
 
 
@@ -518,19 +456,9 @@ def transition_status(push_id: str, to_status: str, *, actor: str = "",
             if value is not None and key in _ALL_COLUMNS:
                 record[key] = value
 
-    conn = _connect(resolve_site_db(db_path))
-    try:
-        with conn:
-            assignments = ", ".join(f"{name}=?" for name in _ALL_COLUMNS
-                                    if name != "push_id")
-            conn.execute(
-                f"UPDATE {SITE_BOARD_TABLE} SET {assignments} "
-                f"WHERE push_id = ?",
-                [record.get(name) for name in _ALL_COLUMNS
-                 if name != "push_id"] + [record["push_id"]],
-            )
-    finally:
-        conn.close()
+    repo = _repo(db_path)
+    repo.ensure_schema()
+    repo.update_push(push_id, record)
     return get_push(push_id, db_path)
 
 
@@ -551,7 +479,7 @@ def close(push_id: str, *, actor: str = "", feedback: str = "",
 # ---------------- 读取 ----------------
 
 
-def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
+def _row_to_dict(row: Mapping[str, Any]) -> dict[str, Any]:
     return {name: row[name] for name in _ALL_COLUMNS}
 
 
@@ -561,13 +489,9 @@ def get_push(push_id: str,
     pid = str(push_id or "").strip()
     if not pid:
         raise SiteBoardError("缺少 push_id")
-    target = ensure_site_board_table(db_path)
-    conn = _connect(target)
-    try:
-        row = conn.execute(
-            f"SELECT * FROM {SITE_BOARD_TABLE} WHERE push_id = ?", (pid,)).fetchone()
-    finally:
-        conn.close()
+    repo = _repo(db_path)
+    repo.ensure_schema()
+    row = repo.fetch(pid)
     if row is None:
         raise PushNotFound(f"推送行不存在: {pid}")
     return _row_to_dict(row)
@@ -577,27 +501,15 @@ def list_pushes(*, stage: Optional[str] = None, status: Optional[str] = None,
                 limit: int = 50,
                 db_path: Optional[Union[str, Path]] = None) -> list[dict[str, Any]]:
     """取现场看板推送队列（按创建时间倒序；``stage`` 缺省 = 全部工段）。"""
-    sql = f"SELECT * FROM {SITE_BOARD_TABLE} WHERE 1 = 1"
-    params: list[Any] = []
+    target_stage: Optional[str] = None
     if stage:
         target_stage = str(stage).strip()
         if target_stage not in STAGES:
             raise SiteBoardError(
                 f"目标工段非法: {stage!r}（合法值：{'、'.join(STAGES)}）")
-        sql += " AND stage = ?"
-        params.append(target_stage)
-    if status:
-        sql += " AND status = ?"
-        params.append(str(status))
-    sql += " ORDER BY created_at DESC, id DESC LIMIT ?"
-    params.append(max(1, int(limit)))
-
-    target = ensure_site_board_table(db_path)
-    conn = _connect(target)
-    try:
-        rows = conn.execute(sql, params).fetchall()
-    finally:
-        conn.close()
+    repo = _repo(db_path)
+    repo.ensure_schema()
+    rows = repo.list_rows(stage=target_stage, status=status, limit=limit)
     return [_row_to_dict(row) for row in rows]
 
 
