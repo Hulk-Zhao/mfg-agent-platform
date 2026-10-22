@@ -3754,6 +3754,109 @@
       + `${gap}</div>`;
   }
 
+  /* ---------- 签名流水（wf_signoff 只读审计 · 懒加载） ---------- */
+
+  const SG_VERB_LABEL = {
+    select_action: "选定动作", cosign: "会签", approve: "终批", reject: "驳回",
+  };
+
+  /** 签名账本行的单元格（顺序与表头一致）。 */
+  function signoffRowsHtml(ctx, rows) {
+    const UI = ctx.UI;
+    if (!rows.length) {
+      return `<div class="sg-flow-empty">${UI.icon("info", 12)}
+        <span>该工单暂无签名事实。账本只记启用后的新签名，存量工单不回溯；
+        工单判定仍以治理快照（governance_json）为准。</span></div>`;
+    }
+    const head = ["角色", "签署人", "动作", "决定", "时间", "意见"]
+      .map((t) => `<span>${t}</span>`).join("");
+    const body = rows.map((r) => {
+      const actor = UI.esc(r.actor || "-")
+        + (r.actor_id ? `<i class="sg-flow-sub">${UI.esc(r.actor_id)}</i>` : "")
+        + (r.on_behalf_of ? `<i class="sg-flow-sub">代 ${UI.esc(r.on_behalf_of)}</i>` : "");
+      const verb = `<span class="sg-flow-verb">${UI.esc(SG_VERB_LABEL[r.verb] || r.verb || "-")}</span>`
+        + (r.overdue_signoff ? `<i class="sg-flow-over">超时</i>` : "");
+      const cells = [
+        UI.esc(r.role_name || roleLabel(r.role_key) || r.role_key || "-"),
+        actor,
+        verb,
+        UI.esc(r.decision || "-"),
+        UI.esc(r.ts ? UI.fmtDateTime(r.ts) : "-"),
+        UI.esc(r.comment || "-"),
+      ];
+      return `<div class="sg-flow-row">${cells.map((c) => `<span>${c}</span>`).join("")}</div>`;
+    }).join("");
+    return `<div class="sg-flow-table"><div class="sg-flow-row sg-flow-head">${head}</div>${body}</div>`;
+  }
+
+  /** 折叠摘要：收起不预取（审批中心一屏多卡，展开才请求）。 */
+  function signoffFlowHtml(ctx, taskUid) {
+    const UI = ctx.UI;
+    return `<details class="sg-flow" data-sg-task="${UI.esc(taskUid)}">
+      <summary class="sg-flow-sum">
+        ${UI.icon("shield", 12)}<span class="sg-flow-title">签名流水</span>
+        <span class="sg-flow-tag">wf_signoff 只读审计</span>
+        <span class="sg-flow-count" data-sg-count>展开加载</span>
+      </summary>
+      <div class="sg-flow-body" data-sg-body>
+        <div class="sg-flow-note">展开后读取签名事实账本（会签 / 终批 / 驳回）</div>
+      </div>
+    </details>`;
+  }
+
+  /** 绑定签名流水：展开懒加载 + 导出 CSV（每次详情卡重渲染后重新绑定）。 */
+  function wireSignoffFlow(root, ctx, taskUid) {
+    const UI = ctx.UI;
+    const box = root.querySelector("details.sg-flow");
+    if (!box) return;
+    const bodyEl = () => box.querySelector("[data-sg-body]");
+    const load = async () => {
+      if (box.dataset.sgLoaded === "1" || box.dataset.sgLoading === "1") return;
+      // 离线演示没有真实账本：诚实说明，不伪造签名流水
+      if (!ctx.api.online()) {
+        const el = bodyEl();
+        if (el) el.innerHTML = `<div class="sg-flow-note warn">${UI.icon("warn", 12)} 后端离线：签名账本需后端在线才能读取</div>`;
+        return;
+      }
+      box.dataset.sgLoading = "1";
+      const el = bodyEl();
+      if (el) el.innerHTML = `<div class="sg-flow-note">正在读取签名账本…</div>`;
+      try {
+        const data = await ctx.api.workflowSignoffs(taskUid);
+        const rows = (data && data.rows) || [];
+        box.dataset.sgLoaded = "1";
+        delete box.dataset.sgLoading;
+        const count = box.querySelector("[data-sg-count]");
+        if (count) count.textContent = rows.length + " 条";
+        if (el) {
+          el.innerHTML = `<div class="sg-flow-tools">
+              <span class="sg-flow-src">来源 <b>${UI.esc((data && data.source) || "wf_signoff")}</b></span>
+              <button class="btn btn-outline btn-sm" data-sg-export>${UI.icon("report", 12)}导出 CSV</button>
+            </div>
+            ${(data && data.note) ? `<div class="sg-flow-note">${UI.esc(data.note)}</div>` : ""}
+            ${signoffRowsHtml(ctx, rows)}`;
+          const btn = el.querySelector("[data-sg-export]");
+          if (btn) btn.addEventListener("click", async () => {
+            btn.disabled = true;
+            try {
+              const name = await ctx.api.downloadWorkflowSignoffs(taskUid);
+              UI.toast("已导出签名账本（" + name + "）", "ok", 3000);
+            } catch (err) {
+              UI.toast("导出失败：" + UI.friendlyError(err).text, "err", 5000);
+            } finally {
+              btn.disabled = false;
+            }
+          });
+        }
+      } catch (err) {
+        delete box.dataset.sgLoading;
+        if (el) el.innerHTML = `<div class="sg-flow-note err">${UI.icon("warn", 12)} 读取失败：${UI.esc(UI.friendlyError(err).text)}（收起再展开可重试）</div>`;
+      }
+    };
+    box.addEventListener("toggle", () => { if (box.open) load(); });
+    if (box.open) load();
+  }
+
   function hitlChatCardHtml(ctx, m) {
     const UI = ctx.UI;
     const processed = processedMap(ctx)[m.taskUid];
@@ -4705,6 +4808,7 @@
         </div>
         ${gateReasonHtml(ctx, slot)}
         ${signoffGapHtml(ctx, taskSignoff(t), slot, (t.context || {}).actions)}
+        ${signoffFlowHtml(ctx, t.task_uid)}
         ${approveSummaryHtml(ctx, t)}
         <div style="margin-top:13px">${slaHtml(due, total)}</div>
         <div class="hitl-ctx-grid" style="margin-top:13px">${ctxItems}</div>
@@ -4742,6 +4846,7 @@
     wireActionChips(document, ctx, t.task_uid);
     bindQuickComments(document);
     wireCosign(document, ctx, t.task_uid, (c.actions || []));
+    wireSignoffFlow(document, ctx, t.task_uid);
     const approveBtn = document.getElementById("hitl-approve");
     const rejectBtn = document.getElementById("hitl-reject");
     if (approveBtn) approveBtn.addEventListener("click", () => hitlAction(ctx, t.task_uid, "approve"));

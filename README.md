@@ -298,6 +298,7 @@ mfg-agent-platform/
   存量工单不补历史签名（判定与渲染仍读 `governance_json`）。
   只读审计接口：`GET /api/v2/workflow/{task_id}/signoffs`（可见性与工单详情同源）；
   CSV 导出：`GET /api/v2/workflow/{task_id}/signoffs/export`（UTF-8 BOM，审计留档）。
+  审批确认中心工单详情已内置默认收起的「签名流水」（展开懒加载、CSV 导出、空账本/离线诚实提示）。
   多实例前提已满足（治理库可切 MySQL）；业务读路径 MySQL 仍是下一处缺口。
 
 - **看板数据范围**：四个 `/dashboard/*` 端点已接声明式数据范围目录（`v2/data/data_scope.yaml`）：按岗位 allow + 字段级脱敏 + 下钻同源裁决，未登记看板 fail-closed。剩余缺口是**行级**（同一看板内按组织/产线过滤到本人辖区）——当前是"看到全厂该岗位该看的部分"，生产前需把 `data_scope.yaml` 从角色维度扩展到组织维度。

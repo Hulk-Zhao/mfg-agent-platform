@@ -900,6 +900,46 @@
       return this._getScoped(`/api/v2/workflow/${encodeURIComponent(taskId)}`);
     },
 
+    /** 签名事实账本（wf_signoff 只读审计）：会签 / 终批 / 驳回记录。
+     *  可见性与工单详情同源（越权与不存在统一 404，不暴露 ID 空间）。
+     *  诚实边界：账本只记启用后的新签名，存量工单返回空列表。 */
+    workflowSignoffs(taskId) {
+      return this._getScoped(
+        `/api/v2/workflow/${encodeURIComponent(taskId)}/signoffs`);
+    },
+
+    /** 导出签名账本 CSV（审计留档）。带令牌 fetch → Blob → 触发下载，
+     *  因为普通 <a href> 无法携带 Authorization 头。 */
+    async downloadWorkflowSignoffs(taskId) {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), DEFAULT_TIMEOUT_MS);
+      let resp;
+      try {
+        const opts = { signal: ctrl.signal };
+        if (state.token) opts.headers = { Authorization: `Bearer ${state.token}` };
+        resp = await fetch(
+          `${this.base()}/api/v2/workflow/${encodeURIComponent(taskId)}/signoffs/export`,
+          opts);
+      } finally {
+        clearTimeout(timer);
+      }
+      if (!resp.ok) {
+        if (resp.status === 401) handleAuthExpired({});
+        throw apiError(resp.status, {});
+      }
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `signoffs-${taskId}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      // 立即 revoke 在部分浏览器会让下载中断，延迟释放
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+      return a.download;
+    },
+
     /** 治理权限目录（角色×权限矩阵 + 10 个 HITL 槽位；前端门控提示用） */
     governancePermissions() { return this._get("/api/v2/governance/permissions"); },
 

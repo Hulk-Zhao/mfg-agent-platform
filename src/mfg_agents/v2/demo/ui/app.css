@@ -6209,3 +6209,122 @@ html[data-theme="light"] .msg .chat-foldbar {
 html[data-theme="light"] .msg .chat-foldbar:hover {
   background: var(--primary-light-2);
 }
+
+/* ============================================================
+ * 签名流水（wf_signoff 只读审计 · 审批详情卡内折叠）
+ * 收起只露一行摘要，展开懒加载；颜色全部走主题令牌。
+ * ============================================================ */
+.sg-flow {
+  margin-top: 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-sub);
+  overflow: hidden;
+}
+.sg-flow-sum {
+  display: flex; align-items: center; gap: 7px;
+  padding: 8px 11px;
+  list-style: none;
+  cursor: pointer;
+  user-select: none;
+  font-size: calc(12px * var(--font-scale));
+  color: var(--text-2);
+}
+.sg-flow-sum::-webkit-details-marker { display: none; }
+.sg-flow-sum::after {
+  content: "›";
+  margin-left: auto;
+  color: var(--text-3);
+  transform: rotate(90deg);
+  transition: transform .15s ease;
+}
+.sg-flow[open] .sg-flow-sum::after { transform: rotate(-90deg); }
+.sg-flow[open] .sg-flow-sum { border-bottom: 1px solid var(--border); }
+.sg-flow-title { font-weight: 600; color: var(--text); }
+.sg-flow-tag {
+  padding: 1px 7px; border-radius: 999px;
+  background: var(--bg-2); color: var(--text-3);
+  font-size: calc(10.5px * var(--font-scale));
+  white-space: nowrap;
+}
+.sg-flow-count {
+  color: var(--text-3);
+  font-size: calc(11px * var(--font-scale));
+  white-space: nowrap;
+}
+.sg-flow[open] .sg-flow-count { color: var(--primary); }
+.sg-flow-body { padding-bottom: 2px; }
+.sg-flow-note {
+  padding: 8px 11px;
+  color: var(--text-3);
+  font-size: calc(11.5px * var(--font-scale));
+  line-height: 1.65;
+}
+.sg-flow-note.warn { color: var(--warn); }
+.sg-flow-note.err { color: var(--danger); }
+.sg-flow-tools {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 9px 11px 0;
+}
+.sg-flow-src {
+  flex: 1; min-width: 0;
+  color: var(--text-3);
+  font-size: calc(11px * var(--font-scale));
+}
+.sg-flow-src b { color: var(--text-2); font-weight: 600; }
+.sg-flow-tools .btn { margin-left: auto; }
+.sg-flow-empty {
+  display: flex; align-items: flex-start; gap: 7px;
+  margin: 9px 11px 11px;
+  padding: 9px 10px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  background: var(--bg-soft);
+  color: var(--text-3);
+  font-size: calc(11.5px * var(--font-scale));
+  line-height: 1.65;
+}
+.sg-flow-table {
+  margin: 9px 11px 11px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.sg-flow-row {
+  display: grid;
+  grid-template-columns: 92px minmax(120px, 1.1fr) 84px 92px 150px minmax(140px, 2fr);
+  gap: 8px;
+  padding: 7px 10px;
+  border-top: 1px solid var(--border);
+  color: var(--text-2);
+  font-size: calc(11.5px * var(--font-scale));
+  line-height: 1.55;
+}
+.sg-flow-row:first-child { border-top: 0; }
+.sg-flow-table .sg-flow-row:nth-child(even) { background: var(--bg-soft); }
+.sg-flow-head {
+  background: var(--bg-2);
+  color: var(--text);
+  font-weight: 600;
+}
+.sg-flow-table .sg-flow-head { background: var(--bg-2); }
+.sg-flow-row > span { min-width: 0; word-break: break-word; }
+.sg-flow-row > span:last-child { white-space: pre-wrap; }
+.sg-flow-sub {
+  display: block;
+  font-style: normal;
+  color: var(--text-3);
+  font-size: calc(10.5px * var(--font-scale));
+}
+.sg-flow-verb { color: var(--primary); font-weight: 600; }
+.sg-flow-over {
+  display: block;
+  font-style: normal;
+  color: var(--warn);
+  font-size: calc(10.5px * var(--font-scale));
+}
+@media (max-width: 860px) {
+  .sg-flow-table { overflow-x: auto; }
+  .sg-flow-row { min-width: 720px; }
+}
+
