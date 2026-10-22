@@ -8,6 +8,8 @@ import json
 import os
 import queue
 import sys
+import time
+import uuid
 from xml.etree import ElementTree
 
 os.environ.setdefault("IM_TOKEN", "QDG6eK")
@@ -95,18 +97,20 @@ r = client.get("/api/v2/events", params={"request_id": "req-not-exist"})
 check("未知 request_id 404", r.status_code == 404, f"status={r.status_code}")
 
 # 5) 企微 GET URL 校验
+now_ts = str(int(time.time()))
+get_nonce = "qa-get-" + uuid.uuid4().hex[:8]
 echostr_cipher = encrypt_msg(AES_KEY, APPID, "echo_plain_qa")
-sig = compute_signature(TOKEN, "1729000000", "qa-nonce", echostr_cipher)
+sig = compute_signature(TOKEN, now_ts, get_nonce, echostr_cipher)
 r = client.get("/api/v2/im/wecom/callback", params={
-    "msg_signature": sig, "timestamp": "1729000000",
-    "nonce": "qa-nonce", "echostr": echostr_cipher})
+    "msg_signature": sig, "timestamp": now_ts,
+    "nonce": get_nonce, "echostr": echostr_cipher})
 check("企微 GET 校验回显明文",
       r.status_code == 200 and r.text == "echo_plain_qa",
       f"status={r.status_code} body={r.text!r}")
-bad_sig = compute_signature("WRONG", "1729000000", "qa-nonce", echostr_cipher)
+bad_sig = compute_signature("WRONG", now_ts, get_nonce, echostr_cipher)
 r = client.get("/api/v2/im/wecom/callback", params={
-    "msg_signature": bad_sig, "timestamp": "1729000000",
-    "nonce": "qa-nonce", "echostr": echostr_cipher})
+    "msg_signature": bad_sig, "timestamp": now_ts,
+    "nonce": get_nonce, "echostr": echostr_cipher})
 check("企微 GET 伪造签名 403", r.status_code == 403, f"status={r.status_code}")
 
 # 6) 企微 POST 消息回调（解密 → 编排 → 加密回包）
@@ -117,11 +121,13 @@ inner = (f"<xml><ToUserName><![CDATA[{APPID}]]></ToUserName>"
          "<Content><![CDATA[A型号在SMT-1停线，何时复线？]]></Content>"
          "<MsgId>6001</MsgId></xml>")
 encrypt = encrypt_msg(AES_KEY, APPID, inner)
-cb_sig = compute_signature(TOKEN, "1729000000", "qa-nonce", encrypt)
+post_ts = str(int(time.time()))
+post_nonce = "qa-post-" + uuid.uuid4().hex[:8]
+cb_sig = compute_signature(TOKEN, post_ts, post_nonce, encrypt)
 body_xml = f"<xml><Encrypt><![CDATA[{encrypt}]]></Encrypt></xml>"
 r = client.post(
     f"/api/v2/im/wecom/callback?msg_signature={cb_sig}"
-    f"&timestamp=1729000000&nonce=qa-nonce",
+    f"&timestamp={post_ts}&nonce={post_nonce}",
     content=body_xml.encode("utf-8"),
     headers={"Content-Type": "text/xml"})
 check("企微 POST 回包 200", r.status_code == 200, f"status={r.status_code}")
@@ -143,7 +149,7 @@ except Exception as exc:  # noqa: BLE001
 # 7) 企微 POST 伪造签名 → 403
 r = client.post(
     "/api/v2/im/wecom/callback?msg_signature=" + "0" * 40
-    + "&timestamp=1729000000&nonce=qa-nonce",
+    + f"&timestamp={post_ts}&nonce={post_nonce}",
     content=body_xml.encode("utf-8"),
     headers={"Content-Type": "text/xml"})
 check("企微 POST 伪造签名 403", r.status_code == 403, f"status={r.status_code}")

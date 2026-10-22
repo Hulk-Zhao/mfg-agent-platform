@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+import threading
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterable, Iterator, Mapping, Optional, Sequence, Union
@@ -124,11 +125,19 @@ class CaseStore:
     def __init__(self, db_path: Optional[Union[str, Path]] = None) -> None:
         ensure_case_schema(db_path)
         self.db_path = resolve_case_db(db_path)
+        # 批量导入时复用连接（线程级：其它线程仍各自开连接，不共享事务）
+        self._batch_local = threading.local()
 
     # ---------- 连接 ----------
 
     @contextmanager
     def _conn(self) -> Iterator[sqlite3.Connection]:
+        # 批量上下文内复用同一连接：MySQL 下单连接建连 ~180ms，
+        # 种子 221 例 × 每例十余次 _conn() 会让导入耗时到分钟级。
+        shared = getattr(self._batch_local, "conn", None)
+        if shared is not None:
+            yield shared
+            return
         conn = connect(self.db_path)
         try:
             yield conn
@@ -137,6 +146,28 @@ class CaseStore:
             conn.rollback()
             raise
         finally:
+            conn.close()
+
+    @contextmanager
+    def _batch_conn(self) -> Iterator[sqlite3.Connection]:
+        """批量写入：整段复用一条连接、结束时统一提交 / 回滚。
+
+        只用于可重放的种子导入；审计链等强持久性路径不得包进本上下文。
+        """
+        existing = getattr(self._batch_local, "conn", None)
+        if existing is not None:
+            yield existing
+            return
+        conn = connect(self.db_path)
+        self._batch_local.conn = conn
+        try:
+            yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            self._batch_local.conn = None
             conn.close()
 
     # ---------- 写入 ----------
@@ -561,7 +592,7 @@ class CaseStore:
         #   实测 62ms/例，是 demo 首次启动的主要耗时）。种子可重放，
         #   崩了下次重导即可，所以这个代价只在种子路径上可接受。
         #   退出上下文立即恢复默认持久性，审计链写入不受影响。
-        with bulk_load():
+        with bulk_load(), self._batch_conn():
           for item in cases:
               if not isinstance(item, dict):
                   raise CaseStoreError(f"种子案例格式非法: {item!r}")

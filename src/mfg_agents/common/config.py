@@ -131,6 +131,8 @@ class Settings:
     IM_AES_KEY: str = os.getenv("IM_AES_KEY", "")
     # 注意：回调侧本字段是**企业 ID（CorpID）**（解密后归属校验用它），非应用 AgentId
     IM_APPID: str = os.getenv("IM_APPID", "")
+    # 回调重放防护：时间戳允许偏差（秒）；nonce 去重窗口取其 2 倍
+    IM_CALLBACK_MAX_SKEW_S: str = os.getenv("IM_CALLBACK_MAX_SKEW_S", "300")
 
     # 企业微信**应用消息**（主动推送 / @ 责任人）凭据：
     # gettoken(corpid+corpsecret) → message/send(touser+agentid)。

@@ -16,8 +16,10 @@
 """
 from __future__ import annotations
 
+import hmac
 import json
 import logging
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -25,6 +27,8 @@ import urllib.request
 from typing import Any, Callable, Optional
 from xml.etree import ElementTree
 
+from ....common.config import settings
+from ...core import cache
 from ..im_gateway import IMGateway, InboundMessage, ReplyCard
 from .wecom_crypto import (
     WeComCryptoError,
@@ -41,6 +45,42 @@ DEFAULT_BASE_URL = "https://qyapi.weixin.qq.com"
 #: access_token 默认有效期（企微 7200s；提前 300s 过期重取）
 _TOKEN_TTL_S = 7200
 _TOKEN_SKEW_S = 300
+
+#: 回调时间戳最大允许偏差（秒）；nonce 去重窗口取其 2 倍
+DEFAULT_MAX_SKEW_S = 300
+
+
+class _NonceGuard:
+    """进程内 nonce 去重（Redis 不可用时的降级实现；带 TTL 与容量上限）。"""
+
+    def __init__(self, max_entries: int = 4096) -> None:
+        self._seen: dict[str, float] = {}
+        self._max_entries = max_entries
+        self._lock = threading.Lock()
+
+    def consume(self, nonce: str, ttl_s: int) -> bool:
+        """首次使用返回 True；窗口内重复使用返回 False。"""
+        now = time.time()
+        with self._lock:
+            if len(self._seen) >= self._max_entries:
+                self._seen = {k: v for k, v in self._seen.items() if v > now}
+            expires = self._seen.get(nonce)
+            if expires is not None and expires > now:
+                return False
+            self._seen[nonce] = now + ttl_s
+            return True
+
+
+#: 进程级去重表（API 每次请求新建 adapter，故不能挂在实例上）
+_NONCE_GUARD = _NonceGuard()
+
+
+def _configured_max_skew() -> int:
+    try:
+        value = int(str(getattr(settings, "IM_CALLBACK_MAX_SKEW_S", DEFAULT_MAX_SKEW_S)))
+    except (TypeError, ValueError):
+        return DEFAULT_MAX_SKEW_S
+    return value if value > 0 else DEFAULT_MAX_SKEW_S
 
 
 def _cdata(text: str) -> str:
@@ -184,7 +224,8 @@ class WeComAdapter(IMGateway):
     """
 
     def __init__(self, token: str, aes_key: str, appid: str,
-                 push_client: Optional["WeComPushClient"] = None) -> None:
+                 push_client: Optional["WeComPushClient"] = None,
+                 max_skew_s: Optional[int] = None) -> None:
         if not token or not aes_key or not appid:
             raise ValueError("token / aes_key / appid 均不能为空")
         self.token = token
@@ -192,26 +233,76 @@ class WeComAdapter(IMGateway):
         self.appid = appid
         # 可选：配齐企业应用凭据后，主动推送走真实应用消息（见 WeComPushClient）
         self.push_client = push_client
+        self.max_skew_s = int(max_skew_s) if max_skew_s is not None else _configured_max_skew()
+        # nonce 去重窗口覆盖整个允许时间窗（窗口外的时间戳已被时间校验拒绝）
+        self.nonce_ttl_s = max(60, self.max_skew_s * 2)
 
     # ---------- IMGateway 契约 ----------
 
-    def verify_callback(self, payload: dict[str, Any],
-                        headers: Optional[dict[str, str]] = None) -> bool:
-        """校验回调签名。payload 需含 msg_signature/timestamp/nonce 及 encrypt 或 echostr。"""
+    def _verify_signature(self, payload: dict[str, Any]) -> bool:
+        """只校验签名（不消费 nonce、不校验时间戳）。"""
         data = payload.get("encrypt") or payload.get("echostr") or ""
         expected = compute_signature(
             self.token, str(payload.get("timestamp", "")),
             str(payload.get("nonce", "")), data)
-        ok = expected == payload.get("msg_signature", "")
+        ok = hmac.compare_digest(expected, str(payload.get("msg_signature", "")))
         if not ok:
             logger.warning("企微回调验签失败: expected=%s got=%s",
                            expected, payload.get("msg_signature"))
         return ok
 
+    def _check_timestamp(self, payload: dict[str, Any]) -> tuple[bool, str]:
+        raw = str(payload.get("timestamp", "")).strip()
+        if not raw.isdigit():
+            return False, f"timestamp 非法: {raw!r}"
+        skew = abs(time.time() - int(raw))
+        if skew > self.max_skew_s:
+            return False, f"timestamp 偏差 {skew:.0f}s 超过 {self.max_skew_s}s"
+        return True, ""
+
+    def _consume_nonce(self, nonce: str) -> bool:
+        """nonce 一次性消费：Redis 原子 NX 优先；不可用时退回进程内去重。"""
+        # Redis 可用时多实例共享同一份去重状态；返回 None 表示不可用
+        redis_ok = cache.set_if_absent(
+            f"mfg:im:nonce:{self.appid}:{nonce}", {"ts": time.time()},
+            ttl=self.nonce_ttl_s)
+        if redis_ok is not None:
+            return redis_ok
+        return _NONCE_GUARD.consume(nonce, self.nonce_ttl_s)
+
+    def verify_callback(self, payload: dict[str, Any],
+                        headers: Optional[dict[str, str]] = None) -> bool:
+        """校验回调：签名 + 时间戳窗口 + nonce 一次性消费（防重放）。
+
+        payload 需含 msg_signature/timestamp/nonce 及 encrypt 或 echostr。
+        **一次 payload 只能验证成功一次**：重复提交同 nonce 会被拒绝。
+        """
+        if not self._verify_signature(payload):
+            return False
+        fresh, why = self._check_timestamp(payload)
+        if not fresh:
+            logger.warning("企微回调时间戳拒绝: %s", why)
+            return False
+        nonce = str(payload.get("nonce", "")).strip()
+        if not nonce or len(nonce) > 128:
+            logger.warning("企微回调 nonce 为空或过长，拒绝（无法做重放防护）")
+            return False
+        if not self._consume_nonce(nonce):
+            logger.warning("企微回调 nonce 重放，拒绝: nonce=%s", nonce)
+            return False
+        return True
+
     def receive(self, payload: dict[str, Any]) -> InboundMessage:
-        """解密回调消息体 → InboundMessage（调用前必须先 verify_callback）。"""
-        if not self.verify_callback(payload):
+        """解密回调消息体 → InboundMessage（调用前必须先 verify_callback）。
+
+        这里只重复做签名与时间戳校验，**不再消费 nonce**——否则「先验后收」
+        的合法请求会被自己的重放防护拒绝。
+        """
+        if not self._verify_signature(payload):
             raise WeComCryptoError("回调验签失败，拒绝解析消息")
+        fresh, why = self._check_timestamp(payload)
+        if not fresh:
+            raise WeComCryptoError(f"回调时间戳无效：{why}")
         plain = decrypt_msg(self.aes_key, self.appid, payload["encrypt"])
         return self._parse_msg_xml(plain)
 

@@ -105,6 +105,24 @@ def cache_set(key: str, value: Any, ttl: int = 600) -> None:
         logger.warning("[cache] set 失败，降级：%s", exc)
 
 
+def set_if_absent(key: str, value: Any, ttl: int = 600) -> bool | None:
+    """原子写入（仅当 key 不存在）；成功 True / 已存在 False / 不可用 None。
+
+    用于回调 nonce 去重：``NX + EX`` 是 Redis 侧的一次性原子操作，
+    多实例共享同一份去重状态；Redis 不可用时调用方退回进程内缓存。
+    """
+    client = get_client()
+    if client is None:
+        return None
+    try:
+        return bool(client.set(key, json.dumps(value, ensure_ascii=False),
+                               nx=True, ex=ttl))
+    except Exception as exc:  # noqa: BLE001
+        _reset()
+        logger.warning("[cache] set_if_absent 失败，降级：%s", exc)
+        return None
+
+
 def cache_delete(key: str) -> None:
     """删除缓存键（例：工单审批后失效相关查询缓存）。"""
     client = get_client()

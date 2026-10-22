@@ -1,6 +1,8 @@
 """企业微信加解密/验签测试：构造已知向量 + 协议结构 + 安全负向用例。"""
 import hashlib
 import re
+import time
+import uuid
 from xml.etree import ElementTree
 
 import pytest
@@ -89,18 +91,23 @@ def test_bad_base64_rejected():
 
 # ---------- 适配器协议 ----------
 
-def _make_payload(encrypt: str, signature: str) -> dict:
-    return {"msg_signature": signature, "timestamp": "1729000000",
-            "nonce": "nonce123", "encrypt": encrypt}
+def _make_payload(encrypt: str, signature: str, *,
+                  timestamp: str | None = None,
+                  nonce: str | None = None) -> dict:
+    return {"msg_signature": signature,
+            "timestamp": str(timestamp if timestamp is not None else int(time.time())),
+            "nonce": nonce or ("nonce-" + uuid.uuid4().hex[:10]),
+            "encrypt": encrypt}
 
 
 def test_adapter_verify_url_flow():
     """GET URL 校验：echostr 加密 + 签名 → 验签通过 → 解密回显。"""
     adapter = WeComAdapter(TOKEN, AES_KEY, APPID)
     echostr = encrypt_msg(AES_KEY, APPID, "echostr_plain")
-    sig = compute_signature(TOKEN, "1729000000", "nonce123", echostr)
-    assert adapter.verify_callback(_make_payload(echostr, sig)) is True
-    assert adapter.verify_url({**_make_payload(echostr, sig),
+    timestamp, nonce = str(int(time.time())), "nonce-url-" + uuid.uuid4().hex[:8]
+    sig = compute_signature(TOKEN, timestamp, nonce, echostr)
+    assert adapter.verify_url({**_make_payload(echostr, sig, timestamp=timestamp,
+                                               nonce=nonce),
                                "echostr": echostr}) == "echostr_plain"
 
 
@@ -113,6 +120,66 @@ def test_adapter_verify_rejects_forged_signature():
                             "echostr": echostr})
 
 
+def test_adapter_rejects_stale_timestamp():
+    adapter = WeComAdapter(TOKEN, AES_KEY, APPID, max_skew_s=60)
+    echostr = encrypt_msg(AES_KEY, APPID, "echo")
+    timestamp = str(int(time.time()) - 120)
+    sig = compute_signature(TOKEN, timestamp, "nonce-stale", echostr)
+    assert adapter.verify_callback(
+        _make_payload(echostr, sig, timestamp=timestamp, nonce="nonce-stale")) is False
+
+
+def test_adapter_rejects_future_timestamp():
+    adapter = WeComAdapter(TOKEN, AES_KEY, APPID, max_skew_s=60)
+    echostr = encrypt_msg(AES_KEY, APPID, "echo")
+    timestamp = str(int(time.time()) + 120)
+    sig = compute_signature(TOKEN, timestamp, "nonce-future", echostr)
+    assert adapter.verify_callback(
+        _make_payload(echostr, sig, timestamp=timestamp,
+                      nonce="nonce-future")) is False
+
+
+def test_adapter_rejects_nonce_replay():
+    """同一 nonce 第二次验证必须失败（重放防护）。"""
+    adapter = WeComAdapter(TOKEN, AES_KEY, APPID)
+    echostr = encrypt_msg(AES_KEY, APPID, "echo")
+    timestamp, nonce = str(int(time.time())), "nonce-replay-" + uuid.uuid4().hex[:8]
+    sig = compute_signature(TOKEN, timestamp, nonce, echostr)
+    payload = _make_payload(echostr, sig, timestamp=timestamp, nonce=nonce)
+    assert adapter.verify_callback(payload) is True
+    assert adapter.verify_callback(payload) is False
+
+
+def test_adapter_nonce_replay_fallback_without_redis(monkeypatch):
+    """Redis 不可用时退回进程内去重，重放防护不能因此失效。"""
+    from mfg_agents.v2.core import cache
+
+    monkeypatch.setattr(cache, "set_if_absent", lambda *a, **k: None)
+    adapter = WeComAdapter(TOKEN, AES_KEY, APPID)
+    echostr = encrypt_msg(AES_KEY, APPID, "echo")
+    timestamp = str(int(time.time()))
+    nonce = "nonce-fallback-" + uuid.uuid4().hex[:8]
+    sig = compute_signature(TOKEN, timestamp, nonce, echostr)
+    payload = _make_payload(echostr, sig, timestamp=timestamp, nonce=nonce)
+    assert adapter.verify_callback(payload) is True
+    assert adapter.verify_callback(payload) is False
+
+
+def test_adapter_receive_after_verify_does_not_consume_nonce_again():
+    """先 verify_callback 再 receive 是合法链路，不能被自己的重放防护误杀。"""
+    adapter = WeComAdapter(TOKEN, AES_KEY, APPID)
+    inner = ("<xml><ToUserName><![CDATA[wx5823bf96d3bd56c7]]></ToUserName>"
+             "<FromUserName><![CDATA[lisi]]></FromUserName>"
+             "<MsgType><![CDATA[text]]></MsgType>"
+             "<Content><![CDATA[你好]]></Content></xml>")
+    encrypt = encrypt_msg(AES_KEY, APPID, inner)
+    timestamp, nonce = str(int(time.time())), "nonce-flow-" + uuid.uuid4().hex[:8]
+    sig = compute_signature(TOKEN, timestamp, nonce, encrypt)
+    payload = _make_payload(encrypt, sig, timestamp=timestamp, nonce=nonce)
+    assert adapter.verify_callback(payload) is True
+    assert adapter.receive(payload).text == "你好"
+
+
 def test_adapter_receive_parses_text_message():
     """POST 消息：解密 → InboundMessage（user/text/channel/raw）。"""
     adapter = WeComAdapter(TOKEN, AES_KEY, APPID)
@@ -123,8 +190,10 @@ def test_adapter_receive_parses_text_message():
              "<Content><![CDATA[A型号在SMT-1停线，何时复线？]]></Content>"
              "<MsgId>6001</MsgId></xml>")
     encrypt = encrypt_msg(AES_KEY, APPID, inner)
-    sig = compute_signature(TOKEN, "1729000000", "nonce123", encrypt)
-    msg = adapter.receive(_make_payload(encrypt, sig))
+    timestamp, nonce = str(int(time.time())), "nonce-recv-" + uuid.uuid4().hex[:8]
+    sig = compute_signature(TOKEN, timestamp, nonce, encrypt)
+    msg = adapter.receive(_make_payload(encrypt, sig, timestamp=timestamp,
+                                        nonce=nonce))
     assert msg.user_id == "zhangsan"
     assert msg.text == "A型号在SMT-1停线，何时复线？"
     assert msg.channel == "wecom"

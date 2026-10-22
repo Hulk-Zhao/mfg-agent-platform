@@ -295,6 +295,7 @@ mfg-agent-platform/
   真库回归：`MFG_MYSQL_BIZ_URL=... pytest tests/v2/test_text2sql_mysql_integration.py`。
   案例库（`CASE_DB`）已支持 MySQL：配 `mysql+pymysql://...` 即启用（schema 自动建、
   审计链用命名锁跨实例串行化），SQLite 仍是默认零依赖实现。
+  种子导入整段复用单连接（221 例 MySQL 实测 41.0s → 1.7s，事务整体提交/回滚）。
   真库回归：`MFG_MYSQL_CASE_URL=... pytest tests/v2/test_case_mysql_integration.py`。
   **仍待办**：生产只读账号联调、真实业务表 ACL 登记、未建表查询（order_fulfillment /
   物料库存扩展表等）的回归。
@@ -314,7 +315,9 @@ mfg-agent-platform/
   两套 DDL），`tasks/get` 从库读取；TTL 仍为 1 小时（每次发送前顺带清理过期行）。
   多实例共享的前提是治理库切 MySQL（SQLite 单文件不适合多写者）。
 - **公网访问认证**：读接口（看板 / 下钻 / 待办 / 工单详情）均已 fail-closed 要求令牌；剩余的"链接即权限"在于**登录本身免密**（31 个岗位任选即入），对外正式提供前必须替换为 SSO。
-- **企微回调重放防护**：需补 timestamp 窗口验重 + nonce 缓存。
+- **企微回调重放防护**：已补 timestamp 窗口（默认 ±300s，`IM_CALLBACK_MAX_SKEW_S`）
+  + nonce 一次性消费（Redis `SET NX EX` 跨实例，Redis 不可用退回进程内 TTL 去重）；
+  验签改用常量时间比较。真实租户联调仍需按企微重试策略确认 nonce 行为。
 - **超时代签**：字段位已预留（`on_behalf_of` / `overdue_signoff`），入口未开放。
 
 ## 文档

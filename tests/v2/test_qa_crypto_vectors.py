@@ -223,18 +223,23 @@ class TestWeComSignature:
             {"msg_signature": bad_sig, "timestamp": "1729000000",
              "nonce": "n", "encrypt": echostr}) is False
 
-    def test_replay_same_signature_behavior(self):
-        """重放行为记录（QA 观察项 OBS-1，非阻断缺陷）：
-        当前实现无 nonce/时间戳新鲜度缓存，同一合法签名重复提交会被
-        再次接受（企微官方被动回调同样依赖 5s 窗口 + 上层幂等）。
-        生产接入前应在 API 层补 timestamp 窗验重（如 5 分钟）与 nonce 缓存。"""
+    def test_replay_same_signature_rejected(self):
+        """重放防护（第三十棒闭环）：同一 nonce 的合法签名第二次必须被拒绝。
+
+        旧实现无时间戳/ nonce 新鲜度校验，重放会被再次接受；现已补
+        timestamp 窗口 + nonce 一次性消费。"""
+        import time
+        import uuid
+
         adapter = WeComAdapter(TOKEN, AES_KEY, APPID)
         echostr = encrypt_msg(AES_KEY, APPID, "echo")
-        sig = compute_signature(TOKEN, "1729000000", "n", echostr)
-        payload = {"msg_signature": sig, "timestamp": "1729000000",
-                   "nonce": "n", "echostr": echostr}
+        timestamp = str(int(time.time()))
+        nonce = "replay-" + uuid.uuid4().hex[:8]
+        sig = compute_signature(TOKEN, timestamp, nonce, echostr)
+        payload = {"msg_signature": sig, "timestamp": timestamp,
+                   "nonce": nonce, "echostr": echostr}
         assert adapter.verify_callback(payload) is True
-        assert adapter.verify_callback(payload) is True  # 重放同样通过（记录在案）
+        assert adapter.verify_callback(payload) is False  # 重放被拒绝
 
 
 # ---------- 4. 密文篡改 / 截断 / 结构攻击 ----------
@@ -320,7 +325,10 @@ class TestWeComCipherAttacks:
         raw = bytearray(base64.b64decode(encrypt))
         raw[20] ^= 0x01
         tampered = base64.b64encode(bytes(raw)).decode("ascii")
-        sig = compute_signature(TOKEN, "1729000000", "n", tampered)
+        import time
+
+        timestamp = str(int(time.time()))
+        sig = compute_signature(TOKEN, timestamp, "n", tampered)
         with pytest.raises(WeComCryptoError):
-            adapter.receive({"msg_signature": sig, "timestamp": "1729000000",
+            adapter.receive({"msg_signature": sig, "timestamp": timestamp,
                              "nonce": "n", "encrypt": tampered})

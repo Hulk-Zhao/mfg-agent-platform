@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import logging
 import sys
+import time
+import uuid
 from typing import Any, Optional
 
 from ..contracts.adapters.wecom import WeComAdapter
@@ -48,7 +50,9 @@ def run(query: str = DEFAULT_QUERY) -> dict[str, Any]:
 
     # 1) 构造回调载荷（与企微推送格式一致：Encrypt + 签名）
     _section("1. 构造企业微信回调（加密 + 签名）")
-    timestamp, nonce = "1729000000", "9x1m2k3p"
+    # 时间戳取当前时间、GET/POST 用不同 nonce：回调重放防护会拒过期/重复 nonce
+    timestamp = str(int(time.time()))
+    nonce = "sim-post-" + uuid.uuid4().hex[:8]
     inner_xml = (
         "<xml>"
         f"<ToUserName><![CDATA[{DEMO_APPID}]]></ToUserName>"
@@ -69,10 +73,12 @@ def run(query: str = DEFAULT_QUERY) -> dict[str, Any]:
     # 2) GET URL 校验演示
     _section("2. GET URL 校验（echostr + SHA1 验签）")
     echostr_cipher = encrypt_msg(DEMO_AES_KEY, DEMO_APPID, "echo_plain_text")
-    echostr_sig = compute_signature(DEMO_TOKEN, timestamp, nonce, echostr_cipher)
+    get_ts = str(int(time.time()))
+    get_nonce = "sim-get-" + uuid.uuid4().hex[:8]
+    echostr_sig = compute_signature(DEMO_TOKEN, get_ts, get_nonce, echostr_cipher)
     echostr_plain = adapter.verify_url({
-        "msg_signature": echostr_sig, "timestamp": timestamp,
-        "nonce": nonce, "echostr": echostr_cipher})
+        "msg_signature": echostr_sig, "timestamp": get_ts,
+        "nonce": get_nonce, "echostr": echostr_cipher})
     print(f"验签通过，解密 echostr -> {echostr_plain!r}")
 
     # 3) 验签 + 解密 + 解析
