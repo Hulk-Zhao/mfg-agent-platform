@@ -36,6 +36,7 @@ PLATFORM_DDL = [
       hitl_prompt TEXT DEFAULT '',
       history_json TEXT DEFAULT '[]',
       governance_json TEXT DEFAULT '{}',
+      owner_scope TEXT DEFAULT '{}',
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       sla_due_at TEXT
@@ -102,6 +103,8 @@ _METRIC_UPSERT = (
 _ADDITIVE_COLUMNS: dict[str, dict[str, str]] = {
     "platform_workflow_task": {
         "governance_json": "TEXT DEFAULT '{}'",
+        # R9 行级归属（D13）：岗位/部门/厂区 JSON；空 = 未纳管存量（保持既有可见性）
+        "owner_scope": "TEXT DEFAULT '{}'",
     },
 }
 

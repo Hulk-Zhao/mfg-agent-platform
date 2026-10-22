@@ -21,9 +21,10 @@
 #   AGENT_ACTOR_ROLES 显式黑名单，否则自检不会拦住「Agent 持 approve」的破防配置。
 version: 2
 
-# ---------- 9 个 HITL 槽位（对应 7 场景 + S1 接单评审 共 9 个 HITL 节点） ----------
+# ---------- 10 个 HITL 槽位（7 场景 + S1 接单评审 + 报告中心审定） ----------
 # available_permissions 必须显式声明（加载期校验：必须存在且归属本槽位）；
-# 场景 YAML 里出现这 9 个之外的 hitl kind，ScenarioRegistry 加载期即报错。
+# 场景 YAML 里出现这 10 个之外的 hitl kind，ScenarioRegistry 加载期即报错。
+# 2026-10-22 勘误：原注释写「9 个」（T16 报告中心 report_publish 落槽后未同步）。
 slots:
   - key: restart
     name: 复线决策

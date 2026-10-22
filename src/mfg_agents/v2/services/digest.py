@@ -64,7 +64,9 @@ def _kpi_gap(entry: dict) -> float:
 
 def build_digest(registry: Any, workflow: Any, roles: list[str],
                  window: str = "window",
-                 query: str = "") -> Optional[dict[str, Any]]:
+                 query: str = "",
+                 user_ctx: Optional[dict[str, Any]] = None
+                 ) -> Optional[dict[str, Any]]:
     """构建跨域态势汇总；无任何可见看板时返回 None（调用方回落原链路，不臆造）。"""
     from . import dashboard as dash
 
@@ -133,11 +135,39 @@ def build_digest(registry: Any, workflow: Any, roles: list[str],
         return None
 
     # ---- 治理待办（workflow_scope 同源裁决：只看"我能动的"）----
-    todo = {"mine": 0, "visible": 0}
+    todo: dict[str, Any] = {"mine": 0, "visible": 0}
     try:
         from . import workflow_scope
         waiting = workflow.list_tasks(status="waiting_hitl")
-        todo = workflow_scope.summarize(workflow, waiting, roles)
+        todo = workflow_scope.summarize(
+            workflow, waiting, roles,
+            user_ctx={**(user_ctx or {}), "roles": roles})
+        # 2026-10-22：「本周有哪些要我拍板的升级事项」不能只回一个计数——
+        # 管理者要看到**具体哪几项**。按我持有的 HITL 槽位筛出待处置工单，
+        # 给出标题/槽位/优先级/最迟响应时间，并区分「已会签可终批」与「待会签」。
+        slots = workflow_scope.slot_keys_for(workflow.permission_registry, roles)
+        mine_items = []
+        ready = 0
+        for task in waiting:
+            if not task.is_governed() or task.slot not in slots:
+                continue
+            signoff = task.signoff_status() or {}
+            can_approve = bool((task.governance or {}).get("action_key")) \
+                and bool(signoff.get("satisfied"))
+            ready += int(can_approve)
+            mine_items.append({
+                "task_uid": task.task_uid,
+                "title": task.title or task.hitl_prompt or "待确认工单",
+                "slot": task.slot,
+                "priority": task.priority or "",
+                "sla_due_at": task.sla_due_at or "",
+                "ready_to_approve": can_approve,
+            })
+        mine_items.sort(key=lambda x: (0 if x["priority"] == "P1" else 1,
+                                       x["sla_due_at"] or "9999"))
+        todo["governed"] = len(mine_items)
+        todo["ready_to_approve"] = ready
+        todo["items"] = mine_items[:5]
     except Exception as exc:  # noqa: BLE001 —— 待办失败不拖垮整体
         logger.warning("[digest] 待办汇总失败（跳过）: %s", exc)
 

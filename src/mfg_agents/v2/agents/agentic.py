@@ -39,6 +39,9 @@ AGENT_TOOLS_META: list[dict[str, str]] = [
     {"name": "search_knowledge", "desc": "检索知识库（财务/行政制度；工程知识随接入扩展）", "kind": "只读"},
     {"name": "query_project_milestones", "desc": "查项目/NPI 里程碑（EVT/DVT/PVT/MP 阶段与状态）", "kind": "只读"},
     {"name": "query_test_records", "desc": "查测试记录（可靠性/执行结果，引用记录编号）", "kind": "只读"},
+    {"name": "draft_delivery_reply", "desc": "对客交期答复草稿（R5：ATP 现货 + 排产试算，确定性组装；放行须 hitl.eta 人工确认）", "kind": "只读/草稿"},
+    {"name": "dispatch_followup", "desc": "齐套催交派发（R6：缺口清单→采购员待办，治理轨状态机；到货确认须人工操作）", "kind": "写/治理轨"},
+    {"name": "trace_quality_chain", "desc": "质量追溯三路并查（R7：生产记录/来料检验/设备状态串行取证 + 同批在制工单，确定性成稿）", "kind": "只读/成稿"},
     # V4 工具层并轨：以下工具经 ToolRegistry 装配（与 MCP / A2A 单一事实源），
     # 按域附加给对应智能体（safe name：命名空间.动作 → 命名空间__动作）
     {"name": "quality__trace", "desc": "批次全链路质量追溯（不良/客诉/测试记录串联）", "kind": "只读"},
@@ -301,6 +304,9 @@ _SYSTEM_TEMPLATE = """{role}
 - search_knowledge(question)：检索知识库（财务/行政制度；工程知识随接入扩展）
 - query_project_milestones(...)：查项目/NPI 里程碑（EVT/DVT/PVT/MP 阶段与状态）
 - query_test_records(...)：查测试记录（可靠性/执行结果，引用记录编号）
+- draft_delivery_reply(model, qty, need_date)：组装对客交期答复草稿（ATP 现货 + 排产试算，数字全部来自注册查询；草稿不是承诺——对外发送前必须按返回提示建 hitl.eta 人工确认工单）
+- dispatch_followup(work_order_set, limit)：齐套催交派发（缺口清单→采购员待办，落治理轨状态机；幂等键料号×供应商×工单集；到货确认必须人工操作，你不得代确认）
+- trace_quality_chain(batch_no)：质量追溯三路并查（生产记录 → 来料检验 → 设备状态 + 同批在制工单，确定性成稿；对外发布前必须建 report_publish 人工确认工单）
 - create_hitl_task(title, prompt, slot)：发起人工确认工单（你只发起，绝不放行）
 
 ## 工作方式（ReAct）
@@ -314,10 +320,39 @@ _SYSTEM_TEMPLATE = """{role}
   "needs_hitl": true/false,
   "hitl_title": "需要人工确认的事项标题（needs_hitl=true 时必填）",
   "hitl_prompt": "给审批人的说明（needs_hitl=true 时必填）",
-  "hitl_slot": "disposition|restart|eta|d8_close|complaint_reply|delivery_commit|maintenance_window 之一（needs_hitl=true 时必填）",
+  "hitl_slot": "{slots} 之一（needs_hitl=true 时必填）",
   "data_gaps": ["未能获取的数据及原因"]}}
 
 注意：只输出一个 JSON 对象；数字必须来自工具返回；权限被拒时换思路或如实说明。"""
+
+
+def _governance_slot_list() -> list[str]:
+    """合法 HITL 槽位清单（提示词与工具 schema 的单一事实源）。
+
+    2026-10-22 R1 前置修复：原来提示词与工具 schema 各写死 7 个槽，
+    漏了 T15/T16 新增的 spc_action/order_review/report_publish——Agent
+    建不出这三类工单（U1 插单评估要的正是 order_review）。改为从
+    GOVERNANCE_SLOTS 动态生成，未来加槽位（如 spend_commit）零维护。
+    """
+    from ..services.workflow import GOVERNANCE_SLOTS
+    return sorted(GOVERNANCE_SLOTS)
+
+
+def _propose_role_names(slot: str) -> list[str]:
+    """槽位 propose 角色中文名（PermissionRegistry 单一事实源）。
+
+    2026-10-22 R1 前置修复：create_hitl_task 原硬编码 assignees=
+    ["质量总监"]——所有域的工单都挂同一受理人，与槽位语义无关。改为按
+    ``hitl.<slot>.propose`` 权限反查持有角色；权限目录故障时返回空列表
+    （建单不阻断，受理人由人工兜底）。
+    """
+    from ..contracts.permissions import get_permission_registry
+    try:
+        reg = get_permission_registry()
+        return reg.roles_with_permission_names(f"hitl.{slot}.propose")
+    except Exception as exc:  # noqa: BLE001 - 权限目录故障不阻断建单
+        logger.warning("[agentic] propose 角色解析失败（slot=%s）: %s", slot, exc)
+        return []
 
 
 @dataclass
@@ -349,6 +384,33 @@ class AgenticDomainAgent:
         return self._llm
 
     # ---------- 工具实现（能力即工具；全部走既有服务层，权限同源） ----------
+
+    def _slot_actions(self, slot: str) -> list[dict]:
+        """按槽位取处置动作目录（单一事实源：scenarios/*.yaml 的 hitl 步骤）。
+
+        2026-10-22 R1 前置修复：create_hitl_task 原来传 ``actions: []``，
+        治理快照因「无处置动作」不初始化（``_init_governance`` 返回 {}），
+        Agent 建出的工单人工选不了动作、会签链建不起来——U1 插单评估
+        「Agent 发起 → 人工确认」闭环断在这里。改为按槽位从场景 YAML
+        取动作清单（与 S1–S7 场景工单同口径）；无场景登记的槽位
+        （如 report_publish）回落空列表，行为与修复前一致。
+
+        场景注册表不可用（测试桩/装配失败）时返回空列表，不阻断建单。
+        """
+        try:
+            registry = self.orchestrator.runtime.scenario_registry
+            for meta in registry.list():
+                for step in getattr(meta, "steps", []):
+                    if str(step.get("type") or "").lower() != "hitl":
+                        continue
+                    node_slot = str(step.get("agent") or step.get("id") or "")
+                    if node_slot.startswith("hitl_"):
+                        node_slot = node_slot[len("hitl_"):]
+                    if node_slot == slot:
+                        return [dict(a) for a in (step.get("actions") or [])]
+        except Exception as exc:  # noqa: BLE001 - 目录缺失不阻断建单（回落空动作）
+            logger.warning("[agentic] 槽位动作目录解析失败（slot=%s）: %s", slot, exc)
+        return []
 
     def _tools(self) -> dict[str, Any]:
         t2s = self.orchestrator.runtime.text2sql
@@ -418,8 +480,142 @@ class AgenticDomainAgent:
                 "ORDER BY test_date DESC LIMIT 5", {"m": model})
             return {"rows": rows[:5], "row_count": len(rows)}
 
+        def draft_delivery_reply(model: str, qty: int, need_date: str) -> dict:
+            """对客交期答复草稿（R5）：ATP 现货 + 排产试算 → 草稿 + 建单提示。
+
+            数字全部来自注册查询（atp_by_model / plan_by_model），确定性组装、
+            不调 LLM、不编造；草稿不是承诺——按返回的 hitl 提示调
+            create_hitl_task(slot="eta") 建人工确认工单，Agent 永不直接放行
+            （闸门理由：对客交期超期即违约，见 gate_reasons.yaml）。
+            """
+            from ..services.delivery_reply import compose_delivery_reply
+
+            def _run(name: str, params: dict) -> list[dict]:
+                qr = t2s.query_registered(name, params or {},
+                                          user_ctx=self.user_ctx)
+                # 查询被 ACL 拦截/缺参时 rows 为空——必须抛出，交给
+                # compose_delivery_reply 记为 data_gap 并判 NO_DATA；
+                # 否则空结果会被当成「零库存」继续算，静默编造交期（R5 真机实测）。
+                if qr.fallback or any("审核拦截" in str(w) for w in (qr.warnings or [])):
+                    raise RuntimeError(
+                        f"注册查询 {name} 不可用（{'；'.join(map(str, qr.warnings or [])) or qr.fallback}）")
+                return qr.rows or []
+
+            rep = compose_delivery_reply(model=model, qty=qty,
+                                         need_date=need_date, run_query=_run)
+            return {
+                "verdict": rep.verdict, "draft": rep.draft,
+                "on_hand": rep.on_hand, "first_ship": rep.first_ship,
+                "to_produce": rep.to_produce,
+                "daily_capacity": round(rep.daily_capacity, 1),
+                "finish_date": rep.finish_date, "slack_days": rep.slack_days,
+                "data_gaps": rep.data_gaps,
+                "needs_hitl": True, "hitl_slot": "eta",
+                "hitl_title": f"对客交期答复确认（{model} {qty} 套）",
+                "hitl_prompt": rep.draft,
+                "note": "草稿已生成；对外发送必须经人工确认——请调 "
+                        "create_hitl_task(slot='eta') 建单，勿擅自承诺",
+            }
+
+        def dispatch_followup(work_order_set: str, limit: int = 10) -> dict:
+            """齐套催交派发（R6）：缺口清单 → 采购员待办（治理轨状态机）。
+
+            数据全部来自注册查询（material_shortage / supplier_followup）；
+            幂等键 = 料号 × 供应商 × 工单集，重复派发不会产生第二条待办。
+            到货确认是人工动作（演示态带「演示回写」徽标），Agent 只派发、
+            不改到货状态——这是「Agent 只推进、不放行」的同一铁律。
+            """
+            from ..services import procurement_followup as followup_svc
+
+            if self.domain not in ("supply_chain", "procurement", "warehouse"):
+                return {"error": f"催交派发仅限供应链/采购/仓储域（当前 {self.domain}）",
+                        "needs_hitl": False}
+            label = str(work_order_set or "").strip()
+            if not label:
+                return {"error": "缺少工单集 work_order_set（如「2026-10-26 开工批次」）",
+                        "needs_hitl": False}
+
+            def _run(name: str, params: dict) -> list[dict]:
+                qr = t2s.query_registered(name, params or {},
+                                          user_ctx=self.user_ctx)
+                if qr.fallback or any("审核拦截" in str(w) for w in (qr.warnings or [])):
+                    raise RuntimeError(
+                        "；".join(map(str, qr.warnings or [])) or str(qr.fallback))
+                return qr.rows or []
+
+            try:
+                plan = followup_svc.build_followup_gaps(
+                    _run, limit=max(1, min(int(limit or 10), 50)))
+                rows = followup_svc.dispatch_followups(
+                    label, plan["gaps"],
+                    actor=str(self.user_ctx.get("user_id") or ""))
+            except followup_svc.FollowupDataError as exc:
+                return {"error": str(exc), "needs_hitl": False}
+
+            return {
+                "work_order_set": label,
+                "dispatched": len(rows),
+                "total_gaps": plan["total_gaps"],
+                "truncated": plan["truncated"],
+                "missing_supplier": plan["missing_supplier"],
+                "basis": plan["basis"],
+                "followups": [{
+                    "followup_id": r.get("followup_id"),
+                    "part_no": r.get("part_no"), "part_name": r.get("part_name"),
+                    "supplier": r.get("supplier"),
+                    "shortage_qty": r.get("shortage_qty"),
+                    "status": r.get("status"), "owner": r.get("owner"),
+                    "sla_due_at": r.get("sla_due_at"),
+                    "demo_writeback": r.get("demo_writeback"),
+                } for r in rows[:10]],
+                "needs_hitl": False,
+                "note": ("催交待办已落治理轨状态机（订单看板可跟踪）。"
+                         "到货确认必须人工操作，演示态带「演示回写」徽标；"
+                         "重复派发同缺口返回既有单（幂等键：料号×供应商×工单集）。"),
+            }
+
+        def trace_quality_chain(batch_no: str) -> dict:
+            """质量追溯三路并查（R7）：生产记录 → 来料检验 → 设备状态 + 同批影响面。
+
+            串行四查（D11：不新增并行编排原语），确定性成稿，数字全部来自
+            注册查询；每一路失败/无权限记 data_gap，不拿空结果当"没有异常"。
+            成稿自动随本轮结果归档进报告中心；对外发布须建 report_publish 工单。
+            """
+            from ..services.quality_trace_report import compose_quality_trace
+
+            if self.domain not in ("quality", "customer_service"):
+                return {"error": f"质量追溯仅限质量/客服域（当前 {self.domain}）"}
+            batch = str(batch_no or "").strip()
+            if not batch:
+                return {"error": "缺少批次号 batch_no"}
+
+            def _run(name: str, params: dict) -> list[dict]:
+                qr = t2s.query_registered(name, params or {},
+                                          user_ctx=self.user_ctx)
+                if qr.fallback or any("审核拦截" in str(w) for w in (qr.warnings or [])):
+                    raise RuntimeError(
+                        "；".join(map(str, qr.warnings or [])) or str(qr.fallback))
+                return qr.rows or []
+
+            rep = compose_quality_trace(batch, _run)
+            out = rep.to_dict()
+            out["needs_hitl_hint"] = {
+                "slot": "report_publish",
+                "title": f"追溯报告发布确认（批次 {batch}）",
+                "prompt": "追溯报告草稿已生成；对外发布/发客户前须经报告审定人工确认。",
+            }
+            out["note"] = ("三路串行取证已完成，报告随本轮归档；对外发布必须调 "
+                           "create_hitl_task(slot='report_publish') 人工确认，勿擅自外发。")
+            return out
+
         def create_hitl_task(title: str, prompt: str, slot: str) -> dict:
             """Agent 发起 HITL（治理：只 propose，工单走完整治理链，Agent 永不放行）。"""
+            # 槽位白名单校验（R1 前置）：未知槽位直接拒，并把合法清单回给
+            # Agent 自纠——否则脏槽位会静默建成「未纳管」工单，绕过治理链
+            if slot not in set(_governance_slot_list()):
+                return {"error": f"未知治理槽位 {slot!r}（合法槽位："
+                                 f"{'|'.join(_governance_slot_list())}）",
+                        "task_uid": None}
             # 流程留痕：域 Agent 无 DAG 轨迹，按「意图识别 → 数据取证判定」调用链补造，
             # 供审批摘要卡渲染流程进展与各职能部门耗时（与办公/MCP 单工具工单同口径）
             flow = single_tool_flow(
@@ -428,11 +624,13 @@ class AgenticDomainAgent:
                 f"agentic_{slot}", prompt, seed=f"{title}|{prompt}")
             task = wf.create_task(
                 wf_id=f"agentic_{slot}", title=title[:80],
-                context={"slot": slot, "kind": slot, "actions": [],
+                context={"slot": slot, "kind": slot,
+                         "actions": self._slot_actions(slot),
                          "origin": "agentic_agent", "domain": self.domain,
                          "reason": f"{title}；现需人工确认：{prompt}",
                          "flow": flow},
-                assignees=["质量总监"], priority="P2", hitl=True,
+                assignees=_propose_role_names(slot) or ["治理角色待定"],
+                priority="P2", hitl=True,
                 hitl_prompt=prompt[:300])
             return {"task_uid": task.task_uid, "status": task.status,
                     "note": "已创建人工确认工单，等待对应岗位处理"}
@@ -457,6 +655,31 @@ class AgenticDomainAgent:
                 "type": "object",
                 "properties": {"model": {"type": "string"}},
                 "required": ["model"]}),
+            "draft_delivery_reply": (draft_delivery_reply, {
+                "type": "object",
+                "properties": {
+                    "model": {"type": "string", "description": "产品型号，如 A型号"},
+                    "qty": {"type": "integer", "description": "客户需求量（套）"},
+                    "need_date": {"type": "string",
+                                  "description": "约定交期：ISO 日期（2026-10-31）/ 月底 / 下月底"},
+                },
+                "required": ["model", "qty", "need_date"]}),
+            "dispatch_followup": (dispatch_followup, {
+                "type": "object",
+                "properties": {
+                    "work_order_set": {"type": "string",
+                                       "description": "工单集标签（如「2026-10-26 开工批次」或订单号列表）"},
+                    "limit": {"type": "integer",
+                              "description": "最多派发缺口条数（默认 10，上限 50）"},
+                },
+                "required": ["work_order_set"]}),
+            "trace_quality_chain": (trace_quality_chain, {
+                "type": "object",
+                "properties": {
+                    "batch_no": {"type": "string",
+                                 "description": "批次号，如 BATCH-A-1008"},
+                },
+                "required": ["batch_no"]}),
             "query_metric": (query_metric, {
                 "type": "object",
                 "properties": {"metric_id": {"type": "string",
@@ -482,10 +705,7 @@ class AgenticDomainAgent:
                 "properties": {"title": {"type": "string"},
                                "prompt": {"type": "string"},
                                "slot": {"type": "string",
-                                        "enum": ["disposition", "restart", "eta",
-                                                 "d8_close", "complaint_reply",
-                                                 "delivery_commit",
-                                                 "maintenance_window"]}},
+                                        "enum": _governance_slot_list()}},
                 "required": ["title", "prompt", "slot"]}),
         } | self._registry_tools()
 
@@ -584,7 +804,10 @@ class AgenticDomainAgent:
         final: Optional[dict] = None
         llm = self._get_llm()
 
-        sys_text = _SYSTEM_TEMPLATE.format(**self.cfg)
+        sys_text = _SYSTEM_TEMPLATE.format(
+            role=self.cfg["role"], boundary=self.cfg["boundary"],
+            hitl_rule=self.cfg["hitl_rule"],
+            slots="|".join(_governance_slot_list()))
         # V4：按域附加工具的运行时说明（registry 装配后动态拼入——静态模板
         # 不知道每个域拿到哪些附加工具，写死会与实际能力清单失真）
         if self._extra_desc:

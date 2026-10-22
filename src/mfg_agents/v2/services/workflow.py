@@ -32,18 +32,18 @@ import threading
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Mapping, Optional
 
-from ...common.platform_schema import (
-    ensure_platform_schema,
-    ensure_platform_schema_sqlite,
-    is_sqlite_target,
-    sqlite_path_from_url,
-)
+from ...common.platform_schema import sqlite_path_from_url
 from ..contracts.permissions import (
     PermissionRegistry,
     get_permission_registry,
+)
+from .workflow_repository import (
+    SQLiteWorkflowRepository,
+    WorkflowBackendError,
+    WorkflowRepository,
+    assert_sqlite_backed,
 )
 
 logger = logging.getLogger(__name__)
@@ -60,6 +60,7 @@ __all__ = [
     "TERMINAL_STATUSES",
     "GOVERNANCE_SLOTS",
     "assert_sqlite_backed",
+    "normalize_owner_scope",
 ]
 
 
@@ -138,40 +139,31 @@ GOVERNANCE_SLOTS: frozenset[str] = frozenset({
     "report_publish",
 })
 
+# 注：``WorkflowBackendError`` / ``assert_sqlite_backed`` 已下沉到
+# ``services/workflow_repository.py``（D15），此处 re-export 保持既有导入路径
+# （procurement_followup / report_store / site_board 等仍从本模块导入）。
 
-class WorkflowBackendError(NotImplementedError):
-    """治理写路径不接受非 SQLite 后端——启动即失败，绝不静默降级。"""
 
+def normalize_owner_scope(scope: Optional[dict[str, Any]]) -> dict[str, Any]:
+    """规范行级归属（R9）：仅保留 ``user_id / roles / dept / site`` 非空值。
 
-def assert_sqlite_backed(db_url: str) -> None:
-    """校验 ``db_url`` 可作为 SQLite 文件路径使用，否则 fail-fast。
-
-    背景（这条防线是必须的，别删）：本引擎直连 ``sqlite3``，不走 SQLAlchemy，
-    而 :func:`sqlite_path_from_url` 对无法识别的 URL **原样返回整条字符串**。
-    若把 ``DB_URL=mysql+pymysql://root:pw@host:3306/db`` 直接传进来，会得到：
-
-    - Linux / 容器：``sqlite3.connect("<整条 URL>")`` 在工作目录静默建出一个
-      文件名即该 URL 的空库 → 工单写进错误位置，跨进程重启（CWD 变化）后"消失"；
-    - Windows：文件名含 ``:`` 属非法字符 → 直接抛 ``OSError``，治理链整体不可用。
-
-    两种结局都是事故，且第一种**不报错**，排查成本极高。因此在此显式拒绝，
-    让错误在启动时以清晰信息暴露。方言判定复用
-    :func:`~mfg_agents.common.platform_schema.is_sqlite_target`，与建表路径同源。
+    空 dict 表示「未纳管存量」——可见性完全走既有槽位判据，保持向后兼容。
+    ``assignees`` 仍是自由文本展示列，**不进**本结构（不做判据）。
     """
-    if is_sqlite_target(db_url):
-        return
-    raise WorkflowBackendError(
-        f"WorkflowEngine 目前仅支持 SQLite 持久化，收到非 SQLite 地址：{db_url!r}。\n"
-        f"治理写路径（工单 / 会签 / SLA / HITL）直连 sqlite3，未接入 SQLAlchemy 抽象；\n"
-        f"把 MySQL URL 当作文件路径会静默建出错误的库（Windows 直接抛异常）。\n"
-        f"解决方式：\n"
-        f"  1) 单独指定治理库（推荐）——在 .env 设 "
-        f"WORKFLOW_DB=sqlite:////absolute/path/to/platform.db，与 DB_URL 解耦；\n"
-        f"  2) 或把 DB_URL 改回 SQLite；\n"
-        f"  3) 需要治理数据落 MySQL 时，先抽 WorkflowRepository 契约再实现\n"
-        f"     SQLAlchemy 后端（见 README「生产化清单」第 1 条）。"
-    )
-
+    if not isinstance(scope, dict):
+        return {}
+    out: dict[str, Any] = {}
+    user_id = str(scope.get("user_id") or "").strip()
+    if user_id:
+        out["user_id"] = user_id
+    roles = [str(r).strip() for r in (scope.get("roles") or []) if str(r).strip()]
+    if roles:
+        out["roles"] = sorted(set(roles))
+    for key in ("dept", "site"):
+        value = str(scope.get(key) or "").strip()
+        if value:
+            out[key] = value
+    return out
 
 
 @dataclass
@@ -205,6 +197,8 @@ class WorkflowTask:
     hitl_prompt: str = ""
     history: list[dict[str, Any]] = field(default_factory=list)
     governance: dict[str, Any] = field(default_factory=dict)
+    # R9 行级归属：{user_id?, roles?, dept?, site?}；空 = 既有槽位级可见性
+    owner_scope: dict[str, Any] = field(default_factory=dict)
     created_at: str = ""
     updated_at: str = ""
     sla_due_at: Optional[str] = None
@@ -281,13 +275,22 @@ class WorkflowEngine:
     """
 
     def __init__(self, db_url: str, default_sla_hours: float = 2.0,
-                 permission_registry: Optional[PermissionRegistry] = None) -> None:
+                 permission_registry: Optional[PermissionRegistry] = None,
+                 repository: Optional[WorkflowRepository] = None) -> None:
         self.db_url = db_url
-        # 先校验后端再解析路径：非 SQLite URL 必须在解析前被拒（详见函数 docstring）
-        assert_sqlite_backed(db_url)
-        self.db_path = sqlite_path_from_url(db_url)
         self.default_sla_hours = default_sla_hours
         self.permission_registry = permission_registry or get_permission_registry()
+        # D15：全部工单读写经仓储契约；SQLite 实现先行，MySQL 实现接同一契约。
+        # 注入 repository 供测试/多后端切换；未注入时才校验 SQLite 并构造默认实现
+        # （注入非 SQLite 仓储时不应被 SQLite 方言校验挡住）。
+        if repository is None:
+            # 先校验后端再解析路径：非 SQLite URL 必须在解析前被拒（见函数 docstring）
+            assert_sqlite_backed(db_url)
+            self.db_path = sqlite_path_from_url(db_url)
+            self.repository: WorkflowRepository = SQLiteWorkflowRepository(db_url)
+        else:
+            self.repository = repository
+            self.db_path = str(getattr(repository, "db_path", "") or db_url)
         # 并发双签防护：治理写路径（select_action/cosign/approve/reject）的
         # 「读-判断-写」必须串行化。RLock 可重入，且对 :memory: 场景的共享
         # sqlite3.Connection（check_same_thread 默认限制）同样有效。
@@ -297,24 +300,15 @@ class WorkflowEngine:
         # 写锁内的临时传递：_assert_* 校验出的 actor_id 供 _append_approval 落库
         # （仅在 _write_lock 内读写，串行化保证线程安全）
         self._last_actor_id: str = ""
-        self._memory_conn: Optional[sqlite3.Connection] = None
-        if self.db_path == ":memory:":
-            # 内存库：建一个进程内持久连接，DDL/DML 共用同一库
-            self._memory_conn = sqlite3.connect(":memory:")
-            self._memory_conn.row_factory = sqlite3.Row
-            ensure_platform_schema_sqlite(self._memory_conn)
-        else:
-            ensure_platform_schema(db_url)
 
-    # ---------- 连接 ----------
+    # ---------- 连接（兼容入口：既有测试/运维脚本仍可 engine._connect()） ----------
 
     def _connect(self) -> sqlite3.Connection:
-        if self._memory_conn is not None:
-            return self._memory_conn
-        Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(self.db_path, timeout=10.0)
-        conn.row_factory = sqlite3.Row
-        return conn
+        connect = getattr(self.repository, "connect", None)
+        if connect is None:
+            raise WorkflowBackendError(
+                "当前仓储实现不提供原生连接（connect 是 SQLite 实现的兼容入口）")
+        return connect()
 
     # ---------- 生命周期 ----------
 
@@ -324,7 +318,8 @@ class WorkflowEngine:
                     priority: str = "P1",
                     sla_hours: Optional[float] = None,
                     hitl: bool = False,
-                    hitl_prompt: str = "") -> WorkflowTask:
+                    hitl_prompt: str = "",
+                    owner_scope: Optional[dict[str, Any]] = None) -> WorkflowTask:
         """创建工单；hitl=True 时直接进入 waiting_hitl（待人工确认，绝不自动放行）。
 
         治理链初始化条件：``hitl=True`` + 能解析出已知 slot + ``context`` 携带
@@ -344,6 +339,7 @@ class WorkflowEngine:
             context=task_context,
             hitl_prompt=hitl_prompt,
             governance=self._init_governance(task_context, wf_id) if hitl else {},
+            owner_scope=normalize_owner_scope(owner_scope),
             created_at=now.isoformat(), updated_at=now.isoformat(),
             sla_due_at=sla.isoformat(),
         )
@@ -888,10 +884,7 @@ class WorkflowEngine:
     # ---------- 查询 ----------
 
     def get(self, task_uid: str) -> WorkflowTask:
-        with self._connect() as conn:
-            row = conn.execute(
-                "SELECT * FROM platform_workflow_task WHERE task_uid = ?",
-                (task_uid,)).fetchone()
+        row = self.repository.fetch_task(task_uid)
         if row is None:
             raise KeyError(f"工单不存在: {task_uid!r}")
         return self._row_to_task(row)
@@ -899,19 +892,7 @@ class WorkflowEngine:
     def list_tasks(self, status: Optional[str] = None,
                    run_id: Optional[str] = None) -> list[WorkflowTask]:
         """按状态 / run_id（context.run_id）过滤工单。"""
-        sql = "SELECT * FROM platform_workflow_task"
-        conditions, params = [], []
-        if status:
-            conditions.append("status = ?")
-            params.append(status)
-        if run_id:
-            conditions.append("context_json LIKE ?")
-            params.append(f'%"{run_id}"%')
-        if conditions:
-            sql += " WHERE " + " AND ".join(conditions)
-        sql += " ORDER BY id DESC"
-        with self._connect() as conn:
-            rows = conn.execute(sql, params).fetchall()
+        rows = self.repository.list_tasks(status=status, run_id=run_id)
         return [self._row_to_task(r) for r in rows]
 
     def pending_hitl(self, role_names: Optional[list[str]] = None) -> list[WorkflowTask]:
@@ -1006,39 +987,41 @@ class WorkflowEngine:
         return task
 
     def _insert(self, task: WorkflowTask) -> None:
-        with self._connect() as conn:
-            conn.execute(
-                "INSERT INTO platform_workflow_task "
-                "(task_uid, wf_id, title, status, priority, assignees, context_json, "
-                " hitl_prompt, history_json, governance_json, created_at, updated_at, "
-                " sla_due_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (task.task_uid, task.wf_id, task.title, task.status, task.priority,
-                 json.dumps(task.assignees, ensure_ascii=False),
-                 json.dumps(task.context, ensure_ascii=False),
-                 task.hitl_prompt,
-                 json.dumps(task.history, ensure_ascii=False),
-                 json.dumps(task.governance or {}, ensure_ascii=False),
-                 task.created_at, task.updated_at, task.sla_due_at))
+        self.repository.insert_task({
+            "task_uid": task.task_uid,
+            "wf_id": task.wf_id,
+            "title": task.title,
+            "status": task.status,
+            "priority": task.priority,
+            "assignees": json.dumps(task.assignees, ensure_ascii=False),
+            "context_json": json.dumps(task.context, ensure_ascii=False),
+            "hitl_prompt": task.hitl_prompt,
+            "history_json": json.dumps(task.history, ensure_ascii=False),
+            "governance_json": json.dumps(task.governance or {}, ensure_ascii=False),
+            "owner_scope": json.dumps(normalize_owner_scope(task.owner_scope),
+                                      ensure_ascii=False),
+            "created_at": task.created_at,
+            "updated_at": task.updated_at,
+            "sla_due_at": task.sla_due_at,
+        })
 
     def _update(self, task: WorkflowTask) -> None:
-        with self._connect() as conn:
-            conn.execute(
-                "UPDATE platform_workflow_task SET status = ?, priority = ?, "
-                "assignees = ?, context_json = ?, hitl_prompt = ?, "
-                "history_json = ?, governance_json = ?, updated_at = ?, "
-                "sla_due_at = ? "
-                "WHERE task_uid = ?",
-                (task.status, task.priority,
-                 json.dumps(task.assignees, ensure_ascii=False),
-                 json.dumps(task.context, ensure_ascii=False),
-                 task.hitl_prompt,
-                 json.dumps(task.history, ensure_ascii=False),
-                 json.dumps(task.governance or {}, ensure_ascii=False),
-                 task.updated_at, task.sla_due_at, task.task_uid))
+        self.repository.update_task(task.task_uid, {
+            "status": task.status,
+            "priority": task.priority,
+            "assignees": json.dumps(task.assignees, ensure_ascii=False),
+            "context_json": json.dumps(task.context, ensure_ascii=False),
+            "hitl_prompt": task.hitl_prompt,
+            "history_json": json.dumps(task.history, ensure_ascii=False),
+            "governance_json": json.dumps(task.governance or {}, ensure_ascii=False),
+            "owner_scope": json.dumps(normalize_owner_scope(task.owner_scope),
+                                      ensure_ascii=False),
+            "updated_at": task.updated_at,
+            "sla_due_at": task.sla_due_at,
+        })
 
     @staticmethod
-    def _row_to_task(row: sqlite3.Row) -> WorkflowTask:
+    def _row_to_task(row: Mapping[str, Any]) -> WorkflowTask:
         # 老库（未迁移）可能没有 governance_json 列：容错回落空 dict
         keys = set(row.keys()) if hasattr(row, "keys") else set()
         raw_governance = row["governance_json"] if "governance_json" in keys else "{}"
@@ -1049,6 +1032,15 @@ class WorkflowEngine:
             governance = {}
         if not isinstance(governance, dict):
             governance = {}
+        # R9：老库（未迁移）没有 owner_scope 列 → 视为空域（既有可见性不变）
+        raw_scope = row["owner_scope"] if "owner_scope" in keys else "{}"
+        try:
+            owner_scope = json.loads(raw_scope or "{}")
+        except (TypeError, ValueError):
+            logger.warning("[workflow] owner_scope 解析失败，按空域处理")
+            owner_scope = {}
+        if not isinstance(owner_scope, dict):
+            owner_scope = {}
         return WorkflowTask(
             task_uid=row["task_uid"], wf_id=row["wf_id"], title=row["title"],
             status=row["status"], priority=row["priority"],
@@ -1057,6 +1049,7 @@ class WorkflowEngine:
             hitl_prompt=row["hitl_prompt"] or "",
             history=json.loads(row["history_json"] or "[]"),
             governance=governance,
+            owner_scope=normalize_owner_scope(owner_scope),
             created_at=row["created_at"], updated_at=row["updated_at"],
             sla_due_at=row["sla_due_at"],
         )

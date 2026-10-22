@@ -1,9 +1,13 @@
 """数据源接入契约（docs/ARCHITECTURE-V2.md §5.1 / T02）。
 
-新数据源（API / MCP / ETL / RPA）只需实现 ``DataSource`` 三个方法即可接入：
+新数据源（API / MCP / ETL / RPA）只需实现 ``DataSource`` 三个读方法即可接入：
 - list_tables()            ：枚举可用表（供 schema 注册与权限裁剪）
 - run_query(name, params)  ：执行预注册查询（参数化，高频固定查询走此通道）
 - execute_readonly_sql(sql)：执行明细探查 SQL（调用前必须已过 Text2SQL 审核链）
+
+R13 / D14 起增加**写回侧契约**（可选实现）：
+- write_back(intent, payload) -> Receipt：幂等键 + 审计回执；未实现的源默认
+  fail-closed（抛 ``WritebackNotSupported``），只读源绝不静默写入。
 
 ``SQLiteDataSource`` 为本地开发实现：只读连接（``mode=ro``），
 任何写操作在 SQLite 驱动层即被拒绝，这是"数据质量优先于智能能力"的落地边界。
@@ -13,10 +17,79 @@ from __future__ import annotations
 import logging
 import sqlite3
 from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
+
+__all__ = [
+    "WritebackNotSupported",
+    "Receipt",
+    "DataSource",
+    "SQLiteDataSource",
+    "DataSourceRegistry",
+]
+
+
+class WritebackNotSupported(NotImplementedError):
+    """数据源未实现写回（只读源默认 fail-closed，绝不静默写入）。"""
+
+
+@dataclass(frozen=True)
+class Receipt:
+    """写回回执（R13 / D14）：幂等键 + 审计事实，不只返回一个 200。
+
+    Attributes:
+        receipt_id: 稳定回执 id（``rc-`` + 幂等键摘要，重放同 id）。
+        intent: 写回意图键（如 ``erp.purchase_receipt``）。
+        status: ``applied``（已落地）/ ``pending_consent``（待人工会签，未落地）。
+        idempotency_key: 调用方幂等键（缺省由意图 + 载荷摘要派生）。
+        tier: 治理分级（0 只读 / 1 预执行同意 / 2 事后审计）。
+        mode: ``mock``（模拟连接器，未写回真实系统）/ ``real``。
+        demo: 是否演示态（前端据此渲染不可关闭的「演示回写」徽标）。
+        label: 面向人的回写事实说明（演示态必须显式写「未写回 ERP」）。
+        system: 目标系统名（如「ERP(模拟)」）。
+        replayed: 是否命中既有幂等回执（重复提交不再落地第二遍）。
+        created_at: 回执生成时间（ISO8601）。
+        consent: 预执行同意凭据（ticket_id / approved / actor）。
+        payload: 本次回写载荷快照（审计用）。
+        next_step: 未落地时的下一步指引（如「先经 delivery_commit 会签」）。
+    """
+
+    receipt_id: str
+    intent: str
+    status: str
+    idempotency_key: str
+    tier: int = 2
+    mode: str = "mock"
+    demo: bool = True
+    label: str = ""
+    system: str = ""
+    replayed: bool = False
+    created_at: str = ""
+    consent: dict[str, Any] = field(default_factory=dict)
+    payload: dict[str, Any] = field(default_factory=dict)
+    next_step: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "receipt_id": self.receipt_id,
+            "intent": self.intent,
+            "status": self.status,
+            "idempotency_key": self.idempotency_key,
+            "tier": self.tier,
+            "mode": self.mode,
+            "demo": self.demo,
+            "demo_writeback": self.demo,
+            "label": self.label,
+            "system": self.system,
+            "replayed": self.replayed,
+            "created_at": self.created_at,
+            "consent": dict(self.consent),
+            "payload": dict(self.payload),
+            "next_step": self.next_step,
+        }
 
 
 class DataSource(ABC):
@@ -43,6 +116,26 @@ class DataSource(ABC):
     def execute_readonly_sql(self, sql: str, params: Optional[dict] = None,
                              row_cap: int = 200) -> list[dict]:
         """执行明细探查 SQL（只读 + 行数上限）。"""
+
+    # ---------- 写回侧契约（R13 / D14：可选实现，默认 fail-closed） ----------
+
+    def write_back(self, intent: str, payload: Optional[dict[str, Any]] = None) -> Receipt:
+        """执行一次写回意图，返回幂等回执。
+
+        设计边界（与「Agent 永不放行」同源）：
+        - 写回是有副作用的治理动作，**只读源默认拒绝**（抛
+          ``WritebackNotSupported``），不得静默写入；
+        - ``payload`` 必须带幂等键（``idempotency_key``；缺省由实现派生），
+          重复提交返回同一回执、不重复落地；
+        - ``tier=1`` 的意图要求 ``payload["consent"]`` 带已审批工单
+          （``ticket_id`` + ``approved``），否则只能返回 ``pending_consent``
+          回执（未落地），不得先斩后奏。
+
+        未实现写回的数据源无需覆写本方法。
+        """
+        raise WritebackNotSupported(
+            f"数据源 {self.name!r} 未实现写回（只读契约默认拒绝写入）；"
+            f"需要回写时实现 write_back(intent, payload) 并返回 Receipt")
 
     # ---------- 数据注入自描述（V3.1：接入即见，便于后续真实数据源接入） ----------
 

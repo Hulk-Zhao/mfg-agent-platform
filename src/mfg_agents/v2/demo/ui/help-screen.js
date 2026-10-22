@@ -222,9 +222,10 @@
     try {
       if (ctx.api.online()) {
         const resp = await ctx.api._get("/api/v2/agents/configs");
-        if (resp.data && resp.data.agents && resp.data.agents.length) {
-          agents = resp.data.agents;
-          tools = resp.data.tools || tools;
+        // `api._get` 已解信封：resp 即 data 载荷本身（不能再取一层 .data）
+        if (resp && Array.isArray(resp.agents) && resp.agents.length) {
+          agents = resp.agents;
+          tools = resp.tools || tools;
           source = "实时同步自后端（单一事实源）";
         }
       }
@@ -257,6 +258,379 @@
     if (src) src.textContent = source;
   }
 
+  // ---------------------------------------------------------------- 数据口径词典（R8）
+
+  let _dictEntries = [];
+  let _dictSource = "";
+
+  const DICT_BADGE = {
+    registered_query: "badge-blue",
+    metric_library: "badge-green",
+    dashboard_kpi: "badge-amber",
+  };
+
+  function dictRowHtml(entry) {
+    const tables = (entry.tables || []).join("、");
+    const refs = (entry.refs || []).join(" · ");
+    return `<div class="help-dict-row">
+      <div class="help-dict-head">
+        <b>${esc(entry.name)}</b>
+        <span class="badge ${DICT_BADGE[entry.source] || "badge-gray"}">${esc(entry.source_label)}</span>
+        <code>${esc(entry.id)}</code>
+      </div>
+      <div class="help-dict-def">${esc(entry.definition || "")}</div>
+      <div class="help-dict-meta">
+        ${entry.owner ? `<span>归属：${esc(entry.owner)}</span>` : ""}
+        ${tables ? `<span>表：${esc(tables)}</span>` : ""}
+        ${entry.unit ? `<span>单位：${esc(entry.unit)}</span>` : ""}
+        ${entry.target != null ? `<span>目标：${esc(entry.target)}${esc(entry.unit || "")}</span>` : ""}
+      </div>
+      <div class="help-dict-refs">引用方：${esc(refs || "—")}</div>
+      <button class="link-btn help-dict-open" type="button"
+              data-dict-id="${esc(entry.id)}">查看完整口径</button>
+    </div>`;
+  }
+
+  function renderDictEntries() {
+    const box = document.getElementById("help-dict-body");
+    if (!box) return;
+    const input = document.getElementById("help-dict-q");
+    const q = ((input && input.value) || "").trim().toLowerCase();
+    const hit = _dictEntries.filter((entry) => {
+      if (_dictSource && entry.source !== _dictSource) return false;
+      if (!q) return true;
+      const hay = [entry.id, entry.name, entry.definition, entry.owner,
+        (entry.keywords || []).join(" "), (entry.tables || []).join(" "),
+        (entry.refs || []).join(" ")].join(" ").toLowerCase();
+      return hay.indexOf(q) !== -1;
+    });
+    box.innerHTML = hit.length
+      ? hit.map(dictRowHtml).join("")
+      : '<div class="empty">未找到匹配口径（不缩小范围硬凑结果）</div>';
+  }
+
+  async function loadMetricDict(ctx) {
+    const box = document.getElementById("help-dict-body");
+    if (!box) return;
+    let entries = [];
+    let coverage = null;
+    let source = "内置配置（后端离线兜底）";
+    let failure = "";
+    const online = !!(ctx.api && ctx.api.online());
+    try {
+      if (online) {
+        const resp = await ctx.api._get("/api/v2/metric-dict");
+        // `api._get` 已解信封：resp 即 data 载荷本身
+        if (resp && Array.isArray(resp.entries)) {
+          entries = resp.entries;
+          coverage = resp.coverage;
+          source = "实时同步自后端 · 三源汇总";
+        }
+      }
+    } catch (e) {
+      failure = String((e && e.message) || e || "");
+    }
+    const src = document.getElementById("help-dict-source");
+    if (!entries.length) {
+      // 区分「后端没连上」与「后端在线但接口拒绝」——后者多半是登录态失效，
+      // 不能笼统写成离线（真机排障时这句话误导过）。
+      box.innerHTML = online
+        ? '<div class="empty">口径接口不可用（登录态可能已失效，请重新登录后重试）'
+          + (failure ? '：' + esc(failure) : "") + '</div>'
+        : '<div class="empty">口径词典需要后端在线：前端不内嵌第二份口径，避免制造新的双源。</div>';
+      if (src) src.textContent = source;
+      return;
+    }
+    _dictEntries = entries;
+    if (src) {
+      const by = (coverage && coverage.by_source) || {};
+      src.textContent = `${entries.length} 条 · 注册查询 ${by.registered_query || 0}`
+        + ` / 指标库 ${by.metric_library || 0} / 看板 KPI ${by.dashboard_kpi || 0}`;
+    }
+    renderDictEntries();
+  }
+
+  // 来源过滤 / 搜索用**事件委托**：帮助中心重渲染会替换按钮节点，
+  // 逐节点绑定会绑到已脱离 DOM 的旧节点上（真机表现为「点了没反应」）。
+  document.addEventListener("click", function (ev) {
+    const chip = ev.target && ev.target.closest
+      && ev.target.closest("#help-dict-filters [data-dict-filter]");
+    if (!chip) return;
+    _dictSource = chip.getAttribute("data-dict-filter") || "";
+    document.querySelectorAll("#help-dict-filters [data-dict-filter]")
+      .forEach((c) => c.classList.toggle("is-active", c === chip));
+    renderDictEntries();
+  });
+
+  document.addEventListener("input", function (ev) {
+    if (ev.target && ev.target.id === "help-dict-q") renderDictEntries();
+  });
+
+  // ---------------------------------------------------------------- 治理槽位矩阵（R3）
+
+  /** 「动钱」缺口说明（不美化）：本期无专属槽位，interim 口径 + 正式方案如实写清。 */
+  function gateGapNoteHtml() {
+    return `<b>已知缺口（不美化）</b>：「动钱」类操作（加急采购 / 退供折价 / 备件紧急采购）`
+      + `当前<b>无专属槽位</b>——10 个槽位按闸门语义命名，无一对应资金承诺。`
+      + `本期 interim 口径：复用「来料处置」的金额会签链（<code>fin</code> 角色在 cosign 链）；`
+      + `正式方案为新增 <code>hitl.spend_commit</code>（资金支出承诺，6 处改动链，约 0.5 人日），`
+      + `待治理角色拍板绑定矩阵后实施。详见 <code>docs/HITL闸门映射表.md</code>。`;
+  }
+
+  /**
+   * 治理槽位矩阵（R3 验收②）：槽 × 三动词 × 持有角色 + 闸门类别 + 为什么必须人工在环。
+   * 角色列实时取自权限目录（ctx.perms，/api/v2/governance/permissions），闸门列取自
+   * 闸门理由目录（ctx.gates，/api/v2/governance/gates）——两侧都是只读快照，帮助中心
+   * 不内嵌第二份。目录缺失时给诚实降级，不渲染半张表。
+   */
+  function gateMatrixHtml(ctx) {
+    const perms = (ctx && ctx.perms) || null;
+    const gates = (ctx && ctx.gates) || [];
+    if (!perms || !Array.isArray(perms.slots) || !perms.slots.length) {
+      return `<div class="empty-inline">权限目录未加载（后端离线或加载失败）——槽位矩阵不可用；`
+        + `闸门语义与缺口见 <code>docs/HITL闸门映射表.md</code>。</div>`;
+    }
+    const gateOf = (key) => gates.find((g) => g && g.key === key) || null;
+    const rolesOf = (permKey) => (perms.roles || [])
+      .filter((r) => (r.permissions || []).indexOf(permKey) >= 0)
+      .map((r) => r.name || r.key);
+    const rows = perms.slots.map((s) => {
+      const g = gateOf(s.key);
+      const verbs = ["propose", "cosign", "approve"].map((v) => {
+        const holders = rolesOf(`hitl.${s.key}.${v}`);
+        return `<div class="help-gate-verb"><span class="help-gate-verb-k">${esc(v)}</span>`
+          + `<span>${holders.length ? esc(holders.join("、")) : "—"}</span></div>`;
+      }).join("");
+      return `<tr>
+        <td><b>${esc(s.name || s.key)}</b><br/>`
+          + `<span style="font-size: calc(10.5px * var(--font-scale));color:var(--text-3)">${esc(s.key)}</span></td>
+        <td>${verbs}</td>
+        <td>${g ? `<span class="hitl-gate-cls">${esc(g.gate_class || "")}</span>` : "—"}</td>
+        <td class="help-gate-why-cell">${esc((g && g.why) || "闸门理由未登记（gate_reasons.yaml 缺条）")}</td>
+      </tr>`;
+    }).join("");
+    return `<table class="help-gate-matrix">
+      <thead><tr><th style="width:14%">槽位</th>`
+      + `<th style="width:36%">三动词 · 持有角色（permissions.yaml 实时）</th>`
+      + `<th style="width:12%">闸门类别</th><th>为什么必须人工在环</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <div class="help-gate-gap">${gateGapNoteHtml()}</div>`;
+  }
+
+  // ---------------------------------------------------------------- 落地方法论（R12）
+
+  const METH_KEY = "mfg_launch_check_v1";
+
+  const METH_SEVEN = [
+    { t: "定场景与指标", d: "选 1 个高频断点（不是全都要），写成可验证的验收句，例如「交期当场答得上、且留痕」。" },
+    { t: "盘数据与口径", d: "逐项确认事实源、时间口径、缺失字段；口径只认注册查询/指标库/看板 KPI 三源，不另写一套。" },
+    { t: "配岗位与权限", d: "菜单可见性、看板数据范围、待办槽位三层分开配；需要行级归属时写 owner_scope，不拿自由文本当判据。" },
+    { t: "接知识与规则", d: "制度、案例、工艺参数各走独立通道；没有的语料如实标注缺口，不用模型猜。" },
+    { t: "小范围试点", d: "先 1 个岗位、1–2 周、只读优先；确认答案能对上看板数字，再开放写/回写。" },
+    { t: "治理与人工在环", d: "涉及对外承诺/动钱/改排产的动作挂 HITL 槽位，会签与 SLA 可见；Agent 只发起、不放行。" },
+    { t: "推广与复盘", d: "用报告中心留痕与「上线六项体检」逐项验收，复盘数据缺口与未达标项后再扩岗位。" },
+  ];
+
+  const METH_FIVE = [
+    { t: "走现场", d: "看人怎么问、表怎么对、异常怎么闭环——先记录真实动作，不先讲功能。" },
+    { t: "归断点", d: "归到三类：有数不问（入口）、口径不一（信任）、动作无回执（闭环）。" },
+    { t: "映射事实源", d: "每个问题指向具体表/注册查询；指不到的写缺口，不承诺「以后能查」。" },
+    { t: "定角色与闸门", d: "谁发起、谁会签、谁终批，与 permissions.yaml 对齐；跨部门必须留会签位。" },
+    { t: "验闭环", d: "用一条真实问题跑完「问 → 结论 → 待确认 → 留痕」，失败就回上一步改口径/权限。" },
+  ];
+
+  const METH_EVOLUTION = [
+    "数据速查", "单域问答", "场景闭环", "跨域协同",
+    "治理回写", "经营对话", "生态链",
+  ];
+
+  const METH_CHECKS = [
+    { id: "traceable", t: "数据口径可追溯",
+      d: "注册查询/指标库/看板 KPI 三源可在口径词典查到；结论卡能逐条展开数据溯源。" },
+    { id: "permission", t: "权限三层可验证",
+      d: "菜单/看板/待办三层一致；行级归属（owner_scope）有测试夹具，同岗位不同范围可见行数不同。" },
+    { id: "governance", t: "治理闸门有人签",
+      d: "10 个 HITL 槽位会签链完整，审批中心能看到闸门理由与缺谁；Agent 不持任何 approve。" },
+    { id: "chain", t: "关键链路真机跑通",
+      d: "至少一条业务链路走完「问数 → 结论 → 待确认 → 留痕」，并在浏览器真机复验。" },
+    { id: "degrade", t: "诚实降级可复现",
+      d: "无数据/无权限/LLM 不可用时明示缺口或转人工，绝不编造数字；断网有演示态标注。" },
+    { id: "boundary", t: "演示与真实边界清晰",
+      d: "演示回写徽标不可关；对客承诺/动钱一律人工确认；数据真实性边界写进交付说明。" },
+  ];
+
+  function loadMethState() {
+    try {
+      const raw = localStorage.getItem(METH_KEY);
+      const obj = raw ? JSON.parse(raw) : {};
+      return obj && typeof obj === "object" ? obj : {};
+    } catch (e) { return {}; }
+  }
+
+  function saveMethState(state) {
+    try { localStorage.setItem(METH_KEY, JSON.stringify(state || {})); }
+    catch (e) { /* 隐私模式忽略 */ }
+  }
+
+  function methodologyHtml() {
+    const state = loadMethState();
+    const done = METH_CHECKS.filter((c) => state[c.id]).length;
+    const pct = Math.round((done / METH_CHECKS.length) * 100);
+    const stepCards = METH_SEVEN.map((s, i) => `<div class="mth-step">
+      <span class="mth-step-no">${i + 1}</span>
+      <div><b>${esc(s.t)}</b><div class="mth-step-d">${esc(s.d)}</div></div>
+    </div>`).join("");
+    const mapCards = METH_FIVE.map((s, i) => `<div class="mth-map-item">
+      <span class="mth-map-no">${i + 1}</span>
+      <div><b>${esc(s.t)}</b><div class="mth-step-d">${esc(s.d)}</div></div>
+    </div>`).join("");
+    const evo = METH_EVOLUTION.map((s, i) =>
+      `<span class="mth-evo"><em>${i + 1}</em>${esc(s)}</span>`).join("");
+    const checks = METH_CHECKS.map((c, i) => `<label class="mth-check-row">
+      <input type="checkbox" data-mth-check="${esc(c.id)}" ${state[c.id] ? "checked" : ""}/>
+      <span class="mth-check-body"><b>${i + 1}. ${esc(c.t)}</b><span>${esc(c.d)}</span></span>
+      <span class="mth-check-state">${state[c.id] ? "已通过" : "待检查"}</span>
+    </label>`).join("");
+    return `
+      <div class="section-title">落地方法论 <span class="section-extra">交付物料 · 七步 / 五步 / 六项体检</span></div>
+      <div class="card mth-card">
+        <div class="mth-intro">
+          这不是功能清单，而是<b>把平台落进现场</b>的检查顺序：先定场景与口径，再配权限与治理，
+          证明一条链路跑通后才扩岗位。<b>六项体检可逐项勾选并导出</b>，作为上线评审的交付物。
+        </div>
+
+        <div class="mth-sub">七步落地流程</div>
+        <div class="mth-grid mth-grid-7">${stepCards}</div>
+
+        <div class="mth-sub">五步现场地图</div>
+        <div class="mth-grid mth-grid-5">${mapCards}</div>
+
+        <div class="mth-sub">七场景演进路径 <span class="mth-sub-note">由浅入深，不跳过取证与治理</span></div>
+        <div class="mth-evo-line">${evo}</div>
+
+        <div class="mth-sub">上线六项体检 <span class="mth-sub-note">勾选后自动保存；可导出 Markdown 交付评审</span></div>
+        <div class="mth-progress-wrap">
+          <div class="mth-progress-top">
+            <span>完成度 <b id="mth-progress-text">${done}/${METH_CHECKS.length}</b></span>
+            <span class="mth-progress-pct"><b id="mth-progress-pct">${pct}%</b></span>
+          </div>
+          <div class="mth-progress" role="progressbar" aria-valuemin="0"
+               aria-valuemax="100" aria-valuenow="${pct}">
+            <span id="mth-progress-bar" style="width:${pct}%"></span>
+          </div>
+        </div>
+        <div class="mth-checks" id="mth-checks">${checks}</div>
+        <div class="mth-actions">
+          <button class="btn btn-primary" type="button" id="mth-export">
+            导出体检清单（Markdown）</button>
+          <button class="btn mth-reset" type="button" id="mth-reset">清空勾选</button>
+          <span class="mth-actions-note" id="mth-save-note">勾选状态保存在本机浏览器</span>
+        </div>
+      </div>`;
+  }
+
+  /** 生成体检清单 Markdown（也是导出文件的内容；返回文本便于测试/复制）。 */
+  function exportChecklist() {
+    const state = loadMethState();
+    const done = METH_CHECKS.filter((c) => state[c.id]).length;
+    const now = new Date();
+    const pad = (n) => String(n).padStart(2, "0");
+    const stamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} `
+      + `${pad(now.getHours())}:${pad(now.getMinutes())}`;
+    const rows = METH_CHECKS.map((c, i) =>
+      `| ${i + 1} | ${c.t} | ${c.d.replace(/\|/g, "/")} | ${state[c.id] ? "✅ 已通过" : "⬜ 待检查"} |`);
+    const missing = METH_CHECKS.filter((c) => !state[c.id]);
+    const verdict = missing.length ? `未通过（还有 ${missing.length} 项待检查）` : "通过（六项全部勾选）";
+    const text = [
+      "# 平台上线六项体检清单",
+      "",
+      `- 导出时间：${stamp}`,
+      `- 完成度：${done}/${METH_CHECKS.length}（${Math.round(done / METH_CHECKS.length * 100)}%）`,
+      `- 结论：${verdict}`,
+      "",
+      "| # | 检查项 | 通过标准 | 状态 |",
+      "|---|---|---|---|",
+      ...rows,
+      "",
+      "## 未通过项",
+      ...(missing.length ? missing.map((c) => `- ${c.t}：${c.d}`) : ["- 无"]),
+      "",
+      "> 口径：本清单为上线评审交付物；勾选状态存本机浏览器，不替代真实链路验收。",
+      "",
+    ].join("\n");
+    try {
+      const blob = new Blob([text], { type: "text/markdown;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `上线体检清单-${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}.md`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1200);
+    } catch (e) { /* 下载被拦截：文本仍可复制 */ }
+    return text;
+  }
+
+  function updateMethProgress() {
+    const boxes = document.querySelectorAll("[data-mth-check]");
+    let done = 0;
+    boxes.forEach((box) => {
+      if (box.checked) done += 1;
+      const stateEl = box.closest(".mth-check-row")
+        && box.closest(".mth-check-row").querySelector(".mth-check-state");
+      if (stateEl) stateEl.textContent = box.checked ? "已通过" : "待检查";
+    });
+    const pct = Math.round((done / METH_CHECKS.length) * 100);
+    const t = document.getElementById("mth-progress-text");
+    const p = document.getElementById("mth-progress-pct");
+    const bar = document.getElementById("mth-progress-bar");
+    if (t) t.textContent = `${done}/${METH_CHECKS.length}`;
+    if (p) p.textContent = `${pct}%`;
+    if (bar) {
+      bar.style.width = `${pct}%`;
+      const wrap = bar.parentElement;
+      if (wrap) wrap.setAttribute("aria-valuenow", String(pct));
+    }
+    return done;
+  }
+
+  function bindMethodology(root) {
+    if (!root) return;
+    const exportBtn = root.querySelector("#mth-export");
+    if (exportBtn) {
+      exportBtn.addEventListener("click", () => {
+        exportChecklist();
+        const note = document.getElementById("mth-save-note");
+        if (note) note.textContent = "已导出 Markdown（下载被拦截时可在控制台调用 HelpScreen.exportChecklist）";
+      });
+    }
+    const resetBtn = root.querySelector("#mth-reset");
+    if (resetBtn) {
+      resetBtn.addEventListener("click", () => {
+        saveMethState({});
+        // 用 document 作用域而不是 root：帮助中心可能被重渲染替换过节点，
+        // root 引用可能已脱离 DOM（真机表现为「存储清了、进度还在」）。
+        document.querySelectorAll("[data-mth-check]").forEach((box) => { box.checked = false; });
+        updateMethProgress();
+        const note = document.getElementById("mth-save-note");
+        if (note) note.textContent = "已清空本机勾选";
+      });
+    }
+  }
+
+  // 勾选状态：事件委托（帮助中心重渲染会替换节点，逐节点绑定会失效）
+  document.addEventListener("change", function (ev) {
+    const box = ev.target;
+    if (!box || !box.matches || !box.matches("[data-mth-check]")) return;
+    const state = loadMethState();
+    if (box.checked) state[box.getAttribute("data-mth-check")] = true;
+    else delete state[box.getAttribute("data-mth-check")];
+    saveMethState(state);
+    updateMethProgress();
+  });
+
   // ---------------------------------------------------------------- 渲染
 
   function render(root, ctx) {
@@ -264,6 +638,8 @@
       <div class="content-inner content-wide">
         <div class="page-title">帮助中心</div>
         <div class="page-desc">平台由 <b>18 个智能体</b>协同（17 个域智能体 + 1 个综合办公助手）。核心设计不是"一个大模型包打天下"，而是<b>按代价分派链路、按权限前置检索、按槽位管住决策</b>：能确定性回答的不交给模型，交给模型的必须可溯源，涉及关键决策的一律人工在环。看板点进来的问题走<b>结构化口径直查</b>（与看板同源同函数），跨部门问题由<b>协同规划器</b>拆解后多域智能体并行取证。下面每一块都说明<b>用了什么技术</b>与<b>为什么这么设计</b>。</div>
+
+        ${methodologyHtml()}
 
         <div class="section-title">协同架构 <span class="section-extra">分层视图 · 与代码现状对齐</span></div>
         <div class="card" style="padding:14px">${architectureSvg()}</div>
@@ -359,17 +735,52 @@
           <div id="help-tools-body"></div>
         </div>
 
+        <div class="section-title">数据口径词典 <span class="section-extra" id="help-dict-source">加载中…</span></div>
+        <div class="card" style="padding:13px">
+          <div style="font-size: calc(12px * var(--font-scale));color:var(--text-3);line-height:1.8;margin-bottom:10px">
+            口径<b>三源汇总</b>：注册查询（<code>queries.yaml</code>）+ 指标库（<code>metrics/*.yaml</code>）+
+            看板 KPI（<code>dashboard.DRILL_DEFS</code>）。同名口径不合并、分别标注来源；
+            看板口径为静态定义，本屏<b>不执行任何查询</b>。看板 KPI 卡、问数证据里的
+            「口径」按钮都跳回同一词条——避免「各看各的表」。词典需要后端在线，前端不内嵌第二份。
+          </div>
+          <div class="help-dict-bar">
+            <input id="help-dict-q" class="help-dict-search" type="search"
+                   placeholder="搜索指标名 / 口径 / 关键词（如 OTD、齐套、批次追溯）" />
+            <div id="help-dict-filters" class="help-dict-filters">
+              <button class="help-dict-chip is-active" type="button" data-dict-filter="">全部</button>
+              <button class="help-dict-chip" type="button" data-dict-filter="registered_query">注册查询</button>
+              <button class="help-dict-chip" type="button" data-dict-filter="metric_library">指标库</button>
+              <button class="help-dict-chip" type="button" data-dict-filter="dashboard_kpi">看板 KPI</button>
+            </div>
+          </div>
+          <div id="help-dict-body"><div class="empty">正在加载口径词典…</div></div>
+        </div>
+
+        <div class="section-title">治理槽位与闸门 <span class="section-extra">为什么必须人确认 · 谁会签 · 缺谁（R3）</span></div>
+        <div class="card" style="padding:13px">
+          <div style="font-size: calc(12px * var(--font-scale));color:var(--text-3);margin-bottom:9px">
+            三类硬闸门对标：<b style="color:var(--text)">对外消息</b>（说出的话收不回来）、<b style="color:var(--text)">动钱</b>（资金承诺，本期无专属槽位，见下方缺口）、<b style="color:var(--text)">改排产</b>（动产能承诺，影响一片订单交期）；平台另有两类自设闸门：质量关闭（8D/客诉结论即对客口径）与报告审定（发布即代表平台结论）。审批中心每张卡片常驻展示本表对应的「闸门理由 + 会签方及缺谁」。
+          </div>
+          <div id="help-gate-matrix"><div class="empty">正在加载治理目录…</div></div>
+        </div>
+
         <div class="section-title">治理与安全</div>
         <div class="card" style="padding:13px;font-size: calc(12.5px * var(--font-scale));line-height:2;color:var(--text-2)">
-          <b style="color:var(--text)">关键决策人工在环</b>：8 个 HITL 槽位（复线 / 对客 ETA / 来料处置 / 8D 关闭 / 对客回复 / 交期承诺 / 停机窗口 / SPC 处置），每槽位三个动词 propose · cosign · approve，共 24 条权限；权限注册表在<b>构造期</b>就禁止 Agent 持有任何 <code>*.approve</code>——智能体只发起、不放行。<br/>
+          <b style="color:var(--text)">关键决策人工在环</b>：<b>10 个 HITL 槽位</b>（复线 / 对客 ETA / 来料处置 / 8D 关闭 / 对客回复 / 交期承诺 / 停机窗口 / SPC 处置 / 接单评审 / 报告审定），每槽位三个动词 propose · cosign · approve，共 30 条权限（完整矩阵见上方「治理槽位与闸门」，实时同步自 <code>permissions.yaml</code>）；权限注册表在<b>构造期</b>就禁止 Agent 持有任何 <code>*.approve</code>——智能体只发起、不放行。<br/>
           <b style="color:var(--text)">三套权限各管一域，互不替代</b>：<b>业务数据</b>看 <code>data_scope</code>（看板 allow_roles + 字段脱敏，未登记看板 fail-closed）；<b>治理待办</b>看 <code>workflow_scope</code>（判据是"你是否持有该 HITL 槽位的权限"，跨域一律 404）；<b>案例访问</b>看 <code>case_acl</code>（6 个动词各声明可见状态白名单）。三者正交——一个岗位可以"能看全厂订单，但只管停机窗口"。<br/>
           <b style="color:var(--text)">全程可审计</b>：工作流审计落 <code>platform_workflow_task</code>（含状态机历史）；案例检索落 <code>CaseAuditLog</code>（只记哈希不记正文，支持一键校验审计链对账）；问答落 <code>kbqa_query_log</code>（含 channel 与耗时）。每次查询都记录 SQL 原文、命中行、脱敏标记与耗时（结果卡「数据溯源」可展开）。<br/>
           <b style="color:var(--text)">最小泄漏面</b>：无权案例统一 404（不确认存在性）；hidden_count 只在候选不足时计算；审计只记哈希不记正文；导出默认拒绝、外发恒定拒绝。<br/>
           <b style="color:var(--text)">诚实降级</b>：数据源未接入或查询失败时明示缺口，绝不编造数字；Agentic 步数耗尽输出"已尽力结论 + 数据缺口"；服务不可用时界面明确标注演示模式。
         </div>
       </div>`;
+    bindMethodology(root);
     loadAgents(ctx);
+    // 数据口径词典（R8）：三源汇总只读快照，后端离线时不内嵌第二份
+    loadMetricDict(ctx);
+    // 治理槽位矩阵（R3）：权限目录 + 闸门理由目录都是只读快照，缺失时诚实降级
+    const gateBox = document.getElementById("help-gate-matrix");
+    if (gateBox) gateBox.innerHTML = gateMatrixHtml(ctx);
   }
 
-  window.HelpScreen = { render };
+  window.HelpScreen = { render, exportChecklist };
 })();

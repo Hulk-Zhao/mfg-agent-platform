@@ -10,7 +10,10 @@ metrics:
     # （准时 = 实际发货日 ≤ 客户要求交付日），窗口按 due_date 归属。
     desc: "准时交付（实际发货日 ≤ 客户要求交付日）订单数 ÷ 窗口内订单总数；窗口按客户要求交付日 due_date 归属，与订单履约看板同源。"
     tables: [order_fulfillment]
-    keywords: [OTD, 准时交付, 交付率, 订单达成]
+    # 2026-10-22：补「准交率 / 准交」——岗位推荐问题「这个月准交率完成多少」原本
+    # 匹配不到指标，掉进明细探查由模型现写 SQL，真机返回 otd_rate=0.0（与看板
+    # 68% 自相矛盾）。补词后同一问题稳定走指标库（与看板同源口径）。
+    keywords: [OTD, 准时交付, 交付率, 订单达成, 准交率, 准交, 交期达成]
     # :start / :end = 统计窗口（Text2SQLService 按问题里的「当日/当月/最近7天」解析，
     # 缺省回落最近 7 天；窗口定义与 dashboard.resolve_window 同源）。
     sql: "SELECT ROUND(100.0 * SUM(on_time) / COUNT(*), 1) AS otd_rate_pct, SUM(on_time) AS on_time_orders, COUNT(*) AS total_orders FROM order_fulfillment WHERE due_date BETWEEN :start AND :end"

@@ -78,3 +78,78 @@ def test_entities_extracted_for_degraded_path(router):
     result = router.route("DIP-2线的B型号产出怎么样")
     assert result.entities["line_code"] == "DIP-2"
     assert result.entities["product_model"] == "B型号"
+
+
+# ---------------------------------------------------------------- R10 大单进度
+
+
+def test_business_big_order_progress(router):
+    """「5000 件大单做到哪了」必须回到单张单的进度，不能被 open digest 吞掉。"""
+    result = router.route("5000 件大单做到哪了")
+    assert result.strategy == "business"
+    assert result.domain == "orders"
+    assert result.entities["min_qty"] == 5000
+    assert result.entities["order_no"] == ""
+
+
+def test_business_extracts_order_no_and_model(router):
+    result = router.route("大单进度 SO-2026-15331 做到哪了")
+    assert result.strategy == "business"
+    assert result.entities["order_no"] == "SO-2026-15331"
+    model = router.route("A型号的大单进度如何")
+    assert model.strategy == "business"
+    assert model.entities["model"] == "A型号"
+
+
+def test_business_does_not_swallow_open_digest(router):
+    """「经营情况 / 整体情况」仍是开放式汇总，不是对象级大单进度。"""
+    assert router.route("本月经营情况怎么样").strategy == "digest"
+    # 只提单号、没有「大单/做到哪」→ 不判 business（留给对象级数据链路）
+    assert router.route("SO-2026-15331 的进度").strategy != "business"
+
+
+# ---------------------------------------------------------------- R11 呆滞料
+
+
+def test_aging_route_defaults_to_180_days(router):
+    result = router.route("超 180 天没动的料有哪些")
+    assert result.strategy == "aging"
+    assert result.entities["days"] == 180
+
+
+def test_aging_extracts_custom_days(router):
+    assert router.route("库龄超过 90 天的物料").strategy == "aging"
+    assert router.route("库龄超过 90 天的物料").entities["days"] == 90
+    assert router.route("呆滞料处置建议").entities["days"] == 180
+
+
+def test_aging_does_not_swallow_general_inventory(router):
+    assert router.route("材料库存还有多少").strategy != "aging"
+
+
+# ---------------------------------------------------------------- R7：批次追溯快路径
+
+
+def test_quality_trace_fast_path_preempts_scenarios(router):
+    """批次号 + 追溯词 → 质量域 agentic（不让场景/库存快路径抢走）。
+    R7 真机根因：批次号被忽略时会答成另一批次（MAT-SP-1015）。"""
+    result = router.route("BATCH-A-1008 这个批次的完整来龙去脉帮我串一下")
+    assert result.strategy == "trace"
+    assert result.domain == "quality"
+    assert result.entities["batch_no"] == "BATCH-A-1008"
+    assert result.confidence >= 0.9
+
+
+def test_quality_trace_fast_path_requires_both_signals(router):
+    """只有追溯词 / 只有批次号都不触发（防误吞普通问数）。"""
+    no_batch = router.route("帮我把这批的不良追溯一下")
+    assert no_batch.strategy != "trace"
+
+    no_trace = router.route("BATCH-A-1008 这个批次怎么样")
+    assert no_trace.strategy != "trace"
+
+
+def test_quality_trace_fast_path_accepts_mat_batch(router):
+    result = router.route("MAT-SP-1015 追溯一下")
+    assert result.strategy == "trace"
+    assert result.entities["batch_no"] == "MAT-SP-1015"

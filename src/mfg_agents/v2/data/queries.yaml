@@ -93,6 +93,22 @@ queries:
     keywords: [订单, 交期, 发货, 能发]
     sql: "SELECT order_no, product_model, qty, ship_status, eta FROM shipment WHERE product_model = :model"
 
+  # 2026-10-22：岗位推荐问题「哪些订单有履约风险」的可答性修复。
+  # 原链路被 orders_by_model 的「订单」关键词空手命中（缺 :model）→ 人工兜底；
+  # 明细探查虽能查，但 SQL 会把 risk_type='正常' 也算进风险（且无 LIMIT 被判截断）。
+  # 这里把口径固化为注册查询：只取非「正常」风险类型，按延期天数倒序。
+  orders_at_risk:
+    desc: "TMS：订单履约风险清单（风险类型非「正常」，按延期天数倒序，最多 50 条）"
+    tables: [order_fulfillment]
+    keywords: [履约风险, 订单风险, 风险订单, 有风险, 延期风险]
+    sql: "SELECT order_no, customer, product_model, qty, due_date, stage, risk_type, delay_days, progress, owner, shortage_note FROM order_fulfillment WHERE risk_type NOT IN ('', '正常') ORDER BY delay_days DESC, due_date ASC LIMIT 50"
+
+  big_orders_in_progress:
+    desc: "TMS：在制大单清单（未发货且进度未满，按数量降序，最多 50 条）"
+    tables: [order_fulfillment]
+    keywords: [大单, 大订单, 大额订单, 大单进度, 做到哪]
+    sql: "SELECT order_no, customer, product_model, qty, due_date, stage, risk_type, delay_days, progress, owner, shortage_note FROM order_fulfillment WHERE stage <> '发货' AND progress < 100 ORDER BY qty DESC, progress ASC LIMIT 50"
+
   shortage_by_model:
     desc: "WMS+TMS：型号库存与订单量（缺料/缺口推算）"
     tables: [inventory, shipment]
@@ -243,6 +259,12 @@ queries:
     keywords: [缺料, 缺口, 安全库存, 备料, 齐套, 低于安全]
     sql: "SELECT part_no, part_name, category, SUM(on_hand_qty) AS on_hand_qty, SUM(reserved_qty) AS reserved_qty, SUM(on_hand_qty - reserved_qty) AS available_qty, MAX(safety_stock) AS safety_stock, (MAX(safety_stock) - SUM(on_hand_qty - reserved_qty)) AS shortage_qty FROM material_inventory GROUP BY part_no, part_name, category HAVING SUM(on_hand_qty - reserved_qty) < MAX(safety_stock) ORDER BY shortage_qty DESC"
 
+  material_aging_over_days:
+    desc: "WMS：超龄料清单（库龄 ≥ N 天，含供应商/数量/单位成本，按库龄倒序）"
+    tables: [material_inventory]
+    keywords: [超龄料, 超180天, 库龄超过, 没动的料, 呆滞清单]
+    sql: "SELECT part_no, part_name, category, warehouse, batch_no, supplier, on_hand_qty, reserved_qty, (on_hand_qty - reserved_qty) AS available_qty, safety_stock, age_days, last_move_date, unit_cost FROM material_inventory WHERE age_days >= :days ORDER BY age_days DESC, part_no"
+
   material_aging_top:
     desc: "WMS：材料库龄/呆滞 TOP10（按库龄天数倒序，>=90 天视为呆滞）"
     tables: [material_inventory]
@@ -292,4 +314,27 @@ queries:
     tables: [incoming_batch, material_batch, quality_defect]
     keywords: [批次追溯, 追溯, 全链路追溯, 正向追溯, 反向追溯]
     sql: "SELECT b.batch_no, b.part_no, b.part_name, b.supplier, b.arrival_time, b.qty, b.qualified_qty, b.inspect_status, b.warehouse, b.bin_location, m.incoming_result AS legacy_result, q.defect_type, q.defect_qty FROM incoming_batch b LEFT JOIN material_batch m ON b.batch_no = m.batch_no LEFT JOIN quality_defect q ON b.batch_no = q.batch_no WHERE b.batch_no = :batch_no"
+
+  # ============================================================
+  # R7 增量（质量追溯三路并查）：生产记录 / 设备状态 / 同批在制工单
+  # 三查共用同一批次号，不改既有 batch_trace_full / incoming_batch_by_no 口径。
+  # ============================================================
+
+  quality_defect_scope_by_batch:
+    desc: "QMS：按批次查不良明细（含产线/工段/时间，质量追溯生产记录一路）"
+    tables: [quality_defect]
+    keywords: [批次不良明细, 该批次产线, 工段不良]
+    sql: "SELECT batch_no, product_model, line_code, process_stage, defect_type, defected_qty FROM (SELECT batch_no, product_model, line_code, process_stage, defect_type, SUM(defect_qty) AS defected_qty, MAX(inspect_time) AS last_time FROM quality_defect WHERE batch_no = :batch_no GROUP BY batch_no, product_model, line_code, process_stage, defect_type) ORDER BY defected_qty DESC"
+
+  equipment_log_by_batch:
+    desc: "EAM：批次所属产线近期设备日志（质量追溯设备状态一路，含异常标记）"
+    tables: [equipment_log, quality_defect]
+    keywords: [批次设备, 产线设备状态, 设备异常追溯]
+    sql: "SELECT equipment_id, line_code, log_time, alarm_code, param_name, param_value, is_abnormal FROM equipment_log WHERE line_code IN (SELECT DISTINCT line_code FROM quality_defect WHERE batch_no = :batch_no) ORDER BY log_time DESC LIMIT 30"
+
+  inprocess_wo_by_batch:
+    desc: "MES：同型号同产线在制工单清单（质量追溯同批影响面，按报工记录去重，最多 30 张）"
+    tables: [work_report, quality_defect]
+    keywords: [同批在制, 在制工单, 影响面]
+    sql: "SELECT wo_no, product_model, line_code, GROUP_CONCAT(DISTINCT process_step) AS process_steps FROM work_report WHERE product_model = (SELECT product_model FROM quality_defect WHERE batch_no = :batch_no LIMIT 1) AND line_code IN (SELECT DISTINCT line_code FROM quality_defect WHERE batch_no = :batch_no) GROUP BY wo_no, product_model, line_code ORDER BY wo_no LIMIT 30"
 

@@ -30,6 +30,15 @@ COLLECTION_FAILURE_CASES = "failure_cases"
 COLLECTION_ENTERPRISE_FAQ = "enterprise_faq"
 
 
+def _dense_fp32(vec: Any) -> Any:
+    """BGE-M3 在 GPU(fp16) 下输出 float16 向量，而 collection 的
+    dense_vector 字段为 FLOAT_VECTOR(fp32)——Milvus 对类型强校验，
+    混用直接报 "vector type must be the same"。统一在适配器边界转 fp32：
+    模型保持 fp16 计算速度，存储/检索侧始终 fp32。"""
+    import numpy as np
+    return np.asarray(vec, dtype="float32")
+
+
 def _get_collection(name: str = COLLECTION_FAILURE_CASES):
     if name in _collections:
         return _collections[name]
@@ -168,7 +177,7 @@ class MilvusCollectionAdapter:
                 "id": str(doc_id),
                 "document": doc,
                 "metadata": meta or {},
-                "dense_vector": vecs["dense"][i],
+                "dense_vector": _dense_fp32(vecs["dense"][i]),
                 "sparse_vector": _sparse_to_dict(vecs["sparse"][i]),
             })
         res = client.upsert(self._name, data=data)
@@ -183,7 +192,7 @@ class MilvusCollectionAdapter:
         client = self._ensure()
         query = list(query_texts)[0]
         vecs = self._embedder()([query])
-        dense_q = vecs["dense"][0]
+        dense_q = _dense_fp32(vecs["dense"][0])
         sparse_q = _sparse_to_dict(vecs["sparse"][0])
 
         # 候选数：保证 >= n_results*3，供重排序挑选

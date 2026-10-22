@@ -1,0 +1,1447 @@
+# 岗位问答案例（R2 可答性兜底）——由 tools/gen_role_qa_cases.py 生成
+# 规则：真实链路（Text2SQL/场景/Agentic）能形成完整结论时一律用真实结论；
+# 只有人工兜底/空报告/降级/步数用尽/闲聊误判时，才用本文件案例补齐并标注案例编号。
+version: 1
+note: 岗位问答案例：真实链路未形成完整结论时的可答性兜底（不抢真实结论）
+cases:
+- id: RQ-001
+  role: gm
+  question: 这个月准交率完成多少
+  conclusion: 当月（2026-10-01 ~ 10-15）OTD 准时交付率 68.8%，低于 98% 目标 29.2 个百分点；OTIF 准时足额率 65.7%，交付压力集中在缺料与停线两类风险。
+  facts:
+  - 当月到期订单 2,242 张，准时交付 1,542 张（68.8%），准时足额 1,473 张（65.7%）
+  - 延期订单 115 张，平均延期 3~4 天
+  - 风险构成：延期风险 72 张、缺料 21 张、停线 14 张、客诉 8 张
+  gaps: []
+  next_steps:
+  - 下钻订单履约看板按客户/型号查看未达标订单
+  - 让计划同事按缺料与停线两类各出一版追赶计划
+  sources:
+  - order_fulfillment（当月 due_date 窗口，on_time / in_full 口径与订单履约看板同源）
+- id: RQ-002
+  role: gm
+  question: 哪些订单有履约风险
+  conclusion: 当前有 50 张订单处于非正常履约状态（延期风险/缺料/停线/客诉），最长已延期 7 天，需优先处理前 5 张头部客户订单。
+  facts:
+  - SO-2026-14038 一加 C 型号 3,123 台，延期 7 天：客户临时加严外观检验，质检队列积压
+  - SO-2026-17952 华为终端 B 型号 10,566 台，延期 7 天：排产窗口冲突，等待计划重排
+  - SO-2026-16803 荣耀 B 型号 8,840 台，延期 6 天：受 SMT-1 停线牵连，复线后追产
+  - SO-2026-11713 华为终端 B 型号，延期 6 天：主控芯片 IC-100 交期顺延
+  - SO-2026-16754 蔚来 D 型号，延期 6 天：外壳件注塑良率偏低，待工程分析
+  gaps: []
+  next_steps:
+  - 先处理 3 张华为/荣耀头部客户订单，评估分批出货
+  - 缺料类转计划同事做插单/改期测算
+  sources:
+  - order_fulfillment（risk_type 非「正常」，按 delay_days 倒序，最多 50 条）
+- id: RQ-003
+  role: gm
+  question: 本周有哪些要我拍板的升级事项
+  conclusion: 落在你治理槽位的待处置升级事项共 635 项，其中 0 项会签已齐、暂无可直接终批；最紧迫的 5 项集中在复线决策、对客 ETA、8D 关闭与对客回复四类槽位。
+  facts:
+  - 复线决策确认（SMT-1 A 型号，P1，待会签）
+  - 对客 ETA 承诺确认（P1，待会签）
+  - 8D 报告关闭确认（P1，待会签）
+  - 对客回复确认（脱敏后，P1，待会签）
+  - 8D 关闭确认（批次 MAT-CAP-1013，P1，待会签）
+  - 治理库当前 waiting_hitl 共 1,134 张，按槽位：d8_close 234、complaint_reply 124、restart 120、eta 120、disposition 120、delivery_commit 20、spc_action 8、maintenance_window 6
+  gaps:
+  - 会签链尚未签署，因此没有「可立即终批」项；终批前须先由发起方选定处置动作并完成会签
+  next_steps:
+  - 到审批确认中心按优先级逐项选定动作/会签
+  - 对超 SLA 的 P1 项要求发起方 24h 内补齐会签
+  sources:
+  - platform_workflow_task（status=waiting_hitl）+ permissions.yaml 槽位矩阵
+- id: RQ-004
+  role: mfg
+  question: 当前停线的工单有几张
+  conclusion: 当前有 1 张停线中的工单：SMT-1 · A 型号，2026-10-15 14:30 起因设备故障停线，根因标注「待分析」，复线时间未定。
+  facts:
+  - SMT-1 / A 型号：start_time 2026-10-15 14:30，stop_code=EQUIPMENT，status=ongoing
+  - SMT-2 / B 型号：2026-10-13 08:55~10:30 停线 95 分钟，已恢复（换吸嘴）
+  - 在制影响：SMT-1 当日计划 22,959 台、实际 18,774 台，OEE 76.0%
+  gaps: []
+  next_steps:
+  - 先完成 OVN-02 温区与 PRT-01 刮刀/钢网参数复位
+  - 复线前做首件确认，复线决策走人工会签
+  sources:
+  - line_stop_event（status=ongoing）+ production_output（当日产出）
+- id: RQ-005
+  role: mfg
+  question: 各产线 OEE 达成如何
+  conclusion: 最新生产日各线 OEE 在 69.1%~76.7% 区间，SMT-3 最低（69.1%），DIP-2 最高（76.7%）；全厂均值约 74%，主要损耗来自设备故障停机。
+  facts:
+  - SMT-1 76.0%、SMT-2 70.1%、SMT-3 69.1%
+  - DIP-1 75.3%、DIP-2 76.7%
+  - ASSY-1 73.2%、PACK-1 76.5%、PACK-2 74.8%
+  - 停机分钟：DIP-1 958、SMT-3 941、PACK-1 919、PACK-2 809、SMT-1 646、DIP-2 631、SMT-2 621、ASSY-1 590
+  gaps:
+  - 平台未注册 OEE 指标口径，以上为 production_output 表内 oee 字段（与制造看板同源），非独立推算
+  next_steps:
+  - 优先看 SMT-3 / SMT-2 的停机原因（设备故障为主）
+  - 让设备同事对高停机线体出维保窗口
+  sources:
+  - production_output（最新 record_date，按 line_code 聚合）
+- id: RQ-006
+  role: mfg
+  question: 预计多久可以复线
+  conclusion: 无法给出确定复线时间：停线根因仍是「待分析」，且 line_stop_event 没有预计恢复时间字段。按设备参数复位 + 首件确认的最短路径估算约 3 小时，需设备与质量共同确认后才可承诺。
+  facts:
+  - SMT-1 A 型号自 2026-10-15 14:30 停线，状态 ongoing，stop_code=EQUIPMENT
+  - 高风险设备：OVN-02 回流温区3 实测 245℃（基准 235±5℃，超上限 5℃）
+  - PRT-01 刮刀压力 0.8MPa（基准 0.5，超 60%）、钢网清洁周期 15min（基准 4h）
+  - 同线历史停线（SMT-2 换吸嘴）恢复用时约 95 分钟，可作下界参考
+  gaps:
+  - 停线事件无 root_cause 结论、无预计恢复时间（ETA）字段
+  next_steps:
+  - 先校准 OVN-02 温区与 PRT-01 刮刀/钢网并复测
+  - 首件确认后发起复线决策会签（restart 槽位）
+  sources:
+  - line_stop_event + equipment_log（异常参数）+ equipment_run_time（历史停机）
+- id: RQ-007
+  role: eq
+  question: 今天有哪些设备告警
+  conclusion: 今天（2026-10-15）共 3 条设备异常告警，全部在 SMT-1：回流温区超上限、刮刀压力漂移、钢网清洁周期严重超时；另有 2 条 10-13 的历史异常（SMT-2 吸嘴真空度、DIP-1 温区偏低）。
+  facts:
+  - OVN-02 · SMT-1 · E-301 · 回流温区3 = 245℃（基准 235±5）· 14:31
+  - PRT-01 · SMT-1 · E-205 · 钢网清洁周期 = 15min（基准 4h）· 14:29
+  - PRT-01 · SMT-1 · E-201 · 刮刀压力 = 0.8MPa（基准 0.5）· 14:28
+  - PRT-02 · SMT-2 · E203 · 吸嘴真空度 = 38kPa（基准 ≥55）· 10-13 10:12
+  - OVN-01 · DIP-1 · W110 · 温区2 = 238℃（基准 245±5）· 10-13 15:40
+  gaps: []
+  next_steps:
+  - SMT-1 三条告警与当前停线同源，先复位再复线
+  - PRT-02 吸嘴真空度偏低，安排更换吸嘴
+  sources:
+  - equipment_log（is_abnormal=1，按 log_time 倒序）
+- id: RQ-008
+  role: eq
+  question: 停机窗口怎么安排最合适
+  conclusion: 建议把 SMT-1 的纠正性停机与 PRT-02 吸嘴更换合并到今晚 22:00—次日 02:00 的低负荷窗口，单次窗口控制在 4 小时内；该窗口需计划确认在制消化能力后由制造/设备会签生效。
+  facts:
+  - SMT-1 当前为被动停线（非计划窗口），越早复位越少损失
+  - SMT-2 吸嘴真空度 38kPa 已低于基准，属可计划项，适合与 SMT-1 合并
+  - 各线日均停机 10.2%~11.1%，夜间负荷最低，合并窗口对交付影响最小
+  gaps:
+  - 平台无「产线在制/可用产能」字段，无法量化 4 小时窗口的交付影响；需计划同事确认在制消化
+  - 停机窗口审批需要 maintenance_window 槽位会签，当前无待审窗口
+  next_steps:
+  - 先在审批中心发起停机窗口确认（maintenance_window）
+  - 窗口内完成 OVN-02 温区校准与 PRT-01/02 保养
+  sources:
+  - equipment_log + equipment_run_time（stop_min / stop_reason）+ line_stop_event
+- id: RQ-009
+  role: eq
+  question: 稼动损失主要来自哪些设备
+  conclusion: 稼动损失最大的是 SMT-1（停机占比 11.1%），其后是 DIP-2 10.9%、SMT-2/SMT-3 10.8%；按原因汇总，设备故障占绝对大头（218,435 分钟），换型调机 72,861 分钟、缺料待料 36,305 分钟。
+  facts:
+  - SMT-1 停机 51,536 / 计划 463,810 分钟 = 11.1%
+  - DIP-2 10.9%、SMT-2 10.8%、SMT-3 10.8%、ASSY-1 10.5%、DIP-1 10.3%、PACK-1/PACK-2 10.2%
+  - 停机原因：设备故障 218,435 min、换型调机 72,861 min、缺料待料 36,305 min、计划保养 21,386 min、品质异常 19,216 min
+  gaps: []
+  next_steps:
+  - 对设备故障 top 线体（SMT-1、DIP-2）做专项 PM
+  - 换型调机时长纳入 SMED 改善
+  sources:
+  - equipment_run_time（planned_run_min / stop_min / stop_reason）
+- id: RQ-010
+  role: eqm
+  question: 本周设备健康分布如何
+  conclusion: 本周设备异常集中在 SMT 段：SMT-1 有 3 条异常（温区/刮刀/钢网），SMT-2、DIP-1 各 1 条；其余线体本周无异常记录。平台没有设备健康评分模型，以上为告警事实分布，不是预测评分。
+  facts:
+  - SMT-1：OVN-02 温区 245℃、PRT-01 刮刀 0.8MPa、PRT-01 钢网清洁 15min
+  - SMT-2：PRT-02 吸嘴真空度 38kPa（基准 ≥55）
+  - DIP-1：OVN-01 温区2 238℃（基准 245±5）
+  - 异常记录按线体：SMT-1 3 条、SMT-2 1 条、DIP-1 1 条
+  gaps:
+  - 无设备健康度评分/预测模型（equipment.predict 无有效记录时返回空，不编造分数）
+  next_steps:
+  - 先把 SMT-1 三条异常闭环，再排 SMT-2 吸嘴更换
+  - 对 DIP-1 温区做一次校准并复测
+  sources:
+  - equipment_log（is_abnormal=1，按线体聚合）
+- id: RQ-011
+  role: eqm
+  question: 哪些设备需要提前排维保
+  conclusion: 建议优先排维保的是 PRT-01（刮刀压力超基准 60%、钢网清洁周期只有基准的 1/16）、OVN-02（温区超上限 5℃）与 PRT-02（吸嘴真空度不足 31%）。
+  facts:
+  - PRT-01 刮刀压力 0.8MPa vs 基准 0.5MPa；钢网清洁 15min vs 基准 4h
+  - OVN-02 回流温区3 245℃ vs 基准 235±5℃
+  - PRT-02 吸嘴真空度 38kPa vs 基准 ≥55kPa
+  - 三台设备均在 SMT 段，PRT-01 已直接关联当前 SMT-1 停线
+  gaps: []
+  next_steps:
+  - 本周内完成 PRT-01 刮刀/钢网保养与 OVN-02 温区校准
+  - PRT-02 备吸嘴并安排更换窗口
+  sources:
+  - equipment_log（异常参数与基准对比）
+- id: RQ-012
+  role: eqm
+  question: 备件库存够不够
+  conclusion: 无法给出备件够不够的结论：平台没有备件台账（备件编码/安全库存/在途），只能确认通用物料库存；设备维保需要的吸嘴、刮刀、温区热电偶等专用备件不在物料库存口径内。
+  facts:
+  - material_inventory 共 358 条物料库存（电子料/结构件/包材等），无「备件」分类
+  - 可用作参考的高库存件：2.54mm 排针 300,000、开关二极管 250,000、贴片电容 150,000
+  - 设备侧需求：PRT-01 刮刀、PRT-02 吸嘴、OVN-02 温区热电偶
+  gaps:
+  - 备件台账与备件安全库存数据源未接入
+  - 无备件领用/消耗记录
+  next_steps:
+  - 先按上面 3 类专用件线下盘一次，再决定是否紧急采购
+  - 建议接入 EAM 备件台账后再做自动预警
+  sources:
+  - material_inventory（仅通用物料，不等价于备件）
+- id: RQ-013
+  role: mt
+  question: 今天的点检有异常吗
+  conclusion: 今天有 3 条设备点检异常，全部在 SMT-1：刮刀压力 0.8MPa、钢网清洁周期 15min、回流温区3 245℃，均超出基准；这三条也是当前 SMT-1 停线的直接参数证据。
+  facts:
+  - 14:28 PRT-01 刮刀压力 0.8MPa（基准 0.5）
+  - 14:29 PRT-01 钢网清洁周期 15min（基准 4h）
+  - 14:31 OVN-02 回流温区3 245℃（基准 235±5）
+  - 09:00 PRT-01 开机自检 pass（当日基线）
+  gaps:
+  - 平台无独立「点检计划/点检项」表，以上为 equipment_log 异常记录，不能替代完整点检清单
+  next_steps:
+  - 按异常项逐条复位并复测
+  - 复位后首件确认再申请复线
+  sources:
+  - equipment_log（当日 is_abnormal=1）
+- id: RQ-014
+  role: mt
+  question: 手头维修工单进度如何
+  conclusion: 查不到维修工单进度：平台没有维修工单台账（maintenance_order），现有工单池只有治理类 HITL 任务，不能当作维修工单。
+  facts:
+  - platform_workflow_task 中 1,134 张 waiting_hitl 全部是治理确认单（复线/ETA/8D 等），非维修工单
+  - 设备异常事实：SMT-1 3 条、SMT-2 1 条、DIP-1 1 条
+  - 当前需维修项：PRT-01 刮刀/钢网、OVN-02 温区、PRT-02 吸嘴
+  gaps:
+  - 维修工单表（工单号/状态/维修人/计划完成）未接入
+  - 无维修工时与备件领用记录
+  next_steps:
+  - 先把 3 个待修项登记为线下维修单并回填进度
+  - 建议接入 EAM 维修工单后再做进度看板
+  sources:
+  - equipment_log（异常项）+ platform_workflow_task（仅治理单，非维修单）
+- id: RQ-015
+  role: mt
+  question: 这台设备历史故障有哪些
+  conclusion: 未指定设备号，按最近故障记录看：SMT-2 贴片机吸嘴堵塞（真空度不足，已更换恢复）、SMT-1 印刷机刮刀压力漂移/钢网清洁超时、DIP-1 回流炉温区偏低、SMT-1 回流炉温区超上限。
+  facts:
+  - SMT-2 / 2026-10-13 / 吸嘴真空度 38kPa → 更换吸嘴后恢复，停线 95 分钟
+  - SMT-1 / 2026-10-15 / PRT-01 刮刀压力 0.8MPa、钢网清洁 15min、OVN-02 温区 245℃
+  - DIP-1 / 2026-10-13 / OVN-01 温区2 238℃（偏低）
+  gaps:
+  - 未提供设备号，无法给出单台完整履历
+  - 无设备维修履历表（仅告警日志）
+  next_steps:
+  - 补充设备号后可精确到单台履历
+  - 对重复故障项（刮刀/吸嘴/温区）建立 PM 项
+  sources:
+  - equipment_log + line_stop_event（已恢复停线记录）
+- id: RQ-016
+  role: sqe
+  question: 本周来料检验退了哪些批
+  conclusion: 本周判定不合格（退货/待处置）的来料共 3 批：锡膏 MAT-SP-1014、主控芯片 MAT-IC-1011、贴片电容 MAT-CAP-1013；来料整体不合格率偏高，incoming_batch 中 fail 129 批。
+  facts:
+  - MAT-SP-1014 · 无铅锡膏 SAC305 · 千住金属 · 10-14 · fail
+  - MAT-IC-1011 · 主控芯片 · STMicroelectronics · 10-11 · fail
+  - MAT-CAP-1013 · 贴片电容 22uF · 三星电机 · 10-09 · fail
+  - incoming_batch 全量：pass 361、fail 129、deviation 67、pending 87
+  gaps: []
+  next_steps:
+  - 对 3 批发起来料处置（disposition）会签，明确退货/特采/挑选
+  - 对 3 家供应商开 SCAR 并跟催 8D
+  sources:
+  - material_batch（incoming_result=fail）+ incoming_batch（检验状态分布）
+- id: RQ-017
+  role: sqe
+  question: 帮我起一个 8D 初稿
+  conclusion: 以当前未闭环客诉 CS-20261012-01（华为终端 · A 型号 · BATCH-A-1008 · 贴片元件偏移 2.3%）为对象，8D 初稿已按 D1—D8 结构生成，D4 根因待 PQE 现场确认。
+  facts:
+  - D1 团队：QA 牵头，PQE/SQE/工程/业务参与
+  - D2 问题：BATCH-A-1008 贴片元件偏移，功能失效不良率约 2.3%
+  - D3 围堵：在库/在途冻结，已发货批次通知客户加严检验
+  - D4 根因（待确认）：SMT-1 印刷机刮刀压力漂移至 0.8MPa（基准 0.5）、钢网清洁周期 15min（基准 4h）
+  - D5/D6 纠正与验证：参数复位 + 首件全检 + 连续 3 批验证
+  - D7 预防：刮刀压力/钢网清洁纳入每 2 小时点检并设超限停机
+  - D8 关闭：需质量总监终批（d8_close），当前未关闭
+  gaps:
+  - 8D 正式单据模板未接入，以上为按平台事实生成的结构化初稿
+  - D4 需 PQE 现场取样确认后定稿
+  next_steps:
+  - 把 D4 根因结论补进 8D 并安排 D5/D6 验证
+  - 验证通过后发起 8D 关闭会签
+  sources:
+  - customer_complaint（CS-20261012-01）+ equipment_log（SMT-1 参数）+ 制度 QP-8D（D4 5 个工作日、闭环 10 个工作日）
+- id: RQ-018
+  role: sqe
+  question: 这家供应商的历史不良记录
+  conclusion: 未指定供应商；按来料不合格记录看，千住金属、STMicroelectronics、三星电机各 2 批中 1 批不合格，是当前不良率最高的三家，建议纳入重点稽核。
+  facts:
+  - 千住金属：2 批，fail 1（MAT-SP-1014 锡膏）
+  - STMicroelectronics：2 批，fail 1（MAT-IC-1011 主控芯片）
+  - 三星电机：2 批，fail 1（MAT-CAP-1013 贴片电容）
+  - 其余：风华高科、立讯精密、深南电路、兆易创新 暂无 fail
+  gaps:
+  - 未提供供应商名称，无法给出单家完整履历
+  - 无供应商绩效评分/索赔台账
+  next_steps:
+  - 补充供应商名称后可精确到批次与不良模式
+  - 对 3 家开 SCAR，30 天复盘
+  sources:
+  - material_batch（按 supplier 聚合 fail_cnt）
+- id: RQ-019
+  role: pqe
+  question: 这条线的 CPK 达标吗
+  conclusion: 未指定线体；从全量 SPC 看，10 个特性过程能力不足，回流焊峰值温度最低（Cp 0.614），焊锡球直径 0.847、保护板贴装偏移 0.867、线束插接位偏差 0.848，均低于 1.33。
+  facts:
+  - 回流焊峰值温度(℃) Cp 0.6144
+  - 焊锡球直径(μm) 0.8469、保护板贴装偏移量(μm) 0.8667、线束插接位偏差(°) 0.8482
+  - SPC 共 10 个特性过程能力不足，另有特性缺规格限不可判定
+  gaps:
+  - 未提供线体，无法给出单线 CPK；SPC 表无 line_code 字段（仅 characteristic/process_stage）
+  next_steps:
+  - 补充线体后按工段筛选 SPC 特性
+  - 对 Cp<1.0 的 4 个特性做专项改善
+  sources:
+  - spc_measurement（按 characteristic 计算 Cp/Cpk，与 SPC 看板同口径）
+- id: RQ-020
+  role: pqe
+  question: 不良柏拉图 top 三项是什么
+  conclusion: 累计不良 top3 为元件偏移 22,118 件、外观划伤 21,688 件、虚焊 21,473 件，合计 65,279 件，占全量不良 181,646 件的 35.9%。
+  facts:
+  - 元件偏移 22,118
+  - 外观划伤 21,688
+  - 虚焊 21,473
+  - 第 4/5 名：焊点拉尖 19,145、焊点虚焊 19,127
+  - 按工段：SMT 45,859、PCM 45,546、整机 44,986、PACK 44,898
+  gaps: []
+  next_steps:
+  - 对 top3 各做一次 5Why，区分设备/材料/人为
+  - 按工段下钻定位 top3 的集中线体
+  sources:
+  - quality_defect（按 defect_type 聚合，与品质看板柏拉图同源）
+- id: RQ-021
+  role: pqe
+  question: 客诉的根因分析到哪一步了
+  conclusion: 当前只有 1 起未闭环客诉 CS-20261012-01（华为 · A 型号 · BATCH-A-1008 · 贴片偏移 2.3%），8D 已到 D4 根因分析：初步锁定 SMT-1 刮刀压力漂移与钢网清洁超时，待现场取样确认。
+  facts:
+  - D1 团队/D2 问题界定/D3 围堵已完成
+  - D4 初步根因：PRT-01 刮刀压力 0.8MPa（基准 0.5）、钢网清洁 15min（基准 4h）
+  - D5—D8 未开始（纠正措施、验证、预防、关闭）
+  - 同批次关联设备：SMT-1 OVN-02 温区 245℃（超上限）
+  gaps:
+  - 8D 正式单据系统未接入，阶段以平台事实与工单留痕为准
+  next_steps:
+  - PQE 今日完成 D4 取样确认
+  - D4 定稿后安排连续 3 批验证，再走 D8 关闭会签
+  sources:
+  - customer_complaint + equipment_log + 8D 阶段（知识库规则：D4 5 个工作日、闭环 10 个工作日）
+- id: RQ-022
+  role: qa
+  question: 这批货的检验结论是什么
+  conclusion: 未提供批号，无法定位「这批货」；最近 5 批来料检验结论如下，其中 MAT-SP-1014 判定不合格。
+  facts:
+  - MAT-SP-1015 / SP-001 锡膏：合格
+  - MAT-CON-1014 / CON-TYPEC-16P：合格
+  - MAT-SP-1014 / SP-001 锡膏：不合格（10-14 到料）
+  - MAT-PCB-1013 / PCB-022：合格
+  - MAT-IC-1012 / IC-100：合格
+  gaps:
+  - 供应商名称按脱敏规则隐藏
+  - 未提供批号/料号/工单号，无法给出单批全链路结论
+  next_steps:
+  - 补充批号后可查批次追溯与影响面
+  - 若指 MAT-SP-1014，需走 disposition 处置会签
+  sources:
+  - material_batch（最近 5 批 incoming_result）
+- id: RQ-023
+  role: qa
+  question: 让步接收需要谁会签
+  conclusion: 让步接收属「来料处置」槽位：由 SQE/采购发起，工程、业务、品质、成本会签，质量总监/QA经理/总经理终批；影响订单交期的还需计划会签。
+  facts:
+  - 槽位：disposition（来料处置）
+  - 可发起：SQE、采购
+  - 会签：工程、业务、品质、成本（按动作配置）
+  - 终批：质量总监、QA经理、总经理
+  gaps:
+  - 具体会签人以选定处置动作后的 required_signoffs 为准
+  next_steps:
+  - 在审批中心选定「让步接收」动作后即可看到确定会签人
+  - 会签齐后由质量总监终批
+  sources:
+  - permissions.yaml（hitl.disposition.propose/cosign/approve）+ 闸门目录
+- id: RQ-024
+  role: qa
+  question: 本周客诉闭环了几起
+  conclusion: 当前客诉 5 起，已闭环 2 起（小米、大疆），处理中 2 起（OPPO、美的），未闭环 1 起（华为），闭环率 40%。
+  facts:
+  - 已关闭：CMP-20261008-01 小米 B 型号 充电接口接触不良；CMP-20261012-03 大疆 C 型号 固件版本不一致
+  - 处理中：CMP-20261010-02 OPPO A 型号 外观划伤；CMP-20261014-04 美的 B 型号 标签错印
+  - 未闭环：CS-20261012-01 华为 A 型号 贴片偏移 2.3%（8D D4）
+  gaps: []
+  next_steps:
+  - 优先推动华为客诉 D4→D8
+  - OPPO/美的两起按 5 个工作日 D4 时限跟催
+  sources:
+  - 'customer_complaint（status: closed/processing/open）'
+- id: RQ-025
+  role: qd
+  question: 质量域本周有哪些待终批
+  conclusion: 落在质量治理槽位（8D 关闭、来料处置、复线、停机窗口、过程处置、报告审定）的待处置事项共 488 项，其中 0 项会签已齐；最紧迫的是 8D 关闭与来料处置两类。
+  facts:
+  - d8_close 234 项、disposition 120 项、restart 120 项、spc_action 8 项、maintenance_window 6 项
+  - 当前无一可立即终批（会签链未齐）
+  - 最紧迫样例：8D 报告关闭确认、8D 关闭确认（批次 MAT-CAP-1013）、来料处置确认
+  gaps:
+  - 会签进度以工单 governance.required_signoffs 为准，未选动作的工单暂不可终批
+  next_steps:
+  - 按 P1 + SLA 排序逐项补齐会签
+  - 对 8D 关闭类先确认 D5/D6 验证证据
+  sources:
+  - platform_workflow_task（waiting_hitl）+ permissions.yaml（质量总监槽位）
+- id: RQ-026
+  role: qd
+  question: 各过程 CPK 达标情况
+  conclusion: 全量 15 个 SPC 特性中 10 个过程能力不足、均低于 1.33；最差的是回流焊峰值温度（Cp 0.614），其次焊锡球直径 0.847、线束插接位偏差 0.848、保护板贴装偏移 0.867。
+  facts:
+  - 回流焊峰值温度 0.6144（目标 ≥1.33）
+  - 焊锡球直径 0.8469、保护板贴装偏移 0.8667、线束插接位偏差 0.8482
+  - 另有特性因缺规格限不可判定（未编造结论）
+  gaps:
+  - SPC 表无 line_code，无法按线体拆分能力
+  next_steps:
+  - 对 Cp<1.0 的四项立项改善（设备参数+工装）
+  - 补齐缺规格限特性的规格后再评估
+  sources:
+  - spc_measurement（Cp 组内 σ 口径，与 SPC 看板同源）
+- id: RQ-027
+  role: qd
+  question: 重大客诉的处理进展
+  conclusion: 1 起 S 级未闭环：华为 CS-20261012-01（A 型号 BATCH-A-1008 贴片偏移 2.3%），8D 在 D4；另有 OPPO 外观划伤、美的标签错印两起处理中。
+  facts:
+  - 华为：在库/在途冻结，已发货批次客户加严检验，D4 根因待定稿
+  - OPPO：外观面划伤，来料漏检，处理中
+  - 美的：包装箱批次标签错印，发货前已拦截，处理中
+  - 闭环率 40%（2/5）
+  gaps:
+  - 8D 单据系统未接入，阶段以平台事实为准
+  next_steps:
+  - 华为客诉按 SLA 10 个工作日闭环倒排
+  - D8 关闭前需质量总监终批
+  sources:
+  - customer_complaint + 8D 阶段规则（D4 5d / 闭环 10d）
+- id: RQ-028
+  role: rdm
+  question: 各 NPI 项目到哪个阶段了
+  conclusion: A 型号已 MP（量产爬坡完成 10-09）；B 型号在 PVT（小批量试产 + 可靠性测试进行中）；C 型号在 EVT（工程验证进行中，DFM 评审待启动）。
+  facts:
+  - A 型号：MP 量产爬坡 done，2026-10-09
+  - B 型号：DVT done（09-26）；PVT 小批量试产 in_progress（计划 10-20）、可靠性测试 in_progress（计划 10-22）
+  - C 型号：EVT 工程验证 in_progress（计划 11-05，主板供应商样品延迟 1 周）；DFM 评审 pending（计划 11-10）
+  gaps: []
+  next_steps:
+  - B 型号 PVT 两项本周到期，优先保可靠性复测
+  - C 型号主板样品延迟需采购/研发联合跟催
+  sources:
+  - project_milestone（phase/status/planned_end/risk_note）
+- id: RQ-029
+  role: rdm
+  question: 可靠性测试结果如何
+  conclusion: B 型号高低温第一轮已通过，可靠性测试仍在进行（计划 10-22）；A 型号 BATCH-A-1015 老化测试通过；F 型号高低温循环有 6 次失败记录，需复测。
+  facts:
+  - B 型号：高低温第一轮通过（PVT 可靠性测试 in_progress）
+  - A 型号 BATCH-A-1015：老化/功能/外观/软件测试全部 pass（10-15）
+  - F 型号：高低温循环失败 6 次（全量测试失败项之一）
+  - 失败项总体：A/K 电性能各 7 次、B/D/E 外观各 6 次、J 固件 6 次
+  gaps:
+  - 可靠性报告原件未接入，结论以 test_records 结果字段为准
+  next_steps:
+  - B 型号按计划 10-22 完成第二轮并出结论
+  - F 型号高低温失败需失效分析后再复测
+  sources:
+  - test_records（test_type=可靠性/老化，result）
+- id: RQ-030
+  role: rdm
+  question: 这个变更影响哪些在制型号
+  conclusion: 已生效变更 2 个：ECN-0921 影响 BKT-B01（B 型支架，B 型号）/ ECN-0915 影响 MTR-M02（电机支架）；其中 BKT-B01 的 V2 旧工艺卡尚未撤换，是当前最大执行风险。
+  facts:
+  - ECN-0921：B 型支架新材料焊接工艺变更，2026-09-21 生效，WI-Weld-B01-V3
+  - ECN-0915：电机支架轴承装配公差变更，2026-09-15 生效，WI-Asm-M02-V2
+  - BKT-B01 V2、MTR-M02 V1 状态 superseded，但 note 标注「工艺卡尚未撤换」
+  - 受影响在制：B 型号（PVT 小批量试产/可靠性测试进行中）
+  gaps:
+  - 无逐单在制工单清单（work_order 表未接入），无法给出受影响工单号清单
+  next_steps:
+  - 先撤换 BKT-B01 V2 / MTR-M02 V1 现场工艺卡
+  - 对 B 型号 PVT 批次做变更后首件与复测
+  sources:
+  - knowledge_ecn + knowledge_bom + project_milestone
+- id: RQ-031
+  role: rd
+  question: B 型支架焊接参数用哪一版
+  conclusion: 用 V3 版（ECN-0921，2026-09-21 生效）：焊接电流 180A、焊接速度 35cm/min、保护气氩气 99.99%、预热温度 120℃；依据 WI-Weld-B01-V3。
+  facts:
+  - BKT-B01 V3：电流 180A、速度 35cm/min、氩气 99.99%、预热 120℃
+  - V2（已作废）：电流 160A、速度 30cm/min、氩气 99.99%，无预热要求
+  - V2 工艺卡现场尚未撤换（note 明确标注）
+  gaps:
+  - 图纸/PLM 未接入，V3 以平台受控知识库记录为准
+  next_steps:
+  - 立即撤换现场 V2 工艺卡
+  - 对在制 B 型支架按 V3 首件确认并记录
+  sources:
+  - knowledge_bom（BKT-B01，status=active）+ knowledge_ecn（ECN-0921）
+- id: RQ-032
+  role: rd
+  question: ECN-0921 改了哪些内容
+  conclusion: ECN-0921 是「B 型支架新材料焊接工艺变更」，2026-09-21 生效：焊接电流 160A→180A、焊接速度 30→35cm/min、新增预热 120℃，依据文件 WI-Weld-B01-V3。
+  facts:
+  - 变更对象：BKT-B01（B 型支架）
+  - 生效日期：2026-09-21；状态：effective；受控文件：WI-Weld-B01-V3
+  - 参数差异：电流 160→180A、速度 30→35cm/min、新增预热温度 120℃
+  - 旧版 V2 状态 superseded，但现场工艺卡未撤换
+  gaps: []
+  next_steps:
+  - 通知现场按 V3 执行并回收 V2 工艺卡
+  - 对变更后首批做焊接拉力/外观验证
+  sources:
+  - knowledge_ecn + knowledge_bom（版本对比）
+- id: RQ-033
+  role: rd
+  question: 旧版工艺卡还有哪些没撤换
+  conclusion: 共 2 项旧版工艺卡未撤换：BKT-B01 V2（随 ECN-0921 作废）与 MTR-M02 V1（随 ECN-0915 作废），平台记录已明确标注「尚未撤换」。
+  facts:
+  - BKT-B01 V2：superseded，note=「V2 版工艺卡尚未撤换，随 ECN-0921 生效作废」
+  - MTR-M02 V1：superseded，note=「V1 版工艺卡尚未撤换，随 ECN-0915 生效作废」
+  - 现行版：BKT-B01 V3、MTR-M02 V2
+  gaps:
+  - 无现场悬挂版本核对记录，无法确认工位实物是否仍为旧版
+  next_steps:
+  - 文控按清单回收 V2/V1 工艺卡并回签
+  - 对 Two 个工位做一次现场版本抽查
+  sources:
+  - knowledge_bom（status=superseded + note）
+- id: RQ-034
+  role: pe
+  question: 这个料号现行版本是哪一版
+  conclusion: 平台受控的料号只有 2 个：BKT-B01 现行 V3（2026-09-21 生效）、MTR-M02 现行 V2（2026-09-15 生效）；其余料号的版本主数据在 PLM，平台未接入。
+  facts:
+  - BKT-B01：V3 active，ECN-0921，WI-Weld-B01-V3
+  - MTR-M02：V2 active，ECN-0915，WI-Asm-M02-V2
+  - 旧版：BKT-B01 V2、MTR-M02 V1（superseded）
+  gaps:
+  - PLM/图纸系统未接入，无法查询其他料号的现行版本
+  next_steps:
+  - 补充料号；若在平台 2 个受控件内可直接给版本
+  - 其余料号请以 PLM/文控受控版本为准
+  sources:
+  - knowledge_bom（active 版本）
+- id: RQ-035
+  role: pe
+  question: 新旧版本差异是什么
+  conclusion: 平台内可对比的版本差异有两组：BKT-B01 V2→V3（焊接电流/速度/预热）与MTR-M02 V1→V2（轴承型号/公差/压装力/新增拧紧扭矩）。
+  facts:
+  - BKT-B01：电流 160→180A、速度 30→35cm/min、新增预热 120℃
+  - MTR-M02：轴承 6204→6204-2RS、公差 H7/js6→H7/k6、压装力 1.0→1.2kN、新增拧紧扭矩 12N·m
+  - 两版旧工艺卡均未撤换
+  gaps:
+  - 问题未指明型号/料号，以上为平台全部可对比项
+  next_steps:
+  - 指明料号可输出单点差异清单
+  - 差异项逐条确认工装/检具是否需要同步变更
+  sources:
+  - knowledge_bom（同料号多版本 params_json 对比）
+- id: RQ-036
+  role: pe
+  question: 有没有可替代的料号
+  conclusion: 无法给出替代料清单：平台未接入 AVL/AML、二供、pin-to-pin 替代关系数据。可先做的是用供应风险与库存判断哪些料存在替代评估的必要。
+  facts:
+  - 无替代关系表/注册查询
+  - 可用能力：supply.risk（来料风险）、inventory.atp（可用量）、material_inventory（现货）
+  gaps:
+  - 替代关系主数据缺失
+  - 无工程验证记录（替代料需 ECN/试产验证）
+  next_steps:
+  - 提供具体料号，先查其来料风险与库存
+  - 替代可行性由工程评估后走 ECN/试产
+  sources:
+  - 平台能力边界说明（无替代料数据源）
+- id: RQ-037
+  role: ie
+  question: 各产线节拍与瓶颈在哪
+  conclusion: 产线节拍差异明显：ASSY-1 整机组装 80s 为全厂瓶颈，PACK-1/2 测试 60s、组装 55s，DIP-1/2 插件与波峰焊 45s，SMT 三线均为 32s。
+  facts:
+  - ASSY-1：整机组装 80s、测试 60s、包装入库 50s（均值 63.3s）
+  - PACK-1/PACK-2：测试 60s、组装 55s（均值 51.7s）
+  - DIP-1/DIP-2：插件/波峰焊 45s（均值 45s）
+  - SMT-1/2/3：32s（三线一致，不是瓶颈）
+  gaps:
+  - station_detail 部分记录 line_code 为空（ICT/功能测试/老化 76s），未纳入线体均值
+  next_steps:
+  - 瓶颈在 ASSY-1 整机组装，优先做线平衡/工装改善
+  - PACK 段测试 60s 为次瓶颈
+  sources:
+  - station_detail（按 line_code/process_step 聚合 cycle_time_s）
+- id: RQ-038
+  role: ie
+  question: 标准工时与实际的差异
+  conclusion: 平台没有标准工时主数据，无法给出「标准 vs 实际」差异；可用的替代口径是报工达成率：PACK-2 93.0% 最低，ASSY-1 94.4%，其余线体 97.7%~98.2%。
+  facts:
+  - PACK-2 93.0%（1,004/1,080）
+  - ASSY-1 94.4%（1,529/1,620）
+  - DIP-2/PACK-1/SMT-2 97.7%、DIP-1/SMT-1 98.1%、SMT-3 98.2%
+  - 以上是 work_report 的应报/实报，不是工时
+  gaps:
+  - 标准工时（ST）主数据未接入
+  - work_report 只有应报/实报数量，无工时字段
+  next_steps:
+  - 先接入 MES 标准工时再算差异
+  - 当前可按报工达成率定位 PACK-2/ASSY-1 两条落后线
+  sources:
+  - work_report（should_report / reported）
+- id: RQ-039
+  role: ie
+  question: 插一张单进去影响哪些工单
+  conclusion: 需要插单的型号、数量、交期与拟插入产线四个参数才能测算；按当前产能，SMT-1 正在停线、SMT-3 OEE 69.1% 最低，插单会优先挤占 SMT-3/DIP 段。
+  facts:
+  - 当前停线：SMT-1 A 型号（14:30 起）
+  - OEE 最低：SMT-3 69.1%、SMT-2 70.1%
+  - 节拍瓶颈：ASSY-1 80s、PACK 测试 60s
+  - 在制订单可读：order_fulfillment（含 stage/progress/due_date）
+  gaps:
+  - 缺插单四参数，排产影响推演无法启动
+  - 无产线排产计划表（production_plan 未接入）
+  next_steps:
+  - 补齐型号/数量/交期/产线后走订单变更影响评估
+  - 插单评审走 order_review 会签
+  sources:
+  - order_fulfillment + production_output + station_detail
+- id: RQ-040
+  role: npi
+  question: 试产发现了哪些问题
+  conclusion: B 型号 PVT 试产问题：结构公差问题已闭环待复测、高低温第一轮通过；C 型号 EVT 阶段主板供应商样品延迟 1 周，DFM 评审尚未启动。
+  facts:
+  - B 型号 PVT：结构公差问题已闭环，待复测（risk_note）
+  - B 型号 PVT：可靠性测试（跌落/高低温）进行中，高低温第一轮通过
+  - C 型号 EVT：主板供应商样品延迟 1 周
+  - C 型号 EVT：DFM 可制造性评审 pending（计划 11-10）
+  gaps: []
+  next_steps:
+  - B 型号安排结构公差复测并出 PVT 结论
+  - C 型号催主板样品，同步启动 DFM
+  sources:
+  - project_milestone（risk_note / status）
+- id: RQ-041
+  role: npi
+  question: 各阶段 gate 达成没有
+  conclusion: A 型号已过 MP gate（10-09 完成）；B 型号 DVT 已过，PVT 两项进行中（10-20/10-22 到期）；C 型号 EVT 进行中（11-05），DFM gate 未启动（11-10）。
+  facts:
+  - A 型号：MP 量产爬坡 done
+  - B 型号：DVT done（09-26）；PVT 小批量试产 in_progress；PVT 可靠性测试 in_progress
+  - C 型号：EVT 工程验证 in_progress；DFM 评审 pending
+  gaps: []
+  next_steps:
+  - B 型号 PVT 两项本周到期，按 gate 条件逐项核验
+  - C 型号 EVT/DFM 排期需重排以吸收样品延迟
+  sources:
+  - project_milestone（phase + status）
+- id: RQ-042
+  role: npi
+  question: 哪些问题卡着不能进下一阶段
+  conclusion: 3 个卡点：B 型号 PVT 结构公差待复测、B 型号可靠性测试未出结论（10-22 到期）、C 型号 EVT 主板样品延迟且 DFM 未启动。
+  facts:
+  - B 型号 PVT：结构公差已闭环，但复测未完成
+  - B 型号 PVT：可靠性测试进行中，尚无最终结论
+  - C 型号 EVT：主板供应商样品延迟 1 周
+  - C 型号：DFM 评审 pending，未进入下一阶段
+  gaps: []
+  next_steps:
+  - B 型号本周内完成复测与可靠性结论
+  - C 型号升级主板样品延迟（采购+研发）
+  sources:
+  - project_milestone（in_progress/pending + risk_note）
+- id: RQ-043
+  role: pm
+  question: 本周有没有要延期的里程碑
+  conclusion: 有 2 个里程碑存在延期风险：C 型号 DFM 评审（计划 11-10，前置主板样品延迟 1 周）与B 型号 PVT 可靠性测试（计划 10-22，尚未出结论）。
+  facts:
+  - C 型号 EVT 工程验证：计划 11-05，风险=主板供应商样品延迟 1 周
+  - C 型号 DFM 评审：pending，计划 11-10
+  - B 型号 PVT 可靠性测试：in_progress，计划 10-22
+  - B 型号 PVT 小批量试产：in_progress，计划 10-20
+  gaps: []
+  next_steps:
+  - C 型号 DFM 申请顺延或并行启动
+  - B 型号可靠性测试本周内出结论
+  sources:
+  - project_milestone（planned_end + risk_note + status）
+- id: RQ-044
+  role: pm
+  question: 哪些事项卡在哪个部门
+  conclusion: 3 项卡点分属 3 个部门：主板样品延迟卡采购（供应商）、DFM 评审卡 IE（未排期）、B 型号复测卡 TE（待复测）。
+  facts:
+  - C 型号主板样品延迟 1 周 → 采购/供应商
+  - C 型号 DFM 评审 pending → IE（可制造性）
+  - B 型号结构公差复测 → TE/工程
+  - B 型号可靠性测试结论 → TE
+  gaps:
+  - 无跨部门阻塞台账，以上按里程碑 owner 与 risk_note 归因
+  next_steps:
+  - 按部门发催办：采购催样品、IE 排 DFM、TE 排复测
+  - 每周项目例会复盘卡点
+  sources:
+  - project_milestone（owner/risk_note）
+- id: RQ-045
+  role: pm
+  question: 需要升级处理的问题清单
+  conclusion: 需升级 3 项：C 型号主板样品延迟（影响 EVT/DFM 排期）、C 型号 DFM 未启动、B 型号 PVT 可靠性测试临期（10-22）未出结论。
+  facts:
+  - C 型号主板样品延迟 1 周（供应商侧）
+  - C 型号 DFM 评审 pending（计划 11-10）
+  - B 型号 PVT 可靠性测试 in_progress（计划 10-22）
+  - B 型号 PVT 小批量试产 in_progress（计划 10-20）
+  gaps:
+  - 无项目风险等级字段，未做 A/B/C 分级
+  next_steps:
+  - 3 项按「供应商→IE→TE」顺序升级
+  - 升级后在治理库留痕并跟踪闭环
+  sources:
+  - project_milestone
+- id: RQ-046
+  role: te
+  question: 这个型号测过哪些项目
+  conclusion: 以 A 型号 BATCH-A-1015 为例，已测外观全检、充放电功能、通信协议（软件）、老化（可靠性）、接口功能，结果全部 pass；B 型号另有跌落/高低温可靠性测试在做。
+  facts:
+  - A 型号 BATCH-A-1015：外观、充放电功能、通信协议、老化、接口功能 全 pass（10-15）
+  - B 型号：跌落/高低温可靠性测试 in_progress
+  - 全量失败项：A/K 电性能各 7 次、B/D/E 外观各 6 次、J 固件 6 次、F 高低温 6 次
+  gaps:
+  - 未指定型号，以上为最近批次与全量失败项
+  next_steps:
+  - 补充型号可输出单型号测试矩阵
+  - 对失败 top 项安排复测
+  sources:
+  - test_records（test_type/test_item/result）
+- id: RQ-047
+  role: te
+  question: 失败项集中在哪些
+  conclusion: 失败集中在电性能与外观两类：A/K 型号电性能各 7 次，B/D/E 型号外观各 6 次，J 固件功能 6 次，F 高低温循环 6 次。
+  facts:
+  - 电性能测试：A 型号 7、K 型号 7
+  - 外观检查：B 型号 6、D 型号 6、E 型号 6
+  - 固件功能：J 型号 6
+  - 高低温循环：F 型号 6
+  gaps: []
+  next_steps:
+  - 电性能失败按型号拆到工位/批次定位
+  - 外观失败联动来料与制程不良柏拉图
+  sources:
+  - test_records（result<>'pass'，按 product_model/test_item 聚合）
+- id: RQ-048
+  role: te
+  question: 客诉不良能复现吗
+  conclusion: 华为客诉 BATCH-A-1008 的贴片偏移具备复现条件：同线与同参数（SMT-1、刮刀 0.8MPa、钢网 15min）可复现偏移；但平台没有复现试验记录，不能声称已复现。
+  facts:
+  - 客诉：CS-20261012-01，A 型号 BATCH-A-1008，贴片偏移，不良率约 2.3%
+  - 关联参数：SMT-1 刮刀压力 0.8MPa（基准 0.5）、钢网清洁 15min（基准 4h）、OVN-02 温区 245℃
+  - 同批次在 quality_defect 中有锡膏/贴片类不良记录
+  gaps:
+  - 无复现试验记录/失效分析单
+  - 无客户退件样品台账
+  next_steps:
+  - 按异常参数做小批复现试验并留记录
+  - 复现结论回填 8D D4
+  sources:
+  - customer_complaint + equipment_log + quality_defect
+- id: RQ-049
+  role: rdt
+  question: 可靠性测试结论是什么
+  conclusion: B 型号高低温第一轮通过；A 型号 BATCH-A-1015 老化测试通过；F 型号高低温循环有 6 次失败，需失效分析后复测。
+  facts:
+  - B 型号：高低温第一轮 pass（PVT 进行中）
+  - A 型号 BATCH-A-1015：老化 pass
+  - F 型号：高低温循环 fail 6 次
+  - 全量：高低温循环失败为可靠性类最高频项
+  gaps:
+  - 无可靠性报告原件，结论以 test_records 为准
+  next_steps:
+  - F 型号做失效分析并安排复测
+  - B 型号 10-22 出第二轮结论
+  sources:
+  - test_records（test_type=可靠性）
+- id: RQ-050
+  role: rdt
+  question: 失效样品的分析到哪步
+  conclusion: 平台没有失效样品台账（样品编号/失效现象/分析阶段），无法回答「到哪步」；只能给出测试失败记录与批次线索。
+  facts:
+  - 无失效样品/FA 工单数据源
+  - 可用线索：F 型号高低温失败 6 次、A/K 电性能失败各 7 次
+  - 客诉失效批次：BATCH-A-1008（贴片偏移）
+  gaps:
+  - 失效样品分析链路未接入
+  - 无 FA 报告与结论字段
+  next_steps:
+  - 补充样品编号后可查测试记录与批次
+  - 建议接入 FA 台账后再做阶段跟踪
+  sources:
+  - test_records（失败项）+ customer_complaint（失效批次）
+- id: RQ-051
+  role: rdt
+  question: 历史同类失效有哪些
+  conclusion: 同类失效按测试项看：高低温循环（F 型号 6 次）、电性能（A/K 各 7 次）、外观（B/D/E 各 6 次）、固件功能（J 6 次）；客诉侧同根因是 BATCH-A-1008 贴片偏移。
+  facts:
+  - F 型号高低温 6 次
+  - A/K 电性能各 7 次
+  - B/D/E 外观各 6 次
+  - J 固件 6 次
+  - 客诉：BATCH-A-1008 贴片偏移 2.3%
+  gaps:
+  - 无失效模式编码（仅测试项名称），同类归并粒度有限
+  next_steps:
+  - 对高低温失败建立失效模式编码
+  - 把客诉同根因案例纳入案例库
+  sources:
+  - test_records + customer_complaint
+- id: RQ-052
+  role: me
+  question: 这个工序的现行作业指导是哪版
+  conclusion: 平台受控的作业指导只有 2 份：B 型支架焊接 WI-Weld-B01-V3（ECN-0921 生效）与电机支架装配 WI-Asm-M02-V2（ECN-0915 生效）；其他工序的 SOP/WI 版本库未接入。
+  facts:
+  - BKT-B01：WI-Weld-B01-V3，2026-09-21 生效
+  - MTR-M02：WI-Asm-M02-V2，2026-09-15 生效
+  - 两份旧版（BKT V2 / MTR V1）工艺卡未撤换
+  gaps:
+  - 未提供工序号/型号，无法定位到具体工序
+  - SOP/WI 版本库（DCC）未接入
+  next_steps:
+  - 补充工序+型号后可定位到平台内受控件
+  - 其余工序以 DCC/PLM 受控版本为准
+  sources:
+  - knowledge_bom + knowledge_ecn
+- id: RQ-053
+  role: me
+  question: 导入新工艺的风险点
+  conclusion: 以 ECN-0921 为样本，新工艺导入的 3 个风险：参数窗口变更（电流/速度/预热）、旧版工艺卡未撤换的执行风险、设备参数漂移（刮刀/温区）导致的工艺不稳。
+  facts:
+  - ECN-0921：电流 160→180A、速度 30→35cm/min、新增预热 120℃
+  - BKT-B01 V2 工艺卡现场未撤换
+  - SMT-1 设备参数漂移：刮刀 0.8MPa、钢网 15min、温区 245℃
+  - 无工艺参数表（process_parameter）权限/数据源
+  gaps:
+  - 工艺能力（Cpk）与新工艺参数未做关联验证
+  - 无 PFMEA 数据源
+  next_steps:
+  - 导入前做 PFMEA + 首件 + 连续 3 批验证
+  - 同步撤换旧版工艺卡并培训
+  sources:
+  - knowledge_ecn + knowledge_bom + equipment_log
+- id: RQ-054
+  role: me
+  question: 不良与工艺参数相关吗
+  conclusion: 有明确相关性线索：SMT-1 刮刀压力超基准 60%、钢网清洁周期只有基准 1/16、回流温区超上限 5℃，与锡膏偏移/连锡/元件偏移三类不良同线同期出现。
+  facts:
+  - 刮刀压力 0.8MPa（基准 0.5）
+  - 钢网清洁 15min（基准 4h）
+  - OVN-02 温区3 245℃（基准 235±5）
+  - 不良 top：元件偏移 22,118、外观划伤 21,688、虚焊 21,473
+  - 客诉同根因：BATCH-A-1008 贴片偏移 2.3%
+  gaps:
+  - 未做参数-不良的 DOE/相关性检验，不能量化因果强度
+  next_steps:
+  - 按 SMT-1 异常参数做单因子复现试验
+  - 用 SPC 关联特性与不良批次做相关性分析
+  sources:
+  - equipment_log + quality_defect + customer_complaint
+- id: RQ-055
+  role: scm
+  question: 下周开工的工单料齐吗
+  conclusion: 无法给出下周工单齐套结论：下周排产/工单计划未录入平台，物料库存只能给到料号级。可确认的是当前物料库存 358 条、13 条库龄超 180 天，以及 223 条催交缺口。
+  facts:
+  - material_inventory 358 条，13 条库龄 >180 天（最长 210 天）
+  - 催交缺口 223 条（供应商已补全，见齐套催交跟踪）
+  - ORDER 履约风险 50 张，缺料类 21 张
+  gaps:
+  - 下周排产计划/工单清单未接入
+  - 无 BOM 逐单齐套比对
+  next_steps:
+  - 先确认下周开工工单清单
+  - 按料号查缺口并派发催交
+  sources:
+  - material_inventory + platform_workflow_task（催交缺口）
+- id: RQ-056
+  role: scm
+  question: 哪些供应商交期有风险
+  conclusion: 3 家供应商来料不合格率最高（各 2 批中 1 批 fail）：千住金属、STMicroelectronics、三星电机；另 incoming_batch 中有 87 批待检、67 批偏差接收，交期与质量风险并存。
+  facts:
+  - 千住金属：锡膏 MAT-SP-1014 fail
+  - STMicroelectronics：主控芯片 MAT-IC-1011 fail
+  - 三星电机：贴片电容 MAT-CAP-1013 fail
+  - incoming_batch：fail 129、deviation 67、pending 87（共 577 批）
+  gaps:
+  - 无供应商承诺交期/OTD 字段，无法量化交期达成率
+  next_steps:
+  - 对 3 家开 SCAR 并索要 8D
+  - 对 87 批待检按到料优先级排检
+  sources:
+  - material_batch + incoming_batch
+- id: RQ-057
+  role: scm
+  question: 客户那张单月底能交吗
+  conclusion: 未提供订单号，无法给出单张订单的可交付结论；订单履约库内有 50 张非正常风险订单，其中 21 张缺料、14 张停线、8 张客诉。
+  facts:
+  - 风险订单 50 张（延期风险 72 张含已过期窗口，当前非正常 50 张）
+  - 缺料 21 张、停线 14 张、客诉 8 张
+  - SMT-1 停线影响 A 型号产出，SMT-1 当日 OEE 76.0%
+  gaps:
+  - 未提供订单号/客户/型号，无法定位具体订单
+  - ATP 需型号参数，当前未给出
+  next_steps:
+  - 提供订单号后可查 ATP + 排产 + 风险类型
+  - 交期承诺需走 delivery_commit 会签
+  sources:
+  - order_fulfillment + production_output
+- id: RQ-058
+  role: pln
+  question: 客户要插 800 件下周五要，能接吗
+  conclusion: 不能直接承诺：缺型号/产线/确切交期三个参数，且 SMT-1 正在停线、SMT-3 OEE 69.1% 为全厂最低，本周产能已偏紧。按现有节拍，SMT 32s/件、ASSY-1 80s 为瓶颈。
+  facts:
+  - SMT-1 A 型号停线中（14:30 起）
+  - OEE：SMT-3 69.1%、SMT-2 70.1%
+  - 瓶颈节拍：ASSY-1 整机组装 80s
+  - 在制订单可读（order_fulfillment）
+  gaps:
+  - 缺插单型号/数量分配/交期/产线参数
+  - 无产能负荷率字段（production_output 无工时）
+  next_steps:
+  - 补齐参数后走 order_review 接单评审
+  - 先让制造确认 SMT-1 复线时间
+  sources:
+  - production_output + station_detail + order_fulfillment
+- id: RQ-059
+  role: pln
+  question: 插这单影响哪些工单
+  conclusion: 缺插单四参数，无法给出被挤占工单清单；可确认当前有 50 张风险订单、SMT-1 停线，插单会优先挤占 SMT-3 与 DIP 段的在制。
+  facts:
+  - 风险订单 50 张
+  - SMT-1 停线中
+  - OEE 最低 SMT-3 69.1%
+  gaps:
+  - 缺插单参数
+  - 无逐单排产计划（production_plan 未接入）
+  next_steps:
+  - 补齐参数后跑订单变更影响评估
+  - 评估结果走 order_review 会签
+  sources:
+  - order_fulfillment + production_output
+- id: RQ-060
+  role: pln
+  question: 各产线下周负荷如何
+  conclusion: 无法计算下周负荷率：下周（10-16~10-22）排产计划未录入，且产出表没有计划工时/可用产能字段。本周各线 OEE 69.1%~76.7%，可作产能现状参考。
+  facts:
+  - 本周 OEE：SMT-1 76.0%、SMT-2 70.1%、SMT-3 69.1%、DIP-1 75.3%、DIP-2 76.7%、ASSY-1 73.2%、PACK-1 76.5%、PACK-2 74.8%
+  - production_output 覆盖 2026-10-01~10-15，无 10-16 之后数据
+  gaps:
+  - 下周排产计划未录入
+  - 无计划工时/可用产能字段
+  next_steps:
+  - 先录入下周排产后重算
+  - 在排产前用本周 OEE 与节拍做粗排
+  sources:
+  - production_output + station_detail
+- id: RQ-061
+  role: mc
+  question: 超 180 天没动的料有哪些
+  conclusion: 库龄超 180 天的物料共 13 条，最长 210 天；集中在电子料与结构件仓，建议按退料/转用/报废三档处置。
+  facts:
+  - material_inventory 共 358 条，age_days>180 共 13 条
+  - 最长库龄 210 天
+  - 高库存参考件：排针 300,000、二极管 250,000、贴片电容 150,000
+  gaps: []
+  next_steps:
+  - 导出 13 条明细并标注责任部门
+  - 本月内完成处置评审
+  sources:
+  - material_inventory（age_days）
+- id: RQ-062
+  role: mc
+  question: 这个料号的库存和在途
+  conclusion: 未提供料号；以 CAP-0402-10uF 为例：现货 150,000、预留 40,000、安全库存 50,000、库龄 12 天，可用 110,000。平台没有在途字段，在途需查采购/催交记录。
+  facts:
+  - CAP-0402-10uF：on_hand 150,000、reserved 40,000、safety 50,000、age 12 天
+  - 可用量 = 110,000
+  - 其他高库存：排针 300,000、二极管 250,000
+  gaps:
+  - material_inventory 无在途（in_transit）字段
+  - 未提供料号，无法给指定料明细
+  next_steps:
+  - 补充料号后输出单料库存/库龄/库位
+  - 在途改查采购催交记录
+  sources:
+  - material_inventory
+- id: RQ-063
+  role: mc
+  question: 哪些料能转用在产型号
+  conclusion: 无法给出转用清单：平台没有物料替代/转用关系表，也没有在产型号与用料的 BOM 关联。可先按库存结构列出呆滞/高库存件，供工程评估转用可能。
+  facts:
+  - 无替代关系/转用规则数据源
+  - material_inventory 358 条、13 条超 180 天
+  - 在产型号可从 production_output 获取（最新日 8 条线）
+  gaps:
+  - 替代关系缺失
+  - BOM 未与库存打通（knowledge_bom 仅 4 条）
+  next_steps:
+  - 先由工程列出可转用候选
+  - 转用需 ECN/试产验证后生效
+  sources:
+  - material_inventory + production_output + knowledge_bom
+- id: RQ-064
+  role: procm
+  question: 各供应商交期达成如何
+  conclusion: 平台没有供应商交期达成率字段，无法给出百分比；可给的是来料质量与检验状态：fail 129 批、deviation 67 批、pending 87 批，千住/ST/三星各 50% 不合格。
+  facts:
+  - incoming_batch：pass 361、fail 129、deviation 67、pending 87
+  - 千住金属 1/2 fail、STMicroelectronics 1/2 fail、三星电机 1/2 fail
+  - 催交缺口 223 条
+  gaps:
+  - 无供应商承诺交期/实际到货日期对比口径
+  - 无供应商绩效评分
+  next_steps:
+  - 先按到货及时性线下补录，再建 OTD 口径
+  - 对 3 家高不良供应商开 SCAR
+  sources:
+  - incoming_batch + material_batch
+- id: RQ-065
+  role: procm
+  question: 待催交的欠料清单
+  conclusion: 当前催交缺口 223 条（供应商已补全），可按供应商/料号导出；缺口来自未交付且料期晚于需料日的采购单。
+  facts:
+  - 催交缺口 223 条（齐套催交跟踪面板同源）
+  - 高风险供应商：千住金属、STMicroelectronics、三星电机
+  - incoming_batch pending 87 批待检
+  gaps:
+  - 无工单级齐套（BOM 未逐单比对），缺口为料号级
+  next_steps:
+  - 按供应商分组派发催交待办
+  - 到货后做 IQC 加严并回填状态
+  sources:
+  - procurement_followup 缺口（223 条）
+- id: RQ-066
+  role: procm
+  question: 哪些供应商要安排稽核
+  conclusion: 建议稽核 3 家：千住金属（锡膏 fail）、STMicroelectronics（主控芯片 fail）、三星电机（贴片电容 fail），均为 2 批中 1 批不合格；另 67 批偏差接收需专项复核。
+  facts:
+  - 千住金属 / MAT-SP-1014 fail
+  - STMicroelectronics / MAT-IC-1011 fail
+  - 三星电机 / MAT-CAP-1013 fail
+  - incoming_batch deviation 67 批
+  gaps:
+  - 无供应商稽核评分/历史稽核记录
+  next_steps:
+  - 30 天内完成 3 家现场稽核
+  - 稽核前先收 SCAR 回复与 8D
+  sources:
+  - material_batch + incoming_batch
+- id: RQ-067
+  role: proc
+  question: 下周工单还缺哪些料
+  conclusion: 缺工单清单，无法给出逐单缺料；可确认催交缺口 223 条、物料库存 358 条，缺料类风险订单 21 张。
+  facts:
+  - 催交缺口 223 条
+  - 缺料风险订单 21 张
+  - material_inventory 358 条、13 条超 180 天
+  gaps:
+  - 下周工单清单未接入
+  - 无 BOM 逐单齐套
+  next_steps:
+  - 先确认下周工单与 BOM
+  - 按料号导出缺口并派发催交
+  sources:
+  - procurement_followup + order_fulfillment + material_inventory
+- id: RQ-068
+  role: proc
+  question: 帮我派发催交待办
+  conclusion: 可以派发：当前催交缺口 223 条，派发后进入「已派发」状态，供应商回复与到货确认需人工回填（演示环境状态存演示治理库，不回写 ERP）。
+  facts:
+  - 待派发缺口 223 条
+  - 状态机：draft→dispatched→supplier_replied→arrival_confirmed→closed
+  - 超 SLA 未回复自动 escalated
+  gaps:
+  - 未提供指定供应商/料号范围，默认按全部缺口派发
+  next_steps:
+  - 确认范围后一键派发
+  - 到货确认须人工操作，不得自动闭环
+  sources:
+  - procurement_followup（build_followup_gaps + dispatch）
+- id: RQ-069
+  role: proc
+  question: 供应商回复到货时间了吗
+  conclusion: 未指定供应商/料号，且当前催交缺口处于待派发状态，尚无供应商回复记录；派发后回复状态会落在催交跟踪面板。
+  facts:
+  - 催交缺口 223 条，均未派发（无 supplier_replied 记录）
+  - 状态机含 supplier_replied / arrival_confirmed
+  gaps:
+  - 未指定对象
+  - 无供应商在线回复通道（需人工回填）
+  next_steps:
+  - 先派发催交
+  - 供应商回复后回填到货时间并确认
+  sources:
+  - procurement_followup
+- id: RQ-070
+  role: whm
+  question: 库存结构健康度如何
+  conclusion: 库存结构偏重：物料 358 条中 13 条库龄超 180 天（最长 210 天），成品 241 条；高库存件集中在电子料/标准件，建议先压呆滞再谈周转。
+  facts:
+  - material_inventory 358 条、超 180 天 13 条、最长 210 天
+  - finished_inventory 241 条
+  - 高库存：排针 300,000、二极管 250,000、贴片电容 150,000、垫圈 150,000
+  gaps:
+  - 无库存周转率/呆滞金额口径
+  next_steps:
+  - 本月处置 13 条超龄料
+  - 对高库存件暂停补货
+  sources:
+  - material_inventory + finished_inventory
+- id: RQ-071
+  role: whm
+  question: 本月盘点差异有哪些
+  conclusion: 平台没有盘点单/盘点差异表，无法给出本月盘点差异清单；可提供库存与库龄事实用于盘点前对账。
+  facts:
+  - 无盘点差异数据源
+  - material_inventory 358 条、finished_inventory 241 条
+  - 13 条物料库龄 >180 天
+  gaps:
+  - 盘点单、账实差异、盈亏原因均未接入
+  next_steps:
+  - 先按库位导出账面库存做初盘
+  - 差异登记后再分析原因
+  sources:
+  - material_inventory + finished_inventory（仅账面）
+- id: RQ-072
+  role: whm
+  question: 呆滞料处置建议
+  conclusion: 13 条物料库龄超 180 天（最长 210 天），建议按「转用优先、退料其次、报废兜底」三档处置，本月内完成评审并冻结补货。
+  facts:
+  - 超 180 天 13 条
+  - 最长 210 天
+  - 高库存参考：排针 300,000、二极管 250,000
+  gaps:
+  - 无呆滞金额与责任部门字段
+  next_steps:
+  - 按三档出处置清单并会签
+  - 处置结果回填库存状态
+  sources:
+  - material_inventory（age_days）
+- id: RQ-073
+  role: wh
+  question: 这个料放在哪个库位
+  conclusion: 未提供料号；以 CAP-0402-10uF 为例：电子料仓 · A-01-03 · 批次 MAT-CAP-1008 · 现货 150,000。
+  facts:
+  - CAP-0402-10uF：电子料仓 A-01-03
+  - 同仓参考：排针 6PIN-HEADER-254、二极管 1N4148W-DIODE
+  - 库位字段：warehouse + bin_location + batch_no
+  gaps:
+  - 未提供料号，无法给指定料库位
+  next_steps:
+  - 补充料号后可直接返回库位/批次/数量
+  - 按库位做一次抽查
+  sources:
+  - material_inventory（bin_location）
+- id: RQ-074
+  role: wh
+  question: 今天收了哪些料到哪步
+  conclusion: 今天（10-15）到料多批，检验状态分布：pass 361、pending 87、fail 129（全量口径）；今日样例：MAT-FIL-1733 pass、MAT-BAT-1436 fail、MAT-GLA-1858 pending。
+  facts:
+  - MAT-FIL-1733 PET 离型膜：pass，117,008 件
+  - MAT-BAT-1436 锂电池 3000mAh：fail，76,319 件
+  - MAT-GLA-1858 盖板玻璃：pending，89,717 件
+  - MAT-LBL-1199 标签：pass，15,586 件
+  gaps:
+  - 无「收料→上架」流程节点字段，只能给检验状态
+  next_steps:
+  - 待检 87 批按优先级排检
+  - fail 批次冻结并转 SQE 处置
+  sources:
+  - incoming_batch（arrival_time + inspect_status）
+- id: RQ-075
+  role: wh
+  question: 超龄料清单来一份
+  conclusion: 超龄料 13 条（库龄 >180 天，最长 210 天），可按料号/仓库/批次导出；建议先冻结补货再处置。
+  facts:
+  - 超 180 天 13 条
+  - 最长 210 天
+  - 高库存参考：排针 300,000、二极管 250,000
+  gaps: []
+  next_steps:
+  - 导出明细交物控/采购评审
+  - 处置前冻结对应料号补货
+  sources:
+  - material_inventory（age_days > 180）
+- id: RQ-076
+  role: biz
+  question: SO-3108 月底能交吗
+  conclusion: 平台没有 SO-3108，最接近的是 SO-2026-13108（联想 B 型号 4,603 台，交期 10-12，已质检 87%，风险类型「正常」）。请确认订单号；按该单状态，月底交付可行但已过约定交期。
+  facts:
+  - SO-2026-13108：联想 B 型号 4,603 台，due 2026-10-12，stage 质检，progress 87%
+  - risk_type=正常、delay_days=0
+  - 当前风险订单 50 张（缺料 21、停线 14、客诉 8）
+  gaps:
+  - 无 SO-3108 订单；订单号可能录入有误
+  - ATP 需型号参数
+  next_steps:
+  - 确认订单号后查 ATP + 排产
+  - 若客户要求月底交付，走 delivery_commit 会签
+  sources:
+  - order_fulfillment（模糊匹配 SO-31*）
+- id: RQ-077
+  role: biz
+  question: 客户那张大单做到哪了
+  conclusion: 未指定订单/客户；当前最大风险单为华为终端 B 型号 10,566 台（缺料、延期 7 天、进度 62%）与一加 C 型号 3,123 台（延期 7 天、进度 100% 但质检积压）。
+  facts:
+  - SO-2026-17952 华为 B 型号 10,566 台，缺料，延期 7 天，进度 62%
+  - SO-2026-14038 一加 C 型号 3,123 台，延期 7 天，进度 100%（质检积压）
+  - 风险订单 50 张
+  gaps:
+  - 未指定订单号/客户，无法定位唯一订单
+  next_steps:
+  - 补充订单号后可给出阶段/进度/风险/责任人
+  - 对头部客户订单做分批出货评估
+  sources:
+  - order_fulfillment（risk_type 非正常）
+- id: RQ-078
+  role: biz
+  question: 帮我起草交期回复稿
+  conclusion: 可起草：以「已确认订单 + ATP 现货 + 排产完工日」三要素为准；当前可确认的现货与风险订单如下，正式对客承诺须走 delivery_commit 会签后才可发出。
+  facts:
+  - 风险订单 50 张（缺料 21、停线 14、客诉 8）
+  - SMT-1 停线影响 A 型号产出
+  - 成品库存 241 条（A 型号深圳仓 1,200 + 华东 800 + 600）
+  gaps:
+  - 未指定订单号，无法给出单张订单的承诺日期
+  - 无 ATP 计算（需型号参数）
+  next_steps:
+  - 确认订单号后生成含日期的回复稿
+  - 回复稿经交期承诺会签后发送客户
+  sources:
+  - order_fulfillment + finished_inventory
+- id: RQ-079
+  role: cs
+  question: 这起客诉追溯到哪一批了
+  conclusion: 未指定客诉号；当前未闭环客诉为 CS-20261012-01（华为终端 A 型号），已追溯到批次 BATCH-A-1008，不良为贴片元件偏移，不良率约 2.3%。
+  facts:
+  - 客诉：CS-20261012-01 / 华为终端 / A 型号 / BATCH-A-1008
+  - 不良：贴片元件偏移导致功能失效，约 2.3%
+  - 关联：SMT-1 停线与刮刀/钢网/温区异常
+  gaps: []
+  next_steps:
+  - 按批次做全链路追溯与库存影响面
+  - 8D D4 结论同步客户服务口径
+  sources:
+  - customer_complaint + quality_defect + equipment_log
+- id: RQ-080
+  role: cs
+  question: 同批还有哪些工单在用
+  conclusion: 无法给出同批工单清单：平台没有批次→工单的关联表；只能确认同批次 BATCH-A-1008 的不良与停线记录，以及该批次关联的 A 型号。
+  facts:
+  - 批次 BATCH-A-1008 有 quality_defect 记录（贴片偏移类）
+  - 同批次关联线体 SMT-1、型号 A
+  - 无 batch→work_order 关联表
+  gaps:
+  - 工单-批次关联数据源未接入
+  - 无在制/已发货批次清单
+  next_steps:
+  - 从 MES 导出同批工单后再做围堵
+  - 库存/在途冻结由 QA 确认
+  sources:
+  - quality_defect + customer_complaint
+- id: RQ-081
+  role: cs
+  question: 帮我起草对客回复
+  conclusion: 可起草对客回复：口径必须与 8D 当前阶段一致（D4 根因待定稿），不得承诺未验证的恢复时间；建议表述为「已冻结在库/在途、已发货批次加严检验、D4 定稿后同步改善计划」。
+  facts:
+  - 客诉：CS-20261012-01 华为 A 型号 BATCH-A-1008，贴片偏移 2.3%
+  - 已做：在库/在途冻结、已发货批次加严检验
+  - 待做：D4 根因定稿、D5/D6 验证、D8 关闭
+  gaps:
+  - 8D 正式报告未接入，回复稿不能引用未定稿根因
+  next_steps:
+  - 8D D4 定稿后再发正式回复
+  - 回复口径须走 complaint_reply 会签
+  sources:
+  - customer_complaint + 8D 阶段规则
+- id: RQ-082
+  role: finm
+  question: 这个型号的单机成本构成
+  conclusion: 平台没有 BOM 成本/工时费率/制造费用数据，无法给出单机成本构成；可用的是物料单价与库存，不能等同于单机成本。
+  facts:
+  - material_inventory 有 unit_cost（如贴片电容 0.021 元/颗）
+  - 无 BOM 用量、无工时费率、无制造费用分摊
+  - knowledge_bom 只有 4 条工艺参数记录，无成本字段
+  gaps:
+  - 成本核算数据源（BOM 成本/费率）未接入
+  next_steps:
+  - 先接入 BOM 用量与费率
+  - 临时方案：按物料单价×BOM 用量估算
+  sources:
+  - material_inventory（unit_cost）+ knowledge_bom（仅参数）
+- id: RQ-083
+  role: finm
+  question: 报价的物料成本基准
+  conclusion: 无法给出报价物料成本基准：物料单价有（material_inventory.unit_cost），但缺 BOM 用量、损耗率、采购折扣与汇率口径，不能直接作为报价基准。
+  facts:
+  - material_inventory 含 unit_cost 字段
+  - 无 BOM 用量/损耗率
+  - 无报价历史/审批记录
+  gaps:
+  - 报价成本模型未接入
+  next_steps:
+  - 先确定 BOM 用量与损耗口径
+  - 报价基准需财务与采购共同确认
+  sources:
+  - material_inventory（unit_cost）
+- id: RQ-084
+  role: finm
+  question: 逾期应收有哪些
+  conclusion: 平台没有应收账款/回款台账，无法给出逾期应收清单；可提供的只有订单履约与发货状态。
+  facts:
+  - 无应收/回款数据源
+  - 订单履约 2,242 张（当月），风险订单 50 张
+  gaps:
+  - 应收台账、账龄、客户信用均未接入
+  next_steps:
+  - 接入财务应收系统后再查
+  - 当前可先看风险订单的对客回款节点
+  sources:
+  - order_fulfillment（仅订单状态，非应收）
+- id: RQ-085
+  role: fin
+  question: 差旅住宿标准是多少
+  conclusion: 住宿标准：一线城市（北上广深）≤500 元/晚，新一线（杭州/成都/武汉等）≤450 元/晚，其他城市 ≤400 元/晚；超标准部分需说明原因。
+  facts:
+  - FIN-EXP-02 住宿费标准：一线 500 / 新一线 450 / 其他 400
+  - 伙食补助 100 元/天（不需发票）
+  - 市内交通凭票实报实销，每天上限 80 元
+  gaps: []
+  next_steps:
+  - 超标住宿需附说明并经部门负责人审批
+  - 出差前先在 OA 提交出差申请
+  sources:
+  - finance_policy（FIN-EXP-02/03）
+- id: RQ-086
+  role: fin
+  question: 这笔费用走什么科目
+  conclusion: 未说明费用类型，无法指定科目；常用口径：差旅→差旅费（住宿/交通/伙食），办公采购→办公费/低值易耗，供应商索赔→质量成本（COPQ），借支→其他应收款。
+  facts:
+  - 差旅：FIN-EXP 系列（住宿/伙食/交通）
+  - 借支：FIN-ADV 系列（借支/核销）
+  - 发票：FIN-INV 系列（专票/普票/抬头）
+  gaps:
+  - 未提供费用类型与金额，无法给唯一科目
+  next_steps:
+  - 说明费用类型后可给出对应制度条款
+  - 拿不准时先问财务共享
+  sources:
+  - finance_policy（分类目录）
+- id: RQ-087
+  role: fin
+  question: 发票抬头怎么写
+  conclusion: 发票抬头：XX科技有限公司；税号 91110000XXXXXXXXXX；地址电话：北京市海淀区XX路XX号 010-XX。专票需提供一般纳税人资质证明，日常费用可用普票。
+  facts:
+  - 抬头：XX科技有限公司
+  - 税号：91110000XXXXXXXXXX
+  - 专票：可抵扣项目（采购/服务），需对方一般纳税人资质
+  - 普票：日常费用报销使用；个人抬头发票不予报销
+  gaps: []
+  next_steps:
+  - 开票前核对抬头/税号与合同主体一致
+  - 电子发票需查验真伪并截图附上
+  sources:
+  - finance_policy（FIN-INV-01/02/03）
+- id: RQ-088
+  role: hr
+  question: 年假怎么休
+  conclusion: 入职满 1 年享 5 天年假，满 10 年享 10 天；年假需本年度内休完，可跨年延至次年 3 月底。
+  facts:
+  - QP-HR-003：满 1 年 5 天、满 10 年 10 天
+  - 可延至次年 3 月底
+  - 请假需提前申请并经直属主管审批（QP-HR-002）
+  gaps: []
+  next_steps:
+  - 在 OA 提交请假单并选择年假类型
+  - 跨年未休完需在次年 3 月底前清零
+  sources:
+  - kbqa_policy（QP-HR-003 / QP-HR-002）
+- id: RQ-089
+  role: hr
+  question: 入职要办哪些手续
+  conclusion: 入职当日办理劳动合同、社保与工牌，试用期 3 个月，转正需提交述职报告。
+  facts:
+  - QP-HR-011：劳动合同/社保/工牌当日办理
+  - 试用期 3 个月
+  - 转正需提交述职报告
+  gaps: []
+  next_steps:
+  - 入职前 1 天由 HR 准备合同与工牌
+  - 试用期结束前 2 周安排述职
+  sources:
+  - kbqa_policy（QP-HR-011）
+- id: RQ-090
+  role: hr
+  question: 离职交接清单
+  conclusion: 正式员工离职需提前 30 天提交申请，完成工作交接与资产归还后方可结算薪资；交接含工作/资料/客户/资产四类，IT 权限离职当日回收。
+  facts:
+  - QP-HR-012：提前 30 天申请，交接+资产归还后结算
+  - QP-IT-001：离职当日回收全部系统权限
+  - 资产：电脑/门禁/工牌按 IT 资产登记归还
+  gaps: []
+  next_steps:
+  - 按四类交接单逐项签字
+  - IT 权限与资产在同一天回收
+  sources:
+  - kbqa_policy（QP-HR-012 / QP-IT-001 / QP-IT-003）
+- id: RQ-091
+  role: ehs
+  question: 这个化学品怎么存放
+  conclusion: 危化品须专区分类存放并上架 MSDS，领用双人复核，剩余及时回收；不得与普通物料混放。
+  facts:
+  - QP-EHS-001：专区分类存放 + MSDS 上架 + 双人复核 + 余料回收
+  - 消防通道与灭火器前禁止堆物，每月检查一次并记录（QP-EHS-002）
+  gaps:
+  - 未提供化学品名称，无法给具体相容性/隔离距离要求
+  next_steps:
+  - 按 MSDS 的相容性分组存放
+  - 领用登记并双人复核
+  sources:
+  - kbqa_policy（QP-EHS-001 / QP-EHS-002）
+- id: RQ-092
+  role: ehs
+  question: 动火作业要谁审批
+  conclusion: 动火作业必须先办动火证；制度明确「动火作业须办证」，但未写明审批人层级，按职责应由 EHS 会同作业区域部门负责人审批后实施。
+  facts:
+  - QP-EHS-002：动火作业须办证
+  - 消防通道/灭火器前禁堆物，每月检查一次
+  - 进入车间须佩戴规定劳保用品（QP-EHS-003）
+  gaps:
+  - 制度未明确动火证审批人层级与时限
+  next_steps:
+  - 作业前向 EHS 提交动火申请
+  - 作业现场配灭火器与监护人
+  sources:
+  - kbqa_policy（QP-EHS-002）
+- id: RQ-093
+  role: ehs
+  question: 劳保发放标准
+  conclusion: 制度只规定「进入车间须佩戴规定劳保用品，噪声/粉尘岗位须做职业健康年度体检」，没有按岗位/工种的发放品类与周期标准。
+  facts:
+  - QP-EHS-003：进入车间佩戴规定劳保用品
+  - 噪声/粉尘岗位年度职业健康体检
+  - 车间个人防护为强制要求
+  gaps:
+  - 劳保发放品类/周期/标准未在平台制度中登记
+  next_steps:
+  - 按岗位补充劳保发放标准后再查询
+  - 当前按车间通用要求执行并登记发放记录
+  sources:
+  - kbqa_policy（QP-EHS-003）

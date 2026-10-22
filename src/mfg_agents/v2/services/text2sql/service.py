@@ -283,7 +283,16 @@ class Text2SQLService:
         params = self._extract_params(question)
         name = self.queries.match(question, params)
         if name is not None:
-            return self.query_registered(name, params, user_ctx)
+            qr = self.query_registered(name, params, user_ctx)
+            # 2026-10-22：注册查询命中但**抽不到必需参数**时，不能直接判人工兜底——
+            # 「哪些订单有履约风险」被 orders_by_model(:model) 空手命中，导致
+            # 明明能用明细探查答的问题永久落兜底（真机 agentic 因此空转 12 步）。
+            # 缺参 → 继续走明细探查；权限拦截/执行异常仍按原样返回（不放宽审核）。
+            if qr.provenance.get("missing_params"):
+                logger.info("[text2sql] 注册查询 %s 缺参，转明细探查: %s",
+                            name, qr.provenance.get("missing_params"))
+                return self.query_detail(question, user_ctx)
+            return qr
         return self.query_detail(question, user_ctx)
 
     @staticmethod

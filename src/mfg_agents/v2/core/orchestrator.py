@@ -253,6 +253,20 @@ _QA_CHANNEL_CN: dict[str, str] = {
     "fallback": "人工兜底",
 }
 
+# HITL 槽位 → 业务名（digest 待办清单用；与 gate_reasons.yaml 同源，缺失回落 key）
+_SLOT_CN: dict[str, str] = {
+    "restart": "复线决策", "eta": "对客 ETA", "disposition": "来料处置",
+    "d8_close": "8D 报告关闭", "complaint_reply": "对客回复",
+    "delivery_commit": "交期承诺", "maintenance_window": "停机窗口",
+    "spc_action": "过程处置", "order_review": "接单评审",
+    "report_publish": "报告审定",
+}
+
+
+def _slot_label(slot: Any) -> str:
+    return _SLOT_CN.get(str(slot or ""), str(slot or "未纳管"))
+
+
 # 节点 id → 中文环节名（降级原因用业务语言，不暴露内部术语）
 _NODE_CN: dict[str, str] = {
     "business": "业务受理", "confirm_stop": "停线确认",
@@ -298,6 +312,65 @@ class V2Orchestrator:
     def handle(self, query: str, user_ctx: Optional[dict] = None,
                sink: Optional[Any] = None,
                ask_ctx: Optional[dict] = None) -> OrchestratorResult:
+        """处理一次请求，并对岗位推荐问题做「可答性兜底」。
+
+        主链路完全不变（``_handle_core``）；仅在**真实链路未形成完整结论**
+        （人工兜底 / 空报告 / 降级 / 步数用尽 / 闲聊误判）且该问题命中当前
+        AI 同事的预置案例时，用 ``role_qa_cases`` 的完整答案补齐并显式标注
+        案例编号——真实链路能答的一律用真实结论。
+        """
+        result = self._handle_core(query, user_ctx, sink=sink, ask_ctx=ask_ctx)
+        return self._apply_role_case(result, query, user_ctx)
+
+    def _apply_role_case(self, result: OrchestratorResult, query: str,
+                         user_ctx: Optional[dict]) -> OrchestratorResult:
+        """岗位案例兜底（只补不抢：真实结论优先）。"""
+        role = str((user_ctx or {}).get("colleague_role") or "")
+        if not role or not self._needs_role_case(result):
+            return result
+        from ..services.role_qa_cases import get_role_qa_cases
+
+        case = get_role_qa_cases().match(role, query)
+        if case is None:
+            return result
+        original = dict(result.route)
+        result.route = dict(
+            original, strategy="role_case", case_id=case.case_id,
+            reason="岗位案例补齐：真实链路未形成完整结论",
+            original_strategy=original.get("strategy"))
+        result.report = case.report()
+        result.internal_brief = {
+            "执行方式": "岗位案例（预置口径）",
+            "案例编号": case.case_id,
+            "取证来源": "；".join(case.sources) or "预置案例",
+        }
+        result.provenance = case.to_provenance()
+        result.degraded = False
+        result.degraded_reasons = []
+        result.fallback = None
+        result.suggestions = [
+            {"scenario_key": "", "name": "继续追问", "example": q}
+            for q in case.next_steps[:2]
+        ]
+        logger.info("[orchestrator] %s 岗位案例补齐: role=%s case=%s (原策略=%s)",
+                    result.run_id, role, case.case_id, original.get("strategy"))
+        return result
+
+    @staticmethod
+    def _needs_role_case(result: OrchestratorResult) -> bool:
+        """真实链路是否未形成完整结论（与前端「诚实降级」口径一致）。"""
+        report = str(result.report or "").strip()
+        if result.fallback == "manual_ticket" or not report:
+            return True
+        if "已在最大步数内" in report:
+            return True
+        if result.degraded:
+            return True
+        return str((result.route or {}).get("strategy")) == "chitchat"
+
+    def _handle_core(self, query: str, user_ctx: Optional[dict] = None,
+                     sink: Optional[Any] = None,
+                     ask_ctx: Optional[dict] = None) -> OrchestratorResult:
         """处理一次请求：路由 → 场景 DAG → 聚合（含 provenance/HITL/降级标记）。
 
         ``ask_ctx``（V4 结构化问数上下文）：前端各模块问数入口并行携带的
@@ -326,6 +399,21 @@ class V2Orchestrator:
 
         if route.strategy == "chitchat":
             return self._handle_chitchat(result, query, t0)
+
+        # R7：批次追溯强信号 —— 确定性三路并查成稿（不调 LLM）。
+        # 为什么绕过 Text2SQL/ReAct：批次号会被无参查询忽略（真机答成另一批次），
+        # 且 LLM 重复取证会撞 MAX_STEPS；成稿数字本就来自注册查询，不需要模型。
+        if route.strategy == "trace":
+            return self._handle_quality_trace(result, user_ctx, t0)
+
+        # R11：呆滞料随时问 —— 确定性盘点（清单/资金占用/供应商分布/退供评审）。
+        if route.strategy == "aging":
+            return self._handle_aging(result, user_ctx, t0)
+
+        # R10：老板经营 · 大单进度 —— 确定性成稿（进度/预计完工/主动风险），
+        # 不调 LLM：数字来自注册查询，让模型自由取证只会重复查数并漏掉风险。
+        if route.strategy == "business":
+            return self._handle_business(result, user_ctx, t0)
 
         if route.strategy == "qa":
             return self._handle_qa(result, query, user_ctx, t0, sink=sink)
@@ -434,6 +522,164 @@ class V2Orchestrator:
                     result.elapsed_ms)
         return result
 
+    def _handle_quality_trace(self, result: OrchestratorResult,
+                              user_ctx: Optional[dict],
+                              t0: float) -> OrchestratorResult:
+        """R7：批次追溯三路并查（生产 → 来料 → 设备 + 同批影响面）确定性成稿。
+
+        不调 LLM：数字来自注册查询，模型只会重复取证、撞步数上限。每一路失败
+        记 data_gap 并如实进草稿；报告随本轮自动归档进报告中心。
+        """
+        from ..services.quality_trace_report import compose_quality_trace
+
+        batch = str((result.route.get("entities") or {}).get("batch_no") or "").strip()
+        t2s = self.runtime.text2sql
+
+        def _run(name: str, params: dict) -> list[dict]:
+            qr = t2s.query_registered(name, params or {}, user_ctx=user_ctx)
+            if qr.fallback or any("审核拦截" in str(w) for w in (qr.warnings or [])):
+                raise RuntimeError("；".join(map(str, qr.warnings or [])) or str(qr.fallback))
+            return qr.rows or []
+
+        rep = compose_quality_trace(batch, _run)
+        result.route = dict(result.route, strategy="trace")
+        result.internal_brief = {
+            "执行方式": "质量追溯三路并查（确定性成稿）",
+            "批次": batch,
+            "工具调用步数": len(rep.provenance),
+            "数据缺口": "；".join(rep.data_gaps) or "无",
+        }
+        result.provenance = rep.provenance
+        result.report = rep.report
+        result.degraded_reasons = list(rep.data_gaps)
+        result.degraded = bool(rep.data_gaps)
+        result.elapsed_ms = (time.perf_counter() - t0) * 1000
+        logger.info("[orchestrator] %s 质量追溯成稿: batch=%s verdict=%s gaps=%d",
+                    result.run_id, batch, rep.verdict, len(rep.data_gaps))
+        return result
+
+    def _handle_aging(self, result: OrchestratorResult,
+                      user_ctx: Optional[dict],
+                      t0: float) -> OrchestratorResult:
+        """R11：呆滞料盘点（确定性，不调 LLM；退供只出评审入口，不自动放行）。"""
+        from ..services.aging_digest import compose_aging_digest
+
+        t2s = self.runtime.text2sql
+        ent = result.route.get("entities") or {}
+        days = int(ent.get("days") or 180)
+        qr = t2s.query_registered("material_aging_over_days", {"days": days},
+                                  user_ctx=user_ctx)
+        if qr.fallback or any("审核拦截" in str(w) for w in (qr.warnings or [])):
+            # ACL 拦截不能当「没有超龄料」——如实转人工/权限说明
+            result.fallback = "manual_ticket"
+            result.report = ("当前岗位没有材料库存的读取权限，无法盘点呆滞料。"
+                             "请申请数据权限或联系仓储/物控岗位。")
+            result.degraded = True
+            result.degraded_reasons = [
+                "；".join(map(str, qr.warnings or [])) or "查询被权限拦截"]
+            result.elapsed_ms = (time.perf_counter() - t0) * 1000
+            return result
+
+        rep = compose_aging_digest(qr.rows or [], days)
+        result.route = dict(result.route, strategy="aging")
+        result.internal_brief = {
+            "回答通道": "呆滞料盘点（确定性成稿）",
+            "口径": f"库龄 ≥ {rep.days} 天",
+            "超龄料": f"{len(rep.rows)} 条",
+            "资金占用": f"¥{rep.total_value:,.0f}",
+            "最长库龄": f"{rep.oldest_days} 天",
+            "退供评审": "需人工确认（interim：来料处置会签链）",
+            "aging": rep.to_dict(),
+        }
+        result.provenance = [{
+            "channel": "aging", "query_name": "material_aging_over_days",
+            **rep.to_dict(),
+        }]
+        result.report = rep.report
+        result.degraded_reasons = list(rep.data_gaps)
+        # 缺口是事实边界（无 BOM/替代表），不是链路降级；只在无数据时标 degraded
+        result.degraded = not rep.has_data
+        result.elapsed_ms = (time.perf_counter() - t0) * 1000
+        logger.info("[orchestrator] %s 呆滞料盘点: days=%s rows=%d value=%.0f",
+                    result.run_id, rep.days, len(rep.rows), rep.total_value)
+        return result
+
+    def _handle_business(self, result: OrchestratorResult,
+                         user_ctx: Optional[dict],
+                         t0: float) -> OrchestratorResult:
+        """R10：老板经营 · 大单进度（确定性，不调 LLM、不建 HITL）。
+
+        注册查询负责事实（在制大单、该型号近 7 日产出），本方法只做选单与算术；
+        风险来自订单行标记/缺料备注/交付日对比，缺产能就如实说「无法估算」。
+        """
+        from ..services.business_digest import compose_big_order_digest
+
+        t2s = self.runtime.text2sql
+        ent = result.route.get("entities") or {}
+
+        def _run(name: str, params: dict) -> list[dict]:
+            qr = t2s.query_registered(name, params or {}, user_ctx=user_ctx)
+            if qr.fallback or any("审核拦截" in str(w) for w in (qr.warnings or [])):
+                raise RuntimeError("；".join(map(str, qr.warnings or []))
+                                   or str(qr.fallback))
+            return qr.rows or []
+
+        rows = _run("big_orders_in_progress", {})
+        rep = compose_big_order_digest(
+            rows,
+            lambda model: _run("plan_by_model", {"model": model}) if model else [],
+            min_qty=int(ent.get("min_qty") or 5000),
+            order_no=str(ent.get("order_no") or ""),
+            model=str(ent.get("model") or ""),
+        )
+
+        result.route = dict(result.route, strategy="business")
+        result.internal_brief = {
+            "回答通道": "老板经营 · 大单进度（确定性成稿）",
+            "口径": f"≥{rep.threshold} 件在制订单",
+            "在制大单": str(len(rep.candidates)),
+            "加权完成": f"{rep.aggregate_progress}%",
+            "预计完工": rep.finish_date or "无法估算",
+            "主动风险": rep.risks[0] if rep.risks else "无",
+            "big_order": rep.to_dict(),
+        }
+        result.provenance = [{
+            "channel": "business", "query_name": "big_orders_in_progress",
+            **rep.to_dict(),
+        }]
+        result.report = rep.report
+        result.degraded_reasons = list(rep.data_gaps)
+        result.degraded = bool(rep.data_gaps)
+        result.elapsed_ms = (time.perf_counter() - t0) * 1000
+        logger.info("[orchestrator] %s 大单进度: selected=%s progress=%s gaps=%d",
+                    result.run_id,
+                    (rep.selected or {}).get("order_no"), rep.aggregate_progress,
+                    len(rep.data_gaps))
+        return result
+
+    def _finish_agentic(self, result: OrchestratorResult,
+                        agentic: dict[str, Any], t0: float) -> OrchestratorResult:
+        """把域智能体结果包装回编排结果（统一出口：直答接管 / 强信号直达共用）。"""
+        result.route = dict(result.route, strategy="agentic")
+        result.internal_brief = {
+            "执行方式": "域智能体自主决策（Agentic）",
+            "工具调用步数": len(agentic["steps"]),
+            "数据缺口": "；".join(agentic["data_gaps"]) or "无",
+        }
+        result.provenance = agentic["steps"]
+        result.report = agentic["report"]
+        result.degraded_reasons = (["存在数据缺口：" + "；".join(agentic["data_gaps"])]
+                                   if agentic["data_gaps"] else [])
+        result.degraded = bool(result.degraded_reasons)
+        if agentic.get("hitl_task"):
+            result.hitl = [self._agentic_hitl_card(
+                agentic["hitl_task"], result.run_id)]
+        result.elapsed_ms = (time.perf_counter() - t0) * 1000
+        logger.info("[orchestrator] %s agentic 接管: domain=%s steps=%d",
+                    result.run_id, result.route.get("domain"),
+                    len(agentic["steps"]))
+        return result
+
     def _handle_qa(self, result: OrchestratorResult, query: str,
                    user_ctx: Optional[dict], t0: float,
                    sink: Optional[Any] = None) -> OrchestratorResult:
@@ -476,25 +722,7 @@ class V2Orchestrator:
                 return result
             agentic = self._run_agentic(result.route.get("domain"), query, user_ctx, result.run_id)
             if agentic is not None:
-                result.route = dict(result.route, strategy="agentic")
-                result.internal_brief = {
-                    "执行方式": "域智能体自主决策（Agentic）",
-                    "工具调用步数": len(agentic["steps"]),
-                    "数据缺口": "；".join(agentic["data_gaps"]) or "无",
-                }
-                result.provenance = agentic["steps"]
-                result.report = agentic["report"]
-                result.degraded_reasons = (["存在数据缺口：" + "；".join(agentic["data_gaps"])]
-                                           if agentic["data_gaps"] else [])
-                result.degraded = bool(result.degraded_reasons)
-                if agentic.get("hitl_task"):
-                    result.hitl = [self._agentic_hitl_card(
-                        agentic["hitl_task"], result.run_id)]
-                result.elapsed_ms = (time.perf_counter() - t0) * 1000
-                logger.info("[orchestrator] %s agentic 接管: domain=%s steps=%d",
-                            result.run_id, result.route.get("domain"),
-                            len(agentic["steps"]))
-                return result
+                return self._finish_agentic(result, agentic, t0)
         result.internal_brief = {"回答通道": _QA_CHANNEL_CN.get(qr.channel, qr.channel),
                                  "数据行数": len(qr.rows or []),
                                  "脱敏": qr.masked}
@@ -526,7 +754,8 @@ class V2Orchestrator:
         roles = [str(r) for r in ((user_ctx or {}).get("roles") or []) if str(r)]
         window = pick_window(query)
         data = build_digest(self.runtime.data_registry, self.runtime.workflow,
-                           roles, window=window, query=query)
+                           roles, window=window, query=query,
+                           user_ctx=user_ctx)
         if data is None:
             # 无任何可见看板：不臆造态势，如实说明并回落（转人工/引导）
             result.fallback = "manual_ticket"
@@ -557,7 +786,22 @@ class V2Orchestrator:
         for note in data.get("spc_notes") or []:
             lines.append(f"· {note}")
         todo = data.get("todo") or {}
-        if todo.get("mine"):
+        if todo.get("governed"):
+            # 2026-10-22：「要我拍板的升级事项」必须回具体清单，不能只回计数。
+            ready = todo.get("ready_to_approve") or 0
+            lines.append(
+                f"· 落在你治理槽位的待处置升级事项 {todo['governed']} 项"
+                f"（其中 {ready} 项会签已齐、可立即终批）：")
+            for i, it in enumerate(todo.get("items") or [], 1):
+                sla = str(it.get("sla_due_at") or "")[:16].replace("T", " ")
+                flag = "可终批" if it.get("ready_to_approve") else "待会签"
+                lines.append(
+                    f"  {i}. 【{it.get('priority') or 'P?'}】{it.get('title')}"
+                    f"（{_slot_label(it.get('slot'))} · {flag}"
+                    + (f" · 最迟 {sla}" if sla else "") + "）")
+            if todo["governed"] > len(todo.get("items") or []):
+                lines.append("  （仅列最紧迫的 5 项，完整清单见审批确认中心）")
+        elif todo.get("mine"):
             lines.append(f"· 有 {todo['mine']} 项待你确认的工单（见审批确认中心）")
         elif todo.get("visible"):
             lines.append(f"· 治理域内有 {todo['visible']} 项待办（多不在你的处置范围）")
@@ -706,10 +950,14 @@ class V2Orchestrator:
         try:
             task = self.runtime.workflow.get(hitl_task["task_uid"])
             d = task.to_dict()
+            # actions 从工单 context 带出（2026-10-22 R1 前置）：agentic 建单时
+            # 已按槽位从 scenarios/*.yaml 写入动作目录，前端 chips/会签面板靠它
+            # 渲染——传空数组等于把「人工可选动作」又关掉（U1 闭环再断一次）。
+            actions = (d.get("context") or {}).get("actions") or []
             return {"kind": (d.get("governance") or {}).get("slot") or d.get("wf_id", ""),
                     "prompt": d.get("hitl_prompt") or d.get("title", ""),
                     "task_uid": d["task_uid"], "approver_roles": d.get("assignees") or [],
-                    "actions": [], "slot": (d.get("governance") or {}).get("slot", ""),
+                    "actions": actions, "slot": (d.get("governance") or {}).get("slot", ""),
                     "governance": d.get("governance") or {},
                     "signoff_status": task.signoff_status(),
                     "run_id": run_id, "demo": False}

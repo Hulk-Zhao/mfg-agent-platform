@@ -27,26 +27,22 @@ def _css() -> str:
     return (UI_DIR / "app.css").read_text(encoding="utf-8")
 
 
-def test_quick_chip_case_ask_deeplink_is_wired():
-    """数据速查示例胶囊的「问案例」深链：出口 / 入口 / 呈现三件套缺一不可。
+def test_quick_chip_case_ask_removed():
+    """数据速查屏已按需求移除示例胶囊的「问案例」双动作：本屏只保留纯数据速查。
 
-    为什么用静态契约：这条链路横跨 office-screen.js（写预填键 + 切屏）与
-    case-screen.js（消费预填键 + 到屏自动提问）两个文件——删掉任何一半都不会
-    抛错，现场表现只是"点了没反应"，正是最难被发现的半截删除。
+    反向守护：防止「问案例」入口（含深链预填键与双动作胶囊样式）在后续改动中被
+    无意加回——曾经的半截删除难以发现，同理半截回加也会让速查屏混入案例域入口。
     """
     office = _office_src()
-    assert 'data-case-ask' in office, "速查示例胶囊缺少「问案例」按钮"
-    assert 'cases_ask_prefill' in office, "缺少深链预填键写入"
-    assert 'ctx.navigate("cases")' in office, "「问案例」必须切到案例检索室"
+    assert "data-case-ask" not in office, "速查示例胶囊不应再有「问案例」按钮"
+    assert "cases_ask_prefill" not in office, "不应再写深链预填键"
 
     src = _src()
-    assert "cases_ask_prefill" in src, "案例屏未消费 cases_ask_prefill"
-    assert "S.pendingAsk" in src, "深链问题未进入待提问状态"
-    assert "doAsk(pendingQ)" in src, "缺少到屏后的自动提问"
+    assert "cases_ask_prefill" not in src, "案例屏不应再消费 cases_ask_prefill"
+    assert "pendingAsk" not in src, "深链待提问状态应一并移除"
 
     css = _css()
-    assert ".of-quick .chip-ask" in css, "缺少双动作胶囊容器样式"
-    assert ".of-quick .chip-ask .chip-case" in css, "缺少「问案例」子按钮样式"
+    assert "chip-case" not in css, "「问案例」子按钮样式应已删除"
 
 
 def test_evidence_chain_renders_backend_decision_fields():

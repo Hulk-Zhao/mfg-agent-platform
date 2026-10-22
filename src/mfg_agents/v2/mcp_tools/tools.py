@@ -70,7 +70,8 @@ def _h_platform_describe(orch: V2Orchestrator) -> Callable[..., dict]:
         # 等于一个能力发现接口顺带泄漏了全公司治理负载）。
         roles = [str(r) for r in ((user_ctx or {}).get("roles") or [])]
         pending = (workflow_scope.summarize(
-            rt.workflow, rt.workflow.list_tasks(status="waiting_hitl"), roles)
+            rt.workflow, rt.workflow.list_tasks(status="waiting_hitl"), roles,
+            user_ctx={**(user_ctx or {}), "roles": roles})
             if roles else {"mine": 0, "domain": 0, "visible": 0})
         return {
             "scenarios": [{"key": s.key, "name": s.name, "domains": list(s.domains)}
@@ -204,7 +205,8 @@ def _h_workflow_pending(orch: V2Orchestrator) -> Callable[..., dict]:
             roles = granted
 
         pairs = workflow_scope.visible_tasks(
-            wf, wf.list_tasks(status="waiting_hitl"), roles)
+            wf, wf.list_tasks(status="waiting_hitl"), roles,
+            user_ctx={**(user_ctx or {}), "roles": roles})
         items = []
         mine = domain = 0
         for t, vis in pairs:
@@ -1192,34 +1194,48 @@ def _h_doc_extract(orch: V2Orchestrator) -> Callable[..., dict]:
 
 
 def _metric_public(metric: dict[str, Any]) -> dict[str, Any]:
-    """指标定义 → 公开字典（仅取 yaml 实际字段，不臆造字段名）。"""
+    """词条 → 公开字典（仅取实际字段，不臆造；``id`` 保留旧口径便于调用方兼容）。"""
+    entry_id = str(metric.get("id") or "")
+    source = str(metric.get("source") or "")
+    raw_id = (entry_id.split(".", 1)[1]
+              if source in ("registered_query", "metric_library") else entry_id)
     return {
-        "id": metric.get("id"),
+        "id": raw_id,
+        "entry_id": entry_id,
         "name": metric.get("name"),
+        "source": source,
+        "source_label": metric.get("source_label"),
         "owner": metric.get("owner"),
-        "description": metric.get("desc"),
+        "description": metric.get("definition"),
+        "definition": metric.get("definition"),
         "tables": list(metric.get("tables") or []),
         "unit": metric.get("unit"),
         "keywords": list(metric.get("keywords") or []),
-        "formula": metric.get("sql"),
+        "formula": metric.get("formula"),
+        "target": metric.get("target"),
         "higher_is_better": metric.get("higher_is_better"),
+        "refs": list(metric.get("refs") or []),
     }
 
 
 def _h_metric_dict(orch: V2Orchestrator) -> Callable[..., dict]:
-    """指标字典与口径（MetricLibrary 只读枚举；未找到即明示，不编造）。"""
+    """指标字典与口径（R8：三源汇总同一出口；未找到即明示，不编造）。"""
     def handler(args: dict, user_ctx: dict) -> dict:
-        lib = _runtime(orch).text2sql.metrics
+        from ..services import metric_dict as metric_dict_svc
+
         metric_id = str(args.get("metric_id") or "").strip()
         if metric_id:
-            try:
-                metric = lib.get(metric_id)
-            except KeyError:
+            entry = metric_dict_svc.resolve_entry(metric_id)
+            if entry is None:
                 return {"found": False, "metric_id": metric_id, "metric": None,
-                        "note": f"未找到指标 {metric_id!r}（不编造；可省略 metric_id 查全部目录）"}
-            return {"found": True, "metric": _metric_public(metric), "note": ""}
-        metrics = [_metric_public(m) for m in lib.all()]
-        return {"found": True, "metrics": metrics, "count": len(metrics), "note": ""}
+                        "note": f"未找到口径 {metric_id!r}（不编造；"
+                                "可省略 metric_id 查全部目录）"}
+            return {"found": True, "metric": _metric_public(entry), "note": ""}
+        bundle = metric_dict_svc.build_dictionary()
+        metrics = [_metric_public(e) for e in bundle["entries"]]
+        return {"found": True, "metrics": metrics, "count": len(metrics),
+                "sources": bundle["sources"], "coverage": bundle["coverage"],
+                "note": ""}
     return handler
 
 
@@ -1798,11 +1814,12 @@ def build_platform_tools(orchestrator: V2Orchestrator) -> list[Tool]:
              handler=_h_doc_extract(orchestrator), domain="document",
              readonly=True, tier=0),
         Tool(name="metric.dict",
-             description="指标字典与口径说明：返回指标 id/名称/描述/口径/涉及表/公式；"
-                         "未命中即明示'未找到'，不要编造指标",
+             description="数据口径词典（三源汇总：注册查询 / 指标库 / 看板 KPI）："
+                         "返回词条 id / 来源 / 口径说明 / 公式 / 引用方；"
+                         "未命中即明示'未找到'，不要编造口径",
              input_schema={"type": "object", "properties": {
                  "metric_id": {"type": "string",
-                               "description": "指标 id，缺省返回全部目录"}}},
+                               "description": "词条 id 或旧指标 id（缺省返回全部目录）"}}},
              handler=_h_metric_dict(orchestrator), domain="data",
              readonly=True, tier=0),
         Tool(name="scenario.explain",

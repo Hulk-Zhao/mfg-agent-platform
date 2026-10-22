@@ -369,6 +369,44 @@
     return list;
   }
 
+  /** 工作台「我的 AI 同事」卡（D1/R2）：同事人设 + 推荐问题直达对话。
+   *  离线 / 目录缺失 → 诚实降级为岗位问候 + 演示标注，不编同事人设。 */
+  function colleagueCardHtml(ctx) {
+    const UI = ctx.UI;
+    const c = ctx.currentColleague();
+    if (!c) {
+      return `<div class="colleague-card is-offline" id="dash-colleague">
+        <div class="colleague-card-head">${UI.icon("cpu", 15)}我的 AI 同事
+          <span class="section-extra">按岗位配班 · 一句话触发闭环</span></div>
+        <div class="colleague-card-body">
+          <span class="empty-inline">${UI.demoFlag(ctx.api.online() ? "同事目录加载中" : "后端离线 · 同事配置未加载")}</span>
+          <span class="colleague-card-greet">${UI.esc((ctx.currentRole() || {}).greeting || "")}</span>
+        </div>
+      </div>`;
+    }
+    const qs = (c.questions || []).slice(0, 3);
+    return `<div class="colleague-card" id="dash-colleague">
+      <div class="colleague-card-head">${UI.icon("cpu", 15)}我的 AI 同事
+        <span class="section-extra">${UI.esc(c.name)} · 一句话触发闭环，关键动作人工确认</span></div>
+      <div class="colleague-card-body">
+        <div class="colleague-card-id">
+          <span class="colleague-avatar">${UI.icon("cpu", 18)}</span>
+          <div class="colleague-card-meta">
+            <div class="colleague-card-name">${UI.esc(c.name)}${UI.badge("在线", "badge-green")}</div>
+            <div class="colleague-card-greet">${UI.esc(c.greeting || "")}</div>
+          </div>
+          <select class="colleague-select" id="dash-colleague-select" aria-label="切换 AI 同事">
+            ${colleagueOptionsHtml(ctx)}
+          </select>
+        </div>
+        ${qs.length ? `<div class="colleague-card-qs">
+          <span class="colleague-card-qs-label">${UI.icon("chat", 12)}可以直接问：</span>
+          ${qs.map((q) => `<button type="button" class="chip" data-colleague-q="${UI.esc(q)}">${UI.esc(q)}</button>`).join("")}
+        </div>` : ""}
+      </div>
+    </div>`;
+  }
+
   function render_dashboard(root, ctx) {
     const UI = ctx.UI, DEMO = ctx.DEMO;
     const st = ctx.state.screenState;
@@ -391,6 +429,8 @@
           <div class="hero-greeting">${greet}，${UI.esc(role.user)}${UI.icon("sparkle", 18)}</div>
           <div class="hero-sub">${UI.esc(today)} · ${UI.esc(role.greeting)}。${UI.esc(role.desc)}。</div>
         </div>
+
+        ${colleagueCardHtml(ctx)}
 
         <div class="briefing" id="briefing-bar">
           <div class="briefing-head">${UI.icon("sparkle", 14)}今日需要你关注
@@ -447,6 +487,8 @@
     root.querySelectorAll("[data-goto]").forEach((btn) => {
       btn.addEventListener("click", () => ctx.navigate(btn.dataset.goto));
     });
+    // 我的 AI 同事卡：推荐问题直达对话 + 卡内切换同事（D1/R2）
+    bindColleagueCard(ctx, root);
 
     // 我的看板 KPI 卡：有映射 → 就地 L2 下钻；未映射 → 跳协同问数
     root.querySelectorAll("[data-dash-drill]").forEach((el) => {
@@ -631,8 +673,14 @@
     const slot = slotOf(t);
     const signoff = taskSignoff(t);
     const rows = [];
+    if (slot) {
+      rows.push(gateReasonHtml(ctx, slot));
+    }
     if (reason) {
       rows.push(`<div class="todo-brief reason">${UI.icon("warn", 12)}<span>${UI.esc(reason)}</span></div>`);
+    }
+    if (slot) {
+      rows.push(signoffGapHtml(ctx, signoff, slot, c.actions));
     }
     if (brief.length) {
       const items = brief.slice(0, 3).map((b) => {
@@ -1005,6 +1053,8 @@
     // 板级载荷挂到 screenState：弹窗离线兜底时按管道环节回查汇总数
     ctx.state.screenState.ordersPayload = payload;
     bindOrdersExtras(ctx, box, payload);
+    // R6：催交跟踪面板（治理轨状态机；在线且有 orders 范围时渲染，失败静默不占位）
+    loadFollowupPanel(ctx, box);
   }
 
   /* ------------------------------------------------------------
@@ -1094,6 +1144,151 @@
     });
     box.querySelectorAll("[data-domain]").forEach((el) => {
       keyGo(el, () => openOrderDomainModal(ctx, el.dataset.domain));
+    });
+  }
+
+  /* ------------------------------------------------------------
+   * R6 齐套催交跟踪（治理轨状态机）
+   * 缺口清单 → 派发 → 供应商回复 → 到货确认 → 关闭；超 SLA → 升级。
+   * 演示态的到货确认带「演示回写」徽标（不可关）：状态存演示治理库，
+   * **没有**写回 ERP——对外话术必须诚实（D9/D10）。
+   * ------------------------------------------------------------ */
+
+  const FU_STATUS = {
+    draft: ["缺口清单", "badge-blue"],
+    dispatched: ["已派发", "badge-amber"],
+    supplier_replied: ["供应商已回复", "badge-blue"],
+    arrival_confirmed: ["到货已确认", "badge-green"],
+    escalated: ["超时升级", "badge-red"],
+    closed: ["已关闭", ""],
+  };
+
+  function fuRowHtml(UI, r) {
+    const [label, cls] = FU_STATUS[r.status] || [r.status || "—", ""];
+    const acts = [];
+    if (r.status === "dispatched") {
+      acts.push(`<button class="btn btn-sm" data-fu-action="reply" data-fu-id="${UI.esc(r.followup_id)}">供应商已回复</button>`);
+      acts.push(`<button class="btn btn-sm btn-outline" data-fu-action="escalate" data-fu-id="${UI.esc(r.followup_id)}">升级</button>`);
+    } else if (r.status === "supplier_replied") {
+      acts.push(`<button class="btn btn-sm" data-fu-action="arrival" data-fu-id="${UI.esc(r.followup_id)}">到货确认</button>`);
+      acts.push(`<button class="btn btn-sm btn-outline" data-fu-action="escalate" data-fu-id="${UI.esc(r.followup_id)}">升级</button>`);
+    } else if (r.status === "arrival_confirmed") {
+      acts.push(`<button class="btn btn-sm" data-fu-action="close" data-fu-id="${UI.esc(r.followup_id)}">关闭催交</button>`);
+    } else if (r.status === "escalated") {
+      acts.push(`<button class="btn btn-sm" data-fu-action="reply" data-fu-id="${UI.esc(r.followup_id)}">供应商已回复</button>`);
+      acts.push(`<button class="btn btn-sm btn-outline" data-fu-action="close" data-fu-id="${UI.esc(r.followup_id)}">关闭</button>`);
+    }
+    const reply = r.supplier_reply
+      ? `<div class="fu-note">${UI.icon("chat", 11)}供应商回复：${UI.esc(r.supplier_reply)}</div>` : "";
+    return `<div class="fu-row">
+      <div class="fu-main">
+        <div class="fu-title"><span class="mono">${UI.esc(r.part_no || "—")}</span>
+          <span class="fu-name">${UI.esc(r.part_name || "")}</span>
+          ${UI.badge(label, cls)}</div>
+        <div class="fu-meta">供应商 ${UI.esc(r.supplier || "—")} · 缺口
+          <b class="neg">${UI.esc(fmtQty(r.shortage_qty))}</b> · 催交人 ${UI.esc(r.owner || "—")}
+          · SLA ${UI.esc((r.sla_due_at || "").slice(5, 16).replace("T", " ") || "—")}</div>
+        ${reply}
+      </div>
+      <div class="fu-acts">${acts.join("")}</div>
+    </div>`;
+  }
+
+  function followupPanelHtml(UI, d) {
+    const rows = (d && d.rows) || [];
+    const summary = (d && d.summary) || {};
+    const open = rows.filter((r) => r.status !== "closed").length;
+    const demo = !!(d && d.demo_writeback);
+    const demoBadge = demo
+      ? `<span class="fu-demo" title="${UI.esc(d.writeback_label || "")}">${UI.icon("shield", 11)}演示回写</span>` : "";
+    const body = rows.length
+      ? rows.map((r) => fuRowHtml(UI, r)).join("")
+      : `<div class="empty fu-empty">${UI.icon("check", 22)}
+          <div style="margin-top:8px">暂无催交待办——派发缺口清单后在此跟踪状态</div></div>`;
+    return `<div class="card fu-card">
+      <div class="card-head">
+        <div class="card-title">${UI.icon("orders", 16)}齐套催交跟踪 ${demoBadge}</div>
+        <div class="fu-head-acts">
+          <span class="fu-sum">待办 <b>${open}</b> · 已关闭 <b>${UI.esc(summary.closed || 0)}</b></span>
+          <button class="btn btn-sm" id="fu-dispatch">${UI.icon("send", 12)}一键派发缺口</button>
+        </div>
+      </div>
+      <div class="fu-basis">${UI.icon("info", 12)}
+        缺口＝低于安全库存（同源查询）；到货确认在演示态为「演示回写」，状态存演示治理库，<b>不写回 ERP</b>。</div>
+      <div class="fu-list">${body}</div>
+    </div>`;
+  }
+
+  /** 催交面板：仅在线且有访问范围时渲染；无权限/失败静默不占位（看板已裁决）。 */
+  async function loadFollowupPanel(ctx, host) {
+    if (!ctx.api.online() || !host) return;
+    let d;
+    try {
+      d = await ctx.api.followups();
+    } catch (err) {
+      return;
+    }
+    const el = document.createElement("div");
+    el.id = "orders-followups";
+    el.innerHTML = followupPanelHtml(ctx.UI, d);
+    host.appendChild(el);
+    bindFollowupPanel(ctx, el);
+  }
+
+  function bindFollowupPanel(ctx, el) {
+    const UI = ctx.UI;
+    const dispatch = el.querySelector("#fu-dispatch");
+    if (dispatch) {
+      dispatch.addEventListener("click", async () => {
+        const set = window.prompt("派发到哪个工单集？（如：本周开工批次）", "本周开工批次");
+        if (set == null) return;
+        const label = String(set).trim();
+        if (!label) { UI.toast("工单集不能为空", "warn"); return; }
+        dispatch.disabled = true;
+        try {
+          const d = await ctx.api.followupDispatch(label, 20);
+          UI.toast(`已派发 ${(d.rows || []).length} 条催交待办（工单集：${label}）`, "ok", 4000);
+          ctx.refreshScreen();
+        } catch (err) {
+          dispatch.disabled = false;
+          UI.toast(UI.friendlyError(err).text, "err", 5000);
+        }
+      });
+    }
+    el.querySelectorAll("[data-fu-action]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const id = btn.dataset.fuId;
+        const action = btn.dataset.fuAction;
+        let note = "", qty = null;
+        if (action === "reply") {
+          note = window.prompt("供应商回复内容（必填）", "");
+          if (!note || !String(note).trim()) { UI.toast("供应商回复内容不能为空", "warn"); return; }
+        } else if (action === "arrival") {
+          const raw = window.prompt("到货确认：填写到货数量/说明（可留空）", "");
+          if (raw == null) return;
+          note = String(raw).trim();
+          const num = parseFloat(note);
+          if (Number.isFinite(num) && num > 0) qty = num;
+        } else if (action === "close") {
+          note = window.prompt("关闭结论（必填：到货结果 / 后续安排）", "");
+          if (!note || !String(note).trim()) { UI.toast("关闭需填写结论", "warn"); return; }
+        } else if (action === "escalate" && !window.confirm("确认把该催交单升级（超 SLA/重大延迟）？")) {
+          return;
+        }
+        btn.disabled = true;
+        try {
+          const d = await ctx.api.followupTransition(id, action, note, qty);
+          if (action === "arrival" && d && d.demo_writeback) {
+            UI.toast(`到货已确认 · ${d.writeback_label || "演示回写（未写回 ERP）"}`, "warn", 6000);
+          } else {
+            UI.toast("催交状态已更新", "ok", 3000);
+          }
+          ctx.refreshScreen();
+        } catch (err) {
+          btn.disabled = false;
+          UI.toast(UI.friendlyError(err).text, "err", 5000);
+        }
+      });
     });
   }
 
@@ -1643,6 +1838,8 @@
     "华为投诉BATCH-A-1008",
     "A型号能发多少货",
     "SMT-1设备参数异常吗",
+    // R5 交期答复闭环（2026-10-22）：离线回放覆盖，演示口径与参考图场景 2 同型
+    "SO-3108 月底能交吗",
   ];
   // 节点展示名（YAML label 未定义时的兜底；事件通常已带 label）
   const NODE_LABELS = {
@@ -1705,8 +1902,69 @@
 
   function chatStore(ctx) {
     const st = ctx.state.screenState;
-    if (!st.chat) st.chat = { messages: [], seq: 0 };
+    // askOpen（协同问数轮次收缩，参考案例检索模块）：null=自动（只有最新一轮展开）；
+    // 字符串=显式展开的轮次键（用户点开某轮摘要条）；"none"=全部收缩。新提问重置为 null。
+    if (!st.chat) st.chat = { messages: [], seq: 0, askOpen: null };
     return st.chat;
+  }
+
+  /* ---------- 岗位 AI 同事（D1/R2：colleague.yaml 前端消费） ---------- */
+
+  /** 同事下拉选项（目录来自 /api/v2/colleagues；离线/失败给诚实禁用项）。 */
+  function colleagueOptionsHtml(ctx) {
+    const UI = ctx.UI;
+    const list = (ctx.state && ctx.state.colleagues) || [];
+    const cur = (ctx.currentColleague() || {}).role || "";
+    if (!list.length) {
+      return `<option value="">${ctx.api.online() ? "同事目录加载中…" : "同事目录未加载（后端离线）"}</option>`;
+    }
+    return list.map((c) =>
+      `<option value="${UI.esc(c.role)}" ${c.role === cur ? "selected" : ""}>${UI.esc(c.name)}</option>`).join("");
+  }
+
+  /** 同事问候行：名字 + 人设 + 擅长场景（没有同事配置时不硬造）。 */
+  function colleagueIntroHtml(ctx) {
+    const UI = ctx.UI;
+    const c = ctx.currentColleague();
+    if (!c) {
+      return ctx.api.online()
+        ? ""
+        : `<div class="colleague-intro">${UI.demoFlag("后端离线 · 同事配置未加载")}<span class="colleague-intro-greet">当前为通用问数模式</span></div>`;
+    }
+    const scenes = (c.scenarios || []).map((s) =>
+      `<span class="chip chip-scene">${UI.esc(s)}</span>`).join("");
+    return `<div class="colleague-intro">
+      <span class="colleague-intro-name">${UI.icon("cpu", 13)}${UI.esc(c.name)}</span>
+      <span class="colleague-intro-greet">${UI.esc(c.greeting || "")}</span>
+      ${scenes ? `<span class="colleague-intro-scenes">${scenes}</span>` : ""}
+    </div>`;
+  }
+
+  /** 在线模式快捷问题：优先当前同事的推荐问题（岗位视角），否则平台默认。 */
+  function chatQuickQuestions(ctx) {
+    const c = ctx.currentColleague();
+    if (c && Array.isArray(c.questions) && c.questions.length) return c.questions;
+    return QUICK_QUESTIONS;
+  }
+
+  /** 工作台「我的 AI 同事」卡的问题按钮（点击 → 带预填进对话）。 */
+  function bindColleagueCard(ctx, root) {
+    const UI = ctx.UI;
+    root.querySelectorAll("[data-colleague-q]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const q = btn.dataset.colleagueQ;
+        if (!q) return;
+        writeAskPrefill(q, { module: "dashboard", screen: "", kpi: "", view: "kpi" });
+        ctx.navigate("chat");
+      });
+    });
+    const sel = root.querySelector("#dash-colleague-select");
+    if (sel) {
+      sel.addEventListener("change", () => {
+        ctx.setColleague(sel.value);
+        UI.toast(`已切换为${(ctx.currentColleague() || {}).name || "同事"}视角`, "info", 1800);
+      });
+    }
   }
 
   /* ---------- 审批常用语（按槽位预置，一键填入；降本：意见输入时间 -80%） ---------- */
@@ -1805,14 +2063,22 @@
           <div class="head-extra">
             <span style="font-size: calc(12px * var(--font-scale));color:var(--text-3)">问数角色</span>
             ${UI.badge(ctx.currentRole().name, "badge-blue")}
+            <span class="colleague-switch" title="切换 AI 同事：换的是对话场景与推荐问题的视角，岗位数据权限不变">
+              ${UI.icon("cpu", 13)}
+              <span class="colleague-switch-name" id="colleague-name">${UI.esc(ctx.currentColleague() ? ctx.currentColleague().name : "智能总控")}</span>
+              <select class="colleague-select" id="colleague-select" aria-label="切换 AI 同事">
+                ${colleagueOptionsHtml(ctx)}
+              </select>
+            </span>
             <button class="btn btn-outline btn-sm" id="chat-clear">${UI.icon("refresh", 12)}清空对话</button>
           </div>
         </div>
+        ${colleagueIntroHtml(ctx)}
         <div class="chat-wrap">
           <div class="chat-scroll" id="chat-scroll"></div>
           <div class="chat-inputbar">
             <div class="chat-chips" id="chat-chips">
-              ${(ctx.api.online() ? QUICK_QUESTIONS : DEMO_QUICK_QUESTIONS)
+              ${(online ? chatQuickQuestions(ctx) : DEMO_QUICK_QUESTIONS)
                 .map((q) => `<button class="chip" data-q="${UI.esc(q)}">${UI.esc(q)}</button>`).join("")}
             </div>
             <div class="chat-history" id="chat-history">
@@ -1854,9 +2120,19 @@
 
     document.getElementById("chat-clear").addEventListener("click", () => {
       chatStore(ctx).messages = [];
+      chatStore(ctx).askOpen = null;
       renderChatMessages(ctx, scroll);
       ctx.UI.toast("对话已清空", "info", 1500);
     });
+
+    // 同事切换器（D1/R2）：换同事 = 换对话场景与推荐问题视角（岗位权限不变）
+    const colSel = document.getElementById("colleague-select");
+    if (colSel) {
+      colSel.addEventListener("change", () => {
+        ctx.setColleague(colSel.value);
+        ctx.UI.toast(`已切换为${(ctx.currentColleague() || {}).name || "同事"}视角`, "info", 1800);
+      });
+    }
 
     const doSend = () => {
       const text = input.value.trim();
@@ -1895,7 +2171,13 @@
 
   function userCtxFor(ctx) {
     const r = ctx.currentRole();
-    return { user_id: "u-" + r.id, dept: r.dept, roles: r.roles.slice() };
+    // colleague_role：当前 AI 同事的岗位 id（仅用于「岗位案例」可答性兜底，
+    // 不参与权限判定——数据范围仍以 roles 为权威）。
+    const c = ctx.currentColleague();
+    return {
+      user_id: "u-" + r.id, dept: r.dept, roles: r.roles.slice(),
+      colleague_role: (c && c.role) || "",
+    };
   }
 
   function nearBottom(el) {
@@ -1906,22 +2188,121 @@
     el.scrollTop = el.scrollHeight;
   }
 
-  function renderChatMessages(ctx, scroll) {
+  function renderChatMessages(ctx, scroll, opts) {
     const chat = chatStore(ctx);
     if (!chat.messages.length) {
-      scroll.innerHTML = `<div class="empty" style="margin:auto">${ctx.UI.icon("chat", 34)}<div style="margin-top:10px;font-size: calc(13px * var(--font-scale))">向智能总控提问，或点击上方快捷问题开始</div></div>`;
+      const who = (ctx.currentColleague() || {}).name || "智能总控";
+      scroll.innerHTML = `<div class="empty" style="margin:auto">${ctx.UI.icon("chat", 34)}<div style="margin-top:10px;font-size: calc(13px * var(--font-scale))">向${ctx.UI.esc(who)}提问，或点击上方快捷问题开始</div></div>`;
       return;
     }
-    scroll.innerHTML = chat.messages.map((m) => renderChatMessage(ctx, m)).join("");
+    // 轮次划分（收缩功能的前提）：一条 user 消息开启一轮，其后所有 bot 消息归属该轮。
+    // 首条 user 之前的散件正常流程不会出现，兜底直渲染不参与收缩。
+    const rounds = [];
+    let loose = [];
+    chat.messages.forEach((m) => {
+      if (m.kind === "user") rounds.push({ key: m.id, q: m, items: [] });
+      else if (rounds.length) rounds[rounds.length - 1].items.push(m);
+      else loose.push(m);
+    });
+    const processed = processedMap(ctx);
+    const roundOpen = (r, i) => {
+      // 强制展开优先于一切收缩态：Agent 还在跑的轮、有未处理人工确认的轮——
+      // 折叠掉这两类会让用户漏看进行中的链路与待办（收缩只针对已完结的历史）。
+      if (r.items.some((m) => m.kind === "flow" && m.status === "running")) return true;
+      if (r.items.some((m) => m.kind === "hitl" && !processed[m.taskUid])) return true;
+      if (chat.askOpen === "none") return false;
+      if (typeof chat.askOpen === "string" && chat.askOpen) return chat.askOpen === r.key;
+      return i === rounds.length - 1;   // 默认：只有最新一轮展开
+    };
+    let folded = 0;
+    let html = loose.map((m) => renderChatMessage(ctx, m)).join("");
+    html += rounds.map((r, i) => {
+      const open = roundOpen(r, i);
+      if (!open) folded += 1;
+      return renderChatRound(ctx, r, open);
+    }).join("");
+    if (folded) {
+      html = `<div class="chat-fold-hint">上方 ${folded} 轮历史回答已收缩（只留一行摘要），点摘要条可重新展开。</div>` + html;
+    }
+    scroll.innerHTML = html;
     bindChatActions(ctx, scroll);
     bindQuickComments(scroll);
+    // 轮次收缩/展开切换：与案例检索屏同构——点摘要条=展开该轮，再点或点「收起这一轮」=收成摘要。
+    // 切换时保持滚动位置（展开的是历史轮，跳到底部会丢失展开内容的视线）。
+    scroll.querySelectorAll("[data-turn-toggle]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const k = btn.dataset.turnToggle;
+        const cur = (chat.askOpen == null || chat.askOpen === "")
+          ? (rounds.length ? rounds[rounds.length - 1].key : "") : chat.askOpen;
+        chat.askOpen = (cur === k) ? "none" : k;
+        const st = scroll.scrollTop;
+        renderChatMessages(ctx, scroll, { keepScroll: true });
+        scroll.scrollTop = st;
+      });
+    });
     // 兜底建议：点击"你可能想问"直接重新发问（把兜底从死胡同变成入口）
     scroll.querySelectorAll("[data-sq]").forEach((btn) => {
       btn.addEventListener("click", () => {
         sendChatQueryRouter(ctx, scroll, btn.dataset.sq);
       });
     });
+    if (opts && opts.keepScroll) return;
     scrollToBottom(scroll);
+  }
+
+  /** 一轮对话：用户气泡始终可见；展开=完整 bot 消息 + 收起按钮，收缩=一行摘要条（点击展开）。 */
+  function renderChatRound(ctx, round, open) {
+    const UI = ctx.UI;
+    let html = renderChatMessage(ctx, round.q);
+    if (open) {
+      html += round.items.map((m) => renderChatMessage(ctx, m)).join("");
+      html += `<div class="chat-fold-row"><button class="chat-fold-toggle" data-turn-toggle="${UI.esc(round.key)}" title="把这一轮回答收成一行摘要">收起这一轮</button></div>`;
+    } else {
+      html += chatFoldedBarHtml(ctx, round);
+    }
+    return html;
+  }
+
+  /** 收缩态轮次标签：按轮内最后一张回答卡的类型给中文标签。 */
+  const ROUND_TAG = {
+    flow: "执行中", result: "场景结果", qa: "数据直答", digest: "态势汇总",
+    chitchat: "闲聊回应", fallback: "转人工", conclusion: "智能体结论",
+    hitl: "待人工确认", error: "执行异常",
+  };
+
+  /** 轮摘要：优先最后一张回答卡的 headline/report 首行；无回答卡再看 HITL/错误。 */
+  function roundSummaryOf(items) {
+    const ANSWER_KINDS = ["result", "qa", "digest", "chitchat", "fallback", "conclusion"];
+    let ans = null;
+    items.forEach((m) => { if (ANSWER_KINDS.indexOf(m.kind) >= 0) ans = m; });
+    if (ans) {
+      const r = ans.result || {};
+      const head = term("headline", r) || String(r.report || "").split("\n")[0] || "";
+      return { kind: ans.kind, main: head };
+    }
+    const hitl = items.find((m) => m.kind === "hitl");
+    if (hitl) return { kind: "hitl", main: hitl.prompt || "" };
+    const err = items.find((m) => m.kind === "error");
+    if (err) return { kind: "error", main: err.text || "" };
+    return { kind: "flow", main: "" };
+  }
+
+  function clipLine(text, n) {
+    const t = String(text == null ? "" : text).replace(/\s+/g, " ").trim();
+    return t.length > n ? t.slice(0, n) + "…" : t;
+  }
+
+  /** 收缩态的一轮回答：与展开态同一份数据，只留一行摘要条（标签 + 摘要），点整条展开。 */
+  function chatFoldedBarHtml(ctx, round) {
+    const UI = ctx.UI;
+    const s = roundSummaryOf(round.items);
+    const tag = ROUND_TAG[s.kind] || "回答";
+    return `<div class="msg"><div class="msg-avatar agent">${UI.icon("cpu", 15)}</div>`
+      + `<button class="chat-foldbar" data-turn-toggle="${UI.esc(round.key)}" title="展开这一轮的完整回答">`
+      + `<span class="chat-foldbar-caret">▸</span>`
+      + `<span class="chat-foldbar-tag">${UI.esc(tag)}</span>`
+      + `<span class="chat-foldbar-main">${UI.esc(clipLine(s.main, 72) || "（本轮无文本结论）")}</span>`
+      + `</button></div>`;
   }
 
   function renderChatMessage(ctx, m) {
@@ -1938,9 +2319,12 @@
     else if (m.kind === "result") body = resultCardHtml(ctx, m.result, { demo: !!m.demo });
     else if (m.kind === "qa") body = qaAnswerCardHtml(ctx, m.result, { demo: !!m.demo });
     else if (m.kind === "digest") body = digestCardHtml(ctx, m.result, { demo: !!m.demo });
+    else if (m.kind === "business") body = businessCardHtml(ctx, m.result, { demo: !!m.demo });
+    else if (m.kind === "aging") body = agingCardHtml(ctx, m.result, { demo: !!m.demo });
     else if (m.kind === "chitchat") body = chitchatCardHtml(ctx, m.result, { demo: !!m.demo });
     else if (m.kind === "fallback") body = fallbackCardHtml(ctx, m.result, { demo: !!m.demo });
     else if (m.kind === "hitl") body = hitlChatCardHtml(ctx, m);
+    else if (m.kind === "conclusion") body = conclusionCardHtml(ctx, m);
     else if (m.kind === "error") body = `<div class="result-card"><div class="result-head"><div class="result-title">${UI.icon("warn", 15)}执行异常</div></div><div class="result-body"><div class="offline-banner">${UI.icon("warn", 14)}<span>${UI.esc(m.text)}</span></div></div></div>`;
     return `<div class="msg" data-msg-id="${m.id}">${avatar}<div class="msg-panel">${body}</div></div>`;
   }
@@ -1978,6 +2362,7 @@
   async function sendChatQuery(ctx, scroll, text, askCtx) {
     const UI = ctx.UI;
     const chat = chatStore(ctx);
+    chat.askOpen = null;   // 新提问 → 上方历史一律收缩，只展开这一轮（与案例检索屏同构）
     chat.messages.push({ kind: "user", id: "m" + ++chat.seq, text });
     const flow = { kind: "flow", id: "m" + ++chat.seq, status: "running", order: [], nodes: {}, current: null };
     chat.messages.push(flow);
@@ -2045,6 +2430,7 @@
         slot: h.slot || h.kind || "",
         governance: h.governance || null,
         signoffStatus: h.signoff_status || null,
+        colleague: (ctx.currentColleague() || {}).name || "",
         runId: result.run_id, demo: false,
       });
     });
@@ -2059,6 +2445,7 @@
   async function sendDemoQuery(ctx, scroll, text) {
     const UI = ctx.UI;
     const chat = chatStore(ctx);
+    chat.askOpen = null;   // 新提问 → 上方历史一律收缩，只展开这一轮（与在线路径同构）
     chat.messages.push({ kind: "user", id: "m" + ++chat.seq, text });
     const flow = { kind: "flow", id: "m" + ++chat.seq, status: "running", order: [], nodes: {}, current: null };
     chat.messages.push(flow);
@@ -2076,7 +2463,7 @@
     if (!demo) {
       chat.messages.push({
         kind: "error", id: "m" + ++chat.seq,
-        text: "后端离线：该问题未收录离线回放（离线回放覆盖 5 个快捷问题）。请启用在线模式（起后端服务），或点击上方 5 个快捷问题之一。",
+        text: `后端离线：该问题未收录离线回放（当前覆盖 ${DEMO_QUICK_QUESTIONS.length} 个快捷问题）。请启用在线模式（起后端服务），或点击上方 ${DEMO_QUICK_QUESTIONS.length} 个快捷问题之一。`,
       });
       flow.status = "error";
       renderChatMessages(ctx, scroll);
@@ -2098,10 +2485,17 @@
     flow.status = "done";
     chat.messages.push(resultCardMessage(ctx, demo.result, true));
     (demo.result.hitl || []).forEach((h) => {
+      // 字段必须与在线分支（sendChatQuery）完全一致：离线/在线只差数据来源，
+      // 卡片形态一致。2026-10-22 修：原先漏了 slot/signoffStatus/governance，
+      // 导致 R3 闸门理由与会签缺口在最常用的演示路径上整块不渲染。
       chat.messages.push({
         kind: "hitl", id: "m" + ++chat.seq, taskUid: h.task_uid || "",
         prompt: h.prompt || "", approvers: h.approver_roles || [],
         actions: (h.actions || []).map((a) => (typeof a === "string" ? { key: a, label: a } : a)),
+        slot: h.slot || h.kind || "",
+        governance: h.governance || null,
+        signoffStatus: h.signoff_status || null,
+        colleague: (ctx.currentColleague() || {}).name || "",
         runId: demo.result.run_id, demo: true,
       });
     });
@@ -2271,9 +2665,29 @@
         && result.fallback !== "manual_ticket") {
       return { kind: "digest", id: "m" + ++chat.seq, result, demo: !!demo };
     }
+    if (result && result.route && result.route.strategy === "aging"
+        && result.fallback !== "manual_ticket") {
+      return { kind: "aging", id: "m" + ++chat.seq, result, demo: !!demo };
+    }
+    if (result && result.route && result.route.strategy === "business"
+        && result.fallback !== "manual_ticket") {
+      return { kind: "business", id: "m" + ++chat.seq, result, demo: !!demo };
+    }
     if (result && result.route && result.route.strategy === "qa"
         && result.fallback !== "manual_ticket") {
       return { kind: "qa", id: "m" + ++chat.seq, result, demo: !!demo };
+    }
+    // agentic / collab 结果无 scenario_key——旧逻辑会掉进下面的人工兜底卡，
+    // 「AI 同事答了话、界面却写着转人工」是截图级误导。改走同事结论卡（D2）。
+    // R7 追加 trace（批次追溯确定性成稿）：同样是"AI 跑完给出结论"，走结论卡；
+    // 否则 scenario_key 为空会掉进人工兜底卡（与 D2 修的是同一个错标）。
+    if (result && result.route
+        && (result.route.strategy === "agentic" || result.route.strategy === "collab"
+            || result.route.strategy === "role_case"
+            || result.route.strategy === "trace")
+        && result.fallback !== "manual_ticket") {
+      return { kind: "conclusion", id: "m" + ++chat.seq, result, demo: !!demo,
+               colleague: (ctx.currentColleague() || {}).name || "" };
     }
     if (result && (result.fallback === "manual_ticket" || !result.scenario_key)) {
       return { kind: "fallback", id: "m" + ++chat.seq, result, demo: !!demo };
@@ -2341,6 +2755,142 @@
           .filter((l) => l.startsWith("·")).join("　"))}</div>
         <div style="margin-top:8px;font-size: calc(11.3px * var(--font-scale));color:var(--text-3)">
           汇总口径与各看板同源（未达标项 = 各看板 KPI 判定） · 只读汇总，不产生工单
+        </div>
+        ${evidenceHtml(ctx, result, true)}
+      </div>
+    </div>`;
+  }
+
+  /** 老板经营 · 大单进度卡（business 策略）。
+   *
+   *  一眼可见三件事：整体加权完成、选中大单的进度、主动风险。数字全部来自
+   *  注册查询（后端确定性成稿），前端只负责画进度条与列风险，不再二次计算。 */
+  function businessCardHtml(ctx, result, opts) {
+    const UI = ctx.UI;
+    const demo = opts && opts.demo;
+    const brief = result.internal_brief || {};
+    const bo = brief.big_order || {};
+    const sel = bo.selected || {};
+    const clamp = (v) => Math.max(0, Math.min(100, Number(v) || 0));
+    const agg = clamp(bo.aggregate_progress);
+    const cur = clamp(sel.progress);
+    const risks = (bo.risks || []).map((r, i) =>
+      `<div class="biz-risk"><span class="biz-risk-no">${i + 1}</span><span>${UI.esc(r)}</span></div>`
+    ).join("");
+    const finish = bo.finish_date
+      ? `<b>${UI.esc(bo.finish_date)}</b>`
+      + (bo.slack_days == null ? ""
+        : bo.slack_days >= 0
+          ? `（比要求日提前 ${bo.slack_days} 天）`
+          : `（比要求日晚 ${Math.abs(bo.slack_days)} 天）`)
+      : "无法估算（缺产能数据）";
+    const gaps = result.degraded_reasons || [];
+    return `<div class="result-card biz-card">
+      <div class="result-head">
+        <div class="result-title">${UI.icon("grid", 15)}老板经营 · 大单进度</div>
+        <div class="badges">
+          ${demo ? UI.demoFlag("演示回放") : UI.badge("实时链路", "badge-green")}
+          ${UI.badge(`口径 ≥${UI.esc(bo.threshold || 5000)} 件在制`, "badge-outline")}
+          ${bo.as_of ? UI.badge(`截至 ${UI.esc(bo.as_of)}`, "badge-gray") : ""}
+        </div>
+      </div>
+      <div class="result-body">
+        <div class="biz-summary">
+          <div class="biz-summary-top">
+            <span>在制大单 <b>${UI.esc(brief["在制大单"] || "0")}</b> 张 · 加权完成
+              <b>${UI.esc(bo.aggregate_progress || 0)}%</b></span>
+            <span class="biz-summary-meta">合计 ${UI.esc(bo.total_qty || 0)} 件 ·
+              产能 ${UI.esc(bo.daily_capacity || 0)} 套/天</span>
+          </div>
+          <div class="biz-bar biz-bar-lg" role="progressbar" aria-valuenow="${agg}"
+               aria-valuemin="0" aria-valuemax="100"><span style="width:${agg}%"></span></div>
+        </div>
+        ${sel.order_no ? `<div class="biz-focus">
+          <div class="biz-focus-head">
+            <b>${UI.esc(sel.order_no)}</b>
+            <span>${UI.esc(sel.product_model || "—")} · ${UI.esc(sel.qty || 0)} 件</span>
+            <span class="biz-stage">${UI.esc(sel.stage || "—")}</span>
+          </div>
+          <div class="biz-focus-meta">客户要求 ${UI.esc(sel.due_date || "—")} 交付 ·
+            当前进度 <b>${UI.esc(sel.progress || 0)}%</b></div>
+          <div class="biz-bar" role="progressbar" aria-valuenow="${cur}"
+               aria-valuemin="0" aria-valuemax="100"><span style="width:${cur}%"></span></div>
+          <div class="biz-finish">预计完工：${finish}
+            <span class="biz-finish-note">（按该型号近 7 日实际产出均值推算，全产线合计、未按订单分配）</span></div>
+        </div>` : `<div class="empty" style="padding:12px 0">当前没有符合条件的在制大单。</div>`}
+        ${risks ? `<div class="biz-risks-title">${UI.icon("warn", 13)}主动风险（不等你问）</div>
+          ${risks}` : ""}
+        ${gaps.length ? `<div class="offline-banner" style="margin-top:10px">${UI.icon("warn", 14)}
+          <span>数据缺口：${UI.esc(gaps.join("；"))}（不编造，已如实标注）</span></div>` : ""}
+        ${sel.order_no ? `<div style="margin-top:9px">
+          <button class="link-btn" type="button"
+            data-sq="${UI.esc(`${sel.order_no} 的交付风险与 ATP 可承诺量如何？`)}">
+            ${UI.icon("chat", 11)}就这张单继续问数</button></div>` : ""}
+        ${evidenceHtml(ctx, result, true)}
+      </div>
+    </div>`;
+  }
+
+  /** 呆滞料盘点卡（aging 策略，R11）。
+   *
+   *  先给结论（条数/资金占用/最长库龄），再给供应商分布与 TOP 清单；
+   *  退供按治理铁律走人工确认（interim 复用 disposition），卡片只提供发起入口。 */
+  function agingCardHtml(ctx, result, opts) {
+    const UI = ctx.UI;
+    const demo = opts && opts.demo;
+    const brief = result.internal_brief || {};
+    const ag = brief.aging || {};
+    const rows = (ag.rows || []).slice(0, 10);
+    const suppliers = (ag.suppliers || []).map((s) =>
+      `<span class="ag-supplier">${UI.esc(s.supplier)} · ${UI.esc(s.count)} 条 ·
+        ¥${UI.esc(Number(s.value || 0).toLocaleString())}</span>`).join("");
+    const table = rows.length ? `<div class="ag-table-wrap"><table class="std-table ag-table">
+      <thead><tr><th>料号</th><th>名称</th><th>供应商</th><th>在库</th><th>库龄</th><th>金额</th></tr></thead>
+      <tbody>${rows.map((r) => `<tr>
+        <td><b>${UI.esc(r.part_no)}</b></td><td>${UI.esc(r.part_name || "")}</td>
+        <td>${UI.esc(r.supplier || "—")}</td>
+        <td>${UI.esc(Number(r.on_hand_qty || 0).toLocaleString())}</td>
+        <td>${UI.esc(r.age_days)} 天</td>
+        <td>¥${UI.esc(Number((Number(r.on_hand_qty) || 0) * (Number(r.unit_cost) || 0)).toLocaleString())}</td>
+      </tr>`).join("")}</tbody></table></div>
+      ${(ag.rows || []).length > 10 ? `<div class="ag-more">仅列库龄最长的 10 条，共 ${UI.esc((ag.rows || []).length)} 条</div>` : ""}`
+      : `<div class="empty" style="padding:12px 0">当前没有超过该库龄阈值的物料。</div>`;
+    const returnParts = (ag.return_candidates || []).map((r) => r.part_no).filter(Boolean);
+    const returnJson = UI.esc(JSON.stringify(returnParts));
+    const gaps = ag.data_gaps || [];
+    return `<div class="result-card ag-card">
+      <div class="result-head">
+        <div class="result-title">${UI.icon("database", 15)}呆滞料盘点 · 库龄 ≥ ${UI.esc(ag.days || brief["口径"] || 180)} 天</div>
+        <div class="badges">
+          ${demo ? UI.demoFlag("演示回放") : UI.badge("实时链路", "badge-green")}
+          ${UI.badge(`${UI.esc((ag.rows || []).length)} 条超龄`, "badge-amber")}
+        </div>
+      </div>
+      <div class="result-body">
+        <div class="ag-summary">
+          <div class="ag-stat"><b>${UI.esc((ag.rows || []).length)}</b><span>超龄料号</span></div>
+          <div class="ag-stat"><b>¥${UI.esc(Number(ag.total_value || 0).toLocaleString())}</b><span>资金占用</span></div>
+          <div class="ag-stat"><b>${UI.esc(ag.oldest_days || 0)} 天</b><span>最长库龄</span></div>
+          <div class="ag-stat"><b>${UI.esc((ag.suppliers || []).length)}</b><span>涉及供应商</span></div>
+        </div>
+        ${suppliers ? `<div class="ag-suppliers">${suppliers}</div>` : ""}
+        ${table}
+        <div class="ag-policy">
+          <b>处置口径</b>：转用优先 → 退供其次 → 报废兜底；评审通过前冻结补货。
+          可转用料号因平台缺 BOM/替代关系表，<b>不做自动识别</b>（不编造）。
+        </div>
+        ${gaps.length ? `<div class="offline-banner" style="margin-top:8px">${UI.icon("warn", 14)}
+          <span>数据缺口：${UI.esc(gaps.join("；"))}</span></div>` : ""}
+        <div class="ag-actions">
+          <button class="btn btn-primary" type="button"
+            data-ag-return="1" data-days="${UI.esc(ag.days || 180)}"
+            data-part-nos="${returnJson}"
+            ${returnParts.length ? "" : "disabled"}
+            title="发起退供评审（涉及资金回收/折价，必须人工确认）">
+            ${UI.icon("shield", 13)} 发起退供评审（${returnParts.length} 个料号）
+          </button>
+          <span class="ag-gate-note">${UI.icon("lock", 12)} 动钱需人管：当前无专属槽位，
+            interim 复用来料处置（disposition）会签链；Agent 只发起、不放行</span>
         </div>
         ${evidenceHtml(ctx, result, true)}
       </div>
@@ -2578,6 +3128,61 @@
   }
 
   /**
+   * 同事结论卡（D2/R1：agentic / collab 结果专用渲染）。
+   *
+   * 治两个错：① 这两类结果没有 scenario_key，旧渲染掉进「人工兜底工单」卡——
+   * AI 同事明明答了话，界面却写着转人工（误导性截图级 bug）；② 结论缺
+   * 「同事」主体与来源徽标。本卡：同事名领衔 + 结论 + 这一轮做了哪些事
+   * （provenance 步骤流水）+ 数据缺口 + 证据折叠 + 建议动作条（待确认入口）。
+   */
+  function conclusionCardHtml(ctx, m) {
+    const UI = ctx.UI;
+    const result = m.result || {};
+    const demo = !!m.demo;
+    const brief = result.internal_brief || {};
+    const gaps = result.degraded_reasons || [];
+    const steps = (result.provenance || []).filter((p) => p && p.tool);
+    const colleague = m.colleague || (ctx.currentColleague() || {}).name || "AI 同事";
+    const stepsHtml = steps.length ? `<div class="concl-steps">
+      <div class="concl-steps-title">${UI.icon("activity", 12)}这一轮做了</div>
+      ${steps.slice(0, 8).map((p, i) => `<div class="concl-step">
+        <span class="concl-step-no">${circled(i)}</span>
+        <span class="concl-step-tool">${UI.esc(String(p.tool || ""))}</span>
+        <span class="concl-step-sum">${UI.esc(String(p.summary || "").slice(0, 90))}</span>
+      </div>`).join("")}
+    </div>` : "";
+    const firstLine = String(result.report || "").split("\n")[0] || "";
+    const headLine = term("headline", result) || firstLine;
+    // 正文首行常与卡头标题同句（服务端 report 以结论句开篇）——去掉，避免
+    // 同一句话在卡里连排两遍（真机截图可见的观感缺陷）。
+    const bodyLines = String(result.report || "").split("\n");
+    if (bodyLines.length && bodyLines[0].trim() === String(headLine).trim()) {
+      bodyLines.shift();
+    }
+    const bodyText = bodyLines.join("\n").trim();
+    return `<div class="result-card conclusion-card">
+      <div class="result-head">
+        <div class="result-title"><span class="status-dot normal"></span>${UI.icon("cpu", 15)}${UI.esc(colleague)} · 结论</div>
+        <div class="badges">
+          ${demo ? UI.demoFlag("演示回放")
+            : (result.route || {}).strategy === "role_case"
+              ? UI.badge("岗位案例 · 已核验口径", "badge-blue")
+              : UI.badge("实时链路", "badge-green")}
+          ${UI.badge(brief["执行方式"] || "智能体执行", "badge-outline")}
+        </div>
+      </div>
+      <div class="result-body">
+        <div class="head-line">${UI.esc(headLine)}</div>
+        ${bodyText ? `<div style="font-size: calc(13px * var(--font-scale));line-height:1.9;white-space:pre-wrap;margin-top:8px">${UI.esc(bodyText)}</div>` : ""}
+        ${stepsHtml}
+        ${gaps.length ? `<div class="offline-banner" style="margin-top:10px">${UI.icon("warn", 14)}<span>数据缺口：${UI.esc(gaps.join("；"))}（不编造，已如实标注）</span></div>` : ""}
+        ${evidenceHtml(ctx, result)}
+        ${actionBarHtml(ctx, result)}
+      </div>
+    </div>`;
+  }
+
+  /**
    * 分析过程与数据来源（A3）：默认折叠。展开后 = 自然语言步骤时间线 +
    * 数据来源业务口径 + 内层「原始查询语句」技术折叠（SQL 原文 / 表名 / 命中行 /
    * 脱敏标记 / 节点耗时**只**出现在最内层，正文不再暴露）。
@@ -2624,12 +3229,19 @@
     const sqlItems = all.filter((p) => p && p.sql);
     const timings = all.filter((p) => p && p.channel === "node_timing");
     if (!sqlItems.length && !timings.length) return "";
-    const sqlHtml = sqlItems.map((p) => `
+    const sqlHtml = sqlItems.map((p) => {
+      // R8：问数证据里的每个查询/指标都能跳回口径词典同一条目
+      const dictId = p.query_name ? `query.${p.query_name}`
+        : (p.metric_id ? `metric.${p.metric_id}` : "");
+      return `
       <div class="prov-item">
         <div class="prov-item-head">
           ${UI.badge(term("domainLabel", p.domain), "badge-blue")}
           <span class="prov-item-name">${UI.esc(p.query_name || p.metric_id || "-")}</span>
           ${p.masked ? `<span class="mask-flag">${UI.icon("eyeoff", 12)}敏感字段已按角色脱敏</span>` : ""}
+          ${dictId ? `<button class="link-btn prov-dict" type="button"
+                  data-dict-id="${UI.esc(dictId)}"
+                  title="在口径词典中查看该查询的口径定义与引用方">口径</button>` : ""}
         </div>
         <div class="sql-block">${UI.esc(p.sql)}</div>
         <div class="prov-item-meta">
@@ -2637,7 +3249,8 @@
           <span>数据表：<b>${UI.esc((p.tables || []).map((t) => term("tableLabel", t)).join("、"))}</b></span>
           <span>脱敏：<b>${p.masked ? "是" : "否"}</b></span>
         </div>
-      </div>`).join("");
+      </div>`;
+    }).join("");
     const timingHtml = timings.length
       ? `<div class="prov-item"><div class="prov-item-head">${UI.badge("处理耗时", "badge-gray")}<span style="font-size: calc(12px * var(--font-scale));color:var(--text-3)">${timings.length} 个环节</span></div>
          <div class="chip-row" style="margin-top:7px">${timings.map((t) => `<span class="badge ${t.status === "ok" ? "badge-green" : "badge-amber"}">${UI.esc(t.node || "-")} ${UI.esc(String(t.elapsed_ms != null ? Math.round(t.elapsed_ms) + "ms" : "-"))}</span>`).join("")}</div></div>`
@@ -3076,6 +3689,71 @@
     });
   }
 
+  /* ---------- HITL 闸门公示（R3：为什么必须人确认 + 会签方及缺谁） ---------- */
+
+  /** 闸门理由行（常驻）：槽位名 + gate_class + why；目录缺失降级为槽位中文名。 */
+  function gateReasonHtml(ctx, slot) {
+    const UI = ctx.UI;
+    const key = String(slot || "");
+    if (!key) return "";
+    // 离线演示：后端不可达时 state.gates 为空数组（真值！）——必须判长度，
+    // 否则 `||` 兜底永不触发。兜底目录由 tools/gen_gate_fallback.py 从同一份
+    // gate_reasons.yaml 生成，测试守护字节一致，不存在第二事实源。
+    const gateList = (ctx.state && ctx.state.gates && ctx.state.gates.length)
+      ? ctx.state.gates
+      : ((ctx.DEMO && ctx.DEMO.GATE_REASONS) || []);
+    const gate = gateList.find((g) => g && g.key === key) || null;
+    const name = (gate && gate.name) || SLOT_LABEL[key] || key;
+    if (!gate || !gate.why) {
+      return `<div class="hitl-gate"><span class="hitl-gate-cls">闸门</span><span>${UI.esc(name)}</span></div>`;
+    }
+    const cls = gate.gate_class ? `<span class="hitl-gate-cls">${UI.esc(gate.gate_class)}</span>` : "";
+    return `<div class="hitl-gate">${cls}<span class="hitl-gate-name">${UI.esc(name)}</span>`
+      + `<span class="hitl-gate-why">${UI.esc(gate.why)}</span></div>`;
+  }
+
+  /**
+   * 会签方及缺谁（常驻）：required 全量 + 进度 + missing 点名（不再只在 gate 不 ok 时出现）。
+   * 未选定动作时 required 尚未生成（后端 select_action 才建会签要求）——此时展示
+   * 该槽位的**候选会签方**（permissions.yaml 实时）并标注「选定动作后生效」，
+   * 诚实降级，不假装已经有会签链。
+   */
+  function signoffGapHtml(ctx, status, slot, actions) {
+    const UI = ctx.UI;
+    const st = status || {};
+    const required = st.required || [];
+    if (!required.length) {
+      const key = String(slot || "");
+      if (!key) return "";
+      const perms = (ctx && ctx.perms) || (ctx.state && ctx.state.perms) || null;
+      const roles = perms && Array.isArray(perms.roles)
+        ? perms.roles.filter((r) => (r.permissions || []).indexOf(`hitl.${key}.cosign`) >= 0)
+        : [];
+      // 离线演示没有权限目录：候选会签方从回放动作自带的 cosign 推导（动作目录
+      // 本来就是治理真值的一部分），标注「将会签 / 选定动作后生效」——
+      // 不虚构权限，也不假装已有会签链。
+      const fromActions = roles.length ? [] : [...new Set(
+        (actions || []).reduce((acc, a) => acc.concat(
+          Array.isArray(a && a.cosign) ? a.cosign : []), []))];
+      const names = roles.length
+        ? roles.map((r) => UI.esc(r.name || r.key))
+        : fromActions.map((n) => UI.esc(n));
+      if (!names.length) return "";
+      return `<div class="signoff-gap"><span class="signoff-gap-label">将会签</span>`
+        + `<span>${names.join("、")}</span>`
+        + `<span class="signoff-gap-progress">选定动作后生效</span></div>`;
+    }
+    const names = required.map((r) => UI.esc(r.role_name || roleLabel(r.role)));
+    const missing = (st.missing || []).map((r) => UI.esc(r.role_name || roleLabel(r.role)));
+    const gap = missing.length
+      ? `<span class="signoff-gap-missing">缺：${missing.join("、")}</span>`
+      : `<span class="signoff-gap-ok">${UI.icon("check", 11)} 已齐</span>`;
+    return `<div class="signoff-gap"><span class="signoff-gap-label">会签方</span>`
+      + `<span>${names.join("、")}</span>`
+      + `<span class="signoff-gap-progress">${UI.esc(st.progress || "0/0")}</span>`
+      + `${gap}</div>`;
+  }
+
   function hitlChatCardHtml(ctx, m) {
     const UI = ctx.UI;
     const processed = processedMap(ctx)[m.taskUid];
@@ -3087,14 +3765,18 @@
         governance: m.governance, signoff_status: m.signoffStatus || null };
     }
     const gate = approveGate(ctx, m.taskUid, acts, m.slot);
+    const signoff = m.signoffStatus || signoffOf(m.taskUid, acts);
     return `<div class="hitl-card" data-hitl-task="${UI.esc(m.taskUid)}">
       <div class="hitl-card-head">${UI.icon("approve", 15)}待人工确认（不自动放行）</div>
       <div class="hitl-card-prompt">${UI.esc(m.prompt)}</div>
       <div class="hitl-card-meta">
         <span>审批人：<b>${UI.esc((m.approvers || []).join("、"))}</b></span>
         <span>工单：<b>${UI.esc(m.taskUid || "-")}</b></span>
+        ${m.colleague ? `<span>发起：<b>${UI.esc(m.colleague)}</b></span>` : ""}
         ${m.runId ? `<span>run_id：<b>${UI.esc(m.runId)}</b></span>` : ""}
       </div>
+      ${gateReasonHtml(ctx, m.slot || _hitlSlot[m.taskUid] || "")}
+      ${signoffGapHtml(ctx, signoff, m.slot || _hitlSlot[m.taskUid] || "", m.actions)}
       ${acts.length ? `<div class="hitl-card-meta">可选动作（按岗位权限，灰显需对应岗位发起）：</div>
         <div class="act-chips">${actionChipsHtml(ctx, m.taskUid, m.actions)}</div>
         ${actionDetailHtml(ctx, m.taskUid, m.actions)}` : ""}
@@ -3698,6 +4380,23 @@
     return UI.badge(MY_ACTION_LABEL[act] || act, cls);
   }
 
+  /** 列表行紧凑闸门片（槽位名 + 类别；完整理由在详情卡，行内不堆文案）。 */
+  function gateChipHtml(ctx, slot) {
+    const UI = ctx.UI;
+    const key = String(slot || "");
+    if (!key) return "";
+    // 离线演示：后端不可达时 state.gates 为空数组（真值！）——必须判长度，
+    // 否则 `||` 兜底永不触发。兜底目录由 tools/gen_gate_fallback.py 从同一份
+    // gate_reasons.yaml 生成，测试守护字节一致，不存在第二事实源。
+    const gateList = (ctx.state && ctx.state.gates && ctx.state.gates.length)
+      ? ctx.state.gates
+      : ((ctx.DEMO && ctx.DEMO.GATE_REASONS) || []);
+    const gate = gateList.find((g) => g && g.key === key) || null;
+    const name = (gate && gate.name) || SLOT_LABEL[key] || key;
+    const cls = gate && gate.gate_class ? ` · ${gate.gate_class}` : "";
+    return `<span class="hli-gate">${UI.esc(name + cls)}</span>`;
+  }
+
   function hitlListItemHtml(ctx, t) {
     const UI = ctx.UI;
     const st = ctx.state.screenState;
@@ -3721,6 +4420,7 @@
         <span>${UI.esc(t.task_uid)}</span>
         <span>${UI.esc((t.assignees || []).join("、"))}</span>
         <span>${UI.esc(t.priority || "P1")}</span>
+        ${gateChipHtml(ctx, slotOf(t))}
         ${progress}
       </div>
       <div class="hli-sla">${processed ? "" : slaHtml(due, total)}</div>
@@ -3732,6 +4432,10 @@
     restart: "复线决策", eta: "对客 ETA 承诺", disposition: "来料处置",
     d8_close: "8D 报告关闭", complaint_reply: "对客回复",
     delivery_commit: "交期承诺", maintenance_window: "停机窗口",
+    // 2026-10-22 补齐 T15/T16 三个既有槽位（原映射缺这三项 → 审批中心
+    // 一直渲染裸 key，如 "order_review"）；spc_action 同批补
+    spc_action: "过程处置会签", order_review: "接单评审会签",
+    report_publish: "报告审定与派发",
   };
 
   // 工单状态 → 中文（面向非技术审批人，界面不暴露状态机内部枚举）
@@ -3999,6 +4703,8 @@
         <div style="margin-top:12px;font-size: calc(12.5px * var(--font-scale));color:var(--text-2);line-height:1.75">
           ${UI.icon("info", 13)} 关键决策必须人工确认后放行（规则：分析服务只出建议，不参与审批与过账）。多人会签的动作需全部会签人签署后才可终批，岗位权限由后端工作流引擎校验。
         </div>
+        ${gateReasonHtml(ctx, slot)}
+        ${signoffGapHtml(ctx, taskSignoff(t), slot, (t.context || {}).actions)}
         ${approveSummaryHtml(ctx, t)}
         <div style="margin-top:13px">${slaHtml(due, total)}</div>
         <div class="hitl-ctx-grid" style="margin-top:13px">${ctxItems}</div>
@@ -4183,6 +4889,8 @@
     const ico = MFG_KPI_ICON[kpi.key] || "activity";
     const entAttr = ent && Object.keys(ent).length
       ? ` data-drill-entity="${UI.esc(JSON.stringify(ent))}"` : "";
+    // R8：每张 KPI 卡都能回到口径词典的同一条目（三源统一 id）
+    const dictId = `board.${screen}.${kpi.key}`;
     return `<div class="card stat-card stat-clickable" role="button" tabindex="0"
             data-kpi="${UI.esc(kpi.key)}" data-screen="${UI.esc(screen)}"${entAttr}
             title="点击查看「${UI.esc(kpi.label)}」明细分解">
@@ -4193,9 +4901,14 @@
         <div class="stat-trend ${ok ? "down" : "up"}">${UI.icon(ok ? "check" : "warn", 12)} ${UI.esc(delta)}pt · ${UI.esc(dir)}</div>
         ${kpi.scope_note ? `<div class="stat-scope">${UI.icon("info", 11)}${UI.esc(kpi.scope_note)}</div>` : ""}
         <div class="spark-wrap">${mfgSpark(kpi.trend, tone)}</div>
-        <button class="stat-ask-btn" data-ask="${UI.esc(kpi.ask || "")}" data-ask-view="kpi"
-                title="跳转协同问数：${UI.esc(kpi.ask || "")}">
-          ${UI.icon("chat", 11)} 问数</button>
+        <div class="stat-actions">
+          <button class="stat-ask-btn" data-ask="${UI.esc(kpi.ask || "")}" data-ask-view="kpi"
+                  title="跳转协同问数：${UI.esc(kpi.ask || "")}">
+            ${UI.icon("chat", 11)} 问数</button>
+          <button class="stat-def-btn" type="button" data-dict-id="${UI.esc(dictId)}"
+                  title="查看「${UI.esc(kpi.label)}」口径定义与引用方">
+            ${UI.icon("info", 11)} 口径</button>
+        </div>
       </div>
     </div>`;
   }
@@ -6631,6 +7344,88 @@
   /* ============================================================
    * 导出
    * ============================================================ */
+
+  /* ============================================================
+   * R8：数据口径词典弹层（看板 KPI / 问数证据 / 帮助中心共用入口）
+   * ============================================================ */
+
+  /** 按词条 id 拉取统一口径并弹层；找不到就明示，不猜。 */
+  function openDictEntry(entryId) {
+    const api = window.App && window.App.api;
+    if (!api || typeof api._get !== "function" || !entryId) return;
+    const UI = window.App.UI;
+    api._get("/api/v2/metric-dict?id=" + encodeURIComponent(entryId))
+      .then((resp) => {
+        // `api._get` 已解信封：resp 即 data 载荷本身
+        const entry = resp && resp.entry;
+        if (!entry) {
+          UI.toast((resp && resp.note) || "未找到该口径（不编造）");
+          return;
+        }
+        const rows = [
+          ["词条 id", entry.id],
+          ["来源", entry.source_label],
+          ["归属", entry.owner || "—"],
+          ["涉及表", (entry.tables || []).join("、") || "—"],
+          ["单位 / 目标", entry.unit
+            ? `${entry.unit}${entry.target != null ? " · 目标 " + entry.target : ""}`
+            : "—"],
+          ["口径说明", entry.definition || "—"],
+          ["计算公式", entry.formula || "—"],
+          ["关键词", (entry.keywords || []).join("、") || "—"],
+          ["引用方", (entry.refs || []).join(" · ") || "—"],
+        ];
+        const html = '<table class="help-table"><tbody>'
+          + rows.map((r) => `<tr><th style="width:22%;text-align:left">${UI.esc(r[0])}</th>`
+            + `<td style="white-space:pre-wrap">${UI.esc(r[1])}</td></tr>`).join("")
+          + "</tbody></table>";
+        if (window.SceneKit && typeof window.SceneKit.openDrill === "function") {
+          window.SceneKit.openDrill({
+            title: entry.name || entry.id,
+            subtitle: "口径词典 · " + (entry.source_label || ""),
+            html,
+          });
+        }
+      })
+      .catch(() => { /* 网络失败不打扰主流程 */ });
+  }
+
+  // 捕获阶段拦截：KPI 卡主体是「点击下钻」，口径按钮必须先于卡片处理器
+  // stopPropagation，否则一次点击会同时打开下钻与口径。
+  document.addEventListener("click", function (ev) {
+    const el = ev.target && ev.target.closest && ev.target.closest("[data-dict-id]");
+    if (!el) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    openDictEntry(el.getAttribute("data-dict-id"));
+  }, true);
+
+  /* R11：呆滞料卡「发起退供评审」——只发起，不自动放行；创建后跳审批中心。 */
+  document.addEventListener("click", function (ev) {
+    const btn = ev.target && ev.target.closest && ev.target.closest("[data-ag-return]");
+    if (!btn || btn.disabled) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    const api = window.App && window.App.api;
+    const UI = window.App.UI;
+    if (!api || typeof api.agingReturnRequest !== "function") return;
+    let parts = [];
+    try { parts = JSON.parse(btn.getAttribute("data-part-nos") || "[]"); }
+    catch (e) { parts = []; }
+    if (!parts.length) { UI.toast("没有可发起退供的料号", "warn"); return; }
+    btn.disabled = true;
+    api.agingReturnRequest(parts, Number(btn.getAttribute("data-days") || 180), "")
+      .then((data) => {
+        // 发起人（如仓储）不一定持有 disposition 槽位（看不到该待办），
+        // 因此不强行跳审批中心——只回执工单号，处置进度由治理岗位推进。
+        UI.toast(`已创建退供评审工单 ${data.task_uid}（待治理岗位确认，未放行）`,
+                 "ok", 5000);
+      })
+      .catch((err) => {
+        UI.toast((err && err.message) || "退供评审创建失败", "warn", 4200);
+        btn.disabled = false;
+      });
+  }, true);
 
   window.Screens = {
     render_dashboard,

@@ -1,0 +1,323 @@
+# 岗位 AI 同事能力面（D3/R2：同事切换器的配置事实源）
+#
+# 纪律（2026-10-22 架构师 D3 + 质疑 Q5）：
+# 1. role id 必须 ⊆ demo-data.js ROLES（31 岗位）——严禁造第三套角色 key
+#    （前端 31 岗位 / 治理 32 角色已靠 PermissionRegistry aliases 归一化，
+#    第三套口径漂移只是时间问题；守卫测试 tests/v2/test_colleague_yaml.py）；
+# 2. 治理能力（槽位/会签/终批）继续走 permissions.yaml——本文件只描述
+#    「同事人格 + 场景清单 + 推荐问题 + 建议工具子集」；
+# 3. tools 引用 agentic.py::AGENT_TOOLS_META 的工具名（守卫测试校验），
+#    不含任何 *.approve 类治理工具（Agent 永不放行）。
+#
+# 消费方：chat 屏同事切换器（R2/D1）与工作台「我的同事今日概况」。
+# 前端接入前，本文件 + 守卫测试即契约（配置即代码，启动期可校验）。
+colleagues:
+  - role: gm
+    name: 经营同事
+    greeting: 全局运营一屏掌握，风险我先说
+    scenarios: [经营异常摘要, 跨部门升级, 订单履约风险]
+    questions:
+      - 这个月准交率完成多少
+      - 哪些订单有履约风险
+      - 本周有哪些要我拍板的升级事项
+    tools: [query_metric, run_registered_query, explore_data, create_hitl_task]
+
+  - role: mfg
+    name: 制造同事
+    greeting: 停线、稼动、复线进度，问我
+    scenarios: [停线应急, 设备预警, OEE 达成]
+    questions:
+      - 当前停线的工单有几张
+      - 各产线 OEE 达成如何
+      - 预计多久可以复线
+    tools: [query_metric, run_registered_query, explore_data, create_hitl_task]
+
+  - role: eq
+    name: 设备同事
+    greeting: 设备告警、停机窗口、备件，一句就来
+    scenarios: [停机窗口确认, 设备预警, OEE 损耗分析]
+    questions:
+      - 今天有哪些设备告警
+      - 停机窗口怎么安排最合适
+      - 稼动损失主要来自哪些设备
+    tools: [asset__status, equipment__predict, run_registered_query, create_hitl_task]
+
+  - role: eqm
+    name: 设备管理同事
+    greeting: 设备全景与维保计划，我先汇总
+    scenarios: [设备预警, 停机窗口确认, 备件计划]
+    questions:
+      - 本周设备健康分布如何
+      - 哪些设备需要提前排维保
+      - 备件库存够不够
+    tools: [asset__status, equipment__predict, query_metric, create_hitl_task]
+
+  - role: mt
+    name: 维修同事
+    greeting: 报修、点检异常、维修进度，随时查
+    scenarios: [点检异常派单, 故障排查, 维修进度]
+    questions:
+      - 今天的点检有异常吗
+      - 手头维修工单进度如何
+      - 这台设备历史故障有哪些
+    tools: [asset__status, run_registered_query, create_hitl_task]
+
+  - role: sqe
+    name: 供应商质量同事
+    greeting: 来料异常、SCAR、供应商处置，我起稿你拍板
+    scenarios: [来料异常处置, SCAR 跟催, 特采发起]
+    questions:
+      - 本周来料检验退了哪些批
+      - 帮我起一个 8D 初稿
+      - 这家供应商的历史不良记录
+    tools: [quality__trace, quality__8d, run_registered_query, create_hitl_task]
+
+  - role: pqe
+    name: 制程质量同事
+    greeting: SPC、不良分布、客诉 8D，数据我查结论你确认
+    scenarios: [SPC / CPK, 客诉 8D, 不良分析]
+    questions:
+      - 这条线的 CPK 达标吗
+      - 不良柏拉图 top 三项是什么
+      - 客诉的根因分析到哪一步了
+    tools: [spc__capability, spc__pareto, quality__8d, create_hitl_task]
+
+  - role: qa
+    name: 质量保证同事
+    greeting: 出厂检验、放行规则、口径疑问，问我
+    scenarios: [客诉 8D, 不良分析, 放行确认]
+    questions:
+      - 这批货的检验结论是什么
+      - 让步接收需要谁会签
+      - 本周客诉闭环了几起
+    tools: [quality__trace, quality__8d, run_registered_query, create_hitl_task]
+
+  - role: qd
+    name: 质量决策同事
+    greeting: 质量域态势与待你终批的事项，一屏汇总
+    scenarios: [经营异常摘要, 客诉 8D, 特采发起]
+    questions:
+      - 质量域本周有哪些待终批
+      - 各过程 CPK 达标情况
+      - 重大客诉的处理进展
+    tools: [query_metric, spc__capability, quality__8d, create_hitl_task]
+
+  - role: rdm
+    name: 研发同事
+    greeting: 项目阶段、测试记录、变更影响，随时问
+    scenarios: [项目里程碑, 测试记录汇总, 变更评估]
+    questions:
+      - 各 NPI 项目到哪个阶段了
+      - 可靠性测试结果如何
+      - 这个变更影响哪些在制型号
+    tools: [query_project_milestones, query_test_records, explore_data]
+
+  - role: rd
+    name: 研发工程同事
+    greeting: 图纸、BOM、参数版本，答到现行版
+    scenarios: [工艺问答, 变更评估, 图纸检索]
+    questions:
+      - B 型支架焊接参数用哪一版
+      - ECN-0921 改了哪些内容
+      - 旧版工艺卡还有哪些没撤换
+    tools: [run_registered_query, explore_data, doc__extract]
+
+  - role: pe
+    name: 产品工程同事
+    greeting: 型号配置、BOM 结构、替代料，问我
+    scenarios: [工艺问答, 变更评估, 替代料确认]
+    questions:
+      - 这个料号现行版本是哪一版
+      - 新旧版本差异是什么
+      - 有没有可替代的料号
+    tools: [run_registered_query, explore_data, doc__extract]
+
+  - role: ie
+    name: 工业工程同事
+    greeting: 产线平衡、工时、工艺路线，数据说话
+    scenarios: [OEE 达成, 工艺问答, 产能测算]
+    questions:
+      - 各产线节拍与瓶颈在哪
+      - 标准工时与实际的差异
+      - 插一张单进去影响哪些工单
+    tools: [query_metric, schedule__what_if, explore_data]
+
+  - role: npi
+    name: NPI 同事
+    greeting: EVT/DVT/PVT 进度与风险，一屏跟踪
+    scenarios: [项目里程碑, 试产问题, 变更评估]
+    questions:
+      - 试产发现了哪些问题
+      - 各阶段 gate 达成没有
+      - 哪些问题卡着不能进下一阶段
+    tools: [query_project_milestones, query_test_records, create_hitl_task]
+
+  - role: pm
+    name: 项目同事
+    greeting: 里程碑、跨部门阻塞、升级事项，我盯着
+    scenarios: [项目里程碑, 跨部门升级, 风险汇总]
+    questions:
+      - 本周有没有要延期的里程碑
+      - 哪些事项卡在哪个部门
+      - 需要升级处理的问题清单
+    tools: [query_project_milestones, run_registered_query, create_hitl_task]
+
+  - role: te
+    name: 测试同事
+    greeting: 测试记录、覆盖率、不良复现，查得到
+    scenarios: [测试记录汇总, 不良分析, 客诉 8D]
+    questions:
+      - 这个型号测过哪些项目
+      - 失败项集中在哪些
+      - 客诉不良能复现吗
+    tools: [query_test_records, quality__trace, run_registered_query]
+
+  - role: rdt
+    name: 可靠性同事
+    greeting: 可靠性测试与失效分析，记录可溯源
+    scenarios: [测试记录汇总, 失效分析, 客诉 8D]
+    questions:
+      - 可靠性测试结论是什么
+      - 失效样品的分析到哪步
+      - 历史同类失效有哪些
+    tools: [query_test_records, quality__trace, create_hitl_task]
+
+  - role: me
+    name: 制造工程同事
+    greeting: 工艺文件、产线导入、异常分析，问我
+    scenarios: [工艺问答, 变更评估, 不良分析]
+    questions:
+      - 这个工序的现行作业指导是哪版
+      - 导入新工艺的风险点
+      - 不良与工艺参数相关吗
+    tools: [run_registered_query, spc__capability, doc__extract]
+
+  - role: scm
+    name: 供应链同事
+    greeting: 齐套、欠料、交期风险，一次理清
+    scenarios: [齐套检查, 交期答复, 供应风险]
+    questions:
+      - 下周开工的工单料齐吗
+      - 哪些供应商交期有风险
+      - 客户那张单月底能交吗
+    tools: [supply__risk, inventory__atp, schedule__what_if, create_hitl_task]
+
+  - role: pln
+    name: 计划同事
+    greeting: 排产、插单测算、交期承诺，先算账再动手
+    scenarios: [插单评估, 齐套检查, 交期答复]
+    questions:
+      - 客户要插 800 件下周五要，能接吗
+      - 插这单影响哪些工单
+      - 各产线下周负荷如何
+    tools: [schedule__what_if, supply__risk, query_metric, create_hitl_task]
+
+  - role: mc
+    name: 物料同事
+    greeting: 库存、库龄、齐套缺口，随时可问
+    scenarios: [呆滞料盘点, 齐套检查, 库存查询]
+    questions:
+      - 超 180 天没动的料有哪些
+      - 这个料号的库存和在途
+      - 哪些料能转用在产型号
+    tools: [inventory__atp, run_registered_query, supply__risk]
+
+  - role: procm
+    name: 采购管理同事
+    greeting: 供应商全景、催交、准入稽核，我汇总
+    scenarios: [齐套催交, 供应风险, 供应商稽核]
+    questions:
+      - 各供应商交期达成如何
+      - 待催交的欠料清单
+      - 哪些供应商要安排稽核
+    tools: [supply__risk, run_registered_query, create_hitl_task]
+
+  - role: proc
+    name: 采购同事
+    greeting: 缺什么、催谁、到哪了，一次理清
+    scenarios: [齐套催交, 来料异常处置, 供应风险]
+    questions:
+      - 下周工单还缺哪些料
+      - 帮我派发催交待办
+      - 供应商回复到货时间了吗
+    tools: [supply__risk, run_registered_query, create_hitl_task]
+
+  - role: whm
+    name: 仓储管理同事
+    greeting: 库存结构、呆滞、盘点差异，一屏看全
+    scenarios: [呆滞料盘点, 盘点差异, 库存查询]
+    questions:
+      - 库存结构健康度如何
+      - 本月盘点差异有哪些
+      - 呆滞料处置建议
+    tools: [inventory__atp, run_registered_query, explore_data]
+
+  - role: wh
+    name: 仓储同事
+    greeting: 收发存、盘点、定位，随手查
+    scenarios: [呆滞料盘点, 库存查询, 收发货]
+    questions:
+      - 这个料放在哪个库位
+      - 今天收了哪些料到哪步
+      - 超龄料清单来一份
+    tools: [inventory__atp, run_registered_query, create_hitl_task]
+
+  - role: biz
+    name: 商务同事
+    greeting: 交期答复当场算，对外口径先把关
+    scenarios: [交期答复, 订单进度, 客户升级]
+    questions:
+      - SO-3108 月底能交吗
+      - 客户那张大单做到哪了
+      - 帮我起草交期回复稿
+    tools: [inventory__atp, schedule__what_if, run_registered_query, create_hitl_task]
+
+  - role: cs
+    name: 客服同事
+    greeting: 客诉受理、进度、对客回复，痕迹可查
+    scenarios: [质量追溯, 客诉 8D, 对客回复]
+    questions:
+      - 这起客诉追溯到哪一批了
+      - 同批还有哪些工单在用
+      - 帮我起草对客回复
+    tools: [quality__trace, quality__8d, create_hitl_task]
+
+  - role: finm
+    name: 财务同事
+    greeting: 成本、报价、回款，口径统一可追溯
+    scenarios: [成本核算, 报价支持, 回款跟踪]
+    questions:
+      - 这个型号的单机成本构成
+      - 报价的物料成本基准
+      - 逾期应收有哪些
+    tools: [query_metric, run_registered_query, explore_data]
+
+  - role: fin
+    name: 财务专员同事
+    greeting: 报销、差旅、发票口径，先查再答
+    scenarios: [报销咨询, 差旅标准, 发票问题]
+    questions:
+      - 差旅住宿标准是多少
+      - 这笔费用走什么科目
+      - 发票抬头怎么写
+    tools: [run_registered_query, search_knowledge]
+
+  - role: hr
+    name: 人事同事
+    greeting: 考勤、假期、入职离职，制度原文给你
+    scenarios: [考勤咨询, 假期申请, 入职离职]
+    questions:
+      - 年假怎么休
+      - 入职要办哪些手续
+      - 离职交接清单
+    tools: [search_knowledge, run_registered_query]
+
+  - role: ehs
+    name: 安环同事
+    greeting: 危化品、消防、劳保，合规先行
+    scenarios: [危化品管理, 消防检查, 劳保用品]
+    questions:
+      - 这个化学品怎么存放
+      - 动火作业要谁审批
+      - 劳保发放标准
+    tools: [search_knowledge, run_registered_query]

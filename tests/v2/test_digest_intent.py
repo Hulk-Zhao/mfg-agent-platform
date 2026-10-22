@@ -211,8 +211,14 @@ def test_frontend_quick_questions_showcase_verified_paths():
     offline = screens.split("const DEMO_QUICK_QUESTIONS = [", 1)[1].split("];", 1)[0]
     keys = [ln.strip().strip('",') for ln in offline.splitlines()
             if ln.strip().startswith('"')]
-    assert len(keys) == 5, f"离线引导问题应保持 5 条（回放覆盖），实为 {len(keys)}"
+    # 2026-10-22 R5：交期答复回放入库（第 6 条）——纪律不变：每条都有预置回放
+    assert len(keys) == 6, f"离线引导问题应保持 6 条（回放覆盖），实为 {len(keys)}"
     for q in keys:
         assert f'"{q}":' in demo, f"离线引导问题缺少预置回放：{q}"
-    # 渲染时按在线/离线切换（不能写死成一套）
-    assert "ctx.api.online() ? QUICK_QUESTIONS : DEMO_QUICK_QUESTIONS" in screens
+    # 渲染时按在线/离线切换（不能写死成一套）；离线保持 6 条回放覆盖不变。
+    # 在线侧 2026-10-22 D1 起优先当前同事的推荐问题（colleague.yaml），
+    # 无同事配置（目录加载失败/离线回落）时必须回落平台亮点清单——
+    # 两个方向都要钉：既防止写死一套，也防止同事层故障把引导问题清空。
+    assert "online ? chatQuickQuestions(ctx) : DEMO_QUICK_QUESTIONS" in screens
+    assert "function chatQuickQuestions(ctx)" in screens
+    assert "return QUICK_QUESTIONS;" in screens

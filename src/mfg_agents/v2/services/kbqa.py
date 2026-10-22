@@ -2,6 +2,12 @@
 
 链路（``answer`` 出口即统一契约）：
 
+0. **业务知识前置分流**（R4/D5，2026-10-22）：``kbqa_business`` 词面判定
+   「像业务知识问题」（工艺参数/BOM/ECN/图纸版本…）→ 先查知识轨
+   （``knowledge_store``：BOM 版本 + ECN），命中返回 ``channel=business``；
+   落空则**回落制度链路**（误判只损失一次本地查询）。根因与词表纪律见
+   ``kbqa_business`` 模块 docstring——``kbqa_intent._DOMAIN_WORDS`` 收录
+   工艺/ECN 词使业务问题必进制度语料 RAG 兜底，UI 双 tab 不解决；
 1. **L1 FAQ 前置**（``kbqa_faq_match.FAQMatcher``）：``kbqa_policy`` 制度主数据
    ∪ ``kbqa_faq`` 晋升对，词面加权计分 + 阈值/margin 双闸。命中则**不调 LLM、
    不碰 Milvus**，直接回权威制度正文（``channel=faq``）；
@@ -35,7 +41,7 @@ from ...common.kbqa_seed import DEPT_CN, DEPT_ORDER
 from ...common.llm_factory import get_llm, llm_available
 from ...common.rag_tools import search_kb
 from ..core import cache
-from . import kbqa_intent, kbqa_store
+from . import kbqa_business, kbqa_intent, kbqa_store, knowledge_store
 from .kbqa_faq_match import FAQMatcher
 
 logger = logging.getLogger(__name__)
@@ -55,6 +61,7 @@ CHANNEL_RAG = "rag"                    # L2 知识库检索生成（含降级回
 CHANNEL_RAG_UNAVAILABLE = "rag_unavailable"  # L2 整层不可用（如 Milvus 挂）
 CHANNEL_MISS = "miss"                  # L1/L2 都未检索到相关内容
 CHANNEL_DIRECT = "direct"              # 意图路由 → 约束 LLM 直答（无出处）
+CHANNEL_BUSINESS = "business"          # R4：业务知识轨（BOM 版本 + ECN）
 
 _SYSTEM_PROMPT = """你是企业制度问答助手。根据以下制度片段回答员工问题。
 规则：
@@ -170,15 +177,109 @@ def _log_query(session_id: str, query: str, channel: str,
                          latency_ms=latency_ms)
 
 
+# ---------------------------------------------------------------- 业务知识轨（R4）
+
+
+def _business_cache_key(query: str, version: str) -> str:
+    """业务知识答案缓存键：``mfg:bk:v1:{knowledge_version}:{sha1(query)}``。
+
+    D6：命名空间用 ``knowledge_store.version_stamp()``（ECN/BOM 任何写
+    操作改戳 → 旧键自然不可达）——**绝不能用 faq_version**，否则 ECN
+    生效后「答到现行版本」被旧缓存打穿，酿成按旧版参数做报废一批的事故。
+    """
+    from .kbqa_faq_match import normalize
+
+    raw = f"{normalize(query)}|{version}"
+    return "mfg:bk:v1:" + hashlib.sha1(raw.encode("utf-8")).hexdigest()
+
+
+def _business_contract(hits: list[dict[str, Any]],
+                       stamp: str) -> dict[str, Any] | None:
+    """（内部）业务知识轨统一契约；无命中返回 None（由 answer 回落制度链）。
+
+    领衔规则：有 BOM 命中时以**现行 BOM** 领衔（参数类问法要的是现行版
+    与参数值），ECN 记录作佐证进 sources——变更记录标题词多、裸打分常
+    高于 BOM，但直接拿它领衔会答非所问（「哪一版」被答成「改了什么」）。
+    """
+    if not hits:
+        return None
+    bom_hits = [h for h in hits if h["kind"] == "bom"]
+    top = bom_hits[0] if bom_hits else hits[0]
+    if top["kind"] == "bom":
+        params = top.get("params") or {}
+        param_text = "；".join(f"{k} {v}" for k, v in params.items()
+                              if k != "依据")
+        basis = params.get("依据") or ""
+        answer = (f"{top['part_no']}（{top.get('part_name') or ''}）"
+                  f"现行版本 {top['version']}"
+                  + (f"（{top['ecn_id']} 生效）" if top.get("ecn_id") else "")
+                  + f"：{param_text}。")
+        if basis:
+            answer += f"依据：{basis}。"
+        stale = [h for h in hits
+                 if h["kind"] == "bom" and h.get("status") == "superseded"]
+        if stale:
+            names = "、".join(f"{s['part_no']} {s['version']}" for s in stale)
+            answer += f"注意：{names} 已作废旧版，对应工艺卡尚未撤换，建议派待办处理。"
+        category = {"name": "工艺知识"}
+    else:
+        answer = (f"变更记录 {top['ecn_id']}：{top.get('title') or ''}"
+                  f"（涉及料号 {top.get('part_no') or '—'}，"
+                  f"生效日期 {top.get('effective_date') or '—'}）。")
+        category = {"name": "工程变更"}
+    sources = [{
+        "label": h["label"], "source": h["label"], "segment": 0,
+        "dept_cn": category["name"], "score": h["score"],
+    } for h in hits]
+    return _contract(
+        answer=answer, channel=CHANNEL_BUSINESS,
+        tags=[{"text": f"📄 {h['label']}", "cls": "src"} for h in hits],
+        sources=sources, category=category, degraded=False,
+        confidence=top["score"], faq_version=stamp)
+
+
+def _answer_business(query: str, *, started: float) -> dict[str, Any] | None:
+    """（内部）业务知识轨：先查知识轨，命中返回契约；无命中/故障返回 None
+    （由 ``answer`` 回落制度链路）。"""
+    try:
+        repo = knowledge_store.get_knowledge_repository()
+        stamp = repo.version_stamp()
+    except Exception as exc:  # noqa: BLE001 - 知识轨故障 → 回落制度链
+        logger.warning("[kbqa] 业务知识轨不可用，回落制度链路: %s", exc)
+        return None
+    key = _business_cache_key(query, stamp)
+    result = cache.get_or_compute(
+        key, KBQA_CACHE_TTL_S,
+        lambda: _business_contract(repo.search_business(query), stamp))
+    if result is None:
+        return None
+    result["latency_ms"] = int((time.time() - started) * 1000)
+    return result
+
+
 def answer(query: str, top_k: int = 3, session_id: str = "") -> dict[str, Any]:
-    """企业制度问答入口：L1 前置 → 意图路由 → L2 RAG/约束直答，返回统一契约。
+    """企业制度问答入口：业务知识前置分流 → L1 前置 → 意图路由 → L2 RAG/约束直答。
 
     L1 数据层（库）不可用时整层跳过而非报错——FAQ 是加速层，不是依赖。
     意图路由（DESIGN-2）零延迟词面分流：域内词命中保 RAG 全链路（要出处），
     其余走约束直答（不调 search_kb）；``KBQA_DIRECT_ENABLED=false`` 可整体
     关掉直答回落纯 RAG 行为。
+
+    业务知识前置分流（R4/D5）：词面判定「像业务知识问题」→ 先查知识轨
+    （BOM 版本 + ECN），命中即返回（channel=business）；落空回落制度链路。
+    误判代价仅一次本地查询，漏判代价是制度兜底话术——宁宽勿窄。
     """
     started = time.time()
+
+    # ---- R4/D5：业务知识前置分流（服务端，先于 L1 与意图路由）----
+    if kbqa_business.is_business_query(query):
+        biz = _answer_business(query, started=started)
+        if biz is not None:
+            _log_query(session_id, query, CHANNEL_BUSINESS,
+                       confidence=biz.get("confidence"), top_score=None,
+                       latency_ms=biz["latency_ms"])
+            return biz
+        # 知识轨无命中 → 继续走制度链路（词表宁宽勿窄的兑现）
 
     # ---- L1：FAQ 前置（语料/版本戳每次现取，sub-ms；库挂则跳过）----
     version = ""

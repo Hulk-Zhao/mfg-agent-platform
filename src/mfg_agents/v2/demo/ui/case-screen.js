@@ -517,8 +517,6 @@
       answer: null,
       // 最近一次提问原文（供 FR-09"登记本体词条"预填；前端不推测，直接用用户问的话）
       lastQuestion: "",
-      // 深链待提问（数据速查「问案例」带过来的问题）：有会话则自动发起，无会话则先留在输入条
-      pendingAsk: "",
       // 提问对话窗口：多轮"问-答"历史（时间序渲染，最新在底部；最多保留 8 轮）
       askLog: [],
       // 回答收缩：null = 自动（只有最新一轮展开，上方历史全部收缩成一行摘要）；
@@ -581,18 +579,6 @@
       if (want) {
         sessionStorage.removeItem("cases_prefill");
         S.query = want;
-      }
-    } catch (e) { /* 隐私模式忽略 */ }
-
-    // 深链：数据速查「问案例」写入 cases_ask_prefill → 回到大对话框问答主视图并发起提问。
-    // 消费一次即从 sessionStorage 清除；问题本体留在 S.pendingAsk，由 bind 末尾决定何时真正发问。
-    try {
-      const wantAsk = sessionStorage.getItem("cases_ask_prefill");
-      if (wantAsk) {
-        sessionStorage.removeItem("cases_ask_prefill");
-        S.tab = "";
-        S.view = "ask";
-        S.pendingAsk = wantAsk;
       }
     } catch (e) { /* 隐私模式忽略 */ }
 
@@ -2122,7 +2108,7 @@
     if (S.asking) body += pendingCard();
     return '<div class="case-chat" id="case-chat">' + body + "</div>"
       + '<div class="case-inputbar">'
-      + '<input id="case-question" class="case-input case-input-ask" value="' + UI.esc(S.pendingAsk || "") + '" placeholder="例如：锡膏印刷偏移通常怎么处置？" autocomplete="off">'
+      + '<input id="case-question" class="case-input case-input-ask" placeholder="例如：锡膏印刷偏移通常怎么处置？" autocomplete="off">'
       + '<button class="case-btn-ask case-send" id="case-ask" title="提问">' + SEND_ICON + "</button>"
       + "</div>";
   }
@@ -3467,16 +3453,6 @@
           };
           repaint();
         });
-    }
-
-    // 深链待提问（数据速查「问案例」）：已建立案例会话就直接发起一次智能问答；
-    // 尚无会话则问题先留在输入条里（左栏建会话后任意一次 repaint 会自动补发）。
-    // 位置放在 bind 末尾是有意的：doAsk 会同步 repaint（重跑整个 bind），
-    // 放在中段会让外层 bind 继续往新 DOM 上把同一批处理器再绑一遍。
-    if (S.pendingAsk && S.token) {
-      const pendingQ = S.pendingAsk;
-      S.pendingAsk = null;
-      doAsk(pendingQ);
     }
   }
 

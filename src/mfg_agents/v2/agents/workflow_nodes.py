@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+from ..services import workflow_scope
 from .hitl import _flow_snapshot
 
 __all__ = ["make_workflow_handler"]
@@ -56,9 +57,13 @@ def make_workflow_handler(engine: Any, notifier: Any) -> Callable:
         context["flow"] = _flow_snapshot(ctx, task.step_id, title, kind="workflow")
         sink.emit({"type": "tool_start", "tool": "工作流",
                    "detail": f"创建工单：{title}（{level}，SLA {sla_hours:.0f}h）"})
+        # R9：作业工单写行归属（可归一化的责任岗位）；HITL 工单不在此路径。
+        owner_scope = workflow_scope.owner_scope_from_assignees(
+            engine.permission_registry, assignees)
         wf_task = engine.create_task(
             wf_id=wf_id, title=title, context=context,
-            assignees=assignees, priority=level, sla_hours=sla_hours)
+            assignees=assignees, priority=level, sla_hours=sla_hours,
+            owner_scope=owner_scope)
         wf_task = engine.advance(wf_task.task_uid, "start",
                                  actor="orchestrator", comment=f"{title}启动")
         body = (f"{title}\n请相关角色处理（SLA {sla_hours:.0f}h，超时自动升级）")

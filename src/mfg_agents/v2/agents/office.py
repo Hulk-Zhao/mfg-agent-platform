@@ -938,10 +938,14 @@ class OfficeAssistantAgent:
                                          seed=f"{title}|{prompt}"),
             }
             assignee = _OFFICE_ASSIGNEE.get(category, "行政专员")
+            # R9：办公办理按归口岗位写行归属；归一化失败 → 空域（保持旧可见性）
+            from ..services import workflow_scope
+            owner_scope = workflow_scope.owner_scope_from_assignees(
+                wf.permission_registry, [assignee])
             task = wf.create_task(
                 wf_id=f"office_{category}", title=title[:80], context=context,
                 assignees=[assignee], priority="P2", hitl=True,
-                hitl_prompt=prompt[:300])
+                hitl_prompt=prompt[:300], owner_scope=owner_scope)
             return {"task_uid": task.task_uid, "status": task.status,
                     "assignee": assignee,
                     "note": f"已创建人工确认工单，等待{assignee}处理"}

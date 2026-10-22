@@ -96,6 +96,8 @@ docs/办公助手Agent-竞品调研与植入评估.md
 docs/我的看板-竞品调研与下钻设计.md
 docs/订单履约看板-竞品调研与L2L3设计.md
 docs/制造生态链-demo-AIGC开发顺序计划-v1.0.md
+docs/参考图
+
 
 # ---- Local debug scratch (QA runs, temp probes, logs) ----
 # 一律锚定仓库根目录（/ 前缀）：src/ 下的 _helper.py 之类是正常文件，不能误伤
@@ -106,3 +108,6 @@ tmp_sm/
 /_*.txt
 /_dbg_*.py
 /_smoke*.py
+
+# ---- R13 连接器回写审计台账（运行时生成，与治理库同目录）----
+writeback_outbox.jsonl

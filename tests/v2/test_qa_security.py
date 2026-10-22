@@ -175,12 +175,15 @@ class TestUnionProbing:
 class TestTableLevelPermission:
     @pytest.mark.parametrize("sql,ctx,expected_table", [
         ("SELECT * FROM customer_complaint", MFG_CTX, "customer_complaint"),
-        ("SELECT * FROM material_batch", WAREHOUSE_CTX, "material_batch"),
+        # 2026-10-22 并发授权调整：warehouse 已可读 material_batch（超龄料/收料
+        # 进度是仓储本职），原 warehouse 拒绝断言改为 manufacturing（仍无权限）。
+        ("SELECT * FROM material_batch", MFG_CTX, "material_batch"),
         # V3.1 注：production_output / line_stop_event 已对 quality 开放
         # （质量分析 FPY/良率本职需要），原两行禁止断言移除，正向锁定见下一条
         ("SELECT * FROM quality_defect", WAREHOUSE_CTX, "quality_defect"),
         ("SELECT * FROM shipment", MFG_CTX, "shipment"),
-        ("SELECT * FROM equipment_log", QUALITY_CTX, "equipment_log"),
+        # R7（2026-10-22）：equipment_log 已对 quality 开放（追溯三路之一），
+        # 原先「质量被设备日志拒绝」的断言随之移除，正向锁定见下条。
         ("SELECT * FROM shipment", QUALITY_CTX, "shipment"),
         ("SELECT * FROM inventory", QUALITY_CTX, "inventory"),
     ])
@@ -189,9 +192,14 @@ class TestTableLevelPermission:
             SQLAuditor.audit(sql, ctx)
 
     def test_quality_can_read_production_and_linestop(self):
-        """V3.1 有意开放：质量域可读产出与停线表（FPY/良率分析本职需要）。"""
+        """V3.1 有意开放：质量域可读产出与停线表（FPY/良率分析本职需要）。
+
+        R7（2026-10-22）：equipment_log 同步开放——质量追溯三路并查的
+        「设备状态」一路必须能按批次产线取设备日志。
+        """
         for sql in ("SELECT * FROM production_output",
-                    "SELECT * FROM line_stop_event"):
+                    "SELECT * FROM line_stop_event",
+                    "SELECT * FROM equipment_log"):
             SQLAuditor.audit(sql, QUALITY_CTX)  # 不抛即通过
 
     def test_login_persona_scopes_match_acl(self):
@@ -216,6 +224,9 @@ class TestTableLevelPermission:
         SALES_CTX = {"user_id": "u-biz", "dept": "sales", "roles": ["sales"]}
         SQLAuditor.audit("SELECT * FROM shipment", SALES_CTX)
         SQLAuditor.audit("SELECT * FROM customer_complaint", SALES_CTX)
+        # R5 真机回归（2026-10-22）：业务经理答对客交期必须能读产出聚合，
+        # 否则 draft_delivery_reply 永远返回 NO_DATA（实测命中）。
+        SQLAuditor.audit("SELECT * FROM production_output", SALES_CTX)
 
     def test_unknown_table_blocked(self):
         with pytest.raises(SQLAuditError, match="未注册"):
@@ -529,7 +540,10 @@ class TestFallbackContract:
         assert result.provenance["blocked"]
 
     def test_rejected_queries_carry_audit_reason(self, service):
-        result = service.query_registered("supply_batches_today", {},
+        # 2026-10-22：supply_batches_today 已对 warehouse 开放（仓储本职）；
+        # 改用 warehouse 仍无权的事实（quality_defect）锁定拦截原因透出。
+        result = service.query_registered("quality_trace_by_batch",
+                                          {"batch_no": "BATCH-A-1008"},
                                           WAREHOUSE_CTX)
         assert "审核拦截" in result.warnings[0]
         assert result.provenance["channel"] == "registered"

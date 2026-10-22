@@ -18,10 +18,12 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import queue
 import threading
 import time
 import uuid
+from anyio import to_thread
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Mapping, Optional
@@ -44,6 +46,7 @@ from ..services import kbqa as kbqa_service
 from ..services import kbqa_store
 from ..services import workflow_scope
 from ..services import report_service, report_store
+from ..services.knowledge_store import ensure_demo_seed
 from .config_demo import DEMO_LABEL, DEMO_MODE, assert_isolated
 from .loader import (
     OBJECTS,
@@ -70,8 +73,32 @@ logger = logging.getLogger(__name__)
 async def _lifespan(_: FastAPI):
     """启动钩子：后台预热 KB 检索（消首问冷启动），不阻塞服务就绪。"""
     assert_isolated()  # 演示实例隔离自检：配置含外部连接特征即拒绝启动
+    # R4：业务知识演示种子（BOM 版本 + ECN）幂等预置。失败不阻塞启动——
+    # 知识轨不可用时业务问答回落制度链路；治理库配置错误会在治理端点
+    # 首次使用时以 assert_sqlite_backed 的规范信息 fail-fast。
+    try:
+        ensure_demo_seed()
+    except Exception as exc:  # noqa: BLE001 - 种子失败可降级，不堵服务就绪
+        logger.error("[knowledge] 演示种子预置失败（业务问答将回落制度链路）: %s", exc)
+    # 线程池扩容：anyio 默认 40 槽。同步端点（/api/v2/query 等）整请求占一槽，
+    # 大部分时间在等外部 LLM 回包（IO）。GPU 切换后检索仅 ~66ms/次，
+    # 40 槽成为并发会话上限——扩到 200 对齐 SaaS 小型规模目标。
+    to_thread.current_default_thread_limiter().total_tokens = 200
     threading.Thread(target=_preheat_kb, name="kbqa-preheat", daemon=True).start()
+    # R6 遗留：催交 SLA 定时扫描（超时未闭环 → escalated）。默认 10 分钟一轮，
+    # MFG_FOLLOWUP_SLA_SWEEP_S=0 可关闭；扫描失败只告警，不影响服务。
+    sweeper: Optional[asyncio.Task] = None
+    sweep_s = _followup_sweep_seconds()
+    if sweep_s > 0:
+        sweeper = asyncio.create_task(_followup_sla_loop(sweep_s),
+                                      name="followup-sla-sweeper")
     yield
+    if sweeper is not None:
+        sweeper.cancel()
+        try:
+            await sweeper
+        except asyncio.CancelledError:
+            pass
 
 
 def _preheat_kb() -> None:
@@ -88,6 +115,37 @@ def _preheat_kb() -> None:
         logger.info("[kbqa] 预热完成：search_kb 就绪（%.1fs）", time.time() - t0)
     except Exception as exc:  # noqa: BLE001 - 预热失败必须可绕过
         logger.warning("[kbqa] 预热失败（首问将冷启动）: %s", exc)
+
+
+def _followup_sweep_seconds() -> float:
+    """催交 SLA 扫描间隔（秒）：``MFG_FOLLOWUP_SLA_SWEEP_S``，0/负数 = 关闭。
+
+    非法数值回落默认 600s——配置写错不该让服务起不来。
+    """
+    raw = (os.getenv("MFG_FOLLOWUP_SLA_SWEEP_S", "600") or "").strip()
+    try:
+        return float(raw or 600)
+    except ValueError:
+        return 600.0
+
+
+async def _followup_sla_loop(interval: float) -> None:
+    """周期扫描超 SLA 的催交单并升级（``escalate_overdue`` 同步 IO 走线程池）。"""
+    from ..services import procurement_followup as followup_svc
+
+    while True:
+        try:
+            await asyncio.sleep(interval)
+        except asyncio.CancelledError:
+            return
+        try:
+            rows = await asyncio.to_thread(followup_svc.escalate_overdue)
+            if rows:
+                logger.info("[followup] SLA 扫描升级 %s 条催交单", len(rows))
+        except asyncio.CancelledError:
+            return
+        except Exception as exc:  # noqa: BLE001 - 扫描失败不拖垮服务
+            logger.warning("[followup] SLA 扫描失败（下一轮重试）: %s", exc)
 
 
 app = FastAPI(title="mfg-agent-platform v2", version="2.0.0", lifespan=_lifespan)
@@ -203,6 +261,13 @@ def get_orchestrator() -> V2Orchestrator:
     if _orchestrator is None:
         _orchestrator = create_default_orchestrator()
     return _orchestrator
+
+
+class AgingReturnRequest(BaseModel):
+    """退供评审申请（R11）：超龄料退供涉及资金回收/折价，必须人工确认。"""
+    part_nos: list[str]
+    days: int = 180
+    note: str = ""
 
 
 class QueryRequest(BaseModel):
@@ -960,8 +1025,10 @@ def api_workflow_pending(request: Request,
         effective, effective_keys = token_roles, token_keys
 
     # 不能用 engine.pending_hitl()：它按 action_for 过滤，只留 mine，会丢掉 domain。
+    # R9：行归属按**权威令牌身份**裁决；role 只能收窄角色集合，不能改身份。
     pairs = workflow_scope.visible_tasks(
-        engine, engine.list_tasks(status="waiting_hitl"), effective)
+        engine, engine.list_tasks(status="waiting_hitl"), effective,
+        user_ctx={**identity, "roles": list(effective)})
 
     data: list[dict[str, Any]] = []
     mine = domain = 0
@@ -1006,7 +1073,8 @@ def api_workflow_task(task_id: str, request: Request) -> dict[str, Any]:
         _raise_workflow_http(exc)
         raise  # pragma: no cover - _raise_workflow_http 必定抛出
     if workflow_scope.classify(
-            engine, task, identity.get("roles") or []) == workflow_scope.VIS_HIDDEN:
+            engine, task, identity.get("roles") or [],
+            user_ctx=identity) == workflow_scope.VIS_HIDDEN:
         raise HTTPException(status_code=404, detail="工单不存在")
     return {"code": 0, "data": task.to_dict(), "message": "ok"}
 
@@ -1246,6 +1314,129 @@ def api_agents_configs() -> dict[str, Any]:
     return {"code": 0,
             "data": {"agents": agents,
                      "tools": [*AGENT_TOOLS_META, *OFFICE_TOOLS_META]},
+            "message": "ok"}
+
+
+@app.get("/api/v2/metric-dict")
+def api_metric_dict(request: Request,
+                    q: str = Query("", description="按指标名/口径/关键词搜索"),
+                    source: str = Query("", description="来源过滤：registered_query / metric_library / dashboard_kpi"),
+                    entry_id: str = Query("", alias="id", description="词条 id（query.* / metric.* / board.*）"),
+                    ) -> dict[str, Any]:
+    """数据口径词典（R8 · D12 三源汇总，只读）。
+
+    三源：``queries.yaml`` 注册查询 + ``metrics/*.yaml`` 指标库 +
+    ``dashboard.DRILL_DEFS`` 看板 KPI。**不执行任何查询**；每条带
+    ``id / definition / refs``，覆盖说明明确各源条数，避免「只汇总一源」的新双源。
+    登录即可读——帮助中心对全员开放；不按岗位裁剪（口径本身不是业务数据）。
+    """
+    _require_identity(request)
+    from ..services import metric_dict as metric_dict_svc
+
+    if entry_id:
+        entry = metric_dict_svc.get_entry(entry_id)
+        return {"code": 0,
+                "data": {"entry": entry, "found": entry is not None,
+                         "note": "" if entry else f"未找到口径 {entry_id!r}（不编造）"},
+                "message": "ok"}
+
+    bundle = metric_dict_svc.build_dictionary()
+    entries = metric_dict_svc.search_dictionary(q, source)
+    return {"code": 0,
+            "data": {**bundle, "entries": entries, "count": len(entries),
+                     "filters": {"q": q, "source": source}},
+            "message": "ok"}
+
+
+@app.post("/api/v2/aging/return-request")
+def api_aging_return_request(req: AgingReturnRequest,
+                             request: Request) -> dict[str, Any]:
+    """R11：超龄料退供评审申请（Agent/人只发起，动钱必须人工点头）。
+
+    - 身份来自令牌；只允许库存相关岗位/治理岗位发起（不按看板裁剪数据行）；
+    - 重新用注册查询校验所选料号确实超龄（不信客户端传的库龄/金额）；
+    - 落 ``hitl.disposition`` 工单（**interim**：当前无专属动钱槽位，Q7 未拍板），
+      不自动选定动作、不自动放行；由持有 propose 的治理岗位选定退供/转用/报废。
+    """
+    from ..contracts.permissions import get_permission_registry
+    from ..services.aging_digest import RETURN_ACTIONS
+
+    identity = _require_identity(request)
+    registry = get_permission_registry()
+    role_keys = set(registry.normalize_roles(identity.get("roles") or []))
+    allowed = {"warehouse", "warehouse_manager", "material_control", "procurement",
+               "supply_chain_manager", "gm", "coordinator", "quality",
+               "qa_manager", "sqe", "pqe", "quality_director", "finance_manager"}
+    if not (role_keys & allowed):
+        raise HTTPException(
+            status_code=403,
+            detail={"message": "当前岗位不能发起退供评审",
+                    "allowed_roles": sorted(allowed)})
+
+    parts = [str(p).strip() for p in (req.part_nos or []) if str(p).strip()]
+    if not parts:
+        raise HTTPException(status_code=400, detail="至少选择一个料号")
+    parts = parts[:50]
+
+    t2s = get_orchestrator().runtime.text2sql
+    days = max(1, int(req.days or 180))
+    qr = t2s.query_registered("material_aging_over_days", {"days": days},
+                              user_ctx=identity)
+    if qr.fallback or any("审核拦截" in str(w) for w in (qr.warnings or [])):
+        raise HTTPException(
+            status_code=403,
+            detail={"message": "没有材料库存读取权限，不能发起退供评审",
+                    "reason": "；".join(map(str, qr.warnings or []))})
+    wanted = set(parts)
+    # 权限校验已通过（qr 走 ACL/脱敏）；工单 context 是**治理侧事实**，
+    # 供应商/单价不应因发起人岗位（如仓储）被脱敏——用数据注册表取原始行，
+    # 只写入治理库供采购/质量/财务会签，不回传给发起人。
+    try:
+        raw_rows = get_orchestrator().runtime.data_registry.run_query(
+            "material_aging_over_days", {"days": days})
+    except Exception:  # noqa: BLE001 - 原始行取不到时退回已授权行（供应商可能脱敏）
+        raw_rows = qr.rows or []
+    rows = [dict(r) for r in raw_rows
+            if str(r.get("part_no") or "") in wanted]
+    if not rows:
+        raise HTTPException(
+            status_code=404,
+            detail=f"所选料号均未达到库龄 ≥ {days} 天（不按客户端声明放行）")
+
+    items = [{"part_no": r.get("part_no"), "part_name": r.get("part_name"),
+              "supplier": r.get("supplier"),
+              "on_hand_qty": int(float(r.get("on_hand_qty") or 0)),
+              "age_days": int(float(r.get("age_days") or 0)),
+              "value": round(float(r.get("on_hand_qty") or 0)
+                             * float(r.get("unit_cost") or 0), 2)}
+             for r in rows]
+    total_value = round(sum(i["value"] for i in items), 2)
+    engine = _workflow_engine()
+    task = engine.create_task(
+        wf_id="hitl_disposition",
+        title=f"退供评审（超龄料 {len(items)} 条 · 约 ¥{total_value:,.0f}）",
+        context={
+            "slot": "disposition", "kind": "disposition", "origin": "aging_return",
+            "days": days, "part_nos": [i["part_no"] for i in items],
+            "items": items, "total_value": total_value,
+            "reason": (f"库龄 ≥ {days} 天的物料退供/转用/报废评审；"
+                       "涉及资金回收或折价，必须人工确认（interim 槽位：disposition）"),
+            "note": str(req.note or ""),
+            "actions": RETURN_ACTIONS,
+        },
+        assignees=["采购", "财务", "质量"], priority="P1", sla_hours=8,
+        hitl=True,
+        hitl_prompt="超龄料退供涉及资金回收/折价：请治理岗位选定处置动作并完成会签")
+    return {"code": 0,
+            "data": {
+                "task_uid": task.task_uid, "status": task.status,
+                "slot": task.slot, "wf_id": task.wf_id,
+                "count": len(items), "part_nos": [i["part_no"] for i in items],
+                "total_value": total_value, "days": days, "interim": True,
+                "note": ("已创建退供评审工单（写治理轨）。当前无专属「动钱」槽位，"
+                         "interim 复用来料处置会签链；工单待持有 propose 的治理岗位"
+                         "选定动作，Agent/发起人不会自动放行。"),
+            },
             "message": "ok"}
 
 
@@ -1678,6 +1869,70 @@ def api_governance_permissions() -> dict[str, Any]:
     from ..contracts.permissions import get_permission_registry
 
     return {"code": 0, "data": get_permission_registry().describe(),
+            "message": "ok"}
+
+
+@app.get("/api/v2/colleagues")
+def api_colleagues() -> dict[str, Any]:
+    """岗位 AI 同事能力面目录（D1/R2：前端同事切换器消费 colleague.yaml）。
+
+    与 governance/permissions 同范式：声明式 YAML 的只读快照，前端不内嵌
+    第二份。role id 只准是前端 ROLES 的 31 岗位 id（守卫测试
+    tests/v2/test_colleague_yaml.py）——治理能力仍走 permissions.yaml。
+    """
+    from pathlib import Path
+
+    import yaml
+
+    path = Path(__file__).resolve().parent.parent / "data" / "colleague.yaml"
+    try:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except Exception as exc:  # noqa: BLE001 - 配置错误显式 500，不静默空目录
+        raise HTTPException(
+            status_code=500,
+            detail=f"colleague.yaml 加载失败: {exc}") from exc
+    colleagues = [c for c in (raw.get("colleagues") or []) if isinstance(c, dict)]
+    return {"code": 0,
+            "data": {"colleagues": colleagues, "count": len(colleagues),
+                     "source": "colleague.yaml"},
+            "message": "ok"}
+
+
+@app.get("/api/v2/governance/gates")
+def api_governance_gates() -> dict[str, Any]:
+    """HITL 闸门理由目录（R3：审批中心「为什么必须人确认」的产品语义层）。
+
+    与 permissions（谁能签）正交：本端点回答「这个槽位为什么必须人工在环」。
+    key 集合必须与 permissions.yaml 的 slots 一致（守卫测试双向钉）——
+    审批卡透出的闸门理由不许出现权限目录里不存在的槽位。
+    """
+    from pathlib import Path
+
+    import yaml
+
+    from ..contracts.permissions import get_permission_registry
+    from ..services.workflow import GOVERNANCE_SLOTS
+
+    path = Path(__file__).resolve().parent.parent / "data" / "gate_reasons.yaml"
+    try:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except Exception as exc:  # noqa: BLE001 - 配置错误显式 500
+        raise HTTPException(
+            status_code=500,
+            detail=f"gate_reasons.yaml 加载失败: {exc}") from exc
+    gates = [g for g in (raw.get("gates") or []) if isinstance(g, dict)]
+    declared = {str(g.get("key") or "") for g in gates}
+    drift = declared.symmetric_difference(set(GOVERNANCE_SLOTS))
+    if drift:
+        # 双目录漂移是配置错误：审批卡会出现「有槽位没理由」或「有理由没槽位」
+        raise HTTPException(
+            status_code=500,
+            detail=f"gate_reasons.yaml 与 GOVERNANCE_SLOTS 不一致: {sorted(drift)}")
+    known_classes = {str(g.get("gate_class") or "") for g in gates}
+    return {"code": 0,
+            "data": {"gates": gates, "count": len(gates),
+                     "gate_classes": sorted(known_classes),
+                     "source": "gate_reasons.yaml"},
             "message": "ok"}
 
 
@@ -2215,6 +2470,140 @@ class SiteBoardFeedbackRequest(BaseModel):
     """现场处置闭环请求：处置结论**必填**（空理由不闭环，与驳回同纪律）。"""
 
     feedback: str = ""
+
+
+class FollowupDispatchRequest(BaseModel):
+    """齐套催交派发请求（R6）：工单集标签必填，缺口由服务端同源查询组装。"""
+
+    work_order_set: str = ""
+    limit: int = 20
+
+
+class FollowupTransitionRequest(BaseModel):
+    """催交状态流转：reply（供应商回复）/ arrival（到货确认）/ close / escalate。"""
+
+    action: str = ""
+    note: str = ""
+    arrival_qty: Optional[float] = None
+
+
+def _followup_envelope(ctx: dict[str, Any], rows: list[dict[str, Any]],
+                       **extra: Any) -> dict[str, Any]:
+    """催交统一信封：带库域与「演示回写」事实（前端据此渲染不可关徽标）。"""
+    from ..services import procurement_followup as followup_svc
+
+    _, scope = followup_svc.resolve_followup_db()
+    data: dict[str, Any] = {
+        "rows": list(rows),
+        "db_scope": scope,
+        "demo_writeback": scope == "demo",
+        "writeback_label": ("演示回写（状态存演示治理库，未写回 ERP）"
+                            if scope == "demo" else "治理轨状态（未写回 ERP）"),
+        **extra,
+    }
+    return {"code": 0, "data": data, "message": "ok",
+            "scope": {"dashboard": "orders", "roles": list(ctx["roles"]),
+                      "masked": []}}
+
+
+@app.get("/api/v2/followups/gaps")
+def api_followup_gaps(request: Request, limit: int = Query(20)) -> dict[str, Any]:
+    """缺口清单预览（料号 / 缺口数 / 供应商 / 催交人）——派发前先看数。"""
+    from ..services import procurement_followup as followup_svc
+
+    ctx = _scope_guard(request, "orders")
+    t2s = get_orchestrator().runtime.text2sql
+
+    def _run(name: str, params: dict) -> list[dict]:
+        qr = t2s.query_registered(name, params or {}, user_ctx=ctx)
+        if qr.fallback or any("审核拦截" in str(w) for w in (qr.warnings or [])):
+            raise RuntimeError("；".join(map(str, qr.warnings or [])) or qr.fallback)
+        return qr.rows or []
+
+    try:
+        plan = followup_svc.build_followup_gaps(_run, limit=limit)
+    except followup_svc.FollowupDataError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return _followup_envelope(ctx, [], **plan)
+
+
+@app.get("/api/v2/followups")
+def api_followups(request: Request,
+                  status: str = Query(""),
+                  work_order_set: str = Query("")) -> dict[str, Any]:
+    """催交跟踪清单：状态机可见（按工单集 / 状态筛选）。"""
+    from ..services import procurement_followup as followup_svc
+
+    ctx = _scope_guard(request, "orders")
+    try:
+        rows = followup_svc.list_followups(
+            status=(status or "").strip() or None,
+            work_order_set=(work_order_set or "").strip() or None)
+    except followup_svc.FollowupError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    summary: dict[str, int] = {}
+    for row in rows:
+        summary[str(row.get("status"))] = summary.get(str(row.get("status")), 0) + 1
+    return _followup_envelope(ctx, rows, summary=summary)
+
+
+@app.post("/api/v2/followups/dispatch")
+def api_followup_dispatch(request: Request,
+                          req: FollowupDispatchRequest) -> dict[str, Any]:
+    """一键派发：缺口清单 → draft → dispatched（幂等键料号×供应商×工单集）。"""
+    from ..services import procurement_followup as followup_svc
+
+    ctx = _scope_guard(request, "orders")
+    work_order_set = (req.work_order_set or "").strip()
+    if not work_order_set:
+        raise HTTPException(status_code=400, detail="缺少工单集 work_order_set")
+    t2s = get_orchestrator().runtime.text2sql
+
+    def _run(name: str, params: dict) -> list[dict]:
+        qr = t2s.query_registered(name, params or {}, user_ctx=ctx)
+        if qr.fallback or any("审核拦截" in str(w) for w in (qr.warnings or [])):
+            raise RuntimeError("；".join(map(str, qr.warnings or [])) or qr.fallback)
+        return qr.rows or []
+
+    try:
+        plan = followup_svc.build_followup_gaps(_run, limit=req.limit)
+        rows = followup_svc.dispatch_followups(
+            work_order_set, plan["gaps"],
+            actor=str(ctx.get("name") or ctx.get("user_id") or ""))
+    except followup_svc.FollowupDataError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except followup_svc.FollowupError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _followup_envelope(ctx, rows, summary={"dispatched": len(rows)},
+                              total_gaps=plan["total_gaps"],
+                              truncated=plan["truncated"],
+                              basis=plan["basis"])
+
+
+@app.post("/api/v2/followups/{followup_id}/transition")
+def api_followup_transition(request: Request, followup_id: str,
+                            req: FollowupTransitionRequest) -> dict[str, Any]:
+    """催交状态流转：reply → supplier_replied；arrival → arrival_confirmed；close。"""
+    from ..services import procurement_followup as followup_svc
+
+    ctx = _scope_guard(request, "orders")
+    actor = str(ctx.get("name") or ctx.get("user_id") or "")
+    action = (req.action or "").strip()
+    if action not in followup_svc.ACTION_TARGETS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"未知动作 action（合法：{'|'.join(followup_svc.ACTION_TARGETS)}）")
+    try:
+        row = followup_svc.transition(
+            followup_id, action, actor=actor, note=(req.note or "").strip(),
+            arrival_qty=req.arrival_qty)
+    except followup_svc.FollowupNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except followup_svc.InvalidFollowupTransition as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except followup_svc.FollowupError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _followup_envelope(ctx, [row])
 
 
 def _site_board_payload(ctx: dict[str, Any], rows: list[dict[str, Any]],

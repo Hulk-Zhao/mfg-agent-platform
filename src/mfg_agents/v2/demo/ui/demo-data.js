@@ -3336,10 +3336,85 @@
         "elapsed_ms": 123.2,
         "error": null
       }
+    },
+    // R5 交期答复闭环（U8）：一句话 → ATP+排产试算 → 草稿 → hitl.eta 待确认。
+    // 演示回放：数字为演示口径（与参考图场景 2 同型），前端一律标「演示回放」。
+    "SO-3108 月底能交吗": {
+      "events": [
+        { "type": "agent_start", "node": "supply_chain", "label": "供应链智能体 · 交期答复" },
+        { "type": "tool_start", "tool": "draft_delivery_reply",
+          "detail": "model=A型号 qty=2000 need_date=月底（ATP 现货 + 排产试算，数字全部来自注册查询）" },
+        { "type": "tool_end", "tool": "draft_delivery_reply",
+          "detail": "现货 600 套可先发；剩余 1400 套预计 10-26 完工，比约定交期提前 5 天" },
+        { "type": "agent_end", "node": "supply_chain", "label": "供应链智能体 · 交期答复",
+          "summary": "草稿已生成：现货 600 套先发 + 1400 套排产 10-26 完工；已建 hitl.eta 待业务确认",
+          "status": "ok", "elapsed_ms": 12.4 },
+        { "type": "agent_start", "node": "hitl_eta", "label": "人工确认 · 对客 ETA 承诺" },
+        { "type": "agent_end", "node": "hitl_eta", "label": "人工确认 · 对客 ETA 承诺",
+          "summary": "已创建人工确认工单 wf-demo-eta-3108（草稿随单可查；业务经理确认后才放行）",
+          "status": "ok", "elapsed_ms": 3.2 }
+      ],
+      "result": {
+        "query": "SO-3108 月底能交吗",
+        "run_id": "run-demo-eta-3108",
+        "route": {
+          "domain": "supply_chain", "strategy": "agentic",
+          "confidence": 0.9, "level": "L1",
+          "reason": "交期答复类问题 → 供应链智能体（R5）"
+        },
+        "scenario_key": null,
+        "report": "关于 A型号 2000 套的交期答复（草稿，经人工确认后方可发送）\n结论：可以按期。现货 600 套可先发；剩余 1400 套按近 7 日均产 200 套/天排产，预计 2026-10-26 完工，比约定交期（2026-10-31）提前 5 天。\n口径：ATP = 在库 − 预留（跨仓汇总）；排产以近 7 天实际产出均值 200 套/天为基准，未含加急/扩产。\n本稿由平台按注册查询数据组装；对外发送须经 hitl.eta 人工确认。",
+        "internal_brief": {
+          "执行方式": "域智能体自主决策（Agentic）",
+          "工具调用步数": 2,
+          "数据缺口": "无"
+        },
+        "provenance": [
+          { "channel": "registered", "query_name": "atp_by_model",
+            "desc": "WMS：按产品型号查库存可用量 ATP（available = on_hand - reserved）",
+            "params": { "model": "A型号" }, "row_count": 2, "domain": "supply_chain" },
+          { "channel": "registered", "query_name": "plan_by_model",
+            "desc": "MES：型号排产与产出（计划影响/窗口评估）",
+            "params": { "model": "A型号" }, "row_count": 12, "domain": "supply_chain" },
+          { "channel": "hitl", "task_uid": "wf-demo-eta-3108",
+            "approver_roles": ["业务经理"], "domain": "hitl" }
+        ],
+        "hitl": [
+          {
+            "step": "hitl_eta", "kind": "eta",
+            "prompt": "对客交期答复确认（A型号 2000 套）：现货 600 套可先发；剩余 1400 套预计 2026-10-26 完工，比约定交期（2026-10-31）提前 5 天。确认后回复客户。",
+            "status": "waiting_hitl",
+            "approver_roles": ["业务经理"],
+            "actions": [
+              { "key": "commit_planned", "label": "按评估时间承诺", "propose": ["业务经理"], "cosign": ["计划"], "impact": "口径按评估 · 需产能确认", "followup": "更新客户交期 / 通知物流" },
+              { "key": "commit_buffered", "label": "加缓冲承诺", "propose": ["业务经理"], "impact": "降低超期风险 · 客户体验略降", "followup": "更新客户交期" },
+              { "key": "escalate_exec", "label": "升级销售总监", "propose": ["业务经理"], "impact": "重大客户 · 需高层决策", "followup": "升级工单 / 高层沟通" }
+            ],
+            "task_uid": "wf-demo-eta-3108",
+            "slot": "eta",
+            "governance": { "selected_action": "", "action_key": "", "slot": "eta",
+                            "required_signoffs": [], "signoffs": [], "approvals": [] },
+            "signoff_status": { "required": [], "signed": [], "missing": [],
+                                "satisfied": false, "progress": "0/0", "total": 0,
+                                "done": 0, "selected_action": "", "action_key": "",
+                                "slot": "eta", "approvals": [] },
+            "run_id": "run-demo-eta-3108",
+            "demo": true,
+            "card": {
+              "title": "[待确认] 对客交期答复确认（A型号 2000 套）",
+              "body": "对客交期答复确认（A型号 2000 套）：现货 600 套可先发；剩余 1400 套预计 2026-10-26 完工，比约定交期（2026-10-31）提前 5 天。确认后回复客户。",
+              "actions": [
+                { "key": "commit_planned", "label": "按评估时间承诺" },
+                { "key": "commit_buffered", "label": "加缓冲承诺" },
+                { "key": "escalate_exec", "label": "升级销售总监" }
+              ],
+              "level": "P1"
+            }
+          }
+        ]
+      }
     }
   };
-
-  /** 向后兼容：默认回放 = line_stop 场景 */
   const CHAT_DEMO = CHAT_DEMOS["A型号在SMT-1停线，何时复线？"];
 
   /* 制造综合看板演示数据（与后端 /api/v2/dashboard/{manufacturing,quality}
@@ -4299,7 +4374,24 @@
     },
   };
 
+  /* <gate-reasons:begin> 由 tools/gen_gate_fallback.py 从 data/gate_reasons.yaml 生成，禁手改 */
+  // 离线演示（后端不可达）时的闸门理由兜底：与 /api/v2/governance/gates
+  // 的 data.gates 同构，前端用同一段 find 逻辑渲染，无需分支。
+  const GATE_REASONS = [
+    { key: "restart", name: "复线决策", gate_class: "改排产", why: "复线意味着质量风险与产能代价的权衡结论，一旦执行影响整条产线的在制订单，必须由现场与质量共同拍板。" },
+    { key: "eta", name: "对客 ETA 承诺", gate_class: "对外消息", why: "ETA 是说给客户的正式交期，超期即违约；承诺口径必须经业务与产能双侧确认后才允许发出。" },
+    { key: "disposition", name: "来料处置", gate_class: "动钱（interim）", why: "退货/换货/特采都涉及供应商结算与质量放行，让步接收尤其以质量风险换交付——必须从来料、业务、质量多方会签后执行。" },
+    { key: "d8_close", name: "8D 报告关闭", gate_class: "质量关闭", why: "8D 关闭即根因与纠正措施被正式采信，后续对客口径以此为准；验证不充分就关闭等于把问题埋进客户手里。" },
+    { key: "complaint_reply", name: "对客回复", gate_class: "对外消息", why: "客诉回复一旦发出即代表公司立场，措辞与承诺必须与 8D 结论一致并经 QA 会签，防止前线过度承诺。" },
+    { key: "delivery_commit", name: "交期承诺", gate_class: "对外消息", why: "交期承诺以 ATP/排产测算为据，但测算有假设；正式承诺必须由有权解释假设的人确认，避免「系统算的」变成「公司欠的」。" },
+    { key: "maintenance_window", name: "停机窗口", gate_class: "改排产", why: "停机窗口直接改变排产与交付节奏，立即停机还是计划窗口是产能与设备安全的交换，必须现场与计划共同决定。" },
+    { key: "spc_action", name: "过程处置", gate_class: "改排产", why: "加严检验/工程介入/计划内暂停都会改变过程与节拍，处置力度必须与过程能力的证据匹配，由质量与工程确认后执行。" },
+    { key: "order_review", name: "接单评审", gate_class: "改排产", why: "接单即锁定产能与交期承诺，价格/交期/产能任一维度不匹配就接，会把风险转移给生产与交付——必须业务发起、工程计划会签后终批。" },
+    { key: "report_publish", name: "报告审定与派发", gate_class: "报告审定", why: "报告是对外与对管理层的正式结论材料，发布即代表平台与责任岗位的判定；数据缺口未闭合的报告不许带病发布。" },
+  ];
+  /* <gate-reasons:end> */
+
   window.DEMO = {
-    ROLES, ROLE_GROUPS, ALERT_SUMMARY, ROLE_KPIS, DEMO_TODOS, ORDERS, ORDERS_DASHBOARD, SPC_DASHBOARD, ALERTS, REPORTS, DEMO_人工确认, CHAT_DEMO, CHAT_DEMOS, DASHBOARD, OFFICE_SNAPSHOT,
+    GATE_REASONS, ROLES, ROLE_GROUPS, ALERT_SUMMARY, ROLE_KPIS, DEMO_TODOS, ORDERS, ORDERS_DASHBOARD, SPC_DASHBOARD, ALERTS, REPORTS, DEMO_人工确认, CHAT_DEMO, CHAT_DEMOS, DASHBOARD, OFFICE_SNAPSHOT,
   };
 })();

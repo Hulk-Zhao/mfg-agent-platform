@@ -181,11 +181,44 @@
     backend: { online: false, base: "", checking: true, health: null },
     perms: null,     // 治理权限目录快照（/api/v2/governance/permissions）
     permsError: "",  // 权限目录加载失败的用户友好提示（成功时清空）
+    gates: [],       // HITL 闸门理由目录（/api/v2/governance/gates；R3）
+    colleagues: [],  // 岗位 AI 同事能力面（/api/v2/colleagues，colleague.yaml 快照）
+    colleague: "",   // 当前同事（role id；空 = 跟当前岗位）
     screenState: {}, // 各屏持久状态（对话记录、审批处理结果等，重渲染不丢）
   };
 
   function currentRole() {
     return window.DEMO.ROLES.find((r) => r.id === state.role) || window.DEMO.ROLES[0];
+  }
+
+  /* ---------- 岗位 AI 同事（D1/R2：colleague.yaml 的前端消费） ---------- */
+
+  const COLLEAGUE_KEY = "mfg_colleague_v1";
+
+  function colleagueOf(roleKey) {
+    const id = String(roleKey || "");
+    if (!id || !Array.isArray(state.colleagues)) return null;
+    return state.colleagues.find((c) => c && c.role === id) || null;
+  }
+
+  /** 当前同事：手动切过 → 手动选择；否则跟当前岗位（同事默认随岗）。 */
+  function currentColleague() {
+    const picked = colleagueOf(state.colleague);
+    if (picked) return picked;
+    const role = currentRole();
+    return colleagueOf(role && role.id) || null;
+  }
+
+  /** 切换同事（不换岗位：只是换「对话场景与推荐问题」的视角）。 */
+  function setColleague(roleKey) {
+    const c = colleagueOf(roleKey);
+    if (!c) {
+      console.warn("[colleague] 未知同事 role:", roleKey);
+      return;
+    }
+    state.colleague = c.role;
+    try { localStorage.setItem(COLLEAGUE_KEY, c.role); } catch (err) { /* 隐私模式忽略 */ }
+    refreshScreen();
   }
 
   /* ---------- 登录态（演示版免密码：选择岗位身份即登录，并换取访问令牌） ---------- */
@@ -870,6 +903,12 @@
     /** 治理权限目录（角色×权限矩阵 + 8 个 HITL 槽位；前端门控提示用） */
     governancePermissions() { return this._get("/api/v2/governance/permissions"); },
 
+    /** HITL 闸门理由目录（槽位 → 为什么必须人工在环；R3 审批卡透出） */
+    governanceGates() { return this._get("/api/v2/governance/gates"); },
+
+    /** 岗位 AI 同事能力面（colleague.yaml 快照；同事切换器与推荐问题消费） */
+    colleagues() { return this._get("/api/v2/colleagues"); },
+
     /**
      * 受控读接口（看板 / 下钻）：令牌失效时**静默补签一次并重试**。
      *
@@ -1037,6 +1076,39 @@
     siteBoardFeedback(pushId, feedback) {
       return this._post(`/api/v2/site-board/${encodeURIComponent(pushId)}/feedback`,
         { feedback: feedback || "" });
+    },
+
+    /* ---------- 齐套催交（R6：缺口清单 → 派发 → 供应商回复 → 到货确认 → 关闭） ---------- */
+
+    /** 催交跟踪清单（治理轨状态机；响应带 db_scope / demo_writeback 徽标事实）。 */
+    followups(status, workOrderSet) {
+      const qs = [];
+      if (status) qs.push(`status=${encodeURIComponent(status)}`);
+      if (workOrderSet) qs.push(`work_order_set=${encodeURIComponent(workOrderSet)}`);
+      return this._getScoped(`/api/v2/followups${qs.length ? "?" + qs.join("&") : ""}`, 8000);
+    },
+
+    /** 缺口清单预览（料号 / 缺口数 / 供应商 / 催交人）——派发前先看数。 */
+    followupGaps(limit) {
+      return this._getScoped(`/api/v2/followups/gaps?limit=${encodeURIComponent(limit || 20)}`, 8000);
+    },
+
+    /** 一键派发缺口清单到采购员待办（幂等：料号×供应商×工单集）。 */
+    followupDispatch(workOrderSet, limit) {
+      return this._post("/api/v2/followups/dispatch",
+        { work_order_set: workOrderSet || "", limit: limit || 20 }, 20000);
+    },
+
+    /** 催交状态流转：reply / arrival / close / escalate（到货确认在演示态带「演示回写」徽标）。 */
+    followupTransition(followupId, action, note, arrivalQty) {
+      return this._post(`/api/v2/followups/${encodeURIComponent(followupId)}/transition`,
+        { action, note: note || "", arrival_qty: arrivalQty == null ? null : Number(arrivalQty) });
+    },
+
+    /** R11 退供评审申请：超龄料退供/转用/报废，落 disposition 槽位待人工确认。 */
+    agingReturnRequest(partNos, days, note) {
+      return this._post("/api/v2/aging/return-request",
+        { part_nos: partNos || [], days: days || 180, note: note || "" }, 20000);
     },
 
     /** 选定处置动作（按该动作 propose/cosign 生成会签要求）。
@@ -1260,8 +1332,9 @@
     try {
       fn(root, {
         state, api, UI: { icon, esc, badge, toast, spinner, fmtClock, fmtDateTime, fmtRemain, demoFlag, realFlag, friendlyError },
-        DEMO: window.DEMO, perms: state.perms,
+        DEMO: window.DEMO, perms: state.perms, gates: state.gates,
         navigate, refreshScreen, setRole, currentRole, visibleNav,
+        currentColleague, setColleague,
       });
     } catch (err) {
       console.error("[screen] 渲染失败:", err);
@@ -1301,6 +1374,9 @@
     }
     state.role = roleId;
     state.token = "";
+    // 换岗即换同事：同事能力面按岗位配班，手动选择不跨岗位继承
+    state.colleague = "";
+    try { localStorage.removeItem(COLLEAGUE_KEY); } catch (err) { /* 忽略 */ }
     saveUser(roleId, "");
     const allowed = visibleNav();
     if (allowed.length && !allowed.some((n) => n.id === state.screen)) {
@@ -1523,6 +1599,8 @@
     await api.probe();
     await ensureSession();       // F2：持有可用岗位令牌，写接口才有鉴权凭据
     await loadPermCatalog();
+    await loadGateCatalog();
+    await loadColleagueCatalog();
     updateChrome();
 
     const hash = canonScreen(location.hash.replace(/^#\/?/, ""));
@@ -1554,6 +1632,46 @@
     return state.perms;
   }
 
+  /**
+   * 加载 HITL 闸门理由目录（gate_reasons.yaml → /api/v2/governance/gates）。
+   * 失败不阻塞：审批卡降级为「槽位中文名」不带 why——闸门理由是增强层，
+   * 会签门控与安全校验始终在后端，不依赖本目录。
+   */
+  async function loadGateCatalog() {
+    if (!state.backend.online) { state.gates = []; return null; }
+    try {
+      const resp = await api.governanceGates();
+      const list = (resp && resp.gates) || [];   // _get 已解信封：resp 即载荷
+      state.gates = Array.isArray(list) ? list : [];
+    } catch (err) {
+      console.warn("[governance] 闸门理由目录加载失败，审批卡降级为槽位名:", err);
+      state.gates = [];
+    }
+    return state.gates;
+  }
+
+  /**
+   * 加载岗位 AI 同事目录（colleague.yaml → /api/v2/colleagues）。
+   * 失败不阻塞：同事切换器退化为「仅当前岗位同事不可用」的诚实态，
+   * 对话/看板主链路不受影响（同事是形态层，不是依赖）。
+   */
+  async function loadColleagueCatalog() {
+    if (!state.backend.online) { state.colleagues = []; return null; }
+    try {
+      const resp = await api.colleagues();
+      // _get 已解信封：resp 即 data 载荷本身（{colleagues, count, source}），
+      // 不能再取一层 .data（screens.js 里有同款踩坑记录）
+      const list = (resp && resp.colleagues) || [];
+      state.colleagues = Array.isArray(list) ? list : [];
+      // 历史手动选择若已不在目录中（配置收编）→ 静默回落跟岗
+      if (state.colleague && !colleagueOf(state.colleague)) state.colleague = "";
+    } catch (err) {
+      console.warn("[colleague] 同事目录加载失败，同事形态退化:", err);
+      state.colleagues = [];
+    }
+    return state.colleagues;
+  }
+
   async function boot() {
     initChrome();
     /* 会话恢复口径（2026-10-20）：公网链接访客默认落在登录界面。
@@ -1576,6 +1694,11 @@
     }
     state.role = saved ? saved.roleId : "";   // 仅用于登录页预选中上次岗位
     state.token = "";
+    // 恢复手动选择的同事（不存在于目录时由 loadColleagueCatalog 回落跟岗）
+    try {
+      const c = localStorage.getItem(COLLEAGUE_KEY);
+      if (c) state.colleague = String(c);
+    } catch (err) { /* 隐私模式忽略 */ }
     renderLogin();
   }
 
@@ -1586,6 +1709,7 @@
   window.App = {
     state, api, navigate, refreshScreen, setRole,
     currentRole,
+    currentColleague, setColleague, colleagueOf,
     showLogin: renderLogin,
     enterApp,
     UI: { icon, esc, badge, toast, spinner, fmtClock, fmtDateTime, fmtRemain, demoFlag, realFlag, friendlyError },

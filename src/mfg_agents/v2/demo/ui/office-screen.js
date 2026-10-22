@@ -1065,12 +1065,7 @@
                   <span class="badge badge-gray">${isOa ? "办公办理 · 写操作留痕" : "数据速查 · 只读"}</span></div></div>
               <div class="of-chat"><div class="chat-scroll" id="of-chat"></div></div>
               <div class="of-quick" id="of-quick">
-                ${QUICK.map((it) => (it.kind
-                  ? `<button class="chip chip-hist" data-quick="${esc(it.q)}" title="${esc(it.q)}"><span class="chip-kind">${esc(it.kind)}</span>${esc(it.q)}</button>`
-                  : `<span class="chip chip-hist chip-ask">`
-                    + `<button type="button" class="chip-main" data-quick="${esc(it.q)}" title="${esc(it.q)}">${esc(it.q)}</button>`
-                    + `<button type="button" class="chip-case" data-case-ask="${esc(it.q)}" title="问案例：带着这句话去案例检索室提问">问案例</button>`
-                    + `</span>`)).join("")}
+                ${QUICK.map((it) => `<button class="chip chip-hist" data-quick="${esc(it.q)}" title="${esc(it.q)}">${it.kind ? `<span class="chip-kind">${esc(it.kind)}</span>` : ""}${esc(it.q)}</button>`).join("")}
               </div>
               <div class="chat-inputbar of-inputbar">
                 <div class="chat-input-row">
@@ -1387,21 +1382,8 @@
     $("#of-input").addEventListener("keydown", (e) => {
       if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
     });
-    /**
-     * 「问案例」：与报告中心深链同构（写预填键 + 切屏），到位后由案例屏自动提问。
-     * 本屏只负责把这句话递过去——检索/回答口径全在案例域，不在速查屏重造一遍。
-     */
-    function askCase(question) {
-      const q = String(question || "").trim();
-      if (!q) return;
-      try { sessionStorage.setItem("cases_ask_prefill", q); } catch (err) { /* 隐私模式忽略 */ }
-      ctx.navigate("cases");
-    }
-
-    // 示例胶囊双动作：正文=问数（本屏对话）、尾部「问案例」=带同一句话去案例检索室提问
+    // 示例胶囊：点一下即把这句话喂给本屏助手问数
     $("#of-quick").addEventListener("click", (e) => {
-      const ask = e.target.closest("[data-case-ask]");
-      if (ask) { askCase(ask.dataset.caseAsk); return; }
       const q = e.target.closest("[data-quick]");
       if (q) send(q.dataset.quick);
     });

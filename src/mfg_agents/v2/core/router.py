@@ -69,6 +69,17 @@ INVENTORY_QUERY_KEYWORDS: tuple[str, ...] = (
     "来料批次", "到货批次", "批次追溯", "检验结论", "让步接收", "特采",
 )
 
+# R7 质量追溯强信号：批次号 + 追溯意图词 → 直接交质量域智能体三路并查。
+# 为什么必须前置：Text2SQL 的注册查询匹配会忽略批次号、命中无参的「近期来料」，
+# 把「BATCH-A-1008 的来龙去脉」答成另一个批次（真机实测 MAT-SP-1015）。
+QUALITY_TRACE_WORDS: tuple[str, ...] = (
+    "追溯", "来龙去脉", "来龙", "串一下", "串起来", "一起追",
+    "全链路", "完整链路",
+)
+_BATCH_NO_RE = re.compile(
+    r"\b(BATCH-[A-Za-z0-9][A-Za-z0-9-]*|MAT-[A-Za-z0-9][A-Za-z0-9-]*)\b",
+    re.IGNORECASE)
+
 # 场景强信号（排除表）：一旦出现这些词，说明是停线/客诉/交期承诺等**协同场景**，
 # 让位给 L0 场景触发词，不抢路由。
 INVENTORY_SCENARIO_SIGNALS: tuple[str, ...] = (
@@ -88,12 +99,30 @@ DIGEST_STRONG: tuple[str, ...] = (
     "重点是什么", "重点是", "重点在哪", "有哪些风险", "有什么风险", "风险有哪些",
     "整体情况", "整体态势", "整体怎么样", "全局情况", "经营情况", "整体表现",
     "汇总", "概览", "小结", "总结一下", "概括一下",
+    # 2026-10-22：管理者的「待我决策」类提问。此类问题同样是无实体的决策支持，
+    # 旧逻辑落 qa 明细探查 → 模型去猜 risk_level 等不存在的列 → 人工兜底。
+    "要我拍板", "待我拍板", "拍板", "升级事项", "待我确认", "待我终批", "待终批",
 )
 # 弱信号：单说"关注"时必须同时带范围/时间词，否则不判 digest（防误吞对象级提问）：
 DIGEST_SCOPE: tuple[str, ...] = (
     "本月", "这个月", "当月", "本周", "这周", "今天", "今日",
     "最近", "当前", "目前", "整体", "全厂", "公司",
 )
+
+# R10 老板经营 · 大单进度（对象级，早于 L1，避免被 qa 明细探查答成别的东西）。
+BUSINESS_ORDER_WORDS: tuple[str, ...] = (
+    "大单", "大订单", "大额订单", "大单进度",
+)
+_BIG_QTY_RE = re.compile(r"(\d{3,6})\s*(?:件|台|套|pcs)", re.IGNORECASE)
+_CN_BIG_QTY: dict[str, int] = {"三千": 3000, "五千": 5000, "八千": 8000, "一万": 10000}
+_SO_NO_RE = re.compile(r"\b(SO-\d{4}-\d+)\b", re.IGNORECASE)
+_MODEL_CODE_RE = re.compile(r"(?<![A-Za-z0-9])([A-Za-z])\s*型号")
+
+# R11 呆滞料：库龄/积压问法（先于库存速查）；天数缺省 180（呆滞口径）
+AGING_WORDS: tuple[str, ...] = (
+    "呆滞", "超龄", "积压", "库龄", "没动的料", "没有动", "长期不动", "半年没动",
+)
+_AGING_DAYS_RE = re.compile(r"(\d{2,4})\s*天")
 
 
 @dataclass
@@ -137,6 +166,17 @@ class TwoLevelRouter:
     def route(self, query: str, user_ctx: Optional[dict] = None) -> RouteResult:
         """路由入口：库存数据速查 → L0 场景/办公 → 态势汇总 → L1 语义 → 降级。"""
         entities = self._extract_entities(query)
+        # R7 质量追溯强信号（批次号 + 追溯词）：早于库存/场景快路径。
+        # 根因：批次号被忽略时会命中无参的「近期来料」查询，答成别的批次
+        # （R7 真机实测：问 BATCH-A-1008 返回 MAT-SP-1015）。
+        trace = self._route_quality_trace(query, entities)
+        if trace is not None:
+            return trace
+        # R11 呆滞料随时问：必须先于库存速查（后者也含「库龄/呆滞」关键词，
+        # 会把「超180天没动的料」答成 TOP10 明细，缺资金占用与处置建议）。
+        aging = self._route_aging(query, entities)
+        if aging is not None:
+            return aging
         inventory = self._route_inventory(query)
         if inventory is not None:
             inventory.entities = entities
@@ -156,6 +196,11 @@ class TwoLevelRouter:
         if digest is not None:
             digest.entities = entities
             return digest
+        # R10 老板经营 · 大单进度（对象级问题，不能走开放式 digest 汇总）：
+        # 「5000 件大单做到哪了」必须回到那张单的进度 + 预计完工 + 主动风险。
+        business = self._route_business(query, entities)
+        if business is not None:
+            return business
         if llm_available():
             l1 = self._route_l1(query)
             if l1 is not None:
@@ -193,6 +238,23 @@ class TwoLevelRouter:
                     reason=f"V1 关键词命中: {scene}",
                 )
         return None
+
+    # ---------- 质量追溯快路径（R7：批次号 + 追溯意图） ----------
+
+    def _route_quality_trace(self, query: str,
+                             entities: dict[str, Any]) -> Optional[RouteResult]:
+        """批次号 + 追溯词 → 质量域 Agentic（三路并查），不交给 Text2SQL 猜。"""
+        if not any(word in query for word in QUALITY_TRACE_WORDS):
+            return None
+        match = _BATCH_NO_RE.search(query or "")
+        if not match:
+            return None
+        batch = match.group(1).upper()
+        return RouteResult(
+            domain="quality", confidence=0.95, level="L1",
+            entities={**entities, "batch_no": batch}, strategy="trace",
+            reason=f"批次追溯意图命中（批次号 {batch}）",
+        )
 
     # ---------- 制造数据速查快路径（企业综合助手的确定性入口） ----------
 
@@ -250,6 +312,69 @@ class TwoLevelRouter:
         return RouteResult(
             domain=None, scenario_key=None, confidence=0.9, level="L0",
             reason=f"开放式态势汇总意图命中: {hit}", strategy="digest")
+
+    # ---------- R11：呆滞料随时问 ----------
+
+    def _route_aging(self, query: str,
+                     entities: dict[str, Any]) -> Optional[RouteResult]:
+        """库龄/呆滞问句 → aging 确定性盘点（清单 + 资金占用 + 退供评审）。"""
+        hit = next((w for w in AGING_WORDS if w in query), None)
+        if hit is None:
+            return None
+        m = _AGING_DAYS_RE.search(query or "")
+        if m:
+            days = int(m.group(1))
+        elif "半年" in query:
+            days = 180
+        elif hit in ("呆滞", "超龄", "积压", "没动的料", "没有动", "长期不动"):
+            days = 180
+        else:
+            days = 90
+        return RouteResult(
+            domain="supply_chain", confidence=0.95, level="L0",
+            entities={**entities, "days": days},
+            strategy="aging",
+            reason=f"呆滞料盘点意图命中（{hit}；库龄≥{days} 天）")
+
+    # ---------- R10：老板经营 · 大单进度 ----------
+
+    def _route_business(self, query: str,
+                        entities: dict[str, Any]) -> Optional[RouteResult]:
+        """「大单做到哪了 / 大单进度」→ business 确定性成稿。
+
+        与 digest 的分界：digest 是**开放式**汇总（无具体对象）；这里明确指向
+        「在制大单」，要返回单张单的进度、预计完工与主动风险，不能只给 KPI 清单。
+        数量阈值默认 5000（"5000 件大单"），单号/型号可选收窄。
+        """
+        hit = next((w for w in BUSINESS_ORDER_WORDS if w in query), None)
+        if hit is None:
+            # "做到哪了 / 完成到哪" 必须带"单"字才判（防吞一般进度问句）
+            if not (("做到哪" in query or "完成到哪" in query
+                     or "做到什么程度" in query) and "单" in query):
+                return None
+            hit = "做到哪"
+        min_qty = 0
+        m = _BIG_QTY_RE.search(query or "")
+        if m:
+            min_qty = int(m.group(1))
+        else:
+            min_qty = next((v for k, v in _CN_BIG_QTY.items() if k in (query or "")), 0)
+        so = _SO_NO_RE.search(query or "")
+        model_match = _MODEL_CODE_RE.search(query or "")
+        model = f"{model_match.group(1).upper()}型号" if model_match else ""
+        scoped = {**entities,
+                  "min_qty": min_qty or 5000,
+                  "order_no": so.group(1).upper() if so else "",
+                  "model": model}
+        bits = [f"阈值≥{scoped['min_qty']} 件"]
+        if scoped["order_no"]:
+            bits.append(scoped["order_no"])
+        if model:
+            bits.append(model)
+        return RouteResult(
+            domain="orders", confidence=0.93, level="L0", entities=scoped,
+            strategy="business",
+            reason=f"老板经营 · 大单进度意图命中（{hit}；{'，'.join(bits)}）")
 
     @staticmethod
     def _has_entity(query: str) -> bool:
