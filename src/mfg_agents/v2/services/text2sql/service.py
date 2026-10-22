@@ -213,7 +213,8 @@ class Text2SQLService:
             # 又恰好绕过"能解析才 lint"的路径（残缺语句解析失败全走 fallback）。
             llm = get_llm(temperature=0.0, tier="L1",
                           max_tokens=600, timeout=30, thinking="disabled")
-            resp = llm.invoke(build_detail_prompt(question))
+            dialect = getattr(self.data_registry.get(), "dialect", "sqlite")
+            resp = llm.invoke(build_detail_prompt(question, dialect=dialect))
             raw = resp.content if hasattr(resp, "content") else str(resp)
             sql = _extract_sql(raw)
         except Exception as exc:  # noqa: BLE001

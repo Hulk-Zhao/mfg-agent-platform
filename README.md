@@ -288,8 +288,9 @@ mfg-agent-platform/
   （防止 URL 当文件路径静默建库）。
   业务读路径已提供 `MySQLDataSource`（只读副本 + 只读账号 + 代码层只读守卫）；
   SPC 受治理写入通道也已支持 MySQL（`SQLAlchemySpcRepository`）。
-  **仍待办**：Text2SQL 提示词/注册查询的 MySQL 方言适配、真实业务表 ACL 登记；
-  案例库（`CASE_DB`）仍是独立 SQLite，未迁 MySQL。
+  Text2SQL 明细探查已按数据源方言追加 MySQL 提示词（CONCAT/CURDATE 等）。
+  **仍待办**：真实 MySQL 业务表/只读账号下的 Text2SQL 回归、注册查询手写 SQL
+  的方言改写、真实业务表 ACL 登记；案例库（`CASE_DB`）仍是独立 SQLite。
 - **会签并发与幂等**：已落数据库级签名事实表 `wf_signoff` + 两条唯一索引
   （`(task_uid, role_key, actor, verb)` 与 `(task_uid, actor_id, verb)`），
   重复签名由 DB 兜底（多实例/多连接），进程内 `RLock` 保留作单实例串行化；

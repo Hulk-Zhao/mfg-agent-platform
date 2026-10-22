@@ -46,6 +46,9 @@ TEXT_SUFFIXES = {
     ".txt", ".sh", ".bat", ".sql", ".ini", ".cfg", ".example", ".env", ".svg",
 }
 EXCLUDE_DIR_PARTS = {"__pycache__", "node_modules", ".git", ".pytest_cache"}
+#: 云生产部署目录：含真实域名与凭据占位符，不属于「演示实例内容」，
+#: 不参与演示隔离扫描（2026-10-23：deploy/hulkai-cn 上线脚本触发误报）
+EXCLUDE_REL_PREFIXES = ("deploy/hulkai-cn",)
 EXCLUDE_SUFFIXES = {
     ".db", ".sqlite", ".sqlite3", ".pyc", ".png", ".jpg", ".jpeg", ".gif",
     ".ico", ".woff", ".woff2", ".ttf", ".zip", ".pdf", ".pt", ".bin",
@@ -169,6 +172,9 @@ def _iter_files(root: Path):
             continue
         for path in sorted(base.rglob("*")):
             if not path.is_file():
+                continue
+            rel = path.relative_to(root).as_posix()
+            if any(rel == p or rel.startswith(p + "/") for p in EXCLUDE_REL_PREFIXES):
                 continue
             if any(part in EXCLUDE_DIR_PARTS for part in path.parts):
                 continue

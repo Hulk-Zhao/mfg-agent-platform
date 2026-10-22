@@ -79,7 +79,25 @@ SQL：SELECT product_model, ROUND(100.0 * SUM(CASE WHEN ship_status IN ('已发�
 """
 
 
-def build_detail_prompt(question: str) -> str:
-    """构造明细探查 prompt（V1 schema + V2 表清单 + 口径纪律 + 问题）。"""
+#: MySQL 方言纪律（仅在目标数据源方言为 mysql 时追加）。
+#: 与 SQLite few-shot 冲突时以本段为准；真正的执行校验仍靠审核链与只读账号。
+_MYSQL_RULES = """
+目标数据库：MySQL 8（以下规则优先于上文示例）：
+1. 字符串拼接用 CONCAT(a, b, ...)，禁止使用 `||`（MySQL 中它是逻辑或）；
+2. 当前日期用 CURDATE()，当前时间用 NOW()；日期截取用 DATE(col) 或
+   DATE_FORMAT(col, '%Y-%m-%d')；禁止 strftime / julianday；
+3. 标识符与保留字冲突时用反引号（如 `sql`）；
+4. 分页用 LIMIT n OFFSET m；GROUP_CONCAT(DISTINCT x) 可用；
+5. 上文 few-shot 是 SQLite 写法（date('now')），MySQL 请改写为 CURDATE()。
+"""
+
+
+def build_detail_prompt(question: str, dialect: str = "sqlite") -> str:
+    """构造明细探查 prompt（V1 schema + V2 表清单 + 口径纪律 + 问题）。
+
+    ``dialect`` 为 ``mysql`` 时追加 MySQL 方言纪律；其他值保持既有 SQLite 口径。
+    """
     from ...common.sql_tools import SCHEMA_PROMPT  # V1 资产复用
-    return f"{SCHEMA_PROMPT}{_V2_SCHEMA}{_LINT_RULES}\n问题：{question}"
+
+    extra = _MYSQL_RULES if str(dialect or "").lower() == "mysql" else ""
+    return f"{SCHEMA_PROMPT}{_V2_SCHEMA}{_LINT_RULES}{extra}\n问题：{question}"

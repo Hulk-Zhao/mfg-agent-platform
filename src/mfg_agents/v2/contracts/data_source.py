@@ -105,6 +105,8 @@ class DataSource(ABC):
     """
 
     name: str = "abstract"
+    #: SQL 方言（供 Text2SQL 提示词/查询库选择；未知实现默认按 SQLite 处理）
+    dialect: str = "unknown"
 
     @abstractmethod
     def list_tables(self) -> list[str]:
@@ -196,6 +198,7 @@ class SQLiteDataSource(DataSource):
 
     # 进程内共享的内存库连接（源名 → 连接），模拟 StaticPool 连接复用
     _memory_conns: dict[str, sqlite3.Connection] = {}
+    dialect = "sqlite"
 
     def __init__(self, db_path: str, name: str = "dev",
                  queries: Optional[dict[str, str]] = None,
@@ -285,6 +288,7 @@ class MySQLDataSource(DataSource):
     """
 
     name = "mysql"
+    dialect = "mysql"
 
     #: 写类动词（只读通道拒绝；真实防线仍是只读账号）
     _WRITE_WORDS = re.compile(
