@@ -66,9 +66,16 @@ def _agent_card(orch: V2Orchestrator, base_url: str) -> dict[str, Any]:
 
 
 def build_a2a_router(orch: Optional[V2Orchestrator] = None) -> APIRouter:
-    """A2A 路由（FastAPI 挂载；任务表进程内）。"""
+    """A2A 路由（FastAPI 挂载；任务结果持久化到治理库 ``a2a_task``）。"""
     router = APIRouter()
-    tasks: dict[str, dict[str, Any]] = {}
+    repo: Any = None
+
+    def _repo():
+        nonlocal repo
+        if repo is None:
+            from .services.a2a_task_store import resolve_a2a_repo
+            repo = resolve_a2a_repo()
+        return repo
 
     def _orch() -> V2Orchestrator:
         nonlocal orch
@@ -96,10 +103,10 @@ def build_a2a_router(orch: Optional[V2Orchestrator] = None) -> APIRouter:
         try:
             if method == "message/send":
                 return {"jsonrpc": "2.0", "id": msg_id,
-                        "result": _message_send(params, tasks)}
+                        "result": _message_send(params)}
             if method == "tasks/get":
                 return {"jsonrpc": "2.0", "id": msg_id,
-                        "result": _tasks_get(params, tasks)}
+                        "result": _tasks_get(params)}
             return {"jsonrpc": "2.0", "id": msg_id,
                     "error": {"code": -32601, "message": f"未知方法: {method!r}"}}
         except HTTPException:
@@ -109,7 +116,7 @@ def build_a2a_router(orch: Optional[V2Orchestrator] = None) -> APIRouter:
             return {"jsonrpc": "2.0", "id": msg_id,
                     "error": {"code": -32603, "message": f"内部错误: {exc}"}}
 
-    def _message_send(params: dict, store: dict) -> dict[str, Any]:
+    def _message_send(params: dict) -> dict[str, Any]:
         message = dict(params.get("message") or {})
         parts = message.get("parts") or []
         text = "".join(str(p.get("text") or "") for p in parts
@@ -124,8 +131,7 @@ def build_a2a_router(orch: Optional[V2Orchestrator] = None) -> APIRouter:
         result = _orch().handle(text, user_ctx=user_ctx).to_dict()
         task_id = f"a2a-{uuid.uuid4().hex[:12]}"
         now = time.time()
-        for k in [k for k, v in store.items() if now - v["ts"] > A2A_TASK_TTL_S]:
-            store.pop(k, None)
+        _repo().purge(A2A_TASK_TTL_S)
         artifact = {
             "artifactId": f"art-{uuid.uuid4().hex[:8]}",
             "name": "scenario-result",
@@ -135,14 +141,14 @@ def build_a2a_router(orch: Optional[V2Orchestrator] = None) -> APIRouter:
         task = {"id": task_id, "contextId": result.get("run_id", ""),
                 "status": {"state": "completed"},
                 "artifacts": [artifact], "ts": now}
-        store[task_id] = task
+        _repo().save(task)
         return {"id": task_id, "contextId": result.get("run_id", ""),
                 "status": {"state": "completed"}, "artifacts": [artifact],
                 "kind": "task"}
 
-    def _tasks_get(params: dict, store: dict) -> dict[str, Any]:
+    def _tasks_get(params: dict) -> dict[str, Any]:
         task_id = str((params.get("id") or params.get("taskId") or ""))
-        task = store.get(task_id)
+        task = _repo().get(task_id)
         if task is None:
             raise HTTPException(404, f"任务不存在或已过期: {task_id!r}")
         return {"id": task["id"], "contextId": task.get("contextId", ""),

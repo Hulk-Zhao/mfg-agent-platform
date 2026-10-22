@@ -89,6 +89,18 @@ PLATFORM_DDL = [
     CREATE UNIQUE INDEX IF NOT EXISTS ux_wf_signoff_sod
       ON wf_signoff (task_uid, actor_id, verb)
     """,
+    # A2A 任务结果（生产持久化；进程内 dict 只保留作离线兜底）
+    """
+    CREATE TABLE IF NOT EXISTS a2a_task (
+      task_id TEXT PRIMARY KEY,
+      context_id TEXT DEFAULT '',
+      state TEXT NOT NULL DEFAULT 'completed',
+      artifacts_json TEXT NOT NULL DEFAULT '[]',
+      created_at TEXT NOT NULL,
+      ts REAL NOT NULL
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_a2a_task_ts ON a2a_task (ts)",
 ]
 
 _METRIC_UPSERT = (
@@ -165,6 +177,18 @@ MYSQL_PLATFORM_DDL: tuple[str, ...] = (
       overdue_signoff INT DEFAULT 0,
       ts VARCHAR(40) NOT NULL,
       PRIMARY KEY (id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS a2a_task (
+      task_id VARCHAR(64) NOT NULL,
+      context_id VARCHAR(64),
+      state VARCHAR(32) NOT NULL DEFAULT 'completed',
+      artifacts_json LONGTEXT,
+      created_at VARCHAR(40) NOT NULL,
+      ts DOUBLE NOT NULL,
+      PRIMARY KEY (task_id),
+      KEY idx_a2a_task_ts (ts)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     """,
 )

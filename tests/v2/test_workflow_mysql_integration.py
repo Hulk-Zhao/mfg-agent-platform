@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import os
+import time
 from pathlib import Path
 from typing import Any
 
@@ -247,3 +248,29 @@ def test_mysql_spc_write_channel():
         with engine.begin() as conn:
             conn.execute(text("DROP TABLE IF EXISTS spc_measurement"))
         engine.dispose()
+
+
+def test_mysql_a2a_task_repository():
+    """A2A 任务结果持久化：MySQL 方言 upsert + TTL 清理。"""
+    from mfg_agents.v2.services.a2a_task_store import (
+        SQLAlchemyA2ATaskRepository,
+    )
+
+    repo = SQLAlchemyA2ATaskRepository(MYSQL_URL)
+    now = time.time()
+    task_id = "a2a-mysql-it"
+    try:
+        repo.save({"id": task_id, "contextId": "run-mysql",
+                   "status": {"state": "completed"},
+                   "artifacts": [{"artifactId": "art-1"}], "ts": now})
+        got = repo.get(task_id)
+        assert got["id"] == task_id and got["contextId"] == "run-mysql"
+        assert got["artifacts"][0]["artifactId"] == "art-1"
+
+        assert repo.purge(3600, now=now + 7200) >= 1
+        assert repo.get(task_id) is None
+    finally:
+        with repo.engine.begin() as conn:
+            conn.execute(text("DELETE FROM a2a_task WHERE task_id = :tid"),
+                         {"tid": task_id})
+        repo.engine.dispose()
