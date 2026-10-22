@@ -287,13 +287,15 @@ mfg-agent-platform/
   MySQL 8.0 治理链已真库验证。`WorkflowEngine(mysql_url)` 单构造仍 fail-fast
   （防止 URL 当文件路径静默建库）。
   业务读路径已提供 `MySQLDataSource`（只读副本 + 只读账号 + 代码层只读守卫）；
+  SPC 受治理写入通道也已支持 MySQL（`SQLAlchemySpcRepository`）。
   **仍待办**：Text2SQL 提示词/注册查询的 MySQL 方言适配、真实业务表 ACL 登记；
-  SPC / 案例库各自独立，未迁 MySQL。
+  案例库（`CASE_DB`）仍是独立 SQLite，未迁 MySQL。
 - **会签并发与幂等**：已落数据库级签名事实表 `wf_signoff` + 两条唯一索引
   （`(task_uid, role_key, actor, verb)` 与 `(task_uid, actor_id, verb)`），
   重复签名由 DB 兜底（多实例/多连接），进程内 `RLock` 保留作单实例串行化；
   存量工单不补历史签名（判定与渲染仍读 `governance_json`）。
-  只读审计接口：`GET /api/v2/workflow/{task_id}/signoffs`（可见性与工单详情同源）。
+  只读审计接口：`GET /api/v2/workflow/{task_id}/signoffs`（可见性与工单详情同源）；
+  CSV 导出：`GET /api/v2/workflow/{task_id}/signoffs/export`（UTF-8 BOM，审计留档）。
   多实例前提已满足（治理库可切 MySQL）；业务读路径 MySQL 仍是下一处缺口。
 
 - **看板数据范围**：四个 `/dashboard/*` 端点已接声明式数据范围目录（`v2/data/data_scope.yaml`）：按岗位 allow + 字段级脱敏 + 下钻同源裁决，未登记看板 fail-closed。剩余缺口是**行级**（同一看板内按组织/产线过滤到本人辖区）——当前是"看到全厂该岗位该看的部分"，生产前需把 `data_scope.yaml` 从角色维度扩展到组织维度。
