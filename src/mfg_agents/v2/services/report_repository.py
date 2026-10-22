@@ -18,6 +18,7 @@ from typing import Any, Mapping, Optional
 __all__ = [
     "REPORTS_TABLE",
     "REPORT_COLUMNS",
+    "MYSQL_REPORTS_DDL",
     "ReportRepository",
     "SQLiteReportRepository",
 ]
@@ -60,6 +61,38 @@ CREATE INDEX IF NOT EXISTS idx_report_created ON {REPORTS_TABLE} (created_at);
 CREATE INDEX IF NOT EXISTS idx_report_status ON {REPORTS_TABLE} (status);
 CREATE INDEX IF NOT EXISTS idx_report_scenario ON {REPORTS_TABLE} (scenario_key);
 CREATE INDEX IF NOT EXISTS idx_report_run ON {REPORTS_TABLE} (run_id);
+"""
+
+#: MySQL 版建表（SQLite 的 TEXT 默认值与 ``CREATE INDEX IF NOT EXISTS`` 不适用；
+#: 索引内联进 CREATE TABLE，天然幂等）。
+MYSQL_REPORTS_DDL = f"""
+CREATE TABLE IF NOT EXISTS {REPORTS_TABLE} (
+    report_id VARCHAR(80) NOT NULL,
+    scenario_key VARCHAR(80),
+    run_id VARCHAR(80),
+    source_module VARCHAR(80),
+    title VARCHAR(512) NOT NULL,
+    visibility VARCHAR(32) NOT NULL DEFAULT 'internal',
+    status VARCHAR(32) NOT NULL DEFAULT 'draft',
+    risk_level VARCHAR(32),
+    degraded INT NOT NULL DEFAULT 0,
+    actor VARCHAR(128),
+    internal_brief_json LONGTEXT,
+    customer_report LONGTEXT,
+    mask_map_json LONGTEXT,
+    provenance_json LONGTEXT,
+    data_gaps_json LONGTEXT,
+    linked_json LONGTEXT,
+    governing_slot VARCHAR(64),
+    versions_json LONGTEXT,
+    created_at VARCHAR(40) NOT NULL,
+    updated_at VARCHAR(40) NOT NULL,
+    PRIMARY KEY (report_id),
+    KEY idx_report_created (created_at),
+    KEY idx_report_status (status),
+    KEY idx_report_scenario (scenario_key),
+    KEY idx_report_run (run_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
 """
 
 

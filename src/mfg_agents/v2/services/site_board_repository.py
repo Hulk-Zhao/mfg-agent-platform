@@ -18,6 +18,7 @@ __all__ = [
     "SITE_BOARD_TABLE",
     "SITE_BOARD_COLUMNS",
     "SITE_BOARD_CONTENT_COLUMNS",
+    "MYSQL_SITE_BOARD_DDL",
     "SiteBoardRepository",
     "SQLiteSiteBoardRepository",
 ]
@@ -63,6 +64,35 @@ CREATE INDEX IF NOT EXISTS idx_site_board_stage_status
     ON site_board_push (stage, status);
 CREATE INDEX IF NOT EXISTS idx_site_board_complaint
     ON site_board_push (complaint_no);
+"""
+
+#: MySQL 版建表（索引内联，幂等；``customer`` 直接包含在新表里，无需老库补列流程）。
+MYSQL_SITE_BOARD_DDL = f"""
+CREATE TABLE IF NOT EXISTS {SITE_BOARD_TABLE} (
+    id BIGINT NOT NULL AUTO_INCREMENT,
+    push_id VARCHAR(80) NOT NULL,
+    stage VARCHAR(32) NOT NULL,
+    level VARCHAR(16),
+    title VARCHAR(512),
+    body LONGTEXT,
+    status VARCHAR(32) NOT NULL DEFAULT 'pushed',
+    source VARCHAR(64),
+    ref_id VARCHAR(128),
+    complaint_no VARCHAR(128),
+    batch_no VARCHAR(128),
+    customer VARCHAR(255),
+    ack_by VARCHAR(128),
+    ack_at VARCHAR(40) NULL,
+    closed_by VARCHAR(128),
+    closed_at VARCHAR(40) NULL,
+    feedback LONGTEXT,
+    created_at VARCHAR(40) NOT NULL,
+    updated_at VARCHAR(40) NOT NULL,
+    PRIMARY KEY (id),
+    UNIQUE KEY ux_site_board_push_id (push_id),
+    KEY idx_site_board_stage_status (stage, status),
+    KEY idx_site_board_complaint (complaint_no)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
 """
 
 #: 老库升级（``CREATE TABLE IF NOT EXISTS`` 对已存在的表不生效）：PRAGMA 守卫 + 幂等补列。

@@ -35,7 +35,7 @@ from .site_board_repository import (
     SiteBoardRepository,
     SQLiteSiteBoardRepository,
 )
-from .workflow import assert_sqlite_backed
+from .site_board_repository_sqlalchemy import SQLAlchemySiteBoardRepository
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +52,7 @@ __all__ = [
     "resolve_stage",
     "resolve_stage_from_batch",
     "push_id_for",
+    "resolve_site_target",
     "resolve_site_db",
     "ensure_site_board_table",
     "push_message",
@@ -108,19 +109,19 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def resolve_site_db(db_path: Optional[Union[str, Path]] = None) -> str:
-    """解析推送库路径；缺省 = 与治理库同库（``settings.WORKFLOW_DB``）。
-
-    ``assert_sqlite_backed`` 是必过的一道防线：把 MySQL URL 当文件路径交给
-    ``sqlite3.connect`` 会直接抛 ``OSError`` / 静默建出错位空库（同 ``report_store``）。
-    """
+def resolve_site_target(db_path: Optional[Union[str, Path]] = None) -> str:
+    """解析推送库目标（文件路径或 MySQL URL）；缺省 = 与治理库同库。"""
     if db_path is not None:
-        target = str(db_path)
-        assert_sqlite_backed(target)
-        return sqlite_path_from_url(target)
-    url = str(getattr(settings, "WORKFLOW_DB", "") or "")
-    assert_sqlite_backed(url)
-    return sqlite_path_from_url(url)
+        return str(db_path)
+    return str(getattr(settings, "WORKFLOW_DB", "") or "")
+
+
+def resolve_site_db(db_path: Optional[Union[str, Path]] = None) -> str:
+    """解析推送库目标（SQLite 路径 / MySQL URL）；缺省 = 与治理库同库。
+
+    保留原函数名作为唯一解析入口；方言判定交给 ``_repo``。
+    """
+    return resolve_site_target(db_path)
 
 
 def _main_db_path() -> str:
@@ -132,14 +133,17 @@ def _main_db_path() -> str:
 
 
 def _repo(db_path: Optional[Union[str, Path]] = None) -> SiteBoardRepository:
-    """解析路径并构造仓储（D15：模块函数不再持有裸 ``_connect``）。"""
-    return SQLiteSiteBoardRepository(resolve_site_db(db_path))
+    """按方言构造仓储（D15：模块函数不再持有裸 ``_connect``）。"""
+    target = resolve_site_db(db_path)
+    if is_sqlite_target(target):
+        return SQLiteSiteBoardRepository(sqlite_path_from_url(target))
+    return SQLAlchemySiteBoardRepository(target)
 
 
 def ensure_site_board_table(db_path: Optional[Union[str, Path]] = None) -> str:
-    """幂等建表（含索引 + 老库补列）；返回实际使用的库路径。"""
+    """幂等建表（含索引 + 老库补列）；返回实际使用的目标（路径 / URL）。"""
     target = resolve_site_db(db_path)
-    SQLiteSiteBoardRepository(target).ensure_schema()
+    _repo(target).ensure_schema()
     return target
 
 
@@ -261,8 +265,8 @@ def push_message(*, stage: str, title: str = "", body: str = "",
         "ack_by": "", "ack_at": None, "closed_by": "", "closed_at": None,
         "feedback": "", "created_at": now, "updated_at": now,
     }
-    target = ensure_site_board_table(db_path)
-    repo = SQLiteSiteBoardRepository(target)
+    repo = _repo(db_path)
+    repo.ensure_schema()
     # 冲突时只刷新内容列；status / ack_* / closed_* / feedback 保持现场已推进的进度
     # （SQL 细节在 site_board_repository 内，模块层不再拼 SQL）。
     repo.upsert_push(record)

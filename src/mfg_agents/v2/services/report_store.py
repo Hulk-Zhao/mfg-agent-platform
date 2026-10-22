@@ -24,13 +24,13 @@ from datetime import datetime, timezone
 from typing import Any, Mapping, Optional, Union
 
 from ...common.config import settings
-from ...common.platform_schema import sqlite_path_from_url
+from ...common.platform_schema import is_sqlite_target, sqlite_path_from_url
 from .report_repository import (
     REPORTS_TABLE,
     ReportRepository,
     SQLiteReportRepository,
 )
-from .workflow import assert_sqlite_backed
+from .report_repository_sqlalchemy import SQLAlchemyReportRepository
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +43,7 @@ __all__ = [
     "ReportNotFound",
     "InvalidReportTransition",
     "ReportRepository",
+    "resolve_report_target",
     "resolve_report_db",
     "ensure_reports_table",
     "upsert_report",
@@ -105,32 +106,38 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def resolve_report_db(db_path: Optional[Union[str, Path]] = None) -> str:
-    """解析报告库路径；缺省 = 与治理库同库（``settings.WORKFLOW_DB``）。
+def resolve_report_target(db_path: Optional[Union[str, Path]] = None) -> str:
+    """解析报告库目标（文件路径或 MySQL URL）；缺省 = 与治理库同库。
 
-    ``WORKFLOW_DB`` 的解析规则（``config._resolve_workflow_db``）已保证「显式配置 →
-    原样 / DB_URL 是 SQLite → 沿用 / 否则回落本地 SQLite 文件」，因此这里再补一道
-    ``assert_sqlite_backed``：把 MySQL URL 当文件路径交给 ``sqlite3.connect`` 会
-    在 Windows 直接抛 ``OSError``、在 Linux 静默建出错位空库，两种结局都是事故。
+    ``WORKFLOW_DB`` 显式配置为非 SQLite 时原样返回（由仓储按方言分派）；
+    裸 URL / 路径不做二次猜测。
     """
     if db_path is not None:
-        target = str(db_path)
-        assert_sqlite_backed(target)
-        return sqlite_path_from_url(target)
-    url = str(getattr(settings, "WORKFLOW_DB", "") or "")
-    assert_sqlite_backed(url)
-    return sqlite_path_from_url(url)
+        return str(db_path)
+    return str(getattr(settings, "WORKFLOW_DB", "") or "")
+
+
+def resolve_report_db(db_path: Optional[Union[str, Path]] = None) -> str:
+    """解析报告库目标（SQLite 文件路径 / MySQL URL）；缺省 = 与治理库同库。
+
+    保留原函数名作为**唯一解析入口**（既有测试会 monkeypatch 它做库隔离）；
+    方言判定交给 ``_repo``，本函数不再强制 SQLite。
+    """
+    return resolve_report_target(db_path)
 
 
 def _repo(db_path: Optional[Union[str, Path]] = None) -> ReportRepository:
-    """解析路径并构造仓储（D15：模块函数不再持有裸 ``_connect``）。"""
-    return SQLiteReportRepository(resolve_report_db(db_path))
+    """按方言构造仓储（D15：模块函数不再持有裸 ``_connect``）。"""
+    target = resolve_report_db(db_path)
+    if is_sqlite_target(target):
+        return SQLiteReportRepository(sqlite_path_from_url(target))
+    return SQLAlchemyReportRepository(target)
 
 
 def ensure_reports_table(db_path: Optional[Union[str, Path]] = None) -> str:
-    """幂等建表（含索引）；返回实际使用的库路径。"""
+    """幂等建表（含索引）；返回实际使用的目标（SQLite 路径 / MySQL URL）。"""
     target = resolve_report_db(db_path)
-    SQLiteReportRepository(target).ensure_schema()
+    _repo(target).ensure_schema()
     return target
 
 

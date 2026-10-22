@@ -6,7 +6,9 @@ from typing import Any
 
 import pytest
 
+from mfg_agents.v2.core.orchestrator import build_workflow_engine
 from mfg_agents.v2.services.workflow import WorkflowEngine, WorkflowBackendError
+from mfg_agents.v2.services.workflow_repository import SQLiteWorkflowRepository
 from mfg_agents.v2.services.workflow_repository_sqlalchemy import (
     SQLAlchemyWorkflowRepository,
 )
@@ -77,3 +79,10 @@ def test_non_sqlite_without_repository_still_fails_fast():
     """安全边界不变：MySQL 只允许显式注入仓储，裸 URL 仍拒绝。"""
     with pytest.raises(WorkflowBackendError):
         WorkflowEngine("mysql+pymysql://ro:pw@db:3306/mfg")
+
+
+def test_runtime_factory_uses_sqlite_repository_for_sqlite(tmp_path):
+    engine = build_workflow_engine(f"sqlite:///{tmp_path / 'gov.db'}")
+    assert isinstance(engine.repository, SQLiteWorkflowRepository)
+    task = engine.create_task("wf-factory", "装配入口")
+    assert engine.get(task.task_uid).title == "装配入口"

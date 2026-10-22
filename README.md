@@ -281,12 +281,12 @@ mfg-agent-platform/
 
 当前为单实例演示实现，治理层已落地（声明式权限目录 + 启动自检 + 一人一签幂等）。上线前待办：
 
-- **治理库切换 MySQL**：`WorkflowRepository` 契约与 SQLAlchemy 参考实现
-  （`SQLAlchemyWorkflowRepository`）已就位，MySQL 8.0 治理链（建单 / 会签 /
-  终批 / 签名账本）已真库验证；`ensure_platform_schema` 已有 MySQL 方言 DDL。
-  当前仍需**显式注入**仓储才能用 MySQL——`WorkflowEngine(mysql_url)` 继续
-  fail-fast（防止 URL 当文件路径静默建库）。上线前还需把 `settings.WORKFLOW_DB`
-  的运行时装配切到仓储注入，并补齐其余四个仓储的 MySQL 实现。
+- **治理库切换 MySQL**：契约 + SQLAlchemy 实现 + 运行时装配已就位——
+  `WORKFLOW_DB` 显式配成 MySQL 时，`build_workflow_engine` 自动注入仓储，
+  报告中心 / 现场看板按同一地址自动分派方言实现；MySQL 8.0 治理链已真库验证。
+  `WorkflowEngine(mysql_url)` 单构造仍 fail-fast（防止 URL 当文件路径静默建库）。
+  剩余：催交库（`procurement_followup`）仍 SQLite-only；SPC / 案例库各自独立；
+  业务读路径仍只有 `SQLiteDataSource`（`DB_URL=mysql` 需另实现只读数据源）。
 - **会签并发与幂等**：已落数据库级签名事实表 `wf_signoff` + 两条唯一索引
   （`(task_uid, role_key, actor, verb)` 与 `(task_uid, actor_id, verb)`），
   重复签名由 DB 兜底（多实例/多连接），进程内 `RLock` 保留作单实例串行化；

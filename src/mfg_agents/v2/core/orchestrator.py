@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from ...common.config import settings
+from ...common.platform_schema import is_sqlite_target
 from ..contracts.data_source import DataSourceRegistry, SQLiteDataSource
 from ..contracts.scenario import ScenarioRegistry
 from .node_registry import build_handlers
@@ -38,6 +39,7 @@ from ..services.text2sql import (
     Text2SQLService,
 )
 from ..services.workflow import WorkflowEngine
+from ..services.workflow_repository_sqlalchemy import SQLAlchemyWorkflowRepository
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +77,19 @@ def _ensure_columns(conn) -> None:
     from ..services.db_seed import _ensure_columns as _impl
 
     _impl(conn)
+
+
+def build_workflow_engine(db_url: str, **kwargs: Any) -> WorkflowEngine:
+    """按治理库地址构造工作流引擎（D15：运行时装配入口）。
+
+    - SQLite → 原生实现（``WorkflowEngine`` 的默认路径）；
+    - MySQL 等非 SQLite → **显式注入** ``SQLAlchemyWorkflowRepository``；
+      ``WorkflowEngine`` 自身对裸非 SQLite URL 仍 fail-fast（安全边界不放宽）。
+    """
+    if is_sqlite_target(db_url):
+        return WorkflowEngine(db_url, **kwargs)
+    return WorkflowEngine(
+        db_url, repository=SQLAlchemyWorkflowRepository(db_url), **kwargs)
 
 
 def _apply_seed(db_path: str) -> None:
@@ -121,7 +136,10 @@ class V2Runtime:
             default=True)
         scenario_registry = ScenarioRegistry(settings.V2_SCENARIOS_DIR)
         scenario_registry.load()
-        workflow = WorkflowEngine(settings.WORKFLOW_DB)
+        workflow_url = str(settings.WORKFLOW_DB or "")
+        # 治理库显式配成 MySQL 时，装配函数内部注入 SQLAlchemy 仓储；
+        # 报告/推送仓储按同一 WORKFLOW_DB 自动分派。
+        workflow = build_workflow_engine(workflow_url)
         from ..services.office import DemoOfficeBackend
         office_backend = DemoOfficeBackend()
         if settings.OFFICE_BACKEND.strip().lower() in ("feishu", "lark"):
