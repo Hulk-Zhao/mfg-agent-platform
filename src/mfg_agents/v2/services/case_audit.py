@@ -81,7 +81,13 @@ class CaseAuditLog:
         """
         safe_detail = self._sanitize_detail(detail)
         conn = connect(self.db_path)
+        # 跨实例串行化：SQLite 由单写者锁天然串行；MySQL 多实例需要命名锁，
+        # 否则两个实例同时读链尾会写出分叉的 prev_hash（链校验必坏）。
+        acquire = getattr(conn, "lock_chain", None)
+        release = getattr(conn, "unlock_chain", None)
         try:
+            if acquire is not None and not acquire():
+                raise RuntimeError("案例审计链锁获取超时：请重试")
             row = conn.execute(
                 "SELECT row_hash FROM case_audit ORDER BY seq DESC LIMIT 1").fetchone()
             prev_hash = str(row["row_hash"]) if row else ""
@@ -117,6 +123,11 @@ class CaseAuditLog:
             conn.commit()
             return int(cursor.lastrowid or 0)
         finally:
+            if release is not None:
+                try:
+                    release()
+                except Exception:  # noqa: BLE001 - 释放失败不得掩盖原始异常
+                    logger.warning("[case_audit] 释放审计链锁失败", exc_info=True)
             conn.close()
 
     # ---------- 校验 ----------

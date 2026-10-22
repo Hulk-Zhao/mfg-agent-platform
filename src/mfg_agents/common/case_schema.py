@@ -1,4 +1,4 @@
-"""案例域关系库 schema（SQLite）：案例主数据 / ACL / chunk 映射 / 证据元数据 / 审计。
+"""案例域关系库 schema（SQLite 默认 / MySQL 可选）：案例主数据 / ACL / chunk 映射 / 证据元数据 / 审计。
 
 架构位置：§6.2（ER 图）与 §6.1（三库分工）。
 
@@ -23,14 +23,18 @@ from __future__ import annotations
 
 from .case_db import (
     CASE_DDL,
+    CASE_DDL_MYSQL,
     CASE_TABLES,
     DEFAULT_CASE_DB,
     CaseDatabase,
+    MySQLCaseDatabase,
     SQLiteCaseDatabase,
     bulk_load,
+    case_database_for,
     connect,
     default_case_database,
     ensure_case_schema,
+    is_mysql_target,
     resolve_case_db,
 )
 
@@ -38,10 +42,14 @@ __all__ = [
     "DEFAULT_CASE_DB",
     "CASE_TABLES",
     "CASE_DDL",
+    "CASE_DDL_MYSQL",
     "CaseDatabase",
     "SQLiteCaseDatabase",
+    "MySQLCaseDatabase",
     "default_case_database",
+    "case_database_for",
     "resolve_case_db",
+    "is_mysql_target",
     "bulk_load",
     "connect",
     "ensure_case_schema",
