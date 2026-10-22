@@ -274,3 +274,17 @@ def test_mysql_a2a_task_repository():
             conn.execute(text("DELETE FROM a2a_task WHERE task_id = :tid"),
                          {"tid": task_id})
         repo.engine.dispose()
+
+
+def test_mysql_workflow_db_health_probe(monkeypatch):
+    """治理库 MySQL：健康探针必须报 ok（平台表可读），而不是旧版“非 SQLite 即 down”。"""
+    from mfg_agents.common.config import settings
+    from mfg_agents.common.platform_schema import ensure_platform_schema
+    from mfg_agents.v2.services import health as health_mod
+
+    ensure_platform_schema(MYSQL_URL)
+    monkeypatch.setattr(settings, "WORKFLOW_DB", MYSQL_URL)
+    state, detail = health_mod._probe_workflow_db()
+    assert state == "ok", detail
+    assert "MySQL" in detail or "mysql" in detail
+    assert "platform_workflow_task" in detail

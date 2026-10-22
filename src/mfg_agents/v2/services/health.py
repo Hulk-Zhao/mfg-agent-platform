@@ -106,11 +106,25 @@ def _probe_business_db() -> tuple[str, str]:
 
 
 def _probe_workflow_db() -> tuple[str, str]:
-    """治理库：当前仅支持 SQLite（见 WorkflowEngine.assert_sqlite_backed）。"""
+    """治理库：SQLite 走文件只读探测；MySQL 等走 1s 连接 + 平台表可读探测。"""
     db_url = settings.WORKFLOW_DB
-    if not is_sqlite_target(db_url):
-        return "down", f"治理库配置为非 SQLite（{db_url!r}），引擎将拒绝启动"
-    return _probe_sqlite(db_url, "治理库")
+    if is_sqlite_target(db_url):
+        return _probe_sqlite(db_url, "治理库")
+    from sqlalchemy import create_engine, text
+
+    scheme = db_url.split("://", 1)[0]
+    engine = create_engine(
+        db_url, connect_args={"connect_timeout": 1}, pool_pre_ping=False)
+    try:
+        with engine.connect() as conn:
+            # 连接可达 ≠ schema 就绪：平台表必须可读，否则治理链必然失败
+            conn.execute(text("SELECT 1 FROM platform_workflow_task LIMIT 1"))
+    except Exception as exc:  # noqa: BLE001 - 健康检查不允许外抛
+        return "down", (f"{scheme} 治理库不可用或 schema 未初始化："
+                        f"{type(exc).__name__}: {str(exc)[:120]}")
+    finally:
+        engine.dispose()
+    return "ok", f"{scheme} 治理库连接正常（platform_workflow_task 可读）"
 
 
 def _probe_redis() -> tuple[str, str]:
