@@ -1302,8 +1302,8 @@
     const degraded = (health && Array.isArray(health.degraded_components))
       ? health.degraded_components : [];
     const LABELS = {
-      business_db: "业务库", workflow_db: "治理库", redis: "缓存",
-      vector: "向量库", llm: "大模型",
+      business_db: "业务库", workflow_db: "治理库", case_db: "案例库",
+      redis: "缓存", vector: "向量库", llm: "大模型",
     };
 
     if (state.backend.checking) {

@@ -118,6 +118,16 @@ def test_chunks_and_evidence(store, case_id):
     assert store.evidence_rows(case_id)[0]["evidence_id"] == f"{case_id}-e1"
 
 
+def test_health_probe_reads_case_db_mysql(monkeypatch):
+    """健康探针在 MySQL 案例库上要验到表级（连接可达 ≠ schema 就绪）。"""
+    from mfg_agents.common.config import settings
+    from mfg_agents.v2.services import health as health_mod
+
+    monkeypatch.setattr(settings, "CASE_DB", CASE_URL, raising=False)
+    state, detail = health_mod._probe_case_db()
+    assert state == "ok" and "case 表可读" in detail
+
+
 def test_named_lock_available_for_audit_chain():
     from mfg_agents.common.case_db import connect
 

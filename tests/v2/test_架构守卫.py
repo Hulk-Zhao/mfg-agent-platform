@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import re
 import shutil
+import sqlite3
 import subprocess
 from pathlib import Path
 
@@ -153,6 +154,7 @@ def _patch_all_healthy(monkeypatch) -> None:
     ok = {
         "_probe_business_db": lambda: ("ok", "业务库就绪"),
         "_probe_workflow_db": lambda: ("ok", "治理库就绪"),
+        "_probe_case_db": lambda: ("ok", "案例库就绪"),
         "_probe_redis": lambda: ("ok", "缓存就绪"),
         "_probe_vector": lambda: ("ok", "向量库就绪"),
         "_probe_llm": lambda: ("ok", "LLM 就绪"),
@@ -166,7 +168,8 @@ def test_health_report_shape(monkeypatch):
     report = health_mod.build_health_report()
     assert report["status"] in {"ok", "degraded"}
     assert report["mode"] in {"full", "degraded", "offline"}
-    assert set(report["checks"]) == {"business_db", "workflow_db", "redis", "vector", "llm"}
+    assert set(report["checks"]) == {
+        "business_db", "workflow_db", "case_db", "redis", "vector", "llm"}
     for name, item in report["checks"].items():
         assert set(item) >= {"state", "detail", "ms"}, f"{name} 缺少字段"
         assert item["state"] in {"ok", "down", "disabled"}, f"{name} 状态非法"
@@ -177,7 +180,7 @@ def test_health_never_raises_even_if_every_probe_fails(monkeypatch):
     def boom():
         raise RuntimeError("probe exploded")
 
-    for name in ("_probe_business_db", "_probe_workflow_db",
+    for name in ("_probe_business_db", "_probe_workflow_db", "_probe_case_db",
                  "_probe_redis", "_probe_vector", "_probe_llm"):
         monkeypatch.setattr(health_mod, name, boom)
 
@@ -216,6 +219,32 @@ def test_health_reports_full_mode_when_all_ready(monkeypatch):
     assert report["status"] == "ok"
     assert report["mode"] == "full"
     assert report["degraded_components"] == []
+
+
+def test_case_db_probe_reports_missing_file(monkeypatch, tmp_path):
+    """案例库文件不存在 → down（不能因为进程活着就报绿）。"""
+    monkeypatch.setattr(settings, "CASE_DB", str(tmp_path / "nope.db"))
+    state, detail = health_mod._probe_case_db()
+    assert state == "down" and "文件不存在" in detail
+
+
+def test_case_db_probe_reports_uninitialized_schema(monkeypatch, tmp_path):
+    """空库文件存在但未建表 → down（只查 SELECT 1 会漏掉这类故障）。"""
+    empty = tmp_path / "empty.db"
+    sqlite3.connect(str(empty)).close()
+    monkeypatch.setattr(settings, "CASE_DB", str(empty))
+    state, detail = health_mod._probe_case_db()
+    assert state == "down" and "schema" in detail
+
+
+def test_case_db_probe_ok_after_schema(monkeypatch, tmp_path):
+    from mfg_agents.common.case_db import ensure_case_schema
+
+    db_file = tmp_path / "case.db"
+    ensure_case_schema(db_file)
+    monkeypatch.setattr(settings, "CASE_DB", str(db_file))
+    state, detail = health_mod._probe_case_db()
+    assert state == "ok" and "case 表可读" in detail
 
 
 def test_health_endpoint_does_not_bootstrap_orchestrator(monkeypatch):

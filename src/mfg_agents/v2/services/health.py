@@ -16,7 +16,7 @@
 - **绝不触发重初始化**：不调用 ``get_orchestrator()``（首次调用会建库、加载 7 个
   场景 YAML、连接向量库，耗时数秒且改变进程状态）。探针只做轻量只读检查。
 - **绝不抛异常**：任何单项失败都收敛成 ``down``，健康检查自身不允许 500。
-- **并行 + 有界**：5 项互相独立，并行执行，总耗时 = 最慢的单项（约 0.6s），
+- **并行 + 有界**：6 项互相独立，并行执行，总耗时 = 最慢的单项（约 0.6s），
   而不是各自超时之和。这个端点是前端首屏探测的必经之路，串行的每一毫秒都
   会被用户感知成"登录后卡住了"。
 
@@ -127,6 +127,46 @@ def _probe_workflow_db() -> tuple[str, str]:
     return "ok", f"{scheme} 治理库连接正常（platform_workflow_task 可读）"
 
 
+def _probe_case_db() -> tuple[str, str]:
+    """案例库（CASE_DB）：SQLite 文件 / MySQL 均须 **case 表可读**。
+
+    只查 ``SELECT 1`` 不足以证明案例链可用：空库文件存在但未初始化时，
+    案例检索会直接报「no such table」。这里探到表级，schema 未就绪如实报 down。
+    """
+    db_url = str(getattr(settings, "CASE_DB", "") or "")
+    if is_sqlite_target(db_url):
+        path = sqlite_path_from_url(db_url)
+        if not path or path == ":memory:":
+            return "ok", "案例库内存模式（进程内）"
+        if not Path(path).exists():
+            return "down", f"案例库文件不存在：{path}（请先运行案例初始化）"
+        conn = sqlite3.connect(f"file:{Path(path).resolve().as_posix()}?mode=ro",
+                               uri=True, timeout=_SQLITE_TIMEOUT_S)
+        try:
+            conn.execute('SELECT 1 FROM "case" LIMIT 1').fetchone()
+        except sqlite3.Error as exc:
+            return "down", (f"案例库 schema 未初始化或不可读："
+                            f"{type(exc).__name__}: {str(exc)[:120]}")
+        finally:
+            conn.close()
+        return "ok", "案例库只读连接正常（case 表可读）"
+
+    from sqlalchemy import create_engine, text
+
+    scheme = db_url.split("://", 1)[0]
+    engine = create_engine(
+        db_url, connect_args={"connect_timeout": 1}, pool_pre_ping=False)
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1 FROM `case` LIMIT 1"))
+    except Exception as exc:  # noqa: BLE001 - 健康检查不允许外抛
+        return "down", (f"{scheme} 案例库不可用或 schema 未初始化："
+                        f"{type(exc).__name__}: {str(exc)[:120]}")
+    finally:
+        engine.dispose()
+    return "ok", f"{scheme} 案例库连接正常（case 表可读）"
+
+
 def _probe_redis() -> tuple[str, str]:
     url = (getattr(settings, "REDIS_URL", "") or "").strip()
     if not url:
@@ -213,10 +253,11 @@ def build_health_report() -> dict[str, Any]:
     """
     from concurrent.futures import ThreadPoolExecutor
 
-    order = ("business_db", "workflow_db", "redis", "vector", "llm")
+    order = ("business_db", "workflow_db", "case_db", "redis", "vector", "llm")
     fn_names = {
         "business_db": "_probe_business_db",
         "workflow_db": "_probe_workflow_db",
+        "case_db": "_probe_case_db",
         "redis": "_probe_redis",
         "vector": "_probe_vector",
         "llm": "_probe_llm",

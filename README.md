@@ -289,7 +289,8 @@ mfg-agent-platform/
   业务读路径已提供 `MySQLDataSource`（只读副本 + 只读账号 + 代码层只读守卫）；
   SPC 受治理写入通道也已支持 MySQL（`SQLAlchemySpcRepository`）。
   Text2SQL 明细探查已按数据源方言追加 MySQL 提示词（CONCAT/CURDATE 等）。
-  健康检查的 `workflow_db` 探针已支持 MySQL（检查 `platform_workflow_task` 可读）。
+  健康检查的 `workflow_db` 探针已支持 MySQL（检查 `platform_workflow_task` 可读）；
+  `case_db` 探针同时覆盖 SQLite / MySQL，并验到 `case` 表可读（连接可达 ≠ schema 就绪）。
   注册查询已按 MySQL 8 严格模式校正（`ONLY_FULL_GROUP_BY`、派生表别名），并新增
   真库回归：`MFG_MYSQL_BIZ_URL=... pytest tests/v2/test_text2sql_mysql_integration.py`。
   案例库（`CASE_DB`）已支持 MySQL：配 `mysql+pymysql://...` 即启用（schema 自动建、
