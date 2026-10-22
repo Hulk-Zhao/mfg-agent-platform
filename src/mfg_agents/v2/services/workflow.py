@@ -491,6 +491,8 @@ class WorkflowEngine:
         if previous_key != str(action_key):
             # 改选动作 → 旧的会签事实失效（会签要求已变化，必须重新会签）
             governance["signoffs"] = []
+            # DB 级签名账本同步失效（只清会签行；此时不可能已有终批）
+            self.repository.delete_signoffs(task_uid, verb="cosign")
         comment_out = f"选定动作：{governance['selected_action']}"
         if comment_text:
             comment_out += f"；依据：{comment_text}"
@@ -595,6 +597,10 @@ class WorkflowEngine:
             "overdue_signoff": False,
             "ts": datetime.now(timezone.utc).isoformat(),
         })
+        # 先落 DB 级签名账本（唯一索引兜底多实例并发），再更新工单快照
+        self._record_signoff(task, role_key=role_key, actor=actor,
+                             actor_id=actor_id, verb="cosign",
+                             decision=decision or "同意", comment=comment)
         governance["signoffs"] = signoffs
         progress = f"{len({s.get('role') for s in signoffs})}/{len(required)}"
         comment_out = f"{registry.role_name(role_key)} 会签（{progress}）"
@@ -630,9 +636,12 @@ class WorkflowEngine:
         if task.is_governed():
             role_key = self._assert_approve_permission(task, role, user_ctx)
             self._assert_signoffs_complete(task)
+            # 先校验状态迁移合法，避免非法请求在签名账本里留下孤儿行
+            self._assert_transition(task, "done" if final else "running")
             governance = self._append_approval(
                 task, role_key, approver, decision or "approve", comment,
-                actor_id=self._last_actor_id)
+                actor_id=self._last_actor_id,
+                verb="final_approve" if final else "approve")
         comment_out = self._with_decision(decision, comment)
         return self._transition(task_uid, "done" if final else "running",
                                 approver, "approve", comment_out,
@@ -674,9 +683,10 @@ class WorkflowEngine:
                 raise ValueError(
                     "驳回必须填写理由（决策意见不能为空），"
                     "以便写入工单留痕并通知发起方整改")
+            self._assert_transition(task, "closed")
             governance = self._append_approval(
                 task, role_key, approver, "reject", comment,
-                actor_id=self._last_actor_id)
+                actor_id=self._last_actor_id, verb="reject")
         comment_out = self._with_decision(decision, comment)
         return self._transition(task_uid, "closed", approver, "reject",
                                 comment_out, governance=governance)
@@ -849,10 +859,44 @@ class WorkflowEngine:
                 return key
         return role_keys[0]
 
+    def _record_signoff(self, task: WorkflowTask, *, role_key: str, actor: str,
+                        actor_id: str, verb: str, decision: str = "",
+                        comment: str = "", overdue: bool = False) -> None:
+        """落 DB 级签名事实（``wf_signoff``），重复签名由唯一索引兜底。
+
+        与 ``governance_json`` 的分工：后者是**工单快照/渲染源**，前者是
+        **多实例幂等的签名账本**。进程内 ``RLock`` 只能防单实例并发；
+        两个实例同时提交同一签名时，唯一索引会让后到者在此返回 False。
+        """
+        registry = self.permission_registry
+        role_def = registry.role(role_key)
+        role_name = registry.role_name(role_key)
+        created = self.repository.insert_signoff({
+            "task_uid": task.task_uid,
+            "role_key": role_key,
+            "role_name": role_name,
+            "actor": actor,
+            "actor_id": actor_id,
+            "actor_kind": role_def.actor_kind if role_def else "human",
+            "verb": verb,
+            "decision": str(decision or "").strip(),
+            "comment": (comment or "").strip(),
+            "on_behalf_of": None,
+            "overdue_signoff": 1 if overdue else 0,
+            "ts": datetime.now(timezone.utc).isoformat(),
+        })
+        if not created:
+            raise SignoffConflict(
+                f"签名事实已存在（{role_name} / {verb}），重复提交已拒绝",
+                actor_id=actor_id, signed_role_name=role_name)
+
     def _append_approval(self, task: WorkflowTask, role_key: str, actor: str,
                          decision: str, comment: str,
-                         actor_id: str = "") -> dict[str, Any]:
+                         actor_id: str = "", verb: str = "approve") -> dict[str, Any]:
         """追加终批/驳回留痕（返回新的 governance 快照）。"""
+        self._record_signoff(task, role_key=role_key, actor=actor,
+                             actor_id=actor_id, verb=verb,
+                             decision=decision, comment=comment)
         governance = dict(task.governance or {})
         approvals = [dict(a) for a in (governance.get("approvals") or [])]
         role_def = self.permission_registry.role(role_key)
@@ -956,6 +1000,13 @@ class WorkflowEngine:
         return bool(task.sla_status().get("overdue"))
 
     # ---------- 内部 ----------
+
+    @staticmethod
+    def _assert_transition(task: WorkflowTask, target: str) -> None:
+        """状态迁移合法性预检（签名落库前先挡非法请求，避免孤儿签名行）。"""
+        if target not in TRANSITIONS.get(task.status, set()):
+            raise WorkflowTransitionError(
+                f"非法状态迁移: {task.status} -> {target}（工单 {task.task_uid}）")
 
     def _transition(self, task_uid: str, target: str, actor: str,
                     action: str, comment: str,

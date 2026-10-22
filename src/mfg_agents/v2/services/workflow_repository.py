@@ -42,11 +42,20 @@ __all__ = [
 
 TASK_TABLE = "platform_workflow_task"
 
+#: 签名事实表（会签 / 终批 / 驳回的独立落地表；幂等由唯一索引兜底）
+SIGNOFF_TABLE = "wf_signoff"
+
 #: 工单表写入列（顺序即 INSERT 参数顺序；与 SQLite 实现共用）
 TASK_COLUMNS: tuple[str, ...] = (
     "task_uid", "wf_id", "title", "status", "priority", "assignees",
     "context_json", "hitl_prompt", "history_json", "governance_json",
     "owner_scope", "created_at", "updated_at", "sla_due_at",
+)
+
+#: 签名表写入列（``id`` 自增，不写入）
+SIGNOFF_COLUMNS: tuple[str, ...] = (
+    "task_uid", "role_key", "role_name", "actor", "actor_id", "actor_kind",
+    "verb", "decision", "comment", "on_behalf_of", "overdue_signoff", "ts",
 )
 
 #: 可更新列（task_uid 是主键，不允许改）
@@ -109,6 +118,20 @@ class WorkflowRepository(ABC):
     @abstractmethod
     def update_task(self, task_uid: str, fields: dict[str, Any]) -> int:
         """按主键更新指定列，返回受影响行数（不存在的工单返回 0）。"""
+
+    # ---------- 签名事实表（多实例幂等的 DB 级防线） ----------
+
+    @abstractmethod
+    def insert_signoff(self, row: dict[str, Any]) -> bool:
+        """写入一条签名事实；命中唯一索引（重复签名）返回 False，不抛错。"""
+
+    @abstractmethod
+    def list_signoffs(self, task_uid: str) -> list[dict[str, Any]]:
+        """按工单取签名事实（``id`` 升序）。"""
+
+    @abstractmethod
+    def delete_signoffs(self, task_uid: str, verb: Optional[str] = None) -> int:
+        """删除某工单的签名事实（可选按 verb），返回删除行数。"""
 
 
 class SQLiteWorkflowRepository(WorkflowRepository):
@@ -195,4 +218,37 @@ class SQLiteWorkflowRepository(WorkflowRepository):
             cur = conn.execute(
                 f"UPDATE {TASK_TABLE} SET {assignments} WHERE task_uid = ?",
                 (*payload.values(), task_uid))
+            return int(cur.rowcount or 0)
+
+    # ---------- 签名事实表 ----------
+
+    def insert_signoff(self, row: dict[str, Any]) -> bool:
+        missing = [c for c in SIGNOFF_COLUMNS if c not in row]
+        if missing:
+            raise ValueError(f"签名插入缺列: {missing}")
+        with self._lock, self.connect() as conn:
+            try:
+                conn.execute(
+                    f"INSERT INTO {SIGNOFF_TABLE} ({', '.join(SIGNOFF_COLUMNS)}) "
+                    f"VALUES ({', '.join('?' for _ in SIGNOFF_COLUMNS)})",
+                    tuple(row[c] for c in SIGNOFF_COLUMNS))
+            except sqlite3.IntegrityError:
+                return False
+        return True
+
+    def list_signoffs(self, task_uid: str) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"SELECT * FROM {SIGNOFF_TABLE} WHERE task_uid = ? ORDER BY id",
+                (task_uid,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def delete_signoffs(self, task_uid: str, verb: Optional[str] = None) -> int:
+        sql = f"DELETE FROM {SIGNOFF_TABLE} WHERE task_uid = ?"
+        params: list[Any] = [task_uid]
+        if verb:
+            sql += " AND verb = ?"
+            params.append(verb)
+        with self._lock, self.connect() as conn:
+            cur = conn.execute(sql, params)
             return int(cur.rowcount or 0)
