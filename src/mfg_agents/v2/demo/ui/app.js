@@ -336,15 +336,15 @@
             <p>跨部门并行取证 · 跨域工单闭环 · 数据权限随岗位隔离</p>
             <ul class="login-points">
               <li><span>01</span><div><b>7 大协同场景（YAML 声明式）</b>停线应急 / 来料异常 / 客诉 8D / 出货风险 / 设备维保 / 订单变更 / SPC 异常 · 新场景 = 新 YAML + 复用节点</div></li>
-              <li><span>02</span><div><b>关键决策人在环（8 个 HITL 槽位）</b>复线 / 对客 ETA / 来料处置 / 8D 关闭 / 对客回复 / 交期承诺 / 停机窗口 / SPC 处置 · Agent 只发起、不放行</div></li>
-              <li><span>03</span><div><b>结论可审计（权限同源 + 全链路留痕）</b>业务数据 / 治理待办 / 案例访问三套权限分域 · SQL 溯源 + 敏感字段脱敏 + 失败明示降级</div></li>
+              <li><span>02</span><div><b>关键决策人在环（10 个 HITL 槽位）</b>复线 / 对客 ETA / 来料处置 / 8D 关闭 / 对客回复 / 交期承诺 / 停机窗口 / SPC 处置 / 接单评审 / 报告审定 · Agent 只发起、不放行</div></li>
+              <li><span>03</span><div><b>结论可审计（权限同源 + 签名落库 + 全链路留痕）</b>业务数据 / 治理待办 / 案例访问三套权限分域 · 会签签名落 DB 账本（唯一索引防重复）· SQL 溯源 + 敏感字段脱敏 + 失败明示降级</div></li>
             </ul>
           </div>
           <div class="login-stats">
             <div class="login-stat"><b>18</b><span>智能体角色</span></div>
             <div class="login-stat"><b>7</b><span>协同场景</span></div>
-            <div class="login-stat"><b>42</b><span>平台工具</span></div>
-            <div class="login-stat"><b>1157</b><span>自动化测试</span></div>
+            <div class="login-stat"><b>43</b><span>平台工具</span></div>
+            <div class="login-stat"><b>2100+</b><span>自动化测试</span></div>
           </div>
           <div class="login-brand-foot">演示环境 · 免密码 · 选择岗位身份进入对应数据视图</div>
         </section>
@@ -900,7 +900,7 @@
       return this._getScoped(`/api/v2/workflow/${encodeURIComponent(taskId)}`);
     },
 
-    /** 治理权限目录（角色×权限矩阵 + 8 个 HITL 槽位；前端门控提示用） */
+    /** 治理权限目录（角色×权限矩阵 + 10 个 HITL 槽位；前端门控提示用） */
     governancePermissions() { return this._get("/api/v2/governance/permissions"); },
 
     /** HITL 闸门理由目录（槽位 → 为什么必须人工在环；R3 审批卡透出） */

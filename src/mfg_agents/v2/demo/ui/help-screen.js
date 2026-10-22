@@ -193,7 +193,7 @@
     })}
       ${box(448, 788, 408, 120, "#F0F5FA", "#8FAFC9", "数据层 · 只读", {
       lines: [
-        "DataSource 契约：演示 SQLite ⇄ 真实 ERP/MES/QMS",
+        "DataSource 契约：演示 SQLite ⇄ 真实 ERP/MES/QMS（回写含 Receipt + 幂等键）",
         "表级 ACL + 看板 data_scope 裁决 + 字段按岗位脱敏",
         "只读执行 row_cap=200 · 结果校验 · provenance 溯源",
         "目的：宁可转人工，也不放宽校验返回错误数字",
@@ -203,8 +203,8 @@
       ${box(24, 936, 832, 84, "#1F3B57", "#123049", "治理底盘 · 贯穿全流程", {
       cls: "arch-base", titleCls: "arch-base-title", lineCls: "arch-base-line",
       lines: [
-        "HITL 8 槽位 · 工作流状态机 / SLA / 会签 · 三套权限分域（业务数据 / 治理待办 / 案例访问）· 审计留痕",
-        "Agent 只发起不放行 · 协同取证只读不处置 · 关键决策人工在环 · 私有化部署，数据不出厂",
+        "HITL 10 槽位 · 工作流状态机 / SLA / 会签签名账本（wf_signoff，DB 级幂等）· 三套权限分域（业务数据 / 治理待办 / 案例访问）· 审计留痕",
+        "Agent 只发起不放行 · 协同取证只读不处置 · 关键决策人工在环 · 治理库可切 MySQL，数据不出厂",
       ], titleColor: "#fff", lineColor: "rgba(255,255,255,.85)"
     })}
     </svg>`;
