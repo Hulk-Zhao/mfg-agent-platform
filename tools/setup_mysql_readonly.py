@@ -1,4 +1,4 @@
-"""创建 / 收敛业务库只读账号（生产部署辅助脚本）。
+"""创建 / 收敛业务库账号（默认只读；写账号见 ``setup_mysql_writer.py``）。
 
 为什么必须有这一步：``MySQLDataSource`` 的代码层只读守卫（仅 SELECT/WITH）
 不是数据库权限的替代品——拿 root 连业务库时，一条注入或误操作仍可能写入。
@@ -8,7 +8,7 @@
 1. ``CREATE USER IF NOT EXISTS``；
 2. 更新密码（重复执行不会失败）；
 3. 撤销该账号的全部权限（含 GRANT OPTION）；
-4. 只授予目标库的 ``SELECT``。
+4. 只授予目标库的 ``SELECT``（写账号由白名单参数传入 DML + CREATE/ALTER/INDEX，不含 DROP）。
 
 用法（密码建议从环境变量读取，避免进 shell history）::
 
@@ -32,6 +32,11 @@ from sqlalchemy import create_engine, text
 _IDENT = re.compile(r"^[A-Za-z0-9_]{1,64}$")
 _HOST = re.compile(r"^[A-Za-z0-9_.:%-]{1,255}$")
 
+#: 允许授予的库级权限（白名单；DDL 只放行 CREATE/ALTER/INDEX，绝不放 DROP/GRANT）
+ALLOWED_PRIVILEGES = {
+    "SELECT", "INSERT", "UPDATE", "DELETE", "CREATE", "ALTER", "INDEX",
+}
+
 
 def _clean_ident(value: str, label: str) -> str:
     value = str(value or "").strip()
@@ -48,13 +53,21 @@ def _clean_host(value: str) -> str:
 
 
 def provision(admin_url: str, database: str, user: str, password: str,
-              host: str = "%") -> dict[str, Any]:
-    """创建 / 收敛只读账号；返回执行摘要（不含密码）。"""
+              host: str = "%",
+              privileges: tuple[str, ...] = ("SELECT",)) -> dict[str, Any]:
+    """创建 / 收敛账号并授予库级权限；返回执行摘要（不含密码）。
+
+    默认 ``SELECT`` = 只读账号；写账号用 :mod:`setup_mysql_writer` 传入写权限。
+    """
     database = _clean_ident(database, "database")
     user = _clean_ident(user, "user")
     host = _clean_host(host)
     if not str(password or ""):
         raise SystemExit("密码不能为空")
+    grants = tuple(str(p).strip().upper() for p in privileges)
+    bad = [p for p in grants if p not in ALLOWED_PRIVILEGES]
+    if not grants or bad:
+        raise SystemExit(f"权限非法（允许：{sorted(ALLOWED_PRIVILEGES)}）: {bad or privileges}")
     engine = create_engine(admin_url, pool_pre_ping=False)
     account = f"'{user}'@'{host}'"
     steps: list[str] = []
@@ -72,8 +85,9 @@ def provision(admin_url: str, database: str, user: str, password: str,
                 steps.append("revoke_all")
             except Exception:  # noqa: BLE001
                 steps.append("revoke_skipped")
-            conn.execute(text(f"GRANT SELECT ON `{database}`.* TO {account}"))
-            steps.append("grant_select")
+            conn.execute(text(
+                f"GRANT {', '.join(grants)} ON `{database}`.* TO {account}"))
+            steps.append("grant:" + "+".join(grants))
             rows = conn.execute(text(
                 "SELECT privilege_type FROM information_schema.user_privileges "
                 "WHERE grantee = :grantee"), {"grantee": f"'{user}'@'{host}'"}).fetchall()

@@ -289,7 +289,10 @@ mfg-agent-platform/
   业务读路径已提供 `MySQLDataSource`（只读副本 + 只读账号 + 代码层只读守卫）；
   读写账号分离：`DB_READ_URL` 指向只读副本（缺省沿用 `DB_URL`），
   可用 `tools/setup_mysql_readonly.py` 幂等创建仅 `SELECT` 的账号；
-  真库回归：`MFG_MYSQL_RO_URL=... pytest tests/v2/test_mysql_readonly_integration.py`。
+  写账号用 `tools/setup_mysql_writer.py`（DML + CREATE/ALTER/INDEX，**不含 DROP/GRANT**），
+  数据库与迁移仍由管理员执行。
+  真库回归：`MFG_MYSQL_RO_URL=... pytest tests/v2/test_mysql_readonly_integration.py`；
+  `MFG_MYSQL_RW_URL=... pytest tests/v2/test_mysql_writer_integration.py`。
   SPC 受治理写入通道也已支持 MySQL（`SQLAlchemySpcRepository`，始终走主库 `DB_URL`）。
   Text2SQL 明细探查已按数据源方言追加 MySQL 提示词（CONCAT/CURDATE 等）。
   健康检查的 `workflow_db` 探针已支持 MySQL（检查 `platform_workflow_task` 可读）；
@@ -301,7 +304,7 @@ mfg-agent-platform/
   种子导入整段复用单连接（221 例 MySQL 实测 41.0s → 1.7s，事务整体提交/回滚）。
   真库回归：`MFG_MYSQL_CASE_URL=... pytest tests/v2/test_case_mysql_integration.py`。
   **仍待办**：真实业务表 ACL 登记、未建表查询（order_fulfillment /
-  物料库存扩展表等）的回归、生产租户的账号轮换与最小权限审计。
+  物料库存扩展表等）的回归、生产租户的账号轮换审计。
 - **会签并发与幂等**：已落数据库级签名事实表 `wf_signoff` + 两条唯一索引
   （`(task_uid, role_key, actor, verb)` 与 `(task_uid, actor_id, verb)`），
   重复签名由 DB 兜底（多实例/多连接），进程内 `RLock` 保留作单实例串行化；
@@ -309,7 +312,7 @@ mfg-agent-platform/
   只读审计接口：`GET /api/v2/workflow/{task_id}/signoffs`（可见性与工单详情同源）；
   CSV 导出：`GET /api/v2/workflow/{task_id}/signoffs/export`（UTF-8 BOM，审计留档）。
   审批确认中心工单详情已内置默认收起的「签名流水」（展开懒加载、CSV 导出、空账本/离线诚实提示）。
-  多实例前提已满足（治理库可切 MySQL）；业务读路径 MySQL 仍是下一处缺口。
+  多实例前提已满足：治理库、业务读路径、案例库均可切 MySQL（读写账号已分离）。
 
 - **看板数据范围**：四个 `/dashboard/*` 端点已接声明式数据范围目录（`v2/data/data_scope.yaml`）：按岗位 allow + 字段级脱敏 + 下钻同源裁决，未登记看板 fail-closed。剩余缺口是**行级**（同一看板内按组织/产线过滤到本人辖区）——当前是"看到全厂该岗位该看的部分"，生产前需把 `data_scope.yaml` 从角色维度扩展到组织维度。
 - **待办数据范围**：`/workflow/pending` 与 `/workflow/{task_id}` 已按 HITL 槽位裁决（令牌为准、`role` 只能收窄、跨域 404、MCP 同口径）。剩余缺口与看板同类——**行级**：同一槽位内按组织归属过滤（华东/华南质量负责人各看各的）；另外**未纳管的历史工单**没有槽位可判，统一进"无主池"（对有治理职责的岗位只读可见），需要一次工单归属回填才能消掉。
