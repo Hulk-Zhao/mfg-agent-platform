@@ -126,7 +126,10 @@ def test_app_js_gate_catalog_loading():
     app_js = (UI_DIR / "app.js").read_text(encoding="utf-8")
     assert 'governanceGates() { return this._get("/api/v2/governance/gates"); }' in app_js
     assert "async function loadGateCatalog()" in app_js
-    assert "await loadGateCatalog();" in app_js
+    # 2026-10-23：启动序列改为并行取（会话补签 + 三份目录），公网隧道下
+    # 从 4 个串行往返收成 1 个。断言随之改为「在 startApp 的 Promise.all 内被调用」。
+    assert "loadGateCatalog()," in app_js
+    assert "await Promise.all([" in app_js
     # ctx 透出 gates（帮助中心矩阵消费）
     assert "perms: state.perms, gates: state.gates," in app_js
 

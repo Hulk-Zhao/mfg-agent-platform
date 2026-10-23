@@ -406,8 +406,14 @@ def test_dashboard_api_uses_scoped_getter(method):
 
 
 def test_set_role_signs_token_before_render():
-    """换岗位必须先补签令牌再渲染，否则首屏请求撞 401 → 回落演示数据。"""
+    """换岗位必须先补签令牌再渲染，否则首屏请求撞 401 → 回落演示数据。
+
+    补签必须透传换岗前的旧令牌（``ensureSession(prevToken)``）：登录守卫
+    开启时后端凭有效旧令牌豁免验证码，否则切换岗位被 400 弹回登录页
+    （2026-10-23 用户反馈 BUG 的静态契约锁定）。
+    """
     src = (_UI / "app.js").read_text(encoding="utf-8")
     block = _fn_block(src, "async function setRole", 1200)
-    assert "await ensureSession()" in block
-    assert block.index("await ensureSession()") < block.index("refreshScreen()")
+    assert "const prevToken = state.token;" in block
+    assert "await ensureSession(prevToken)" in block
+    assert block.index("await ensureSession(prevToken)") < block.index("refreshScreen()")

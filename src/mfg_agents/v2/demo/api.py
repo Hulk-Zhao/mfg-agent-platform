@@ -20,6 +20,7 @@ import json
 import logging
 import os
 import queue
+import secrets
 import threading
 import time
 import uuid
@@ -30,7 +31,7 @@ from typing import Any, Mapping, Optional
 
 from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import PlainTextResponse, StreamingResponse
+from fastapi.responses import PlainTextResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -58,6 +59,7 @@ from .loader import (
     story_timeline,
 )
 from ..services.auth import AuthError, get_codec, resolve_login_roles
+from ..services.captcha import check_captcha_rate, issue_captcha, verify_captcha
 from ..services.data_scope import get_data_scope
 from ..services.workflow import (
     PermissionDenied,
@@ -159,6 +161,17 @@ from pathlib import Path as _Path
 _UI_DIR = _Path(__file__).resolve().parent / "ui"
 
 
+@app.get("/", include_in_schema=False)
+def root_redirect() -> RedirectResponse:
+    """根路径兜底：公网域名（hulkai.cn）直连时 302 到演示前端。
+
+    后端只挂载了 /demo-ui 与 /demo-story，根路径原本是 404。云上部署时靠
+    Nginx 的 ``location = /`` 兜底；本地 + Cloudflare 命名隧道没有 Nginx，
+    必须由应用自己兜底，否则域名根路径一打开就是 404。
+    """
+    return RedirectResponse("/demo-ui/", status_code=302)
+
+
 @app.get("/demo-ui/", include_in_schema=False)
 @app.get("/demo-ui/index.html", include_in_schema=False)
 def demo_ui_index() -> _HTMLResponse:
@@ -169,8 +182,16 @@ def demo_ui_index() -> _HTMLResponse:
     保证清单内资源必定带上 ``?v=<mtime>``——文件一改，缓存自动失效。
     """
     html = (_UI_DIR / "index.html").read_text(encoding="utf-8")
-    for f in ("demo-data.js", "terms.js", "app.js", "screens.js", "reports-screen.js", "help-screen.js", "kb-screen.js", "office-screen.js", "case-screen.js", "float-help.js", "app.css", "aging.css", "aging-mode.js", "theme-switcher.js"):
+    # 场景脚本（scenes/*.js）同样必须注入版本号：它们是固定 URL，若不带 ?v=
+    # 就落进 no-cache 档，公网经隧道时每个文件都要回源一次（实测 1.3s+/个，
+    # 9 个场景文件足以让首屏多等十几秒）。带版本号后可与其它资源一起走
+    # immutable 长缓存，并被 Cloudflare 边缘缓存。
+    for f in ("demo-data.js", "terms.js", "app.js", "screens.js", "reports-screen.js", "help-screen.js", "kb-screen.js", "office-screen.js", "case-screen.js", "float-help.js", "app.css", "aging.css", "aging-mode.js", "theme-switcher.js",
+              "registry.js", "scene-kit.js", "s00-skeleton.js", "s01-intake.js", "s02-npi-kickoff.js", "s03-stage-gate.js", "s04-batch-ecn.js", "s05-trace.js", "s06-procurement.js"):
         fp = _UI_DIR / f
+        if not fp.exists():
+            # scenes/*.js 在子目录里，取不到 mtime 会让版本号固定为 0，缓存永不失效
+            fp = _UI_DIR / "scenes" / f
         v = int(fp.stat().st_mtime) if fp.exists() else 0
         # 仅替换引号内的资源引用（允许 ./、子目录等路径前缀），不动 HTML 其余部分；
         # 无 ?v= 时追加，有则无论原格式（split1/数字/带点划线）一律按 mtime 覆写。
@@ -694,12 +715,15 @@ def api_events_open(req: EventsOpenRequest) -> dict[str, Any]:
 
 
 class LoginRequest(BaseModel):
-    """岗位登录请求（演示环境免密码：选择岗位身份即登录）。
+    """岗位登录请求。
 
     - ``roles``：岗位对应的平台域角色写法（前端 ROLES.roles，如 ``["quality"]``），
       **优先**作为权威来源；``role`` 仅在缺 ``roles`` 时使用（前端 ROLES.id）；
     - ``user_id`` / ``name`` / ``dept``：登录者标识与展示信息（写入令牌载荷）。
-      两者缺省时由归一化后的角色派生 ``u-<role_key>``，保证 actor 有稳定标识。
+      两者缺省时由归一化后的角色派生 ``u-<role_key>``，保证 actor 有稳定标识；
+    - ``username`` / ``password`` / ``captcha_id`` / ``captcha_code``：登录守卫
+      凭证（公网防刷）。守卫关闭（``MFG_LOGIN_GUARD=0``）时全部忽略，
+      行为与免密演示完全一致；守卫开启时校验规则见 ``_verify_login_credentials``。
     """
 
     roles: Optional[list[str]] = None
@@ -707,16 +731,56 @@ class LoginRequest(BaseModel):
     user_id: str = ""
     name: str = ""
     dept: str = ""
+    username: str = ""
+    password: str = ""
+    captcha_id: str = ""
+    captcha_code: str = ""
+
+
+def _login_guard_enabled() -> bool:
+    """登录守卫开关：默认**开启**（公网演示防刷优先）；显式设 0/false/off/no 关闭。
+
+    本地/测试环境在 tests/conftest.py 统一注入 ``MFG_LOGIN_GUARD=0``，
+    保证 2100+ 既有测试基线不受影响。
+    """
+    return os.getenv("MFG_LOGIN_GUARD", "1").strip().lower() not in ("0", "false", "off", "no")
+
+
+def _verify_login_credentials(req: LoginRequest) -> None:
+    """守卫开启时的登录凭证三重校验（任一失败 → 400，不下发令牌）。
+
+    顺序有讲究：**先验证码后密码**——验证码一次性消费，密码爆破者每次尝试
+    都必须先消耗一张新验证码，把「无限试密码」变成「每次试错都要拉图识图」，
+    成本从零变成不可忽略，这是验证码防刷的核心语义。
+    """
+    ok, message = verify_captcha(req.captcha_id, req.captcha_code)
+    if not ok:
+        raise HTTPException(status_code=400, detail=message)
+    admin_user = (os.getenv("MFG_ADMIN_USER", "admin") or "admin").strip()
+    admin_pass = os.getenv("MFG_ADMIN_PASS", "admin") or "admin"
+    user_ok = secrets.compare_digest(req.username.strip(), admin_user)
+    pass_ok = secrets.compare_digest(req.password, admin_pass)
+    if not (user_ok and pass_ok):
+        raise HTTPException(status_code=400, detail="账号或密码错误")
 
 
 def _ctx_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    """令牌载荷 → 统一用户上下文（写入引擎的 ``user_ctx`` 形状）。"""
-    return {
+    """令牌载荷 → 统一用户上下文（写入引擎的 ``user_ctx`` 形状）。
+
+    ``line_ids``（行级组织归属）只在令牌携带时写入上下文：缺省不写 = 不收紧，
+    保证演示登录与存量令牌行为逐字段不变。该值来自**签名令牌**，请求参数
+    无法自报（行级范围的唯一入口，见 ``data_scope.yaml`` 的 ``row_scope``）。
+    """
+    ctx: dict[str, Any] = {
         "user_id": str(payload.get("sub") or ""),
         "name": str(payload.get("name") or ""),
         "dept": str(payload.get("dept") or ""),
         "roles": [str(r) for r in (payload.get("roles") or [])],
     }
+    lines = [str(v) for v in (payload.get("line_ids") or []) if str(v)]
+    if lines:
+        ctx["line_ids"] = lines
+    return ctx
 
 
 def _bearer_token(request: Request) -> str:
@@ -744,13 +808,51 @@ def _require_identity(request: Request) -> dict[str, Any]:
     return ctx
 
 
-@app.post("/api/v2/auth/login")
-def api_auth_login(req: LoginRequest) -> dict[str, Any]:
-    """岗位登录：校验岗位 → 签发访问令牌（后续写接口凭令牌鉴权）。
+@app.get("/api/v2/auth/captcha")
+def api_auth_captcha(request: Request) -> dict[str, Any]:
+    """签发登录验证码（公网防刷，见 services/captcha.py）。
 
-    服务端**只校验角色合法性**（必须落在 32 角色权限目录内），不校验口令——这是
-    「免密演示」的诚实边界；生产须替换为 SSO。全部未识别 → 400，绝不下发匿名令牌。
+    - SVG 内联文本，前端以 data URI 渲染，点击图片可换一张；
+    - 按 ``request.client.host`` 限速（默认每 IP 每分钟 30 张，超限 429）；
+    - 返回 ``guard`` 字段告知前端登录守卫是否开启：开启 → 登录页展示
+      账号/密码/验证码凭证区；关闭 → 前端隐藏凭证区，保持免密演示体验。
     """
+    ip = request.client.host if request.client else "unknown"
+    if not check_captcha_rate(ip):
+        raise HTTPException(status_code=429, detail="验证码获取过于频繁，请稍后再试")
+    captcha_id, svg = issue_captcha()
+    return {"code": 0,
+            "data": {"captcha_id": captcha_id, "svg": svg,
+                     "ttl_s": 300, "guard": _login_guard_enabled()},
+            "message": "ok"}
+
+
+def _has_valid_session(request: Request) -> bool:
+    """请求是否携带**有效**访问令牌（守卫豁免凭据）。
+
+    会话内换岗 / 静默补签时前端会带上当前令牌：令牌有效说明该会话已通过
+    完整登录校验，换岗只是重新签发——免验证码；令牌缺失/非法/过期一律
+    False（fail-closed）→ 走完整凭证校验。
+    """
+    try:
+        payload = get_codec().verify(_bearer_token(request))
+    except AuthError:
+        return False
+    return bool(str(payload.get("sub") or "").strip())
+
+
+@app.post("/api/v2/auth/login")
+def api_auth_login(req: LoginRequest, request: Request) -> dict[str, Any]:
+    """岗位登录：校验凭证与岗位 → 签发访问令牌（后续写接口凭令牌鉴权）。
+
+    登录守卫（``MFG_LOGIN_GUARD``，默认开）：公网部署防刷——校验一次性图形
+    验证码 + 账号口令（默认 admin/admin，可用 ``MFG_ADMIN_USER`` /
+    ``MFG_ADMIN_PASS`` 覆盖）。**携带有效令牌的补签/换岗豁免凭证校验**（见
+    ``_has_valid_session``）。守卫关闭时只校验岗位合法性，保持免密演示的
+    诚实边界；全部未识别 → 400，绝不下发匿名令牌。
+    """
+    if _login_guard_enabled() and not _has_valid_session(request):
+        _verify_login_credentials(req)
     candidates: list[str] = list(req.roles or [])
     if not candidates and req.role:
         candidates = [req.role]
@@ -2059,26 +2161,60 @@ def _scope_guard(request: Request, dashboard: str) -> dict[str, Any]:
     return ctx
 
 
+def _row_scope_guard(dashboard: str, ctx: dict[str, Any],
+                     stage: str = "") -> list[str]:
+    """行级组织范围裁决：返回需下推到聚合的产线清单（空 = 不收紧）。
+
+    claim 只从令牌上下文读（``_ctx_from_payload``），请求参数无法自报。
+    已声明归属的用户再请求**辖区外工段**时直接 403——不静默改成"全部"，
+    也不返回 200 空数据（那会把越权伪装成正常展示）。
+    """
+    lines = list(get_data_scope().scope_lines(dashboard, ctx))
+    stage = str(stage or "").strip()
+    if lines and stage:
+        from ..services.dashboard import stages_from_lines  # 局部导入：避免循环依赖
+        allowed = stages_from_lines(lines)
+        if stage not in allowed:
+            raise HTTPException(status_code=403, detail={
+                "message": (f"工段「{stage}」不在你的产线范围"
+                            f"（{'、'.join(lines)}）内"),
+                "dashboard": dashboard,
+                "line_ids": lines,
+                "allowed_stages": allowed,
+            })
+    return lines
+
+
 def _dashboard_payload(request: Request, dashboard: str, builder,
                        window: Optional[str] = None,
                        **extra: Any) -> dict[str, Any]:
-    """统一编排：裁决 → 聚合 → 脱敏 → 回写 scope 凭据。
+    """统一编排：裁决 → 行级范围 → 聚合 → 脱敏 → 回写 scope 凭据。
 
     ``window`` 为可选板级时间口径（``manufacturing`` / ``quality`` / ``spc`` 支持
     ``window|day|month``）；``None`` 表示该看板不接口径参数（orders）。
     ``extra``：看板自定义筛选（如品质看板的 ``stage`` / ``category``、SPC 看板的
     ``stage`` / ``product_category``），原样透传给聚合器。
+
+    行级范围（``data_scope.yaml`` 的 ``row_scope``）：令牌携带 claim 时才给聚合器
+    注入 ``lines``，并在响应 ``scope.row_scope`` 如实回执（enforced 真假一目了然）。
+    未声明归属的看板 / 令牌 → 注入空清单 = 行为与改动前逐字段一致。
     """
     ctx = _scope_guard(request, dashboard)
+    lines = _row_scope_guard(dashboard, ctx, stage=str(extra.get("stage") or ""))
+    if lines and get_data_scope().row_scope(dashboard) is not None:
+        extra["lines"] = lines
     registry = get_orchestrator().runtime.data_registry
     if window is not None:
         data = builder(registry, window=window, **extra)
     else:
         data = builder(registry, **extra)
     data, masked = get_data_scope().apply(dashboard, data, ctx["roles"])
-    return {"code": 0, "data": data, "message": "ok",
-            "scope": {"dashboard": dashboard, "roles": list(ctx["roles"]),
-                      "masked": masked}}
+    scope_meta: dict[str, Any] = {"dashboard": dashboard, "roles": list(ctx["roles"]),
+                                  "masked": masked}
+    row_meta = get_data_scope().row_scope_meta(dashboard, ctx)
+    if row_meta.get("enforced"):     # 未声明归属 = 不追加字段（响应结构与改动前一致）
+        scope_meta["row_scope"] = row_meta
+    return {"code": 0, "data": data, "message": "ok", "scope": scope_meta}
 
 
 # 板级时间口径白名单（制造/品质看板）：默认最近 7 天，非法值 → 400
@@ -2486,6 +2622,10 @@ def api_dashboard_drill(request: Request, screen: str = Query(...),
             raise HTTPException(status_code=400, detail="未知工段筛选 stage")
         if category and category not in QUALITY_CATEGORIES:
             raise HTTPException(status_code=400, detail="未知类别筛选 category")
+    # 行级组织范围：与看板同一套 claim 裁决（辖区外工段 → 403），
+    # 并下推到聚合 → 杜绝「看板收紧了、下钻却能拿全厂」的后门。
+    lines = _row_scope_guard(screen, _ctx, stage=stage)
+    line_scope_meta = get_data_scope().row_scope_meta(screen, _ctx)
     # defect_type 只对白名单 DEFECT_TYPE_DRILLS 内的 (screen, kpi) 生效（唯一事实源）：
     #   "pareto" → 走 L1 累计不良柏拉图下钻；"entity" → 作为已声明实体维度走下方通用下钻；
     # 白名单外一律 400（脏参不被静默吞掉），不再用散落的 str 判定。
@@ -2501,11 +2641,14 @@ def api_dashboard_drill(request: Request, screen: str = Query(...),
                                       stage=stage or None,
                                       category=category or None,
                                       prod_category=prod_category or None,
-                                      window=window)
+                                      window=window,
+                                      lines=lines or None)
             data, masked = get_data_scope().apply(screen, data, _ctx["roles"], kpi=kpi)
-            return {"code": 0, "data": data, "message": "ok",
-                    "scope": {"dashboard": screen, "roles": list(_ctx["roles"]),
-                              "masked": masked}}
+            scope_meta: dict[str, Any] = {
+                "dashboard": screen, "roles": list(_ctx["roles"]), "masked": masked}
+            if line_scope_meta.get("enforced"):
+                scope_meta["row_scope"] = line_scope_meta
+            return {"code": 0, "data": data, "message": "ok", "scope": scope_meta}
         if dt_kind != "entity":
             raise HTTPException(status_code=400,
                                 detail="该指标不支持不良类型下钻")
@@ -2528,11 +2671,14 @@ def api_dashboard_drill(request: Request, screen: str = Query(...),
                        station or None, window,
                        stage=stage or None,
                        product_category=prod_category or None,
-                       category=category or None)
+                       category=category or None,
+                       lines=lines or None)
     data, masked = get_data_scope().apply(screen, data, _ctx["roles"], kpi=kpi)
-    return {"code": 0, "data": data, "message": "ok",
-            "scope": {"dashboard": screen, "roles": list(_ctx["roles"]),
-                      "masked": masked}}
+    scope_meta: dict[str, Any] = {
+        "dashboard": screen, "roles": list(_ctx["roles"]), "masked": masked}
+    if line_scope_meta.get("enforced"):
+        scope_meta["row_scope"] = line_scope_meta
+    return {"code": 0, "data": data, "message": "ok", "scope": scope_meta}
 
 
 # ---------- 现场看板（客诉 → 责任工段推送队列：读 + 现场回写） ----------
@@ -3850,13 +3996,26 @@ def api_case_cite(case_id: str, req: CaseCiteRequest, request: Request) -> dict[
 _UI_DIR = Path(__file__).resolve().parent / "ui"
 
 
-class _RevalidateStaticFiles(StaticFiles):
-    """演示前端静态资源：强制浏览器每次协商缓存（ETag → 304 空体，成本极低）。
+def _has_version_query(scope: Mapping[str, Any]) -> bool:
+    """请求是否带 ``?v=<mtime>`` 版本号——静态资源可长缓存的唯一前提。"""
+    raw = scope.get("query_string") or b""
+    if isinstance(raw, bytes):
+        raw = raw.decode("latin-1", "ignore")
+    return "v=" in raw
 
-    为什么不能靠启发式缓存：``index.html`` 只给 10 个具名资源注入了 ``?v=<mtime>``，
-    ``scenes/*.js`` 等仍是无版本号的固定 URL。若让它们按启发式缓存驻留，改动同样
-    不会生效。统一 no-cache（回源校验）兼顾两者：有版本号的命中 304，无版本号的
-    变更后立即拿到新内容，代价只是一个空响应。
+
+class _RevalidateStaticFiles(StaticFiles):
+    """演示前端静态资源：按「是否带版本号」分档缓存。
+
+    - 带 ``?v=<mtime>``：``public, max-age=31536000, immutable``。版本号由
+      index.html 每次按文件 mtime 重写，内容一改 URL 就变，因此可以放心长缓存。
+      公网经 Cloudflare 时这一档还能被边缘缓存，静态资源不再每次回源隧道
+      （隧道回国往返 1.3s+/个，20 个资源足以让首屏转圈十几秒）。
+    - 不带版本号（``scenes/*.js`` 等固定 URL）：仍 ``no-cache`` 回源校验（ETag →
+      304 空体），保证改动立即生效；这类文件也不能交给边缘缓存，否则改了看不到。
+
+    为什么不能对所有资源都长缓存：``index.html`` 只给部分具名资源注入了版本号，
+    其余仍是固定 URL，启发式缓存会让它们改动不生效。
     """
 
     async def get_response(self, path: str, scope: Mapping[str, Any]) -> Any:
@@ -3865,6 +4024,8 @@ class _RevalidateStaticFiles(StaticFiles):
             # index.html 走外壳同款 no-store（含 /demo-ui 无斜杠时的 html 兜底）
             if path.endswith("index.html") or path in ("", "."):
                 response.headers["cache-control"] = "no-store, no-cache, must-revalidate"
+            elif _has_version_query(scope):
+                response.headers["cache-control"] = "public, max-age=31536000, immutable"
             else:
                 response.headers["cache-control"] = "no-cache"
         return response

@@ -1985,6 +1985,49 @@ a:hover { text-decoration: underline; }
 .login-panel-head h2 { font-size: calc(22px * var(--font-scale)); font-weight: 650; letter-spacing: .2px; }
 .login-panel-head p { font-size: calc(13.5px * var(--font-scale)); color: var(--text-2); margin-top: 7px; line-height: 1.7; max-width: 640px; }
 
+/* ---------- 登录守卫凭证区（账号/密码/验证码；公网防刷） ---------- */
+
+.login-cred {
+  margin-top: 16px;
+  padding: 14px 14px 13px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-sub);
+  display: flex; flex-direction: column; gap: 9px;
+}
+.login-cred[hidden] { display: none; }
+.login-cred .cred-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.login-cred .cred-label {
+  flex: none; width: 44px;
+  font-size: calc(12.5px * var(--font-scale)); color: var(--text-2); text-align: right;
+}
+.login-cred .cred-input {
+  flex: 1; min-width: 0; height: 36px;
+  padding: 0 11px;
+  border: 1px solid var(--border-strong);
+  border-radius: 9px;
+  background: var(--card);
+  color: var(--text);
+  font: inherit; font-size: calc(13.5px * var(--font-scale));
+  outline: none;
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+.login-cred .cred-input::placeholder { color: var(--text-3); }
+.login-cred .cred-input:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(var(--primary-rgb), .18);
+}
+.login-cred .cred-captcha-img {
+  flex: none; height: 36px; min-width: 112px;
+  border: 1px solid var(--border-strong);
+  border-radius: 9px;
+  cursor: pointer;
+  display: block;
+  background: #F4F7FC;
+  transition: border-color .15s ease, opacity .15s ease;
+}
+.login-cred .cred-captcha-img:hover { border-color: var(--primary); opacity: .92; }
+
 .role-grid {
   margin: 18px 0 16px;
   max-height: calc(100vh - 300px);

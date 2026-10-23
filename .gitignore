@@ -111,3 +111,8 @@ tmp_sm/
 
 # ---- R13 连接器回写审计台账（运行时生成，与治理库同目录）----
 writeback_outbox.jsonl
+
+# ---- 本地运行产物 / 本机专属配置（不入库）----
+.sentry-native/
+data/demo_storyline/*.db
+deploy/hulkai-cn/tunnel/config.yml

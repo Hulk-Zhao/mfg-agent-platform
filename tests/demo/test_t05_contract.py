@@ -357,14 +357,24 @@ def test_scene_kit_endpoint_matches_backend_route():
 
 
 def test_scene_kit_story_never_rejects():
-    """story() 必须有兜底 catch，把异常转成 {ok:false}（装载层未就绪不许白屏）。"""
+    """story() 必须有兜底 catch，把异常转成 {ok:false}（装载层未就绪不许白屏）。
+
+    2026-10-23：story() 拆成「会话级缓存外壳 + _storyFetch 取数」以去重公网
+    隧道往返，故取数实现一并纳入断言范围；对调用方的可观测契约（永不 reject、
+    失败给「演示装载层未就绪」）保持不变。
+    """
     src = (SCENES_DIR / "scene-kit.js").read_text(encoding="utf-8")
     body = re.search(r"function story\(objectName\) \{(.*?)\n  \}", src, re.S)
     assert body, "未找到 story() 实现"
-    text = body.group(1)
+    fetch = re.search(r"function _storyFetch\(name\) \{(.*?)\n  \}", src, re.S)
+    assert fetch, "未找到 _storyFetch() 取数实现"
+    text = body.group(1) + fetch.group(1)
     assert "Promise.resolve(" in text, "story() 必须对降级路径直接 resolve，不能 reject"
     assert ".catch(" in text, "story() 缺少 catch：接口异常会变成未捕获 rejection"
     assert 'error: "演示装载层未就绪"' in text, "story() 缺省错误文案必须是「演示装载层未就绪」"
+    # 会话级缓存：同对象重复取不得再打一次隧道往返
+    assert "const storyCache = Object.create(null);" in src, (
+        "story() 缺少会话级缓存（公网隧道下每对象 1 次往返，切屏往返会重复取）")
 
 
 # ============================================================

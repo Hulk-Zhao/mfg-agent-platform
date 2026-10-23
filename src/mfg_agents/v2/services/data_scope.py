@@ -42,6 +42,9 @@ _SEGMENT_RE = re.compile(
     r"(?P<list>\[\])?$"
 )
 
+#: 行级 claim 名（令牌载荷字段）的合法形态
+_CLAIM_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
+
 
 class DataScopeError(RuntimeError):
     """数据范围目录非法（加载期即抛出，绝不静默降级）。"""
@@ -150,13 +153,35 @@ class DashboardScope:
         return any(r in self.allow_roles for r in roles)
 
 
+#: 行级 claim 的取值上限（防越权令牌塞入超长清单把 WHERE 撑爆）
+_MAX_CLAIM_VALUES = 100
+
+
+@dataclass(frozen=True)
+class RowScope:
+    """行级组织范围声明（令牌 claim → 看板生效）。
+
+    ``claim`` 是令牌载荷里的字段名（默认 ``line_ids``）。claim 缺省 / 为空时
+    **不收紧**——这是演示与存量令牌零变化的前提，也是「没声明归属就别假装收紧了」
+    的诚实边界。只有本结构 ``dashboards`` 里的看板才会去读 claim。
+    """
+
+    claim: str
+    dashboards: frozenset[str]
+
+    def applies(self, dashboard: str) -> bool:
+        return str(dashboard or "") in self.dashboards
+
+
 class DataScopeRegistry:
     """数据范围目录（构造期自检，配置错误即启动失败）。"""
 
     def __init__(self, dashboards: dict[str, DashboardScope],
-                 pseudo_prefix: dict[str, str]) -> None:
+                 pseudo_prefix: dict[str, str],
+                 row_scope: Optional[RowScope] = None) -> None:
         self._dashboards = dict(dashboards)
         self._pseudo = dict(pseudo_prefix)
+        self._row_scope = row_scope
 
     # ---------- 加载与自检 ----------
 
@@ -217,7 +242,26 @@ class DataScopeRegistry:
             )
         if not dashboards:
             raise DataScopeError("data_scope.yaml 未声明任何看板")
-        return cls(dashboards, pseudo)
+
+        # 行级组织范围（可选段）：claim 必须是合法标识符，看板必须已登记——
+        # 「给不存在的看板配行级范围」是配置错误，不能静默忽略。
+        row_scope: Optional[RowScope] = None
+        raw_row = raw.get("row_scope")
+        if raw_row is not None:
+            if not isinstance(raw_row, dict):
+                raise DataScopeError("row_scope 必须是映射")
+            claim = str(raw_row.get("claim") or "").strip()
+            if not _CLAIM_RE.match(claim):
+                raise DataScopeError(f"row_scope.claim 非法: {claim!r}")
+            targets = [str(x) for x in (raw_row.get("dashboards") or [])]
+            unknown_targets = [x for x in targets if x not in dashboards]
+            if unknown_targets:
+                raise DataScopeError(
+                    f"row_scope 引用了未声明的看板: {unknown_targets}")
+            if not targets:
+                raise DataScopeError("row_scope.dashboards 不能为空")
+            row_scope = RowScope(claim=claim, dashboards=frozenset(targets))
+        return cls(dashboards, pseudo, row_scope)
 
     # ---------- 查询 ----------
 
@@ -236,6 +280,56 @@ class DataScopeRegistry:
         if scope is None:
             return False
         return scope.allows(roles)
+
+    # ---------- 行级组织范围 ----------
+
+    def row_scope(self, dashboard: str) -> Optional[RowScope]:
+        """该看板是否声明了行级范围；未声明 / 不在清单内 → ``None``（不收紧）。"""
+        scope = self._row_scope
+        if scope is None or not scope.applies(dashboard):
+            return None
+        return scope
+
+    def scope_lines(self, dashboard: str, user_ctx: Optional[dict[str, Any]]
+                    ) -> tuple[str, ...]:
+        """从用户上下文取行级归属声明 → 归属值元组（空 = 不收紧）。
+
+        只读 ``user_ctx[claim]``（由签名令牌载荷解出，客户端无法在 query 里自报）。
+        去空白、去重、保序、封顶 ``_MAX_CLAIM_VALUES``；非列表的值按单值处理，
+        数字/对象一律丢弃（脏令牌不猜）。
+        """
+        scope = self.row_scope(dashboard)
+        if scope is None or not user_ctx:
+            return ()
+        raw = user_ctx.get(scope.claim)
+        if raw is None:
+            return ()
+        if isinstance(raw, (list, tuple)):
+            values = list(raw)
+        elif isinstance(raw, str):
+            values = [raw]
+        else:
+            values = []
+        out: list[str] = []
+        for value in values:
+            if not isinstance(value, str):
+                continue
+            text = value.strip()
+            if text and text not in out:
+                out.append(text)
+            if len(out) >= _MAX_CLAIM_VALUES:
+                break
+        return tuple(out)
+
+    def row_scope_meta(self, dashboard: str,
+                       user_ctx: Optional[dict[str, Any]]) -> dict[str, Any]:
+        """行级范围的回执（响应 ``scope`` 用；未声明看板返回空 dict）。"""
+        scope = self.row_scope(dashboard)
+        if scope is None:
+            return {}
+        lines = self.scope_lines(dashboard, user_ctx)
+        return {"claim": scope.claim, "lines": list(lines),
+                "enforced": bool(lines)}
 
     # ---------- 脱敏 ----------
 

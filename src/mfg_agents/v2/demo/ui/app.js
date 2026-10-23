@@ -129,6 +129,8 @@
 
   // probe() 的 in-flight Promise（并发守卫，见下方 probe 注释）
   let probeInFlight = null;
+  // workflowPending 的同参短时缓存（消除工作台「简报 + 待办」的重复往返）
+  const pendingCache = Object.create(null);
 
   const ICONS = {
     grid: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
@@ -178,6 +180,13 @@
     screen: "dashboard",
     role: "gm",
     token: "",       // 岗位访问令牌（F2）：HITL 写接口凭它鉴权；演示模式为空
+    creds: {         // 登录守卫凭证（公网防刷）：登录页收集，loginAs 携带
+      guard: null,   // null=未探测；true=服务端守卫开启（需账号/密码/验证码）
+      username: "admin",
+      password: "admin",
+      captchaId: "",   // 已签发验证码会话 id（一次性，登录成功/失败即作废）
+      captchaCode: "", // 用户输入的验证码（提交后清空）
+    },
     backend: { online: false, base: "", checking: true, health: null },
     perms: null,     // 治理权限目录快照（/api/v2/governance/permissions）
     permsError: "",  // 权限目录加载失败的用户友好提示（成功时清空）
@@ -346,12 +355,31 @@
             <div class="login-stat"><b>43</b><span>平台工具</span></div>
             <div class="login-stat"><b>2100+</b><span>自动化测试</span></div>
           </div>
-          <div class="login-brand-foot">演示环境 · 免密码 · 选择岗位身份进入对应数据视图</div>
+          <div class="login-brand-foot">演示环境 · 选择岗位身份进入对应数据视图</div>
         </section>
         <section class="login-panel">
           <div class="login-panel-head">
             <h2>选择岗位身份</h2>
-            <p>角色定义直接可见：决定数据权限、默认视图与可审批事项。演示版免密码，进入后可随时切换。</p>
+            <p>角色定义直接可见：决定数据权限、默认视图与可审批事项。输入访问凭证并选择岗位，进入后可随时切换。</p>
+          </div>
+          <div class="login-cred" id="login-cred" ${state.creds.guard ? "" : "hidden"}>
+            <div class="cred-row">
+              <label class="cred-label" for="login-user">账号</label>
+              <input class="cred-input" id="login-user" type="text" value="admin"
+                autocomplete="username" spellcheck="false"/>
+            </div>
+            <div class="cred-row">
+              <label class="cred-label" for="login-pass">密码</label>
+              <input class="cred-input" id="login-pass" type="password" value="admin"
+                autocomplete="current-password"/>
+            </div>
+            <div class="cred-row">
+              <label class="cred-label" for="login-captcha-input">验证码</label>
+              <input class="cred-input" id="login-captcha-input" type="text" maxlength="4"
+                placeholder="输入右侧字符" autocomplete="off" spellcheck="false"/>
+              <img class="cred-captcha-img" id="login-captcha-img" alt="验证码"
+                title="看不清？点击刷新"/>
+            </div>
           </div>
           <div class="role-grid">${roleGroupsHtml(roles, selected)}</div>
           <div class="login-panel-foot">
@@ -385,9 +413,66 @@
       card.addEventListener("dblclick", () => { if (selected) enterApp(selected); });
     });
     if (btn) btn.addEventListener("click", () => { if (selected) enterApp(selected); });
+    // 验证码交互：点图换一张；验证码框回车 = 快捷进入（已选岗位时）
+    const capImg = root.querySelector("#login-captcha-img");
+    if (capImg) capImg.addEventListener("click", () => fetchCaptcha());
+    const capInput = root.querySelector("#login-captcha-input");
+    if (capInput) capInput.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter") return;
+      if (selected) { enterApp(selected); return; }
+      toast("请先选择岗位身份，再进入系统", "warn", 2600);
+      const firstCard = root.querySelector(".role-card");
+      if (firstCard) firstCard.scrollIntoView({ block: "nearest" });
+    });
+    fetchCaptcha();   // 探测守卫状态 + 签发验证码（失败静默降级为免密样式）
+  }
+
+  /**
+   * 拉取登录验证码并探测守卫状态。``GET /api/v2/auth/captcha`` 的 ``guard``
+   * 字段决定登录页是否展示凭证区：
+   * - 守卫开（公网部署默认）→ 展示账号/密码/验证码，登录需三样齐全；
+   * - 守卫关 / 后端离线（演示模式）→ 隐藏凭证区，保持免密演示体验。
+   * 失败一律静默降级（不阻塞登录页渲染）。
+   */
+  async function fetchCaptcha() {
+    const wrap = document.getElementById("login-cred");
+    const img = document.getElementById("login-captcha-img");
+    try {
+      const data = await api.captcha();
+      state.creds.guard = !!data.guard;
+      state.creds.captchaId = String(data.captcha_id || "");
+      if (wrap) wrap.hidden = !state.creds.guard;
+      if (img && data.svg) {
+        img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(data.svg);
+      }
+    } catch (err) {
+      // 429（刷新过频）也走这里：隐藏凭证区不让用户白等，下一次 renderLogin 再试
+      state.creds.guard = false;
+      state.creds.captchaId = "";
+      if (wrap) wrap.hidden = true;
+    }
+  }
+
+  /** 守卫开启时从登录页收集凭证；验证码为空则提示并刷新，返回 false 中止进入。 */
+  function collectCreds() {
+    if (state.creds.guard !== true) return true;   // 守卫关/未探测：免密直进
+    const capInput = document.getElementById("login-captcha-input");
+    const code = capInput ? capInput.value.trim() : "";
+    if (!code) {
+      toast("请先输入验证码", "warn", 2600);
+      fetchCaptcha();
+      return false;
+    }
+    const userInput = document.getElementById("login-user");
+    const passInput = document.getElementById("login-pass");
+    state.creds.username = userInput ? userInput.value.trim() : "admin";
+    state.creds.password = passInput ? passInput.value : "admin";
+    state.creds.captchaCode = code;
+    return true;
   }
 
   function enterApp(roleId) {
+    if (!collectCreds()) return;   // 守卫校验不过：留在登录页
     const role = window.DEMO.ROLES.find((r) => r.id === roleId) || window.DEMO.ROLES[0];
     state.role = role.id;
     state.token = "";          // 换岗位必须换令牌（令牌与岗位绑定），由 ensureSession 重新签发
@@ -404,21 +489,45 @@
   /**
    * 向服务端换取岗位访问令牌。后端离线（演示模式）时令牌置空——此模式下
    * 审批操作只做本地回放，本就不会命中后端写接口。
+   *
+   * ``prevToken``：换岗/补签时透传的旧令牌（setRole 已清空 state.token）。
+   * 守卫开启下后端凭**有效**旧令牌豁免验证码——否则切换岗位会被当成全新
+   * 登录要求验证码，验证码又已消费，用户被无故弹回登录页（2026-10-23 修复）。
    */
-  async function loginAs(roleId) {
+  async function loginAs(roleId, prevToken) {
     const role = window.DEMO.ROLES.find((r) => r.id === roleId);
     if (!role || !state.backend.online) { state.token = ""; return null; }
+    const payload = {
+      roles: role.roles || [], role: role.id,
+      user_id: role.uid || "", name: role.user || "", dept: role.dept || "",
+    };
+    // 守卫开启（公网防刷）：携带账号/密码/验证码凭证。验证码一次性——
+    // 提交后无论成败立即作废，失败须回登录页换新码重填。
+    if (state.creds.guard === true) {
+      payload.username = state.creds.username || "admin";
+      payload.password = state.creds.password || "admin";
+      payload.captcha_id = state.creds.captchaId || "";
+      payload.captcha_code = state.creds.captchaCode || "";
+    }
     try {
-      const data = await api.login({
-        roles: role.roles || [], role: role.id,
-        user_id: role.uid || "", name: role.user || "", dept: role.dept || "",
-      });
+      const data = await api.login(payload, prevToken);
       state.token = (data && data.token) || "";
+      state.creds.captchaCode = "";   // 已消费，清空（用户名/密码保留便于重试）
       saveUser(role.id, state.token);
       return data;
     } catch (err) {
       state.token = "";
+      state.creds.captchaCode = "";
       console.warn("[auth] 岗位令牌获取失败，审批写操作将被后端以 401 拒绝:", err);
+      if (err && err.status === 401) return null;   // handleAuthExpired 已处理（回登录页+提示）
+      if (err && (err.status === 400 || err.status === 429)) {
+        // 守卫拒绝（验证码错误/过期/账密错误/限速）：清会话回登录页，换新码重填
+        clearUser();
+        state.role = "";
+        toast(err.message || "登录校验未通过，请重试", "bad", 4200);
+        renderLogin();
+        return null;
+      }
       toast("岗位令牌获取失败：人工确认写操作暂不可用", "warn", 4000);
       return null;
     }
@@ -430,11 +539,13 @@
     try { await api.me(); return true; } catch (err) { return false; }
   }
 
-  /** 保证进入应用时持有可用令牌：有效则复用，失效/缺失则按当前岗位静默补签。 */
-  async function ensureSession() {
+  /** 保证进入应用时持有可用令牌：有效则复用，失效/缺失则按当前岗位静默补签。
+   *  ``prevToken``：换岗场景下 setRole 清空 state.token 前的旧令牌，透传给
+   *  loginAs → /auth/login，后端凭有效旧令牌豁免验证码（见 loginAs）。 */
+  async function ensureSession(prevToken) {
     if (!state.backend.online || !state.role) { state.token = ""; return; }
     if (await tokenValid()) return;
-    await loginAs(state.role);
+    await loginAs(state.role, prevToken);
   }
 
   /** 令牌失效（401）：清登录态并回到登录页，避免"看似已登录却处处写不进去"。 */
@@ -647,7 +758,38 @@
 
         // ① 同源优先：http(s) 托管时先单独打同源（不打其它候选，避免竞速误选旧实例）
         const sameOrigin = /^https?:$/.test(location.protocol) ? location.origin : "";
-        let hit = sameOrigin ? await probeOne(sameOrigin) : null;
+
+        /* 同源时**不再阻塞等待**健康探针：页面本身就是这个后端托管的，
+           可达性可以按"在线"先行放行，把 /api/v2/health 转到后台刷新。
+           公网隧道下这一次探针 1.3–2.3s，且挡在启动序列最前面，等于首屏白等；
+           真不可达时后续请求各自失败并走既有的离线降级，末尾再纠正 online。 */
+        if (sameOrigin) {
+          state.backend = { online: true, base: sameOrigin, checking: false, health: null };
+          /* 首访窗口重试（2026-10-23）：其他电脑首次打开时，浏览器正并行回源
+             拉 20+ 个静态资源（CF 各 PoP 缓存相互隔离），首次健康探针容易被
+             拥塞拖过超时或被边缘重置。旧逻辑"失败即判离线"且探针只在启动跑
+             一次，红标会钉死成「后端离线 · 演示模式」。改为指数退避重试
+             （1.5s/3s），全部失败才判离线；期间保持 online=true——页面本就
+             是该后端托管的，可达性先按在线放行的纪律不变。 */
+          (async () => {
+            const retryDelaysMs = [1500, 3000];
+            let hit = await probeOne(sameOrigin);
+            for (const delayMs of retryDelaysMs) {
+              if (hit) break;
+              if (state.backend.base !== sameOrigin) return;   // 基址已被更新的 probe 改变，停止旧判定
+              await new Promise((resolve) => setTimeout(resolve, delayMs));
+              hit = await probeOne(sameOrigin);
+            }
+            if (hit && hit.health) {
+              state.backend.health = hit.health;
+            } else if (!hit && state.backend.base === sameOrigin) {
+              state.backend = { online: false, base: "", checking: false, health: null };
+            }
+          })();
+          return true;
+        }
+
+        let hit = null;
 
         // ② 同源不可用 → 竞速本机候选（file:// 直开 / 前后端分离部署的老路）
         if (!hit) {
@@ -689,9 +831,13 @@
      *
      *  超时时长由调用方按链路预算传：kbqaQuery 传 75s（覆盖后端 rag 路径
      *  LLM 60s 超时 + 余量），其余轻操作走默认 12s。 */
-    async _post(path, body, timeoutMs) {
+    /** body 之后依次为超时与显式令牌；``token`` 传参时优先于 state.token——
+     *  供换岗/补签场景使用（setRole 已清空 state.token，旧令牌经此透传给
+     *  /auth/login，后端凭有效令牌豁免验证码）。 */
+    async _post(path, body, timeoutMs, token) {
       const headers = { "Content-Type": "application/json" };
-      if (state.token) headers.Authorization = `Bearer ${state.token}`;
+      const bearer = token !== undefined ? token : state.token;
+      if (bearer) headers.Authorization = `Bearer ${bearer}`;
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), timeoutMs || DEFAULT_TIMEOUT_MS);
       let resp;
@@ -740,8 +886,12 @@
       return payload;
     },
 
-    /** 岗位登录（F2）：用岗位身份换访问令牌 */
-    login(payload) { return this._post("/api/v2/auth/login", payload); },
+    /** 岗位登录（F2）：用岗位身份换访问令牌（守卫开启时须携带凭证；
+     *  ``prevToken`` 为换岗/补签透传的旧令牌，有效时后端豁免验证码） */
+    login(payload, prevToken) { return this._post("/api/v2/auth/login", payload, undefined, prevToken); },
+
+    /** 登录验证码签发（公网防刷）：返回 guard 状态 + captcha_id + SVG 文本 */
+    captcha() { return this._get("/api/v2/auth/captcha"); },
 
     /** 当前登录态校验（F2）：令牌有效则返回权威 user_ctx */
     me() { return this._get("/api/v2/auth/me", 6000); },
@@ -892,7 +1042,24 @@
       const qs = list.length
         ? "?" + list.map((r) => `role=${encodeURIComponent(r)}`).join("&")
         : "";
-      return this._getScoped(`/api/v2/workflow/pending${qs}`);
+      /* 短时同参缓存：工作台进入时「今日简报」与「待办中心」各取一次同一队列，
+         公网隧道下这是两个完全相同的往返（实测 1.3–2.8s/次）。
+         3 秒窗口只会合并同一次渲染发起的并发调用，审批动作后的刷新照常回源
+         （approve/reject 会显式失效缓存）。 */
+      const key = qs;
+      const now = Date.now();
+      const hit = pendingCache[key];
+      if (hit && now - hit.at < 3000) return hit.promise;
+      const promise = this._getScoped(`/api/v2/workflow/pending${qs}`);
+      pendingCache[key] = { at: now, promise };
+      // 失败不缓存，下一次调用重新请求
+      promise.catch(() => { if (pendingCache[key] && pendingCache[key].promise === promise) delete pendingCache[key]; });
+      return promise;
+    },
+
+    /** 审批动作后主动失效待办缓存（同意/驳回/会签后必须看到最新队列）。 */
+    invalidatePending() {
+      Object.keys(pendingCache).forEach((k) => { delete pendingCache[k]; });
     },
 
     /** 单工单详情（会签后局部刷新卡片）——可见性与队列同源，跨域取不到（404） */
@@ -1415,6 +1582,9 @@
       console.warn("[role] 未知岗位 id:", roleId, "（应为 DEMO.ROLES 的 id）");
       return;
     }
+    // 换岗必须换令牌（令牌与岗位绑定）：旧令牌暂存透传给补签——后端凭
+    // 有效旧令牌豁免验证码，否则守卫开启时切换岗位会被弹回登录页。
+    const prevToken = state.token;
     state.role = roleId;
     state.token = "";
     // 换岗即换同事：同事能力面按岗位配班，手动选择不跨岗位继承
@@ -1427,7 +1597,7 @@
       if (location.hash !== `#/${state.screen}`) location.hash = `#/${state.screen}`;
     }
     updateChrome();
-    await ensureSession();   // 静默按新岗位补签令牌
+    await ensureSession(prevToken);   // 静默按新岗位补签令牌
     refreshScreen();
   }
 
@@ -1639,11 +1809,21 @@
   }
 
   async function startApp() {
-    await api.probe();
-    await ensureSession();       // F2：持有可用岗位令牌，写接口才有鉴权凭据
-    await loadPermCatalog();
-    await loadGateCatalog();
-    await loadColleagueCatalog();
+    await api.probe();           // 必须先探：决定 online 与同源基址，后续取数都依赖它
+    /* 会话补签与三份目录**互不依赖**，必须并行：
+       - 后端这三条都是只读快照（governance/permissions、governance/gates、
+         colleagues），不要求令牌；
+       - 串行时公网隧道下每个都要一次完整往返（实测 1.3–2.8s），
+         首屏在拿到数据前要白等 4 个往返（约 6–8s），现场就是"一直转圈"。
+       并行后收成一个往返（HTTP/2 同一连接多路复用）。
+       三者内部都已 try/catch 不外抛，ensureSession 也只在失败时返回 null，
+       故 Promise.all 不会因任一失败而中断启动。 */
+    await Promise.all([
+      ensureSession(),           // F2：持有可用岗位令牌，写接口才有鉴权凭据
+      loadPermCatalog(),
+      loadGateCatalog(),
+      loadColleagueCatalog(),
+    ]);
     updateChrome();
 
     const hash = canonScreen(location.hash.replace(/^#\/?/, ""));

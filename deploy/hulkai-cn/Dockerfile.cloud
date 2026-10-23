@@ -1,0 +1,79 @@
+# ============================================================
+# hulkai.cn 轻量云镜像（零中间件 / 精简依赖）
+#
+# 与仓库根 Dockerfile 的两处关键差异：
+#
+# ① 剔除重型依赖。根目录 Dockerfile 用 `pip install .`，而 uv.lock 锁定的是
+#    torch==2.14.1+cu130 + 17 个 nvidia CUDA 13 包 + cuda-toolkit 三件套，
+#    再加 sentence-transformers / flagembedding / transformers / accelerate /
+#    peft / datasets / pymilvus / milvus-model，下载量约 3-4GB。
+#    这些只在 VECTOR_BACKEND=milvus 分支被用到（common/rag_tools.py:141），
+#    chroma 模式完全不碰 → 这里用 uv export 导出后交由 filter-heavy.awk 剔除。
+#    实测：711 行 → 631 行，12 类重型包残留均为 0。
+#    注意不能只过滤 torch 本身：上述各包的 metadata 都声明了 torch 依赖，
+#    pip 解析时会把它连同 CUDA 全套拉回来，等于没过滤。
+#    最后一行守卫会确认安装结果里没有 torch，若清单日后失效会构建失败。
+#
+# ② 补齐演示数据包。原 Dockerfile 只 COPY 了 data/init.sql 与 data/seed_v3.sql，
+#    而 v2/demo/loader.py 在加载 *.jsonl 时是硬失败：
+#        if not path.exists(): raise ... "演示数据缺失: ..."
+#    缺了 data/demo_storyline/*.jsonl，打开 /demo-ui/ 场景数据接口必挂。
+#
+# 构建上下文是仓库根（-f deploy/hulkai-cn/Dockerfile.cloud），根 .dockerignore 生效：
+# 已排除 .git / .venv / docs / tests / logs 与 data/*.db、data/chroma。
+# ============================================================
+FROM python:3.12-slim-bookworm
+
+WORKDIR /app
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION=1 \
+    PYTHONPATH=/app/src
+
+RUN sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources && \
+    apt-get update && apt-get install -y --no-install-recommends \
+    curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# ---- 依赖清单：导出 → 过滤重型包 → 安装 -------------------------
+# 过滤清单不能只写 torch：sentence-transformers / transformers / accelerate /
+# peft / milvus-model 这些包自己的 metadata 声明了 torch 依赖，pip 解析时
+# 会把 torch 连同.cuda 全套重新拉回来，等于没过滤。因此整条链一并剔除。
+# 安全性已核实：全仓库只有 common/rag_tools.py:142,157 出现 import torch，
+# 且都在 VECTOR_BACKEND == "milvus" 分支内，chroma 模式不会执行到。
+COPY pyproject.toml uv.lock README.md ./
+
+COPY deploy/hulkai-cn/filter-heavy.awk /tmp/filter-heavy.awk
+
+RUN pip install --no-cache-dir uv -i https://mirrors.cloud.tencent.com/pypi/simple && \
+    uv export --no-emit-project --frozen --format requirements-txt --no-hashes \
+        -o /tmp/req-full.txt && \
+    awk -f /tmp/filter-heavy.awk /tmp/req-full.txt > /tmp/req.txt && \
+    pip install --no-cache-dir \
+        -i https://mirrors.cloud.tencent.com/pypi/simple \
+        --timeout 120 --retries 3 \
+        --trusted-host mirrors.cloud.tencent.com \
+        -r /tmp/req.txt && \
+    pip list --format=freeze | awk -F'==' '$1=="torch"{print "FATAL: torch slipped back in"; exit 1}'
+
+# ---- 源码与数据 --------------------------------------------------
+COPY src ./src
+# 整个 data 目录拷贝：包含 demo_storyline（演示 ui 命脉）、种子 SQL、
+# kbqa_corpus、case_seed.json。体积仅几 MB，但漏一个就是运行时崩溃。
+COPY data ./data
+
+RUN mkdir -p logs data && chmod -R u+rwX data
+
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+EXPOSE 8004
+
+# 健康检查打的是 v2/services/health.py 的真实探测：
+# chroma 模式会校验 data/chroma/chroma.sqlite3 是否真的存在
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:8004/api/v2/health || exit 1
+
+ENTRYPOINT ["/entrypoint.sh"]

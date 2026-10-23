@@ -23,6 +23,13 @@ from pathlib import Path
 
 import pytest
 
+# 登录守卫（公网防刷验证码）在测试环境**强制关闭**：2100+ 既有用例直接
+# POST /api/v2/auth/login 换令牌，守卫开启会全员 400。守卫行为本身由
+# tests/demo/test_login_guard.py 专项覆盖（显式开启 + 逐一校验）。
+# 顶层强制赋值（而非 setdefault）：即使开发者 shell 残留 MFG_LOGIN_GUARD=1，
+# 测试基线也不被污染。
+os.environ["MFG_LOGIN_GUARD"] = "0"
+
 collect_ignore = [
     "test_sql.py",
 ]

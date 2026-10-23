@@ -198,3 +198,22 @@ dashboards:
       - product_engineering
       - test_engineer
       - ie_engineer
+
+# ---------- 行级组织范围（令牌 claim → 服务端 WHERE 下推）----------
+# 角色维度只回答「哪个岗位能看看板」；同一岗位内的产线负责人仍会看到全厂。
+# 本段把「看到哪几条产线」收敛到令牌携带的归属声明（claim，默认 line_ids）：
+#   1. **缺省不收紧**：claim 缺省 / 为空 → 行为与改动前逐字段一致（演示与存量令牌）；
+#   2. **只能由签发方写入**：claim 由登录（演示会话）或生产 SSO 写进签名令牌，
+#      客户端无法在请求参数里自报范围；
+#   3. **能力边界如实标注**：带产线列的表（equipment_run_time / scrap_record /
+#      work_report / quality_defect）精确到产线；只有工段列的表（spc_measurement /
+#      std_standard_audit）按产线前缀收紧到工段并标注；两者都没有的指标（测试记录 /
+#      来料 / 客诉）保持全厂口径并标注，绝不假装已收紧；
+#   4. **未登记 = 不收紧**：本段只对列出的看板生效，其余看板（orders）没有产线维度，
+#      新增看板若要行级范围必须在此显式登记。
+row_scope:
+  claim: line_ids
+  dashboards:
+    - manufacturing
+    - quality
+    - spc

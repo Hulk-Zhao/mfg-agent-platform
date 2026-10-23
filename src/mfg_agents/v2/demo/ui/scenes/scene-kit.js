@@ -753,6 +753,16 @@
   }
 
   /**
+   * 故事对象会话级缓存（objectName → Promise<结果>）。
+   *
+   * 公网隧道下每个对象都是 1 次完整往返（实测 1.1–2.3s）。场景间大量复用同一批
+   * 对象（sales_orders / inspections / work_orders…），且反复进出场景会重复取。
+   * 缓存 Promise 既去重**并发**（同屏 Promise.all 里同名对象）也去重**重入**
+   * （切走再切回）。只缓存成功结果：失败/降级时删除缓存，下次仍会重试。
+   */
+  const storyCache = Object.create(null);
+
+  /**
    * 公共故事数据的**统一入口**。
    *
    * 取数顺序：`GET /api/v2/demo/objects/<objectName>`（T04 装载层 loader.py）
@@ -777,7 +787,20 @@
     if (!name) {
       return Promise.resolve({ ok: false, rows: [], error: "未指定故事对象名" });
     }
+    const cached = storyCache[name];
+    if (cached) return cached;
+    const pending = _storyFetch(name);
+    storyCache[name] = pending;
+    // 失败/降级都不缓存：下次进入场景仍会重试，避免一次抖动锁死整场演示。
+    // catch 只挂在自己的派生分支上，返回给调用方的仍是 pending（不吞、不改语义）。
+    pending.catch(function () { delete storyCache[name]; });
+    pending.then(function (res) {
+      if (!res || !res.ok) delete storyCache[name];
+    });
+    return pending;
+  }
 
+  function _storyFetch(name) {
     const degrade = function (note) {
       const rows = localStoryRows(name);
       if (rows) {

@@ -1,0 +1,71 @@
+# ============================================================
+# frp 隧道配置（方案 B，比 WireGuard 简单，但少一层网络可靠性）
+#
+# 云服务器跑 frps，本地 Windows 跑 frpc，把本机 8004 映射到云端 127.0.0.1:7000。
+# Nginx 再反代到 7000，公网全程只暴露 443。
+# ============================================================
+
+# -------------------- 云服务器 /etc/frp/frps.toml --------------------
+#
+# bindPort = 7001                  # frpc 来连的端口，需公网可达
+#
+# # 关键：由 proxy 暴露出来的端口只绑在回环地址。
+# # 不写这一行的话，7000 会绑到 0.0.0.0 —— 互联网任何人都能直连你的
+# # 本地 8004，完全绕过 Nginx 的 HTTPS 与鉴权。这是 frp 最常见的翻车点。
+# proxyBindAddr = "127.0.0.1"
+#
+# auth.method = "token"
+# auth.token = "【改成一个长随机串，别用默认值】"
+#
+# transport.tls.force = true       # frpc↔frps 之间强制加密
+
+
+# -------------------- 本地 Windows frpc.toml --------------------
+# ---------------------------------------------------------------
+# serverAddr = "【云公网IP】"
+# serverPort = 7001
+# auth.method = "token"
+# auth.token  = "【与服务端一致】"
+# transport.tls.force = true
+#
+# [[proxies]]
+# name = "mfg-api"
+# type = "tcp"
+# localIP = "127.0.0.1"
+# localPort = 8004
+# remotePort = 7000
+
+
+# ============================================================
+# 本地守护：把后端与 frpc 注册为开机自启服务
+# ============================================================
+#
+# frpc（管理员权限的 cmd 里执行，注意路径用英文引号）：
+#   schtasks /create /tn "mfg-frpc" /tr "\"C:\frp\frpc.exe\" -c \"C:\frp\frpc.toml\"" ^
+#     /sc onstart /ru SYSTEM /rl HIGHEST /f
+#
+# 后端 uvicorn（同理，路径改成你的实际路径）：
+#   schtasks /create /tn "mfg-backend" ^
+#     /tr "\"D:\tools\mfg-agent-platform\.venv\Scripts\python.exe\" -m uvicorn mfg_agents.v2.demo.api:app --host 0.0.0.0 --port 8004" ^
+#     /sc onstart /ru SYSTEM /rl HIGHEST /f
+#
+# 查看与移除：
+#   schtasks /query /tn "mfg-frpc"
+#   schtasks /delete /tn "mfg-frpc" /f
+#
+# 注意：计划任务启动的工作目录通常是 System32，PYTHONPATH 需要在脚本里显式设置，
+# 否则 mfg_agents 模块 import 不到。稳妥做法是先写一个 .cmd 包装脚本设置好
+# 环境变量再拉起 uvicorn（脚本必须纯 ASCII、CRLF 换行才能在 Windows cmd 下跑）。
+
+
+# ============================================================
+# 上线检查清单
+# ============================================================
+#
+# 1. 云服务器安全组放行 TCP 7001（frpc 连接用），但**不要**放行 7000
+#    7000 只能暴露给本机 Nginx，这是 proxyBindAddr 那行的意义。
+#
+# 2. 云服务器上验证链路：curl -s http://127.0.0.1:7000/api/v2/health
+#    这一步通了才说明隧道 OK，再去动 Nginx 配置。
+#
+# 3. 本地 frpc 是否在线看 frps 日志：journalctl -u frps -f

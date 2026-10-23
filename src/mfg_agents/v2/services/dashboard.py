@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Iterable, Optional
 
 from ..core.dimensions import (
     MFG_PRODUCT_CATEGORIES,
@@ -251,7 +251,8 @@ _MFG_NOTES = [
 
 def build_manufacturing_dashboard(registry, window: str = "window", *,
                                   stage: Optional[str] = None,
-                                  product_category: Optional[str] = None) -> dict:
+                                  product_category: Optional[str] = None,
+                                  lines: Optional[Iterable[str]] = None) -> dict:
     """制造看板聚合。
 
     ``stage``（工段：SMT/PCM/PACK/整机）/ ``product_category``（产品分类：消费电子 /
@@ -259,6 +260,10 @@ def build_manufacturing_dashboard(registry, window: str = "window", *,
     ``MFG_PRODUCT_CATEGORIES`` 约束，接口层 fail-fast）。四个指标的 KPI 卡、TOP5 排行、
     趋势线均随筛选重算——**卡片值即所选范围的汇总**；测试直通率无产线维度，工段筛选
     对它不适用并回传 ``scope_note``（不伪造不存在的分解）。
+
+    ``lines``：行级组织范围（令牌 claim，缺省 = 全厂）。只落到有产线列的
+    ``equipment_run_time`` / ``scrap_record`` / ``work_report``（KPI、TOP5、趋势、
+    停机/报废柏拉图同一口径）；测试记录无产线维度 → 保持全厂并标注，绝不伪造。
     """
     state: dict[str, Any] = {"reasons": []}
     win_def = resolve_window(window)
@@ -268,7 +273,7 @@ def build_manufacturing_dashboard(registry, window: str = "window", *,
 
     # 板级筛选：SQL 仍是常量串 + 命名绑定参数（取值取常量映射，绝不拼接用户输入）。
     scope_cn = _scope_cn(stage, product_category)
-    line_frag, line_extra = _mfg_scope(stage, product_category)
+    line_frag, line_extra = _mfg_scope(stage, product_category, lines=lines)
     test_frag, test_extra = _mfg_scope(stage, product_category, has_line=False)
     p_line = dict(params, **line_extra)
     p_test = dict(params, **test_extra)
@@ -366,20 +371,26 @@ def build_manufacturing_dashboard(registry, window: str = "window", *,
          "items": _rank_items(tr, lambda r: r.get("product_model") or "—", 98.0, True)},
     ]
 
-    # 筛选生效时的范围标注：① 无产线维度的指标（工段不适用）；
+    # 筛选生效时的范围标注：① 无产线维度的指标（工段 / 产线不适用）；
     # ② 所选范围在该指标上没有任何记录（0 值不是「达标」，必须如实说明）
-    if scope_cn:
+    line_values = [str(v) for v in (lines or []) if str(v)]
+    if scope_cn or line_values:
         for k in kpis:
-            if k["key"] in MFG_STAGE_FREE_KPIS and stage:
-                k["scope_note"] = "工段筛选不适用（测试记录无产线维度）"
+            if k["key"] in MFG_STAGE_FREE_KPIS and (stage or line_values):
+                k["scope_note"] = "筛选不适用（测试记录无产线维度）"
             elif not k["denominator"]:
                 k["scope_note"] = "所选筛选范围内无记录（0 值不代表达标）"
 
+    # 板级筛选回显（供前端筛选条 / 报告溯源；未筛选 = 空串）。
+    # 行级范围只在生效时追加 ``lines``（未声明归属时回显结构与改动前逐字段一致）。
+    filter_echo: dict[str, Any] = {"stage": stage or "",
+                                   "product_category": product_category or ""}
+    if line_values:
+        filter_echo["lines"] = line_values
+
     data = _envelope("manufacturing", state, win_def)
     data.update({"kpis": kpis, "rankings": rankings, "notes": _MFG_NOTES,
-                 # 板级筛选回显（供前端筛选条 / 报告溯源；未筛选 = 空串）
-                 "filter": {"stage": stage or "",
-                            "product_category": product_category or ""},
+                 "filter": filter_echo,
                  # 制造侧「原因柏拉图」两套同构事实表（与品质 pareto_fact 结构完全一致）：
                  #   停机原因（equipment_run_time.stop_reason × 停机分钟）/
                  #   报废原因（scrap_record.scrap_reason × 报废数）；前端本地切片零往返。
@@ -387,11 +398,11 @@ def build_manufacturing_dashboard(registry, window: str = "window", *,
                  "stop_pareto_fact": _mfg_pareto_fact(
                      registry, state, table="equipment_run_time",
                      type_col="stop_reason", qty_expr="SUM(stop_min)",
-                     date_col="record_date"),
+                     date_col="record_date", lines=lines),
                  "scrap_pareto_fact": _mfg_pareto_fact(
                      registry, state, table="scrap_record",
                      type_col="scrap_reason", qty_expr="SUM(scrap_qty)",
-                     date_col="record_date")})
+                     date_col="record_date", lines=lines)})
     return data
 
 
@@ -480,14 +491,22 @@ def _scope_cn(stage: Optional[str], product_category: Optional[str]) -> str:
 def _mfg_scope(stage: Optional[str], product_category: Optional[str], *,
                has_line: bool = True,
                line_col: str = "line_code",
-               model_col: str = "product_model") -> tuple[str, dict[str, Any]]:
+               model_col: str = "product_model",
+               lines: Optional[Iterable[str]] = None
+               ) -> tuple[str, dict[str, Any]]:
     """制造板级筛选 → （常量 WHERE 片段, 命名绑定参数）。
 
     ``stage`` / ``product_category`` 已在接口层按白名单裁定（非法值 400），此处只做
     「白名单键 → 常量映射值」的取值，**绝不出现用户字符串进入 SQL**。
     ``has_line=False``（test_records 无产线列）时跳过工段条件。
+    ``lines``：行级组织范围（令牌 claim），有产线列时才下推；值为绑定参数。
     """
     frag, extra = "", {}
+    values = [str(v) for v in (lines or []) if str(v)]
+    if values and has_line:
+        keys = [f"lscope{i}" for i in range(len(values))]
+        frag += f" AND {line_col} IN ({', '.join(':' + k for k in keys)})"
+        extra.update(dict(zip(keys, values)))
     if stage and has_line:
         frag += f" AND {line_col} LIKE :f_stage"
         extra["f_stage"] = _MFG_STAGE_LINE_LIKE[stage]
@@ -652,15 +671,19 @@ _INCOMING_TOP = 10
 _INCOMING_REC_LIMIT = 100
 
 
-def _pareto_fact(registry, state: dict[str, Any]) -> dict:
+def _pareto_fact(registry, state: dict[str, Any],
+                 lines: Optional[Iterable[str]] = None) -> dict:
     """预聚合「不良柏拉图事实表」：按 (日期, 类别, 工段, 产品分类, 类型) 聚合 defect_qty。
 
     前端据此本地切片/聚合/排序/累计——切换「月别/日别」与「产品分类/类别/工段」筛选
     零网络往返。仅取 ``process_stage IS NOT NULL`` 的电池域新增行（与既有 SMT/DIP 行并存）。
     显式抬高 ``row_cap``：新增 product_category 分组维度后分组基数 ≈ 3800 行
     （2 个月 × 4 工段 × 4 分类 × 2 类别 × 多类型），registry 默认 200 / 旧 2500 都会截断。
+    ``lines``：行级组织范围——事实表必须同步下推，否则前端本地切片会把辖区外的行还原出来。
     """
     params = {"pstart": PARETO_RANGE["start"], "pend": PARETO_RANGE["end"]}
+    line_frag, line_extra, _ = _line_filter("quality_defect", lines)
+    params.update(line_extra)
     rows = _rows(registry,
                  "SELECT process_stage AS stage, defect_category AS category, "
                  "product_category AS pcat, defect_type AS type, "
@@ -668,6 +691,7 @@ def _pareto_fact(registry, state: dict[str, Any]) -> dict:
                  "SUM(defect_qty) AS qty FROM quality_defect "
                  "WHERE process_stage IS NOT NULL "
                  "AND date(inspect_time) BETWEEN :pstart AND :pend "
+                 f"{line_frag} "
                  "GROUP BY d, category, stage, pcat, type", params, state, cap=8000)
     out: list[dict] = []
     for r in rows:
@@ -693,6 +717,74 @@ MFG_PARETO_RANGE = {"start": "2026-09-01", "end": "2026-10-15"}
 _MFG_LINE_PREFIX_STAGE: tuple[tuple[str, str], ...] = (
     ("SMT", "SMT"), ("DIP", "PCM"), ("PACK", "PACK"), ("ASSY", "整机"),
 )
+
+# ---------------- 行级组织范围（令牌 claim → WHERE 下推） ----------------
+# 角色维度只回答「哪个岗位能看看板」；同一岗位内的产线负责人需要看到自己辖区。
+# 归属值来自**签名令牌载荷**（``line_ids``），不接受请求参数自报。
+# 能力边界（在本模块唯一声明，接口层只消费）：
+_LINE_COLUMN_TABLES: dict[str, str] = {
+    "equipment_run_time": "line_code",
+    "scrap_record": "line_code",
+    "work_report": "line_code",
+    "quality_defect": "line_code",
+}
+_STAGE_COLUMN_TABLES: dict[str, str] = {
+    "spc_measurement": "process_stage",
+    "std_standard_audit": "process_stage",
+}
+
+
+def stages_from_lines(lines: Optional[Iterable[str]]) -> list[str]:
+    """产线代码 → 工段集合（SMT-1 → SMT / DIP-* → PCM / PACK-* → PACK / ASSY-* → 整机）。
+
+    与 ``_MFG_LINE_PREFIX_STAGE`` 同一份映射（工段归属的唯一事实源）。
+    识别不出前缀的产线**不猜**：返回空集合 → 调用方按「无匹配数据」处理（fail-closed）。
+    返回顺序按 ``MFG_STAGES`` 固定，保证同一次请求多次调用结果一致。
+    """
+    out: list[str] = []
+    for line in (lines or []):
+        text = str(line or "").strip().upper()
+        if not text:
+            continue
+        for prefix, stage in _MFG_LINE_PREFIX_STAGE:
+            if text.startswith(prefix):
+                if stage not in out:
+                    out.append(stage)
+                break
+    return [s for s in MFG_STAGES if s in out]
+
+
+def _line_filter(table: str, lines: Optional[Iterable[str]]
+                 ) -> tuple[str, dict[str, Any], str]:
+    """行级范围 → （常量 WHERE 片段, 命名绑定参数, 口径注记）。
+
+    - 表有产线列 → 精确 ``IN`` 到产线（注记空串）；
+    - 表只有工段列 → 按产线前缀收紧到工段，注记写明「无产线维度」；
+    - 两者都无 → 片段空 = 保持全厂口径，注记如实说明**未收紧**。
+    ``values`` 只作为绑定参数，绝不拼进 SQL 文本；认不出前缀的产线用 ``1 = 0``
+    收口（宁可空也不放宽到全厂）。
+    """
+    values = [str(v).strip() for v in (lines or []) if str(v).strip()]
+    if not values:
+        return "", {}, ""
+    column = _LINE_COLUMN_TABLES.get(str(table or ""))
+    if column:
+        keys = [f"lscope{i}" for i in range(len(values))]
+        frag = f" AND {column} IN ({', '.join(':' + k for k in keys)})"
+        return frag, dict(zip(keys, values)), ""
+    column = _STAGE_COLUMN_TABLES.get(str(table or ""))
+    if column:
+        stages = stages_from_lines(values)
+        if not stages:
+            return (" AND 1 = 0", {},
+                    "产线范围无法映射到工段，本指标无匹配数据")
+        keys = [f"lstage{i}" for i in range(len(stages))]
+        frag = f" AND {column} IN ({', '.join(':' + k for k in keys)})"
+        return (frag, dict(zip(keys, stages)),
+                "该指标无产线维度，已按产线所属工段收紧")
+    return "", {}, "该指标无产线 / 工段维度，保持全厂口径"
+
+
 # 型号 → 产品分类（SQL CASE 常量；与 _MFG_CAT_MODELS 同源，共 12 型号 4 分类）
 _MFG_MODEL_PC: dict[str, str] = {
     "A型号": "消费电子", "E型号": "消费电子", "G型号": "消费电子",
@@ -703,13 +795,15 @@ _MFG_MODEL_PC: dict[str, str] = {
 
 
 def _mfg_pareto_fact(registry, state: dict[str, Any], *, table: str,
-                     type_col: str, qty_expr: str, date_col: str) -> dict:
+                     type_col: str, qty_expr: str, date_col: str,
+                     lines: Optional[Iterable[str]] = None) -> dict:
     """预聚合「制造侧原因柏拉图事实表」：结构与品质 ``_pareto_fact()`` **完全一致**。
 
     按 (日期, 原因类型, 工段, 产品分类) 聚合 ``qty``——工段按产线前缀折、产品分类按型号
     折（常量 CASE 表达式，取值全部来自上面常量映射，**绝不拼接用户输入**）。制造侧无
     「缺陷类别」维度 → ``categories`` 恒为空列表；``rows`` 结构与品质侧逐字段对齐
     （``d / cat / pc / stage / type / qty``），前端可按同一套本地切片逻辑复用。
+    ``lines``：行级组织范围（事实表与 KPI 同口径，否则本地切片会还原出辖区外的行）。
 
     纪律同 L1 聚合：只读 + 命名绑定参数 + 异常兜底（记 reasons，绝不抛出）+ 显式抬高 cap。
     """
@@ -720,12 +814,15 @@ def _mfg_pareto_fact(registry, state: dict[str, Any], *, table: str,
         f"WHEN product_model = '{m}' THEN '{pc}'"
         for m, pc in _MFG_MODEL_PC.items()) + " ELSE '' END")
     params = {"pstart": MFG_PARETO_RANGE["start"], "pend": MFG_PARETO_RANGE["end"]}
+    line_frag, line_extra, _ = _line_filter(table, lines)
+    params.update(line_extra)
     rows = _rows(registry,
                  f"SELECT {stage_case} AS stage, {pc_case} AS pcat, "
                  f"{type_col} AS type, {date_col} AS d, {qty_expr} AS qty "
                  f"FROM {table} "
                  f"WHERE {type_col} IS NOT NULL AND {type_col} <> '' "
                  f"AND {date_col} BETWEEN :pstart AND :pend "
+                 f"{line_frag} "
                  "GROUP BY d, stage, pcat, type", params, state, cap=40000)
     out: list[dict] = []
     for r in rows:
@@ -864,7 +961,8 @@ def _std_causes(registry, state: dict, stage: str, team: str,
 
 
 def build_std_team_detail(registry, window: str, stage: str,
-                          team: str) -> dict:
+                          team: str, *,
+                          lines: Optional[Iterable[str]] = None) -> dict:
     """2 级看板「点班组」弹窗数据：该班组三率拆解 + 不良原因归因。
 
     与 ``build_quality_dashboard`` 的 ``standard_three_rates`` **同一套** ``_three_rates``：
@@ -873,6 +971,10 @@ def build_std_team_detail(registry, window: str, stage: str,
 
     ``stage`` / ``team`` 由调用方校验取值；班组在该窗口内无审核记录时返回
     ``found=False`` 的骨架（不抛错——「这个班组本窗口没被审核」本身是有效结论）。
+
+    ``lines``：行级组织范围。该表无产线列，弹窗按调用方已裁定的 ``stage`` 收紧；
+    这里只把「基准是全厂口径、不是辖区口径」写进 notes，避免把全厂对比基准
+    误读成本人范围（不在这里偷偷改基准，否则「与全厂差」名不副实）。
     """
     state: dict[str, Any] = {"reasons": []}
     win_def = resolve_window(window)
@@ -916,6 +1018,11 @@ def build_std_team_detail(registry, window: str, stage: str,
                            "conformity_rate", "status")},
         "notes": [],
     }
+    line_values = [str(v) for v in (lines or []) if str(v)]
+    if line_values:
+        base["notes"].append(
+            f"产线范围：{'、'.join(line_values)}；该表无产线列，工段已由接口层按产线"
+            "所属工段裁定，「与全厂差」仍按全厂基准计算。")
     if not team_rows:
         base.update({"found": False, "rates": dict(empty_block),
                      "by_step": [], "by_day": [], "causes": [],
@@ -997,7 +1104,8 @@ def build_std_team_detail(registry, window: str, stage: str,
 
 def build_quality_dashboard(registry, window: str = "window", *,
                             stage: Optional[str] = None,
-                            category: Optional[str] = None) -> dict:
+                            category: Optional[str] = None,
+                            lines: Optional[Iterable[str]] = None) -> dict:
     """品质看板聚合。
 
     ``stage`` / ``category``：板级「工段 / 缺陷类别」筛选（缺省 = 全部，取值受
@@ -1005,6 +1113,10 @@ def build_quality_dashboard(registry, window: str = "window", *,
     指标（不良率 / 直通率及其 TOP5 排行）随筛选重算——**卡片值即所选范围的汇总**；
     进料端（IQC）/ 客户端（客诉）在小数据源上无该维度，保持板级口径并标注
     ``scope_note``（前端在卡上显示「筛选不适用」），不编造不存在的分解。
+
+    ``lines``：行级组织范围（令牌 claim，缺省 = 全厂）。``quality_defect`` 有产线列
+    → 不良率 / 直通率 / 累计柏拉图 / 柏拉事实表精确到产线；标准三率表无产线列 →
+    按产线所属工段收紧并标注；来料 / 客诉无产线也无工段 → 保持全厂并标注。
     """
     state: dict[str, Any] = {"reasons": []}
     win_def = resolve_window(window)
@@ -1014,7 +1126,9 @@ def build_quality_dashboard(registry, window: str = "window", *,
     # 工段 / 类别只加在 quality_defect 同源聚合的 WHERE 上；未筛选时 SQL 与绑定参数
     # 与既有完全一致（保证历史口径零漂移）。范围标签与下钻侧同一套（_quality_scope_cn）。
     scope_cn = _quality_scope_cn(stage, category)
-    q_win, q_params = win, params
+    line_values = [str(v) for v in (lines or []) if str(v)]
+    q_line_frag, q_line_extra, _ = _line_filter("quality_defect", line_values)
+    q_win, q_params = win + q_line_frag, dict(params, **q_line_extra)
     if stage:
         q_win += " AND process_stage = :f_stage"
         q_params = dict(q_params, f_stage=stage)
@@ -1048,10 +1162,15 @@ def build_quality_dashboard(registry, window: str = "window", *,
     # 标准三率（1 级看板 = 4 工段 / 2 级看板 = 各班组；by_model 保留供兼容）
     # 行数上限显式抬高：4 工段 × 3 班组 × 8 工序 × 15 天 ≈ 1440 行，registry 默认
     # 200/500 都会在「当月」口径下截断，截断后各段之和会与整体对不上。
+    # 标准三率表只有工段列、没有产线列 → 行级范围按产线所属工段收紧（并标注）。
+    std_line_frag, std_line_extra, std_line_note = _line_filter(
+        "std_standard_audit", line_values)
+    std_params = dict(params, **std_line_extra)
     qs = _rows(registry,
                "SELECT product_model, process_stage, team, doc_present, doc_complete, "
                "audit_total, audit_conform FROM std_standard_audit "
-               "WHERE audit_date BETWEEN :start AND :end", params, state, cap=8000)
+               f"WHERE audit_date BETWEEN :start AND :end{std_line_frag}",
+               std_params, state, cap=8000)
     comp, perf, obey, conformity = _three_rates(qs)
     by_stage = _std_by_stage(qs)
     by_model = []
@@ -1136,11 +1255,16 @@ def build_quality_dashboard(registry, window: str = "window", *,
              "已关闭（closed）客诉单数 ÷ 客诉单总数（快照口径）。",
              "各客户型号的客诉闭环率如何？哪些还没闭环？", []),
     ]
-    # 工段 / 类别筛选生效时：无该维度的两项明确标注「不适用」，避免被误读成筛选后的值。
-    if scope_cn:
-        for k in kpis:
-            if k["key"] in QUALITY_SCOPE_FREE_KPIS:
+    # 工段 / 类别 / 产线范围生效时：无该维度的两项明确标注「不适用」，
+    # 避免被误读成筛选后的值；产线范围内无记录时如实说明（0 值不代表达标）。
+    for k in kpis:
+        if k["key"] in QUALITY_SCOPE_FREE_KPIS:
+            if stage or category:
                 k["scope_note"] = "工段 / 类别筛选不适用（该指标无此维度）"
+            elif line_values:
+                k["scope_note"] = "产线范围不适用（该指标无产线 / 工段维度，保持全厂口径）"
+        elif line_values and not k["denominator"]:
+            k["scope_note"] = "所选产线范围内无记录（0 值不代表达标）"
 
     rankings = [
         {"key": "defect_rate", "label": "不良率", "unit": "%", "target": 2.0,
@@ -1176,12 +1300,18 @@ def build_quality_dashboard(registry, window: str = "window", *,
          "items": _rank_items(ild, _sup_name, 5.0, False, _INCOMING_TOP, _sup_entity)},
     ]
 
-    # 累计不良柏拉图：窗口内按 defect_type 聚合，降序累积 + 关键少数（累计首达 80%）
+    # 累计不良柏拉图：窗口内按 defect_type 聚合，降序累积 + 关键少数（累计首达 80%）。
+    # 行级范围同样下推（否则「辖区内的 KPI + 全厂的柏拉图」会让本地切片还原辖区外数据）。
     pareto = _pareto_cum(_rows(registry,
                                "SELECT defect_type AS name, SUM(defect_qty) AS value "
                                "FROM quality_defect "
-                               f"WHERE {win} GROUP BY defect_type "
-                               "ORDER BY value DESC", params, state))
+                               f"WHERE {win}{q_line_frag} GROUP BY defect_type "
+                               "ORDER BY value DESC",
+                               dict(params, **q_line_extra), state))
+
+    filter_echo: dict[str, Any] = {"stage": stage or "", "category": category or ""}
+    if line_values:
+        filter_echo["lines"] = line_values
 
     data = _envelope("quality", state, win_def)
     data.update({
@@ -1189,13 +1319,13 @@ def build_quality_dashboard(registry, window: str = "window", *,
         # 来料质量 TOP10（固定全量口径，不受任何筛选影响）；见上方 incoming_top10
         "incoming_top10": incoming_top10,
         # 板级「工段 / 缺陷类别」筛选（回显给前端筛选条 / 报告溯源；未筛选 = 空串）
-        "filter": {"stage": stage or "", "category": category or ""},
+        "filter": filter_echo,
         "pareto": pareto,
         "pareto_label": "不良类型",
         "pareto_kpi": "defect_rate",   # 供前端点击下钻（与 drill 同源指标）
         "pareto_vital": _vital_few(pareto),
         "pareto_threshold": 80.0,
-        "pareto_fact": _pareto_fact(registry, state),
+        "pareto_fact": _pareto_fact(registry, state, lines=line_values),
         "standard_three_rates": {
             "definition": "标准三率 = 标准完整率 × 标准完善率 × 标准遵守率 = 符合率",
             "targets": dict(_STD_TARGETS),
@@ -1212,6 +1342,8 @@ def build_quality_dashboard(registry, window: str = "window", *,
             "stage_count": sum(1 for s in by_stage if s.get("teams")),
             "team_count": sum(len(s.get("teams") or []) for s in by_stage),
             "by_model": by_model,
+            # 行级范围的能力边界（该表无产线列）：如实标注是按工段收紧还是保持全厂
+            **({"scope_note": std_line_note} if std_line_note else {}),
         },
     })
     return data
@@ -1617,7 +1749,8 @@ def _spc_cap_scope(stage: Optional[str], product_category: Optional[str],
 
 def build_spc_dashboard(registry, window: str = "window", *,
                         stage: Optional[str] = None,
-                        product_category: Optional[str] = None) -> dict:
+                        product_category: Optional[str] = None,
+                        lines: Optional[Iterable[str]] = None) -> dict:
     """SPC 过程能力看板 L1：逐特性 Cp/Cpk/Pp/Ppk 判定 + 超差率 + 不良柏拉图。
 
     板级筛选：
@@ -1627,6 +1760,9 @@ def build_spc_dashboard(registry, window: str = "window", *,
     - ``stage`` / ``product_category``：工段 / 产品分类（``MFG_STAGES`` /
       ``MFG_PRODUCT_CATEGORIES`` 白名单），按**直接列精确匹配**（能力表与柏拉图表
       都有这两列）→ 三个口径来源同源，柏拉图与能力表不再各算各的。
+    - ``lines``：行级组织范围（令牌 claim）。能力表无产线列 → 按产线所属工段收紧
+      （``process_stage IN``），与工段筛选同一条 SQL 片段；认不出前缀的产线收口为
+      ``1 = 0``（宁可空也不放宽到全厂）。
     """
     state: dict[str, Any] = {"reasons": []}
     win_def = resolve_window(window)
@@ -1635,6 +1771,10 @@ def build_spc_dashboard(registry, window: str = "window", *,
 
     # 维度筛选片段（空筛 → 空片段，SQL 与改动前逐字一致）
     dim_frag, params = _spc_cap_scope(stage, product_category, params)
+    line_values = [str(v) for v in (lines or []) if str(v)]
+    spc_line_frag, spc_line_extra, _ = _line_filter("spc_measurement", line_values)
+    dim_frag += spc_line_frag
+    params.update(spc_line_extra)
 
     meas = _rows(registry,
                  "SELECT characteristic, subgroup_no, seq, value, usl, lsl, "
@@ -1712,11 +1852,16 @@ def build_spc_dashboard(registry, window: str = "window", *,
                               lambda r: {"defect_type": r.get("defect_type") or ""})},
     ]
 
+    filter_echo: dict[str, Any] = {"stage": stage or "",
+                                   "product_category": product_category or ""}
+    if line_values:
+        filter_echo["lines"] = line_values
+
     data = _envelope("spc", state, win_def)
     data.update({"kpis": kpis, "capabilities": caps, "pareto": pareto,
                  "rankings": rankings, "notes": _SPC_NOTES,
                  # 板级筛选回显（前端口径标签 + 弹窗/下钻参数透传的唯一来源）
-                 "filter": {"stage": stage or "", "product_category": product_category or ""},
+                 "filter": filter_echo,
                  "data_gap": (not caps) or any(c.get("data_gap") for c in caps)})
     return data
 
@@ -1724,7 +1869,8 @@ def build_spc_dashboard(registry, window: str = "window", *,
 def build_spc_capability_detail(registry, window: str = "window", *,
                                  characteristic: str,
                                  stage: Optional[str] = None,
-                                 product_category: Optional[str] = None) -> dict:
+                                 product_category: Optional[str] = None,
+                                 lines: Optional[Iterable[str]] = None) -> dict:
     """SPC 2 级看板「点特性」弹窗：单特性的能力拆解 + 逐日越限 + 原始记录。
 
     **同源保证（硬约束）**：能力指数复用 ``_spc_caps_from_rows``（与 L1 同一函数），
@@ -1739,6 +1885,11 @@ def build_spc_capability_detail(registry, window: str = "window", *,
     win_def = resolve_window(window)
     params: dict[str, Any] = {"start": win_def["start"], "end": win_def["end"]}
     dim_frag, params = _spc_cap_scope(stage, product_category, params)
+    # 行级范围与 L1 同一条片段（能力表无产线列 → 按产线所属工段收紧）
+    line_values = [str(v) for v in (lines or []) if str(v)]
+    spc_line_frag, spc_line_extra, _ = _line_filter("spc_measurement", line_values)
+    dim_frag += spc_line_frag
+    params.update(spc_line_extra)
     win = "date(measured_at) BETWEEN :start AND :end"
     char = (characteristic or "").strip()
     ent = {"characteristic": char}
@@ -1750,12 +1901,17 @@ def build_spc_capability_detail(registry, window: str = "window", *,
                  f"{dim_frag}", {**params, "ch": char}, state, cap=_SPC_MEAS_CAP)
     rows.sort(key=lambda r: (str(r.get("measured_at") or ""), r.get("subgroup_no") or 0))
 
+    filter_echo: dict[str, Any] = {"stage": stage or "",
+                                   "product_category": product_category or ""}
+    if line_values:
+        filter_echo["lines"] = line_values
+
     data = _envelope("spc", state, win_def)
     data.update({
         "level": 3,
         "characteristic": char,
         "found": bool(rows),
-        "filter": {"stage": stage or "", "product_category": product_category or ""},
+        "filter": filter_echo,
         "columns": [
             {"key": "measured_at", "label": "测量时间"},
             {"key": "subgroup_no", "label": "子组号"},
@@ -1823,7 +1979,8 @@ def build_spc_measurement_records(registry, window: str = "window", *,
                                   day: str = "",
                                   over_only: bool = False,
                                   stage: Optional[str] = None,
-                                  product_category: Optional[str] = None) -> dict:
+                                  product_category: Optional[str] = None,
+                                  lines: Optional[Iterable[str]] = None) -> dict:
     """SPC 测量记录弹窗聚合：越限明细 / 单日明细（与 L1 / 2 级 / 弹窗同口径）。
 
     **同源保证**：窗口（``resolve_window``）与维度筛选（``_spc_cap_scope``）与
@@ -1842,6 +1999,11 @@ def build_spc_measurement_records(registry, window: str = "window", *,
     win_def = resolve_window(window)
     params: dict[str, Any] = {"start": win_def["start"], "end": win_def["end"]}
     dim_frag, params = _spc_cap_scope(stage, product_category, params)
+    # 行级范围与 L1 同源：能力表无产线列 → 按产线所属工段收紧
+    line_values = [str(v) for v in (lines or []) if str(v)]
+    spc_line_frag, spc_line_extra, _ = _line_filter("spc_measurement", line_values)
+    dim_frag += spc_line_frag
+    params.update(spc_line_extra)
     where = "date(measured_at) BETWEEN :start AND :end" + dim_frag
     char = (characteristic or "").strip()
     if char:
@@ -1887,11 +2049,16 @@ def build_spc_measurement_records(registry, window: str = "window", *,
     else:
         columns = [{"key": c, "label": _COL_CN.get(c, c)} for c in cols]
 
+    filter_echo: dict[str, Any] = {
+        "stage": stage or "", "product_category": product_category or "",
+        "characteristic": char, "day": d, "over_only": bool(over_only)}
+    if line_values:
+        filter_echo["lines"] = line_values
+
     data = _envelope("spc", state, win_def)
     data.update({
         "found": bool(rows),
-        "filter": {"stage": stage or "", "product_category": product_category or "",
-                   "characteristic": char, "day": d, "over_only": bool(over_only)},
+        "filter": filter_echo,
         "count": (total[0].get("n") if total else 0) or 0,
         "columns": columns,
         "records": rows,
@@ -2732,7 +2899,8 @@ def build_pareto_drill(registry, screen: str, kpi_key: str, defect_type: str,
                        *, stage: Optional[str] = None,
                        category: Optional[str] = None,
                        prod_category: Optional[str] = None,
-                       window: str = "window") -> dict:
+                       window: str = "window",
+                       lines: Optional[Iterable[str]] = None) -> dict:
     """L1 累计不良柏拉图 → 不良类型下钻（L2）：该 defect_type 按产线 · 型号分解。
 
     ``window`` 缺省 = 板级「最近 7 天」同口径；``all`` = **不限窗口**，``day``/``month``
@@ -2766,6 +2934,11 @@ def build_pareto_drill(registry, screen: str, kpi_key: str, defect_type: str,
     if prod_category:
         cond += " AND product_category = :pcat"
         params["pcat"] = prod_category
+    # 行级组织范围：不良明细表有产线列 → 精确下推（与 L1 柏拉图同口径）
+    line_values = [str(v) for v in (lines or []) if str(v)]
+    line_frag, line_extra, _ = _line_filter(defn.get("table"), line_values)
+    cond += line_frag
+    params.update(line_extra)
     rows = _rows(registry,
                  f"SELECT {group}, {defn['num_expr']} AS num, "
                  f"{defn['den_expr']} AS den FROM {defn['table']} "
@@ -2798,6 +2971,9 @@ def build_pareto_drill(registry, screen: str, kpi_key: str, defect_type: str,
         bits.append(f"类别 {category}")
     if bits:
         data["definition"] = f"{data['definition']}；本次筛选：{' · '.join(bits)}"
+    if line_values:
+        data["definition"] = (f"{data['definition']}；产线范围："
+                              f"{'、'.join(line_values)}")
     data.update({
         "level": 2, "rows": _l2_items(defn, rows, daily, dates),
         "kind": "pareto", "terminal": True, "defect_type": defect_type,
@@ -2814,7 +2990,8 @@ def build_drill(registry, screen: str, kpi_key: str,
                 window: str = "window",
                 stage: Optional[str] = None,
                 product_category: Optional[str] = None,
-                category: Optional[str] = None) -> dict:
+                category: Optional[str] = None,
+                lines: Optional[Iterable[str]] = None) -> dict:
     """看板下钻聚合。
 
     ``entity`` 为空 = L2（按维度全量分解）；非空 = L3（单实体 + 工段/工序/工位分解）；
@@ -2826,6 +3003,10 @@ def build_drill(registry, screen: str, kpi_key: str,
     ``stage`` / ``category``：与品质板级「工段 / 类别」筛选同口径——**只对声明了
     ``q_scope`` 的指标（不良率 / 直通率，与 L1 卡片同源）生效**。
     两者都未声明的指标忽略这些参数（行为与改动前逐字段一致，不因多传参数而漂移）。
+
+    ``lines``：行级组织范围（令牌 claim）。按指标所在表的能力下推（有产线列 → 产线
+    精确匹配；只有工段列 → 产线前缀折工段；都没有 → 不下推并在 definition 标注），
+    保证「看板收紧了、下钻却能拿全厂」这条后门不存在。
 
     纪律同 L1 聚合：只读 + 命名绑定参数 + 异常兜底（记 degraded_reason，绝不抛出）。
     """
@@ -2854,12 +3035,31 @@ def build_drill(registry, screen: str, kpi_key: str,
     else:
         scope_frag, params = _drill_scope(defn, stage, product_category, params)
         scope_cn = _scope_cn(stage, product_category) if scope_frag else ""
+    # 行级组织范围：按指标所在表的能力下推（与 L1 同一套声明，避免下钻成为后门）。
+    line_values = [str(v) for v in (lines or []) if str(v)]
+    table_line_frag, table_line_extra, table_line_note = _line_filter(
+        defn.get("table"), line_values)
+    if table_line_frag:
+        scope_frag += table_line_frag
+        params = {**params, **table_line_extra}
     # 「本次筛选」回显与 L1 各自的筛选回显同形
     # （品质 = 工段 + 类别；制造 / SPC = 工段 + 产品分类）
     if q_scope:
-        filter_echo = {"stage": stage or "", "category": category or ""}
+        filter_echo: dict[str, Any] = {"stage": stage or "", "category": category or ""}
     else:
         filter_echo = {"stage": stage or "", "product_category": product_category or ""}
+    if line_values:
+        filter_echo["lines"] = line_values
+
+    def _with_line_note(meta: dict[str, Any]) -> dict[str, Any]:
+        """在 definition 末尾追加行级范围（含「该指标无产线维度」的诚实标注）。"""
+        if not line_values:
+            return meta
+        note = f"；产线范围：{'、'.join(line_values)}"
+        if table_line_note:
+            note += f"（{table_line_note}）"
+        meta["definition"] = f"{meta.get('definition') or ''}{note}"
+        return meta
     # 无 date_expr = 快照类指标（库存/里程碑/工单等），不做时间窗口过滤，逐日趋势留空
     window_where = f"{date_expr} BETWEEN :start AND :end" if date_expr else "1 = 1"
     base_where = f"{window_where}{scope_frag}"
@@ -2889,6 +3089,7 @@ def build_drill(registry, screen: str, kpi_key: str,
         meta = _drill_meta(defn, kpi_key, win_def.get("label"))
         if scope_cn:
             meta["definition"] = f"{meta['definition']}；本次筛选：{scope_cn}"
+        meta = _with_line_note(meta)
 
         data = _envelope(screen, state, win_def)
         data.update(meta)
@@ -2927,7 +3128,7 @@ def build_drill(registry, screen: str, kpi_key: str,
     value = _pct(tot_num, tot_den)
 
     data = _envelope(screen, state, win_def)
-    data.update(_drill_meta(defn, kpi_key, win_def.get("label")))
+    data.update(_with_line_note(_drill_meta(defn, kpi_key, win_def.get("label"))))
     data.update({
         "level": 3, "entity": _entity_of(defn, entity),
         "value": value, "numerator": tot_num, "denominator": tot_den,

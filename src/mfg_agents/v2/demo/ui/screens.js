@@ -274,6 +274,9 @@
         decision,
       };
       delete hitlSelMap(ctx)[taskUid];  // 处理后清除选择，避免跨工单串用
+      // 队列已变：立即失效 workflowPending 的同参缓存，下一次渲染必须回源，
+      // 否则 3 秒窗口内会拿到审批前的旧队列（"处理了但列表还在"）。
+      if (typeof ctx.api.invalidatePending === "function") ctx.api.invalidatePending();
       // 缓存刷新为审批后的工单（history 含 create + select_action + cosign + approve 留痕）
       ctx.state.screenState.hitlCache = ctx.state.screenState.hitlCache || {};
       ctx.state.screenState.hitlCache[taskUid] = task;
