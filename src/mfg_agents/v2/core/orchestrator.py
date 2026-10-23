@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
-from ...common.config import settings
+from ...common.config import db_read_url, settings
 from ...common.platform_schema import is_sqlite_target
 from ..contracts.data_source import (
     DataSourceRegistry,
@@ -123,8 +123,11 @@ class V2Runtime:
         query_sqls = {name: str(spec["sql"])
                       for name, spec in queries._queries.items()}
         data_registry = DataSourceRegistry()
-        if is_sqlite_target(settings.DB_URL):
-            db_path = settings.DB_URL.replace("sqlite:///", "")
+        # 读路径单独取 DB_READ_URL（缺省 = DB_URL）：生产可只给只读副本/只读账号，
+        # SPC 写入、KBQA 日志等写通道仍走 DB_URL。
+        read_url = db_read_url()
+        if is_sqlite_target(read_url):
+            db_path = read_url.replace("sqlite:///", "")
             _apply_seed(db_path)
             source = SQLiteDataSource(db_path, name="dev", queries=query_sqls,
                                       # 行数上限：数据速查四块各 200+ 行（材料 248 /
@@ -139,7 +142,7 @@ class V2Runtime:
                                       })
         else:
             # 业务库显式配成 MySQL：只读副本 + 只读账号（代码层再挡写动词）
-            source = MySQLDataSource(settings.DB_URL, name="dev",
+            source = MySQLDataSource(read_url, name="dev",
                                      queries=query_sqls, row_cap=500,
                                      meta={
                                          "system": "生产业务库（MySQL 只读副本）",

@@ -125,8 +125,10 @@ def resolve_site_db(db_path: Optional[Union[str, Path]] = None) -> str:
 
 
 def _main_db_path() -> str:
-    """演示库（业务数据）文件路径；非 SQLite 目标（Docker MySQL）返回空串。"""
-    url = str(getattr(settings, "DB_URL", "") or "")
+    """演示库（业务数据）文件路径；非 SQLite 读路径（Docker MySQL）返回空串。"""
+    from ...common.config import db_read_url
+
+    url = str(db_read_url() or "")
     if not url or not is_sqlite_target(url):
         return ""
     return sqlite_path_from_url(url)

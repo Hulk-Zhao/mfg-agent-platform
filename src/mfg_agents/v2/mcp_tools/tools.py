@@ -835,13 +835,13 @@ _SPC_MEASUREMENTS_TABLE = "spc_measurement"
 
 
 def _spc_db_path(orch: V2Orchestrator) -> str:
-    """取默认数据源的同库路径——SPC 写入与经注册查询的读取落在**同一库**上。
+    """SPC **写入**目标：始终取主库 ``DB_URL``（不是读路径 ``DB_READ_URL``）。
 
-    优先用运行时默认数据源的 db_path（与只读查询同源）；非 SQLite 源回退 settings。
+    读路径可以指向只读副本，但写入必须回主库；把两者混用会在生产把测量值写进
+    只读副本（或被只读账号拒绝）。SQLite 与 MySQL URL 都由 ``spc_store`` 按方言处理。
     """
     from ...common.config import settings
-    source = _runtime(orch).data_registry.get()
-    return getattr(source, "db_path", None) or settings.DB_URL.replace("sqlite:///", "")
+    return str(settings.DB_URL or "").replace("sqlite:///", "")
 
 
 def _h_spc_ingest(orch: V2Orchestrator) -> Callable[..., dict]:

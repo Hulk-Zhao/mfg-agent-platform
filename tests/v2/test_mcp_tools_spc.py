@@ -45,10 +45,14 @@ def registry(orch) -> ToolRegistry:
 
 @pytest.fixture
 def isolated_spc_db(orch, tmp_path, monkeypatch):
-    """把默认数据源指向临时库：SPC 写入与经注册查询的读取同源，且与演示库隔离。"""
+    """把读写路径同时指向临时库：SPC 写入（DB_URL）与注册查询读取（DB_READ_URL）同源隔离。"""
+    from mfg_agents.common.config import settings
+
     db = tmp_path / "spc_iso.db"
     source = orch.runtime.data_registry.get()
     monkeypatch.setattr(source, "db_path", str(db))
+    monkeypatch.setattr(settings, "DB_URL", str(db))
+    monkeypatch.setattr(settings, "DB_READ_URL", str(db))
     return str(db)
 
 

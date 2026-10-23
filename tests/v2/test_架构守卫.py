@@ -131,6 +131,35 @@ def test_workflow_db_explicit_env_wins(monkeypatch):
     assert config_mod._resolve_workflow_db("mysql+pymysql://u:p@h/d") == "sqlite:///opt/gov.db"
 
 
+def test_db_read_url_defaults_to_db_url(monkeypatch):
+    """读地址缺省沿用 DB_URL（本地单库行为不变），显式配置时优先。"""
+    monkeypatch.setattr(settings, "DB_URL", "sqlite:///main.db")
+    monkeypatch.setattr(settings, "DB_READ_URL", "")
+    assert config_mod.db_read_url() == "sqlite:///main.db"
+    monkeypatch.setattr(settings, "DB_READ_URL", "  mysql+pymysql://ro@h/db  ")
+    assert config_mod.db_read_url() == "mysql+pymysql://ro@h/db"
+
+
+def test_orchestrator_read_path_uses_db_read_url():
+    """读路径必须走 DB_READ_URL；SPC 写入仍走主库 DB_URL。"""
+    src = (REPO_ROOT / "src" / "mfg_agents" / "v2" / "core"
+           / "orchestrator.py").read_text(encoding="utf-8")
+    assert "read_url = db_read_url()" in src
+    assert "MySQLDataSource(read_url" in src and "SQLiteDataSource(db_path" in src
+    tools_src = (REPO_ROOT / "src" / "mfg_agents" / "v2" / "mcp_tools"
+                 / "tools.py").read_text(encoding="utf-8")
+    assert "SPC **写入**目标：始终取主库 ``DB_URL``" in tools_src
+
+
+def test_business_db_probe_uses_read_url(monkeypatch, tmp_path):
+    ro_db = tmp_path / "ro.db"
+    sqlite3.connect(str(ro_db)).close()
+    monkeypatch.setattr(settings, "DB_URL", str(tmp_path / "main-missing.db"))
+    monkeypatch.setattr(settings, "DB_READ_URL", str(ro_db))
+    state, detail = health_mod._probe_business_db()
+    assert state == "ok" and "读路径" in detail
+
+
 def test_blank_env_falls_back_to_default(monkeypatch):
     """``.env`` 里写 ``DB_URL=`` 时 os.getenv 返回空串——空串会被 sqlite3 当成匿名临时库。"""
     monkeypatch.setenv("DB_URL", "")

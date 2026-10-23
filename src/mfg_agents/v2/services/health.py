@@ -44,7 +44,7 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlparse
 
-from ...common.config import settings
+from ...common.config import db_read_url, settings
 from ...common.platform_schema import is_sqlite_target, sqlite_path_from_url
 from ..core import cache
 
@@ -88,10 +88,14 @@ def _probe_sqlite(db_url: str, label: str) -> tuple[str, str]:
 
 
 def _probe_business_db() -> tuple[str, str]:
-    """业务数据源：SQLite 走文件只读探测；MySQL 等走 1s 超时的连接探测。"""
-    db_url = settings.DB_URL
+    """业务数据源（**读路径**）：SQLite 走文件只读探测；MySQL 等走 1s 连接探测。
+
+    读路径取 ``DB_READ_URL``（缺省 = ``DB_URL``）：生产用只读副本时，
+    健康探针也要探实际被读的那个库，而不是主库。
+    """
+    db_url = db_read_url()
     if is_sqlite_target(db_url):
-        return _probe_sqlite(db_url, "业务库")
+        return _probe_sqlite(db_url, "业务库（读路径）")
     from sqlalchemy import create_engine, text
 
     engine = create_engine(
@@ -102,7 +106,7 @@ def _probe_business_db() -> tuple[str, str]:
     finally:
         engine.dispose()
     scheme = db_url.split("://", 1)[0]
-    return "ok", f"{scheme} 连接正常"
+    return "ok", f"{scheme} 业务库（读路径）连接正常"
 
 
 def _probe_workflow_db() -> tuple[str, str]:

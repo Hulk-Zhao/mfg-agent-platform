@@ -66,6 +66,10 @@ class Settings:
     # 数据库：本地默认SQLite；Docker部署时设置 DB_URL=mysql+pymysql://...
     # 留空（含 .env 里写 `DB_URL=`）→ 回落本地 SQLite，不会连到匿名临时库
     DB_URL: str = _env_or("DB_URL", _DEFAULT_SQLITE_URL)
+    # 业务库**读路径**（DataSource / Text2SQL 只读通道）：
+    # 缺省沿用 DB_URL（本地单库行为不变）；生产可指向只读副本 + 只读账号。
+    # 写通道（SPC 写入 / KBQA 日志 / 初始化）仍走 DB_URL，二者职责分离。
+    DB_READ_URL: str = _env_or("DB_READ_URL", "")
 
     # ChromaDB：本地持久化（见 rag_tools.py）
     CHROMA_HOST: str = os.getenv("CHROMA_HOST", "localhost")
@@ -302,3 +306,13 @@ class Settings:
 
 
 settings = Settings()
+
+
+def db_read_url() -> str:
+    """业务库读路径：``DB_READ_URL`` 优先，缺省回落到 ``DB_URL``。
+
+    为什么单独一个地址：生产业务库的主库账号需要写权限（SPC 落库、KBQA 日志），
+    而 Text2SQL / 看板只应拿只读账号。把读地址单列后，只读副本可以只授予
+    ``SELECT``，写通道继续用主库账号——代码层只读守卫不再是权限的替代品。
+    """
+    return (getattr(settings, "DB_READ_URL", "") or "").strip() or settings.DB_URL

@@ -287,7 +287,10 @@ mfg-agent-platform/
   MySQL 8.0 治理链已真库验证。`WorkflowEngine(mysql_url)` 单构造仍 fail-fast
   （防止 URL 当文件路径静默建库）。
   业务读路径已提供 `MySQLDataSource`（只读副本 + 只读账号 + 代码层只读守卫）；
-  SPC 受治理写入通道也已支持 MySQL（`SQLAlchemySpcRepository`）。
+  读写账号分离：`DB_READ_URL` 指向只读副本（缺省沿用 `DB_URL`），
+  可用 `tools/setup_mysql_readonly.py` 幂等创建仅 `SELECT` 的账号；
+  真库回归：`MFG_MYSQL_RO_URL=... pytest tests/v2/test_mysql_readonly_integration.py`。
+  SPC 受治理写入通道也已支持 MySQL（`SQLAlchemySpcRepository`，始终走主库 `DB_URL`）。
   Text2SQL 明细探查已按数据源方言追加 MySQL 提示词（CONCAT/CURDATE 等）。
   健康检查的 `workflow_db` 探针已支持 MySQL（检查 `platform_workflow_task` 可读）；
   `case_db` 探针同时覆盖 SQLite / MySQL，并验到 `case` 表可读（连接可达 ≠ schema 就绪）。
@@ -297,8 +300,8 @@ mfg-agent-platform/
   审计链用命名锁跨实例串行化），SQLite 仍是默认零依赖实现。
   种子导入整段复用单连接（221 例 MySQL 实测 41.0s → 1.7s，事务整体提交/回滚）。
   真库回归：`MFG_MYSQL_CASE_URL=... pytest tests/v2/test_case_mysql_integration.py`。
-  **仍待办**：生产只读账号联调、真实业务表 ACL 登记、未建表查询（order_fulfillment /
-  物料库存扩展表等）的回归。
+  **仍待办**：真实业务表 ACL 登记、未建表查询（order_fulfillment /
+  物料库存扩展表等）的回归、生产租户的账号轮换与最小权限审计。
 - **会签并发与幂等**：已落数据库级签名事实表 `wf_signoff` + 两条唯一索引
   （`(task_uid, role_key, actor, verb)` 与 `(task_uid, actor_id, verb)`），
   重复签名由 DB 兜底（多实例/多连接），进程内 `RLock` 保留作单实例串行化；
