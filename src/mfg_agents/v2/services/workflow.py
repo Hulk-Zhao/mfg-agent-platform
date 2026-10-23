@@ -34,6 +34,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping, Optional
 
+from ...common.config import hitl_delegate_roles
 from ...common.platform_schema import sqlite_path_from_url
 from ..contracts.permissions import (
     PermissionRegistry,
@@ -609,18 +610,92 @@ class WorkflowEngine:
         return self._transition(task_uid, task.status, actor, "cosign",
                                 comment_out, governance=governance, in_place=True)
 
+    def delegation_state(self, task: WorkflowTask, role: Any = None,
+                         user_ctx: Optional[dict] = None) -> dict[str, Any]:
+        """超时代签可用性（供前端决定是否显示入口；后端仍二次校验）。
+
+        放行条件全部满足才 ``allowed=True``：
+        1. 部署配置了 ``HITL_DELEGATE_ROLES``（留空 = 功能关闭）；
+        2. 工单已纳管且处于 ``waiting_hitl``；
+        3. 已超 SLA；
+        4. 当前身份的角色在授权名单内，且持有该槽位的 ``approve`` 权限。
+        """
+        configured = hitl_delegate_roles()
+        try:
+            sla = task.sla_status()
+        except (TypeError, ValueError):
+            # 存量脏数据（SLA 非 ISO 字符串）不能让整个待办接口 500
+            sla = {"overdue": False}
+        state: dict[str, Any] = {
+            "enabled": bool(configured),
+            "overdue": bool(sla.get("overdue")),
+            "allowed": False,
+            "assignees": list(task.assignees or []),
+            "reason": "",
+        }
+        if not configured:
+            state["reason"] = "未配置超时代签授权岗位（HITL_DELEGATE_ROLES）"
+            return state
+        if not task.is_governed():
+            state["reason"] = "未纳管工单不支持代签"
+            return state
+        if task.status != "waiting_hitl":
+            state["reason"] = "工单当前不在待人工确认状态"
+            return state
+        if not state["overdue"]:
+            state["reason"] = "未超 SLA，不能代签"
+            return state
+        if not task.signoff_status()["satisfied"]:
+            state["reason"] = "会签未完成，不能代签终批"
+            return state
+        role_keys = self.permission_registry.resolve_actor_roles(role, user_ctx)
+        allowed_roles = [r for r in role_keys if r in configured]
+        if not allowed_roles:
+            state["reason"] = "当前岗位不在超时代签授权名单"
+            return state
+        perm = self.permission_registry.slot_permission(task.slot, "approve")
+        if not any(self.permission_registry.has_any([r], [perm])
+                   for r in allowed_roles):
+            state["reason"] = "当前岗位不持有该槽位的终批权限"
+            return state
+        state["allowed"] = True
+        return state
+
+    def _assert_delegate_allowed(self, task: WorkflowTask, role: Any,
+                                 user_ctx: Optional[dict], on_behalf_of: str,
+                                 comment: str, approver: str) -> None:
+        state = self.delegation_state(task, role, user_ctx)
+        if not state["allowed"]:
+            raise PermissionDenied(
+                f"不可超时代签：{state['reason']}",
+                required=[f"已超 SLA + HITL_DELEGATE_ROLES 授权岗位 + "
+                          f"{self.permission_registry.slot_permission(task.slot, 'approve')}"],
+                actual=[])
+        if not on_behalf_of or len(on_behalf_of) > 64:
+            raise ValueError("超时代签必须填写原会签人/岗位（1-64 字符）")
+        if on_behalf_of == str(approver or "").strip():
+            raise ValueError("代签对象不能是本人")
+        if not str(comment or "").strip():
+            raise ValueError("超时代签必须填写理由")
+
     def approve(self, task_uid: str, approver: str,
                 comment: str = "", final: bool = False,
                 decision: str = "", role: Optional[str] = None,
-                user_ctx: Optional[dict] = None) -> WorkflowTask:
-        """HITL 审批通过（线程安全入口：内部持引擎写锁）。"""
+                user_ctx: Optional[dict] = None,
+                on_behalf_of: str = "") -> WorkflowTask:
+        """HITL 审批通过（线程安全入口：内部持引擎写锁）。
+
+        ``on_behalf_of`` 非空 = 超时代签：要求已超 SLA、操作者岗位在
+        ``HITL_DELEGATE_ROLES`` 且持槽位 approve 权限、填写代签对象与理由。
+        """
         with self._write_lock:
             return self._approve(task_uid, approver, comment, final, decision,
-                                 role, user_ctx)
+                                 role, user_ctx, on_behalf_of)
 
     def _approve(self, task_uid: str, approver: str, comment: str, final: bool,
                  decision: str, role: Optional[str],
-                 user_ctx: Optional[dict]) -> WorkflowTask:
+                 user_ctx: Optional[dict],
+                 on_behalf_of: str = "") -> WorkflowTask:
         """HITL 审批通过：waiting_hitl → running（final=True 时 → done）。
 
         受治理工单（新工单）额外强制：
@@ -632,16 +707,22 @@ class WorkflowEngine:
         老工单（``governance`` 为空）保持原有宽松行为，向后兼容。
         """
         task = self.get(task_uid)
+        target = str(on_behalf_of or "").strip()
         governance: Optional[dict[str, Any]] = None
         if task.is_governed():
             role_key = self._assert_approve_permission(task, role, user_ctx)
+            if target:
+                # 代签授权在权限之后、会签之前校验：越权优先报 403，而不是 409
+                self._assert_delegate_allowed(task, role, user_ctx, target,
+                                              comment, approver)
             self._assert_signoffs_complete(task)
             # 先校验状态迁移合法，避免非法请求在签名账本里留下孤儿行
             self._assert_transition(task, "done" if final else "running")
             governance = self._append_approval(
                 task, role_key, approver, decision or "approve", comment,
                 actor_id=self._last_actor_id,
-                verb="final_approve" if final else "approve")
+                verb="final_approve" if final else "approve",
+                on_behalf_of=target, overdue_signoff=bool(target))
         comment_out = self._with_decision(decision, comment)
         return self._transition(task_uid, "done" if final else "running",
                                 approver, "approve", comment_out,
@@ -861,7 +942,8 @@ class WorkflowEngine:
 
     def _record_signoff(self, task: WorkflowTask, *, role_key: str, actor: str,
                         actor_id: str, verb: str, decision: str = "",
-                        comment: str = "", overdue: bool = False) -> None:
+                        comment: str = "", overdue: bool = False,
+                        on_behalf_of: str = "") -> None:
         """落 DB 级签名事实（``wf_signoff``），重复签名由唯一索引兜底。
 
         与 ``governance_json`` 的分工：后者是**工单快照/渲染源**，前者是
@@ -881,7 +963,7 @@ class WorkflowEngine:
             "verb": verb,
             "decision": str(decision or "").strip(),
             "comment": (comment or "").strip(),
-            "on_behalf_of": None,
+            "on_behalf_of": str(on_behalf_of or "").strip() or None,
             "overdue_signoff": 1 if overdue else 0,
             "ts": datetime.now(timezone.utc).isoformat(),
         })
@@ -892,11 +974,15 @@ class WorkflowEngine:
 
     def _append_approval(self, task: WorkflowTask, role_key: str, actor: str,
                          decision: str, comment: str,
-                         actor_id: str = "", verb: str = "approve") -> dict[str, Any]:
+                         actor_id: str = "", verb: str = "approve",
+                         on_behalf_of: str = "",
+                         overdue_signoff: bool = False) -> dict[str, Any]:
         """追加终批/驳回留痕（返回新的 governance 快照）。"""
         self._record_signoff(task, role_key=role_key, actor=actor,
                              actor_id=actor_id, verb=verb,
-                             decision=decision, comment=comment)
+                             decision=decision, comment=comment,
+                             overdue=overdue_signoff,
+                             on_behalf_of=on_behalf_of)
         governance = dict(task.governance or {})
         approvals = [dict(a) for a in (governance.get("approvals") or [])]
         role_def = self.permission_registry.role(role_key)
@@ -909,9 +995,8 @@ class WorkflowEngine:
             "actor_kind": role_def.actor_kind if role_def else "human",
             "decision": str(decision or "").strip(),
             "comment": (comment or "").strip(),
-            # 代签字段位（V3 后续阶段启用；本轮恒为 None / False）
-            "on_behalf_of": None,
-            "overdue_signoff": False,
+            "on_behalf_of": str(on_behalf_of or "").strip() or None,
+            "overdue_signoff": bool(overdue_signoff),
             "ts": datetime.now(timezone.utc).isoformat(),
         })
         governance["approvals"] = approvals

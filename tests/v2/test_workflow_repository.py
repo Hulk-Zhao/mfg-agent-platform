@@ -95,6 +95,7 @@ class DictRepository(WorkflowRepository):
 
     def __init__(self) -> None:
         self.rows: dict[str, dict[str, Any]] = {}
+        self.signoffs: list[dict[str, Any]] = []
         self.schema_calls = 0
 
     def ensure_schema(self) -> None:
@@ -121,6 +122,27 @@ class DictRepository(WorkflowRepository):
             return 0
         self.rows[task_uid].update(fields)
         return 1
+
+    def insert_signoff(self, row: dict[str, Any]) -> bool:
+        for existing in self.signoffs:
+            if (existing["task_uid"] == row["task_uid"]
+                    and existing["verb"] == row["verb"]
+                    and (existing["actor_id"] == row["actor_id"]
+                         or (existing["role_key"] == row["role_key"]
+                             and existing["actor"] == row["actor"]))):
+                return False
+        self.signoffs.append(dict(row))
+        return True
+
+    def list_signoffs(self, task_uid: str) -> list[dict[str, Any]]:
+        return [dict(r) for r in self.signoffs if r["task_uid"] == task_uid]
+
+    def delete_signoffs(self, task_uid: str, verb: Optional[str] = None) -> int:
+        before = len(self.signoffs)
+        self.signoffs = [
+            r for r in self.signoffs
+            if not (r["task_uid"] == task_uid and (not verb or r["verb"] == verb))]
+        return before - len(self.signoffs)
 
 
 def test_engine_runs_on_injected_repository():

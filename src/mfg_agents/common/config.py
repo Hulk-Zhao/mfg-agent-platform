@@ -70,6 +70,9 @@ class Settings:
     # 缺省沿用 DB_URL（本地单库行为不变）；生产可指向只读副本 + 只读账号。
     # 写通道（SPC 写入 / KBQA 日志 / 初始化）仍走 DB_URL，二者职责分离。
     DB_READ_URL: str = _env_or("DB_READ_URL", "")
+    # 超时代签授权岗位（permissions.yaml role key，逗号分隔）；留空 = 功能关闭。
+    # 只对「已超 SLA + 持该槽位 approve 权限 + 角色在名单内」的工单开放。
+    HITL_DELEGATE_ROLES: str = os.getenv("HITL_DELEGATE_ROLES", "")
 
     # ChromaDB：本地持久化（见 rag_tools.py）
     CHROMA_HOST: str = os.getenv("CHROMA_HOST", "localhost")
@@ -306,6 +309,12 @@ class Settings:
 
 
 settings = Settings()
+
+
+def hitl_delegate_roles() -> set[str]:
+    """超时代签授权岗位集合；空集合 = 功能关闭（fail-closed）。"""
+    raw = str(getattr(settings, "HITL_DELEGATE_ROLES", "") or "")
+    return {seg.strip() for seg in raw.split(",") if seg.strip()}
 
 
 def db_read_url() -> str:

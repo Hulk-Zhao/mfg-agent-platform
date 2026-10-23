@@ -1164,10 +1164,13 @@
         { approver, comment: comment || "", decision: decision || "" });
     },
 
-    /** 人工确认 审批通过（waiting_hitl → running / done）。角色由令牌裁决 */
-    workflowApprove(taskId, approver, comment, final, decision) {
+    /** 人工确认 审批通过（waiting_hitl → running / done）。角色由令牌裁决。
+     *  `onBehalfOf` 非空 = 超时代签（后端校验超 SLA + 授权岗位 + 理由）。 */
+    workflowApprove(taskId, approver, comment, final, decision, onBehalfOf) {
+      const body = { approver, comment, final: !!final, decision: decision || "" };
+      if (onBehalfOf) body.on_behalf_of = onBehalfOf;
       return this._post(`/api/v2/workflow/${encodeURIComponent(taskId)}/approve`,
-        { approver, comment, final: !!final, decision: decision || "" });
+        body);
     },
 
     /** 人工确认 审批驳回（→ closed）。角色由令牌裁决 */

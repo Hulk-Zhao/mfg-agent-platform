@@ -797,6 +797,8 @@ class WorkflowActionRequest(BaseModel):
     role: str = ""           # 兼容字段：已失效（仅留旧前端不改也能收到请求）
     user_ctx: Optional[dict[str, Any]] = None  # 兼容字段：已失效，服务端忽略
     action_key: str = ""     # 选定处置动作（select-action/cosign 使用）
+    # 超时代签对象（原会签人/岗位）；非空 = 代签，须已超 SLA 且岗位在授权名单
+    on_behalf_of: str = ""
 
 
 def _workflow_engine() -> WorkflowEngine:
@@ -1037,6 +1039,9 @@ def api_workflow_pending(request: Request,
         item["visibility"] = vis
         item["my_action"] = (engine.action_for(task, effective)
                              if vis == workflow_scope.VIS_MINE else None)
+        # 超时代签入口裁决：前端只负责展示，后端 approve 仍二次校验
+        item["delegation"] = engine.delegation_state(
+            task, effective, user_ctx={**identity, "roles": list(effective)})
         if vis == workflow_scope.VIS_MINE:
             mine += 1
         else:
@@ -1076,7 +1081,10 @@ def api_workflow_task(task_id: str, request: Request) -> dict[str, Any]:
             engine, task, identity.get("roles") or [],
             user_ctx=identity) == workflow_scope.VIS_HIDDEN:
         raise HTTPException(status_code=404, detail="工单不存在")
-    return {"code": 0, "data": task.to_dict(), "message": "ok"}
+    data = task.to_dict()
+    data["delegation"] = engine.delegation_state(
+        task, identity.get("roles") or [], user_ctx=identity)
+    return {"code": 0, "data": data, "message": "ok"}
 
 
 @app.get("/api/v2/workflow/{task_id}/signoffs")
@@ -1197,7 +1205,8 @@ def api_workflow_approve(task_id: str, req: WorkflowActionRequest,
     try:
         task = _workflow_engine().approve(
             task_id, req.approver, req.comment, final=req.final,
-            decision=req.decision, user_ctx=user_ctx)
+            decision=req.decision, user_ctx=user_ctx,
+            on_behalf_of=req.on_behalf_of)
     except (KeyError, PermissionDenied, SignoffIncomplete,
             WorkflowTransitionError, ValueError) as exc:
         _raise_workflow_http(exc)

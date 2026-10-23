@@ -324,7 +324,10 @@ mfg-agent-platform/
 - **企微回调重放防护**：已补 timestamp 窗口（默认 ±300s，`IM_CALLBACK_MAX_SKEW_S`）
   + nonce 一次性消费（Redis `SET NX EX` 跨实例，Redis 不可用退回进程内 TTL 去重）；
   验签改用常量时间比较。真实租户联调仍需按企微重试策略确认 nonce 行为。
-- **超时代签**：字段位已预留（`on_behalf_of` / `overdue_signoff`），入口未开放。
+- **超时代签**：已开放（fail-closed）——`HITL_DELEGATE_ROLES` 配置授权岗位（留空 = 关闭），
+  仅对「已超 SLA + 会签齐备 + 持该槽位 `approve` 权限」的工单显示入口；
+  必须填写代签对象与理由，`on_behalf_of` / `overdue_signoff` 同时写入 `wf_signoff`
+  与工单治理快照，签名流水逐条可见。
 
 ## 文档
 

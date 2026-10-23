@@ -213,10 +213,11 @@
     const selFull = sel
       ? (acts.find((a) => a.key === sel.key) || acts.find((a) => a.label === sel.label) || sel)
       : null;
+    const isApprove = action === "approve" || action === "delegate";
     const commentEl = document.getElementById(`act-comment-${taskUid}`)
       || document.getElementById("hitl-comment");
     let commentText = commentEl && commentEl.value ? commentEl.value.trim() : "";
-    if (action === "approve") {
+    if (isApprove) {
       if (acts.length && !sel) {
         ctx.UI.toast("请先选择一个处置动作（按你的岗位权限）", "warn", 3200);
         return;
@@ -235,25 +236,39 @@
       if (typed === null) return;        // 用户取消 → 不提交
       commentText = typed;
     }
+    // 超时代签：先确认代签对象，再强制填写理由（后端二次校验，缺一即 400/403）
+    let onBehalfOf = "";
+    if (action === "delegate") {
+      const target = await askComment(ctx, "代签对象（原会签人/岗位，必填）");
+      if (target === null) return;
+      const reason = await askComment(ctx, "超时代签理由（必填，写入签名账本）");
+      if (reason === null) return;
+      onBehalfOf = target.trim();
+      commentText = "超时代签：" + reason.trim();
+    }
     const decision = sel ? sel.label : "";
     if (!ctx.api.online()) {
       map[taskUid] = {
-        action, status: action === "approve" ? "running" : "closed",
+        action: isApprove ? "approve" : "reject",
+        status: isApprove ? "running" : "closed",
         actor: role.user, time: new Date().toISOString(), demo: true, decision,
       };
       ctx.UI.toast("后端离线——演示模式：已在界面标记为已处理（未真实调用后端）", "info", 4200);
       ctx.refreshScreen();
       return;
     }
-    const comment = (action === "approve" ? "门户审批：同意" : "门户审批：驳回")
-      + (commentText ? "；" + commentText : "");
+    const comment = action === "delegate"
+      ? commentText
+      : (action === "approve" ? "门户审批：同意" : "门户审批：驳回")
+        + (commentText ? "；" + commentText : "");
     try {
-      const task = action === "approve"
-        ? await ctx.api.workflowApprove(taskUid, role.user, comment, false, decision)
+      const task = isApprove
+        ? await ctx.api.workflowApprove(taskUid, role.user, comment, false,
+          decision, onBehalfOf)
         : await ctx.api.workflowReject(taskUid, role.user, comment, decision);
       const last = task.history && task.history.length ? task.history[task.history.length - 1] : null;
       map[taskUid] = {
-        action, status: task.status,
+        action: isApprove ? "approve" : "reject", status: task.status,
         actor: (last && last.actor) || role.user,
         time: task.updated_at || new Date().toISOString(),
         decision,
@@ -265,7 +280,9 @@
       _hitlGov[taskUid] = task;
       // 审批后保持详情停在该工单，便于查看 before/after 与状态机留痕
       ctx.state.screenState.hitlSelected = taskUid;
-      ctx.UI.toast(`工单 ${taskUid} 已${action === "approve" ? "同意" : "驳回"} → ${statusLabel(task.status)}`, "ok", 4000);
+      const verb = action === "delegate" ? "代签同意"
+        : (action === "approve" ? "同意" : "驳回");
+      ctx.UI.toast(`工单 ${taskUid} 已${verb} → ${statusLabel(task.status)}`, "ok", 4000);
       ctx.refreshScreen();
     } catch (err) {
       ctx.UI.toast(`审批失败：${apiErrorMessage(err)}`, "err", 5200);
@@ -4838,9 +4855,14 @@
           <input class="input hitl-comment" id="hitl-comment" placeholder="决策意见（可选，将写入工单处理记录）" />
           <button class="btn btn-success" id="hitl-approve"
             ${gate.ok ? "" : `disabled title="${UI.esc(gate.reason)}"`}>${UI.icon("check", 14)}同意</button>
+          ${t.delegation && t.delegation.allowed
+            ? `<button class="btn btn-outline" id="hitl-delegate">${UI.icon("clock", 14)}超时代签</button>`
+            : ""}
           <button class="btn btn-danger" id="hitl-reject">${UI.icon("x", 14)}驳回</button>
         </div>
-        ${gate.ok ? "" : `<div class="gate-hint">${UI.icon("info", 13)} ${UI.esc(gate.reason)}</div>`}`)}
+        ${gate.ok ? "" : `<div class="gate-hint">${UI.icon("info", 13)} ${UI.esc(gate.reason)}</div>`}
+        ${t.delegation && t.delegation.enabled && t.delegation.overdue && !t.delegation.allowed
+          ? `<div class="gate-hint">${UI.icon("info", 13)} 超时代签不可用：${UI.esc(t.delegation.reason)}</div>` : ""}`)}
       </div>`;
 
     wireActionChips(document, ctx, t.task_uid);
@@ -4849,8 +4871,10 @@
     wireSignoffFlow(document, ctx, t.task_uid);
     const approveBtn = document.getElementById("hitl-approve");
     const rejectBtn = document.getElementById("hitl-reject");
+    const delegateBtn = document.getElementById("hitl-delegate");
     if (approveBtn) approveBtn.addEventListener("click", () => hitlAction(ctx, t.task_uid, "approve"));
     if (rejectBtn) rejectBtn.addEventListener("click", () => hitlAction(ctx, t.task_uid, "reject"));
+    if (delegateBtn) delegateBtn.addEventListener("click", () => hitlAction(ctx, t.task_uid, "delegate"));
   }
 
   /* ============================================================
