@@ -324,13 +324,33 @@ def test_todo_loader_passes_governance_roles():
     assert "workflowPending(govRoles(ctx))" in block
 
 
+def _method_body(src: str, method: str) -> str:
+    """按方法签名提取方法体（花括号配平到同级收尾）。
+
+    为什么不能定长开窗：``workflowPending`` 里有同参缓存注释与 qs 拼接，
+    2026-10-24 app.js 一次 +378 行的增长就把 400 字符窗口撑爆——调用还在，
+    守卫假红。配平提取跟着函数一起长，不随周边代码漂移。
+    """
+    m = re.search(rf"\b{method}\s*\([^)]*\)\s*\{{", src)
+    assert m, f"{method} 方法定义未找到"
+    open_at = src.index("{", m.start())
+    depth = 0
+    for pos in range(open_at, len(src)):
+        if src[pos] == "{":
+            depth += 1
+        elif src[pos] == "}":
+            depth -= 1
+            if depth == 0:
+                return src[m.start():pos + 1]
+    raise AssertionError(f"{method} 方法体未闭合")
+
+
 def test_workflow_requests_use_scoped_getter():
     """待办请求走 `_getScoped`（401 静默补签），否则后端一重启就整片 401。"""
     src = (_UI / "app.js").read_text(encoding="utf-8")
     for method in ("workflowPending", "workflowTask"):
-        start = src.index(f"{method}(")
-        block = src[start:start + 400]
-        assert "_getScoped(" in block, f"{method} 未走补签重试"
+        body = _method_body(src, method)
+        assert "_getScoped(" in body, f"{method} 未走补签重试"
 
 
 # ============================================================
