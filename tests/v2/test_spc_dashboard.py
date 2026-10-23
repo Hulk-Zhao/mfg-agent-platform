@@ -1618,9 +1618,20 @@ def test_e6_existing_spc_assertions_scoped_to_legacy_characteristics():
 # ============================================================================
 
 def test_f3_memory_daily_file_records_spc():
-    """F3：``.workbuddy/memory/2026-10-20.md`` 已 append 记录本需求。"""
+    """F3：``.workbuddy/memory/2026-10-20.md`` 已 append 记录本需求。
+
+    CI 可见性（2026-10-23 修复「每个 run 必红」）：
+    ``.workbuddy/`` 在 .gitignore 里（本地工作数据目录，刻意不入库），全新克隆 /
+    CI checkout 中整个目录不存在——本条纪律是**本地工作纪律**，CI 无从验证。
+    旧写法无条件 ``assert path.exists()``：本地（日志在场）全绿、远端每个 run
+    必红，且红得毫无信息量——CI 汇总 "1 failed, 2283 passed" 的唯一失败项
+    一直是它（2026-10-23 经 annotations 通道定位）。现改为「在场才校验」：
+    缺席（fresh clone，或日志已被 30 天蒸馏规则清理）→ skip；在场仍校验
+    内容关键词，本地守护价值不变。
+    """
     path = _ROOT / ".workbuddy" / "memory" / "2026-10-20.md"
-    assert path.exists(), "缺少 .workbuddy/memory/2026-10-20.md（交付纪律 F3）"
+    if not path.exists():
+        pytest.skip(".workbuddy/memory 不在库内（.gitignore）或已被蒸馏清理——本地纪律，CI 不验证")
     assert "SPC" in path.read_text(encoding="utf-8"), \
         "当日记忆未记录 SPC 看板增量"
 
