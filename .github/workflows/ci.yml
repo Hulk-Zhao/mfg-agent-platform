@@ -22,5 +22,35 @@ jobs:
       - name: Install dependencies
         run: uv sync --frozen
 
+      # 诊断探针（CI 连红期临时加入）：把 runner 环境事实写成 ::notice:: 注解。
+      # 为什么走注解而不是日志：annotations API 匿名可读，而 job 日志下载 403
+      # （需 admin 权限），注解是无需提权就能观测 CI 的唯一公开窗口。
+      # 重点核对 Chrome / playwright 浏览器是否在位——tests/demo/test_demo_smoke.py
+      # 的 browser fixture 先试 channel="chrome"（系统 Chrome），失败回落打包
+      # chromium；而 `uv sync` 只装 playwright 包、从不下载浏览器二进制。
+      - name: Probe runner environment
+        run: |
+          PB=$(ls "$HOME/.cache/ms-playwright" 2>/dev/null | wc -l || true)
+          echo "::notice::os=$(lsb_release -ds 2>/dev/null || echo unknown) | chrome=$(google-chrome --version 2>/dev/null || echo MISSING) | node=$(node --version 2>/dev/null || echo MISSING) | playwright_browsers=${PB}"
+          echo "::notice::mem_total=$(free -m | awk '/Mem:/{print $2}')MB mem_avail=$(free -m | awk '/Mem:/{print $7}')MB cpu=$(nproc)"
+
       - name: Run tests (offline, no live LLM)
-        run: uv run pytest tests/ -q
+        # 失败时把 FAILED/ERROR 行与耗时 Top10 改写为 ::error:: / ::notice:: 注解：
+        # 纯 `pytest -q` 只在 job 日志里留下失败测试名，而日志下载需要 admin；
+        # 注解让失败清单对匿名只读方同样可见（pass/fail 语义不变，仍以 pytest
+        # 原退出码结项）。
+        run: |
+          uv run pytest tests/ -q -rf > /tmp/pytest.log 2>&1 && rc=0 || rc=$?
+          if [ "$rc" -ne 0 ]; then
+            echo "pytest exit code: $rc"
+            grep -E "^(FAILED|ERROR)" /tmp/pytest.log | head -20 | while IFS= read -r line; do
+              echo "::error::${line}"
+            done || true
+            grep -E "^[0-9]+\.[0-9]+s (call|setup)" /tmp/pytest.log | head -10 | while IFS= read -r line; do
+              echo "::notice::slow ${line}"
+            done || true
+            tail -n 3 /tmp/pytest.log | while IFS= read -r line; do
+              echo "::error::${line}"
+            done || true
+            exit "$rc"
+          fi
